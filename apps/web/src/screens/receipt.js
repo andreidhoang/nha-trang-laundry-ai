@@ -52,7 +52,7 @@ import { errorNotice } from "../ui/components.js";
 import { clock, serviceName, unitShort } from "../ui/quoting.js";
 import { actionBar, button, infoButton, page, skeletonRows } from "../ui/kit.js";
 // UNCLAIMED-001 (DEC-036): the storage rule's one line, once the owner published it.
-import { readStorage, receiptStorageLine } from "../ui/unclaimed.js";
+import { readStorage, receiptStorageLine, storageCharge } from "../ui/unclaimed.js";
 // The same helper the order list and page use, so the paper cannot word the ticket differently.
 import { orderName } from "./orders.js";
 
@@ -177,6 +177,7 @@ function lineAmount(line) {
  * @property {string} reference
  * @property {Array<{name: string, quantity: string, amount: string, code: string}>|null} lines
  * @property {Array<{label: string, amount: string, kind: string}>} adjustments
+ * @property {string|null} fee the storage fee among the server's charges, when there is one
  * @property {string} total
  * @property {{paid: string, remaining: string}|null} paid Đã trả / Còn lại, once anything is paid
  * @property {string} closing
@@ -214,7 +215,13 @@ function receiptModel(order, detail, catalog, storage = null) {
           kind: String(item.kind),
         }))
       : [],
-    total: money(order.payable_total_vnd, "Chưa có tổng"),
+    // UNCLAIMED-001 x PAYMENT-001 (round 7 wave 2 integration): a storage fee is one of the
+    // server's charges, so the slip prints it above the total and the total is everything owed --
+    // otherwise "Đã trả" would read more than "Tổng cộng" on a fee-bearing order.
+    fee: storageCharge(order) ? money(storageCharge(order)) : null,
+    total: storageCharge(order)
+      ? money(order.owed_vnd, "Chưa có tổng")
+      : money(order.payable_total_vnd, "Chưa có tổng"),
     // PAYMENT-001: a deposit or a part payment is printed, so the customer's slip says what is left.
     paid:
       Array.isArray(order.payments) && order.payments.length
@@ -243,6 +250,7 @@ export function receiptText(model) {
     [model.ticket, model.day].filter(Boolean).join(" · "),
     ...(model.lines || []).map((line) => `${line.name} — ${line.quantity}: ${line.amount}`),
     ...model.adjustments.map((item) => `${item.label}: ${item.amount}`),
+    model.fee ? `Phí lưu kho: ${model.fee}` : null,
     `Tổng cộng: ${model.total}`,
     model.paid ? `Đã trả: ${model.paid.paid}` : null,
     model.paid ? `Còn lại: ${model.paid.remaining}` : null,
@@ -319,6 +327,13 @@ function paper(model, linesFallback) {
           "div",
           { class: "receipt-paper__adjustments" },
           model.adjustments.map((item) => row(item.label, item.amount, { adjustment: item.kind })),
+        )
+      : null,
+    model.fee
+      ? h(
+          "div",
+          { class: "receipt-paper__adjustments", dataStorageFee: "true" },
+          row("Phí lưu kho", model.fee, { field: "storage-fee" }),
         )
       : null,
     h(

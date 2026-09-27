@@ -159,8 +159,11 @@ liệt kê mọi đơn đã giặt xong mà khách chưa lấy, đơn chờ lâu
   xảy ra (*hẹn chiều mai qua*).
 - Phí tính theo **ngày lịch** của tiệm, từ ngày đồ xong: ngày 20 vẫn miễn phí, ngày 21 là 5.000 ₫,
   tối đa bằng một nửa tiền giặt của đơn. Máy tính, quầy không tính tay.
-- Đơn **đã trả đủ từ trước** (trả khi gửi đồ) không bị cộng thêm phí sau đó — chưa có quyết định
-  cho trường hợp này; quá hạn lâu thì báo chủ tiệm.
+- Đơn **đã trả đủ từ trước** (trả khi gửi đồ, trước ngày 21) **không tính phí lưu kho** — chủ
+  tiệm đã quyết (27/09/2026). Đơn đó vẫn thanh lý được từ ngày 60 theo cùng quy định liên hệ.
+- Khách **công nợ** để đồ quá 20 ngày: khi bấm **Giao đồ — ghi công nợ**, phí lưu kho tới hôm đó
+  được ghi luôn vào công nợ (dòng dưới ô tiền ghi *Gồm phí lưu kho …*) và không tính thêm sau đó.
+  Hạn mức được so với cả tiền giặt lẫn phí.
 
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
 

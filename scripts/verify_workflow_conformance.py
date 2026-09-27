@@ -560,11 +560,41 @@ class Console:
             touched("newOrder.fee-ack")
 
     def price(self) -> dict[str, Any]:
+        """Press Tính giá, and wait until the receipt of the revision the server returned has
+        painted its lines.
+
+        The receipt paints in two passes (`ui/quoting.js` `receipt`): the totals from the POST at
+        once, the lines when the revision read that follows it answers (`setLines`). Waiting for
+        any `.receipt` and then a fixed 400 ms read the first pass whenever that second read was
+        slower -- the pricing scenario's "both lines are priced" once saw HTTP 201 and a receipt
+        still holding its skeleton on a fresh desk run. So the wait is on the server's own answer:
+        the paper carrying the returned quote id and revision, its lines host no longer busy.
+        """
         (priced,) = self.press_capturing(self.page.locator("#new-price"), "/quotes")
         touched("newOrder.price")
+        body = priced.get("body") if isinstance(priced.get("body"), dict) else {}
+        quote_id, revision = body.get("quote_id"), body.get("revision")
         with contextlib.suppress(Exception):
-            self.page.wait_for_selector("#new-receipt .receipt", timeout=15000)
-        self.page.wait_for_timeout(400)
+            if priced["status"] < 300 and quote_id and revision is not None:
+                self.page.wait_for_function(
+                    """(args) => {
+                        const paper = document.querySelector(
+                            `#new-receipt .receipt[data-quote-id="${args.quote}"]` +
+                                `[data-revision="${args.revision}"]`,
+                        );
+                        const host = paper && paper.querySelector(".receipt__lines-host");
+                        return Boolean(
+                            host && host.firstElementChild && !host.querySelector("[aria-busy]"),
+                        );
+                    }""",
+                    arg={"quote": str(quote_id), "revision": str(revision)},
+                    timeout=15000,
+                )
+            else:
+                self.page.wait_for_selector("#new-receipt .receipt", timeout=15000)
+        if not (priced["status"] < 300 and quote_id and revision is not None):
+            # A refusal paints no revision to wait on; its notice renders with the answer.
+            self.page.wait_for_timeout(400)
         return priced
 
     def confirm(self, source: str = "WALK_IN", *, accept: bool = True) -> dict[str, Any]:
@@ -5454,7 +5484,7 @@ def scenario_export_payments(console: Console) -> None:
     ok(
         "a one-day request today is answered in the live shape, not the retired one",
         created["status"] == 201
-        and str(body.get("query_version", "")).startswith("store-day-orders-export-v3:")
+        and str(body.get("query_version", "")).startswith("store-day-orders-export-v4:")
         and body.get("rendered_hash") not in ("", retired_hash)
         and body.get("shape_retired") is False,
         {k: body.get(k) for k in ("query_version", "shape_retired")},
@@ -5609,7 +5639,7 @@ def scenario_export_payments(console: Console) -> None:
     ok(
         "a one-day file, its header naming the v3 rule and when the money stood so",
         header.get("business_date_from") == header.get("business_date_to") == today.isoformat()
-        and header.get("export_query_version", "").startswith("store-day-orders-export-v3:")
+        and header.get("export_query_version", "").startswith("store-day-orders-export-v4:")
         and bool(header.get("produced_at")),
         header,
     )
@@ -6895,7 +6925,7 @@ def scenario_daily_summary(console: Console) -> None:
     ok(
         "the owner reads today's summary: a versioned template, lines and what it left out",
         first["status"] == 200
-        and str((first["body"] or {}).get("template_version", "")).startswith("daily-summary-v1:")
+        and str((first["body"] or {}).get("template_version", "")).startswith("daily-summary-v2:")
         and (first["body"] or {}).get("date") == today
         and (first["body"] or {}).get("so_far") is True,
         first["text"][:160],
@@ -7074,11 +7104,69 @@ def scenario_daily_summary(console: Console) -> None:
             == sum(1 for item in listed if item.get("status") in ("OPEN", "UNDER_REVIEW")),
             after.get("open_count"),
         )
+    # Round 7 wave 2 integration: the two hooks are wired. The waiting line is the waiting list
+    # the counter reads, counted past 20 and 60 days by the list's own `days_waiting`.
+    waiting = console.call("GET", f"/internal/v1/stores/{STORE}/orders/awaiting-pickup?limit=200")
+    shelf = waiting.get("body") or {}
+    waited = [int(item.get("days_waiting") or 0) for item in shelf.get("orders") or []]
+    if waiting["status"] == 200 and not shelf.get("truncated"):
+        ok(
+            "the waiting line is Đồ chờ lấy counted: over 20 days and over 60 days",
+            after.get("over_20_days") == sum(1 for days in waited if days > 20)
+            and after.get("over_60_days") == sum(1 for days in waited if days > 60)
+            and "quá 20 ngày"
+            in next(
+                (line["text"] for line in body.get("lines", []) if line["key"] == "WAITING_PICKUP"),
+                "",
+            ),
+            (after.get("over_20_days"), after.get("over_60_days"), sorted(waited)[-3:]),
+        )
+    # The accounts line is every account card's own figures, summed: overdue as the card says,
+    # and due = billed on a closed statement (outstanding less this month's charges) less overdue.
+    found = console.call("GET", f"/internal/v1/stores/{STORE}/customers?limit=100")
+    listed_customers = (found.get("body") or {}).get("customers") or []
+    cards = []
+    for customer in listed_customers:
+        if customer.get("kind") != "BUSINESS":
+            continue
+        read = console.call(
+            "GET", f"/internal/v1/stores/{STORE}/customers/{customer['customer_id']}/account"
+        )
+        account = (read.get("body") or {}).get("account")
+        if account:
+            cards.append(account)
+    if found["status"] == 200 and not (found.get("body") or {}).get("truncated"):
+        overdue = [int(card["overdue_vnd"]) for card in cards]
+        due = [
+            max(int(card["outstanding_vnd"]) - int(card["current_statement"]["charges_vnd"]), 0)
+            - int(card["overdue_vnd"])
+            for card in cards
+        ]
+        ok(
+            "the accounts line is the account cards' own money: due and overdue, counted and summed"
+            if cards
+            else "a shop with no account leaves the accounts line out, never as a zero",
+            (
+                after.get("overdue_accounts") == sum(1 for value in overdue if value > 0)
+                and after.get("overdue_vnd") == sum(overdue)
+                and after.get("due_accounts") == sum(1 for value in due if value > 0)
+                and after.get("due_vnd") == sum(due)
+            )
+            if cards
+            else omitted.get("ACCOUNTS_DUE") == "NO_ACCOUNTS",
+            {
+                "summary": {
+                    k: after.get(k)
+                    for k in ("due_accounts", "due_vnd", "overdue_accounts", "overdue_vnd")
+                },
+                "cards": len(cards),
+                "overdue": overdue,
+                "due": due,
+            },
+        )
     ok(
-        "what is not built yet is left out with its reason, never printed as a zero",
-        omitted.get("WAITING_PICKUP") == "SOURCE_NOT_BUILT"
-        and omitted.get("ACCOUNTS_DUE") == "SOURCE_NOT_BUILT"
-        and "20 ngày" not in body.get("text", ""),
+        "nothing is left out as not built any more",
+        "SOURCE_NOT_BUILT" not in omitted.values(),
         omitted,
     )
     everything = json.dumps(body, ensure_ascii=False)
@@ -7097,7 +7185,14 @@ def scenario_daily_summary(console: Console) -> None:
                 "Lê Thánh Tôn",
                 "sơ mi",
                 "vết ố",
+                # PAYMENT-002's account customers (scenario accounts): counts and money only.
+                *(
+                    str(customer.get("display_name") or "")
+                    for customer in listed_customers
+                    if customer.get("kind") == "BUSINESS"
+                ),
             )
+            if value
         ),
         f"customer HTTP {created['status']}",
     )

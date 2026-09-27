@@ -21,6 +21,9 @@ import { h, render } from "../core/dom.js";
 import { money } from "../core/format.js";
 import { gated } from "./components.js";
 import { button, moneyHero } from "./kit.js";
+// UNCLAIMED-001 (round 7 wave 2 integration): laundry that waited past the free days goes on the
+// account with its storage fee; the server's figure already includes it, this only says so.
+import { storageChargeLine } from "./unclaimed.js";
 
 /** The refusals that say nothing worth a line on the page: nothing to charge, or already done. */
 const QUIET = new Set(["NOTHING_OWED", "ALREADY_COLLECTED", "ORDER_NOT_ACTIVE", "NOT_AN_ACCOUNT_CUSTOMER"]);
@@ -106,6 +109,8 @@ export function accountHandover(spec) {
       );
       return;
     }
+    // "Gồm phí lưu kho …" when the server's charges carry a storage fee; the amount is theirs.
+    const fee = storageChargeLine(order);
     const press = gated(
       button({
         label: "Giao đồ — ghi công nợ",
@@ -126,6 +131,7 @@ export function accountHandover(spec) {
         `Ghi ${money(handover.order_remaining_vnd)} vào công nợ · đang nợ ${money(
           handover.outstanding_vnd,
         )} / hạn mức ${money(handover.credit_limit_vnd)}. `,
+        fee ? `${fee}. ` : null,
         customerLink,
       ),
     );
@@ -183,9 +189,14 @@ export function accountHandover(spec) {
         moneyHero({
           label: "Ghi vào công nợ",
           amount: money(handover.order_remaining_vnd),
-          caption: `Đang nợ ${money(handover.outstanding_vnd)} → ${money(
-            handover.outstanding_after_vnd,
-          )} · hạn mức ${money(handover.credit_limit_vnd)}`,
+          caption: [
+            `Đang nợ ${money(handover.outstanding_vnd)} → ${money(
+              handover.outstanding_after_vnd,
+            )} · hạn mức ${money(handover.credit_limit_vnd)}`,
+            storageChargeLine(order),
+          ]
+            .filter(Boolean)
+            .join(" · "),
         }),
         h(
           "p",

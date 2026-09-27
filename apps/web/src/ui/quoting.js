@@ -423,6 +423,10 @@ export function receipt(spec) {
         class: "receipt surface",
         dataFinality: revision.finality || null,
         dataStatus: revision.status || null,
+        // Which revision this paper is, so a reader (and a check) can tell it from the one before
+        // it: the lines paint in a second pass, after the revision read (`setLines`).
+        dataQuoteId: revision.quote_id ? String(revision.quote_id) : null,
+        dataRevision: revision.revision ?? null,
         "aria-label": "Hoá đơn tạm",
       },
       h(

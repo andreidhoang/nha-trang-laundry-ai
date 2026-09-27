@@ -135,26 +135,20 @@ const GROUPS = [
           "Chuyển khoản ghi khi đã thấy tiền vào tài khoản. Sao kê công nợ in từ trang của khách.",
       },
       // UNCLAIMED-001 (DEC-036) built the waiting list, contact attempts, the storage fee, the
-      // waiver and thanh lý. What it could not decide: whether an order paid in full before day 21
-      // owes a fee afterwards (the fee is fixed when the settling payment is taken, so there it is
-      // 0 ₫), and a reminder the software sends itself, which needs a connected channel.
+      // waiver and thanh lý. The question it left open -- whether an order paid in full before
+      // day 21 owes a fee afterwards -- the owner ruled on 2026-09-27: it does not (the fee is
+      // fixed when the settling payment is taken, which is what the code already did), and its
+      // laundry can still be disposed of from day 60. What remains is a reminder the software
+      // sends itself, which needs a connected channel.
       {
         ref: "DEC-036",
-        title: "Phí lưu kho cho đơn đã trả trước",
-        what:
-          "Tính phí lưu kho cho mọi túi đồ để quá hạn lấy, kể cả đơn khách đã trả đủ tiền lúc gửi " +
-          "đồ, và tự nhắc khách tới lấy.",
+        title: "Tự nhắc khách tới lấy đồ",
+        what: "Máy tự nhắn khách khi đồ đã giặt xong mà khách chưa tới lấy.",
         missing:
-          "Phí lưu kho được cộng vào số còn lại và chốt khi khách trả đủ. Đơn đã trả đủ trước ngày " +
-          "hết miễn phí thì phí đã chốt là 0 ₫: máy không tạo thêm khoản phải thu cho một đơn đã " +
-          "tất toán. Cũng chưa có tin tự động nhắc khách tới lấy.",
-        blockedBy:
-          "DEC-036 đã chốt phí và ngày thanh lý, nhưng không nói đơn đã trả đủ có tính thêm phí " +
-          "lưu kho hay không — cần chủ tiệm quyết; tin nhắc tự động cần kênh Zalo đã kết nối " +
-          "(CHANNEL-ZALO-APPLY-001)",
-        today:
-          "Gọi khách từ màn Đồ chờ lấy và ghi lại mỗi lần. Đơn đã trả trước mà quá hạn lâu thì " +
-          "báo chủ tiệm.",
+          "Chưa có tin tự động nhắc khách tới lấy. Đơn đã trả đủ trước ngày hết miễn phí không " +
+          "tính phí lưu kho (chủ tiệm quyết ngày 27/09/2026), nhưng vẫn thanh lý được từ ngày 60.",
+        blockedBy: "Tin nhắc tự động cần kênh Zalo đã kết nối (CHANNEL-ZALO-APPLY-001)",
+        today: "Gọi khách từ màn Đồ chờ lấy và ghi lại mỗi lần.",
         link: { href: "#/pickup", label: "Đồ chờ lấy" },
       },
       {

@@ -255,7 +255,7 @@ a month nobody closed still blocks.
 | A stain or a machine fault found at quality check, or on the shelf before the goods leave | **Giặt lại** (`REWASH`, founder ruling R1): production → `EXCEPTION`, then `EXCEPTION` → `IN_PROCESS` (the backward resume only an exception permits), with a `rewash_reason` (`NOT_CLEAN`, `MACHINE_FAULT`, `OTHER`) on the first event and its audit row. Only on an `ACTIVE` order at `QUALITY_CHECK` or `READY_AT_STORE` whose customer is not recorded as having taken the goods. The price is unchanged; the order then walks forward again. The history reads "Giặt lại · Chưa sạch" |
 | A garment brought back **after** the customer took it | A complaint (`DEC-004`, the remedy flow), never a rewash inside the order |
 | Any other production interruption | `HOLD` / `RESUME` from the order page. The per-axis `EXCEPTION` route still resumes to the interrupted state **or any earlier one**; an exception is an interruption, never an ending |
-| The customer's laundry is finished and they never come back | `DEC-036` (2026-09-25), built by `UNCLAIMED-001`. **Đồ chờ lấy** (`#/pickup`, counted on Hôm nay) lists every running self-collect order at `READY_AT_STORE` not recorded as collected, longest-waiting first, with its shop-local days waiting, its contact attempts and the storage fee owed now. Contact attempts (`CALL`/`ZALO`/`SMS`/`VISIT` × `REACHED`/`NO_ANSWER`/`WRONG_NUMBER`/`PROMISED_TO_COME`, a note that may not hold a phone number) are append-only and work before publication. Once the owner runs `scripts/publish_storage_policy.py`: free through day 20 after ready, then 5.000 ₫ per started day capped at 50% of the quoted total, a `STORAGE_FEE` charge on the order computed at read and fixed by the settling payment (the exact-total route refuses `STORAGE_FEE_OWED`); an `OPS_APPROVER` or the owner waives it with a reason; from day 60, with ≥ 3 attempts on ≥ 2 shop days, the owner (MFA) disposes: `ACTIVE` → `CANCELLATION_REVIEW` → `CANCELLED` with custody resolution `UNCLAIMED_DISPOSED`, the balance left as the ledger holds it (money paid kept), the rest written off on `order_disposals`. The receipt prints the rule in one line once published. An order paid in full before day 21 owes no fee afterwards (fixed at 0 ₫) — an open question for the owner, on `#/gaps`. Earlier versions of this line cited `DEC-005`, which is the channel decision |
+| The customer's laundry is finished and they never come back | `DEC-036` (2026-09-25), built by `UNCLAIMED-001`. **Đồ chờ lấy** (`#/pickup`, counted on Hôm nay) lists every running self-collect order at `READY_AT_STORE` not recorded as collected, longest-waiting first, with its shop-local days waiting, its contact attempts and the storage fee owed now. Contact attempts (`CALL`/`ZALO`/`SMS`/`VISIT` × `REACHED`/`NO_ANSWER`/`WRONG_NUMBER`/`PROMISED_TO_COME`, a note that may not hold a phone number) are append-only and work before publication. Once the owner runs `scripts/publish_storage_policy.py`: free through day 20 after ready, then 5.000 ₫ per started day capped at 50% of the quoted total, a `STORAGE_FEE` charge on the order computed at read and fixed by the settling payment (the exact-total route refuses `STORAGE_FEE_OWED`); an `OPS_APPROVER` or the owner waives it with a reason; from day 60, with ≥ 3 attempts on ≥ 2 shop days, the owner (MFA) disposes: `ACTIVE` → `CANCELLATION_REVIEW` → `CANCELLED` with custody resolution `UNCLAIMED_DISPOSED`, the balance left as the ledger holds it (money paid kept), the rest written off on `order_disposals`. The receipt prints the rule in one line once published. An order paid in full before day 21 owes no fee afterwards (fixed at 0 ₫) — the owner's ruling of 2026-09-27; its laundry can still be disposed of from day 60. An account customer's order that waited past day 20 leaves on the account with its fee: the limit is measured against the quoted total plus the fee, and the fee is fixed with the account charge (`0061`), so it stops accruing when the goods leave. The export's `owed_vnd` includes the fee (`store-day-orders-export-v4`). Earlier versions of this line cited `DEC-005`, which is the channel decision |
 
 There is deliberately **no** resolution code for "washed, walked away, paid nothing". A customer
 whose laundry has been washed pays and collects, or the goods stay with the shop; the protection is
@@ -273,16 +273,19 @@ cancel step never offers it.
 - **Tóm tắt cuối ngày** (`DAILY-SUMMARY-001`, `DEC-039`) is the owner's evening card on Hôm nay,
   for the report's four readers. After 18:00 shop-local it reads by itself; before, **Xem tóm tắt**
   reads it on demand ("tính đến" the time in its first line). `GET …/reports/daily-summary?date=`
-  returns short Vietnamese sentences a versioned Python template (`daily-summary-v1:<digest>`)
+  returns short Vietnamese sentences a versioned Python template (`daily-summary-v2:<digest>`)
   writes from the report's one-day figures and the live lists: orders taken in, completed and
   cancelled; money in split cash / transfer (and refunds when any); finished on time against the
   first promise and how many had none; orders not yet handed back that are late against their
   promise, and those with no promise past the stated mark (the SLA board, today only); new and open
-  complaints; the day's Sổ thu chi. Every amount goes through one formatter; counts carry their
-  unit; no name, phone or note can reach the text. A line whose source cannot answer is left out
-  and listed with its reason — laundry waiting over 20 / 60 days (`UNCLAIMED-001`) and accounts
-  coming due (`PAYMENT-002`) until those reads exist, the board for an accountant, the live lines
-  for a past day, "late against promise" while no turnaround policy and no promise exist.
+  complaints; laundry waiting for pickup over 20 and over 60 days (`UNCLAIMED-001`'s waiting list,
+  counted with its own days rule; today only); account money due on a closed statement and past
+  due (`PAYMENT-002`'s ledgers, as of the day's end for a past day, as counts and money — never an
+  account customer's name); the day's Sổ thu chi. Every amount goes through one formatter; counts
+  carry their unit; no name, phone or note can reach the text. A line whose source cannot answer
+  is left out and listed with its reason — the board, the waiting list and the account card for
+  an accountant, the live lines for a past day, the accounts line while the shop has opened no
+  account, "late against promise" while no turnaround policy and no promise exist.
   **Sao chép** copies the server's text; **Chia sẻ** opens the phone's share sheet (Zalo). Nothing
   is sent by itself and no model is involved.
 - **`#/orders`** is the board: four labels per order, read as four answers.

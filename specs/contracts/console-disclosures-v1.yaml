@@ -2875,29 +2875,27 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:d4d6b0d6650d
+- slot_id: screens/gaps.js#missing:4190aa1ed65f
   module: screens/gaps.js
   key: missing
-  text: 'Phí lưu kho được cộng vào số còn lại và chốt khi khách trả đủ. Đơn đã trả đủ trước ngày hết miễn
-    phí thì phí đã chốt là 0 ₫: máy không tạo thêm khoản phải thu cho một đơn đã tất toán. Cũng chưa có
-    tin tự động nhắc khách tới lấy.'
+  text: Chưa có tin tự động nhắc khách tới lấy. Đơn đã trả đủ trước ngày hết miễn phí không tính phí lưu
+    kho (chủ tiệm quyết ngày 27/09/2026), nhưng vẫn thanh lý được từ ngày 60.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:dedf1fce23c5
+- slot_id: screens/gaps.js#blockedBy:d95103248175
   module: screens/gaps.js
   key: blockedBy
-  text: DEC-036 đã chốt phí và ngày thanh lý, nhưng không nói đơn đã trả đủ có tính thêm phí lưu kho hay
-    không — cần chủ tiệm quyết; tin nhắc tự động cần kênh Zalo đã kết nối (CHANNEL-ZALO-APPLY-001)
+  text: Tin nhắc tự động cần kênh Zalo đã kết nối (CHANNEL-ZALO-APPLY-001)
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:d989fdb9d442
+- slot_id: screens/gaps.js#today:2f49c9029c88
   module: screens/gaps.js
   key: today
-  text: Gọi khách từ màn Đồ chờ lấy và ghi lại mỗi lần. Đơn đã trả trước mà quá hạn lâu thì báo chủ tiệm.
+  text: Gọi khách từ màn Đồ chờ lấy và ghi lại mỗi lần.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

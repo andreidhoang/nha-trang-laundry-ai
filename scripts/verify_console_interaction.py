@@ -1132,6 +1132,12 @@ DAILY_SUMMARY_LINES = [
         "4 đơn chưa trả khách không có giờ hẹn. 1 đơn trong số đó đã quá mốc nội bộ 8 giờ.",
         {"unpromised": 4, "unpromised_late": 1},
     ),
+    # Round 7 wave 2 integration: the waiting-list hook, wired (`daily-summary-v2`).
+    (
+        "WAITING_PICKUP",
+        "2 đơn giặt xong chờ khách lấy quá 20 ngày. 1 đơn đã chờ quá 60 ngày.",
+        {"over_20_days": 2, "over_60_days": 1},
+    ),
     ("COMPLAINTS_NEW", "1 khiếu nại mới trong ngày.", {"complaints_opened": 1}),
     ("COMPLAINTS_OPEN", "Còn 2 khiếu nại đang mở.", {"open_count": 2}),
     (
@@ -1143,24 +1149,19 @@ DAILY_SUMMARY_LINES = [
 DAILY_SUMMARY = {
     "store_id": STORE,
     "date": "2026-09-25",
-    "template_version": "daily-summary-v1:0123456789abcdef",
+    "template_version": "daily-summary-v2:0123456789abcdef",
     "evaluated_at": "2026-09-25T12:30:00+00:00",
     "so_far": True,
     "lines": [
         {"key": key, "text": text, "figures": figures} for key, text, figures in DAILY_SUMMARY_LINES
     ],
+    # A shop that has opened no customer account: the accounts line is left out, with the reason.
     "omitted": [
         {
-            "key": "WAITING_PICKUP",
-            "reason": "SOURCE_NOT_BUILT",
-            "source": "UNCLAIMED-001",
-            "note": "Đồ chờ lấy lâu ngày: hệ thống chưa có phần này.",
-        },
-        {
             "key": "ACCOUNTS_DUE",
-            "reason": "SOURCE_NOT_BUILT",
+            "reason": "NO_ACCOUNTS",
             "source": "PAYMENT-002",
-            "note": "Công nợ đến hạn: hệ thống chưa có phần này.",
+            "note": "Công nợ đến hạn: cửa hàng chưa mở công nợ cho khách nào.",
         },
     ],
     "text": "\n".join(text for _, text, _ in DAILY_SUMMARY_LINES),
@@ -1866,7 +1867,7 @@ EXPORT_REQUEST_CONTENT = {
         "orders.customer_id",
         "order_payments.bank_ref_last",
     ],
-    "query_version": "store-day-orders-export-v3:7b7e01eef9314061",
+    "query_version": "store-day-orders-export-v4:c2ce1e9e6379d784",
     "statement_vi": (
         "Xuất bản sao hồ sơ của chính cửa hàng cho ngày 2026-09-16 (theo giờ Việt Nam): mã đơn, "
         "trạng thái, mốc thời gian và tiền của những đơn MỞ trong ngày đó. Tiền đã trả lấy từ sổ "
@@ -1887,7 +1888,7 @@ EXPORT_REQUEST_CONTENT = {
         "Tiền trong tệp: đã trả (tiền mặt, chuyển khoản) theo sổ thu từng lần, còn lại, đã hoàn — "
         "tính tới lúc xuất."
     ),
-    "bound_query_version": "store-day-orders-export-v3:7b7e01eef9314061",
+    "bound_query_version": "store-day-orders-export-v4:c2ce1e9e6379d784",
     "bound_shape_retired": False,
 }
 
@@ -8662,8 +8663,8 @@ with sync_playwright() as playwright:
     check(
         "what the summary could not say is listed with the server's reason, not as a zero",
         omitted.count() == 1
-        and "Đồ chờ lấy lâu ngày: hệ thống chưa có phần này." in omitted.inner_text()
-        and "Công nợ đến hạn: hệ thống chưa có phần này." in omitted.inner_text(),
+        and "Công nợ đến hạn: cửa hàng chưa mở công nợ cho khách nào." in omitted.inner_text()
+        and "Đồ chờ lấy" not in omitted.inner_text(),
         omitted.inner_text()[:160] if omitted.count() else "absent",
     )
     page.locator("button[data-summary-copy]").click()

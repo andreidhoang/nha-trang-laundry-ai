@@ -152,6 +152,16 @@ export function amountDue(item) {
   if (item.balance === "UNPAID" && !cancelled && Number.isInteger(item.remaining_vnd)) {
     return { label: "Phải thu", text: money(item.remaining_vnd), known };
   }
+  // PAYMENT-002 (round 7 wave 2 integration): an order that left on the customer's account is owed,
+  // not paid -- what is still owed on it is the server's `remaining_vnd` (a storage fee included).
+  if (item.balance === "ON_ACCOUNT" && Number.isInteger(item.remaining_vnd)) {
+    return { label: "Ghi công nợ", text: money(item.remaining_vnd), known };
+  }
+  // Paid in full, a storage fee included when there was one: what was taken is the server's
+  // `paid_vnd`, which the quoted total alone would understate.
+  if (item.balance === "PAID" && Number.isInteger(item.paid_vnd)) {
+    return { label: "Đã thu", text: money(item.paid_vnd), known };
+  }
   const label =
     item.balance === "UNPAID"
       ? cancelled

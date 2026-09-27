@@ -247,6 +247,23 @@ DECLARED_CONTROLS = (
     "customer.call",
     "customer.zalo",
     "customer.erase",
+    # UNCLAIMED-001 (DEC-036): Đồ chờ lấy from the navigation and from Hôm nay's count, a contact
+    # attempt from the list and from the order page, Gọi, the approver's waiver and the owner's
+    # thanh lý with its confirm sheet.
+    "shell.nav.pickup",
+    "today.pickup-link",
+    "pickup.record",
+    "pickup.contact-channel",
+    "pickup.contact-outcome",
+    "pickup.contact-note",
+    "pickup.contact-submit",
+    "pickup.call",
+    "orderDetail.contact-open",
+    "orderDetail.storage-waive",
+    "orderDetail.waiver-reason",
+    "orderDetail.waiver-submit",
+    "orderDetail.dispose",
+    "orderDetail.disposal-confirm",
 )
 
 PASS: list[str] = []
@@ -551,6 +568,7 @@ class Console:
         lines: list[dict[str, str]] | None = None,
         distance_m: int | None = None,
         manual_fee_vnd: int | None = None,
+        customer: tuple[str, str] | None = None,
     ) -> dict:
         """Put an order into the state a scenario starts from.
 
@@ -561,7 +579,21 @@ class Console:
         the routes directly: setting each position up through the order page would take minutes per
         case and prove nothing the daily walk does not already prove.
         """
-        self.walk_in()
+        if customer is None:
+            self.walk_in()
+        else:
+            # UNCLAIMED-001: taken in for a customer record -- (customer id, phone digits) -- the
+            # way the counter does it: the number in the one search field, one tap on the row.
+            self.open("#/new")
+            self.type_into("#new-customer-search", customer[1], "newOrder.customer-search")
+            self.page.wait_for_timeout(1500)
+            row = self.page.locator(f"#new-customer-search-list [data-customer='{customer[0]}']")
+            (intake,) = self.press_capturing(row.first, "/order-requests")
+            touched("newOrder.customer-pick")
+            with contextlib.suppress(Exception):
+                self.page.wait_for_selector("#new-ticket", timeout=15000)
+            if intake["status"] >= 300:
+                raise AssertionError(f"could not take the customer in: {intake['text']}")
         self.set_mode(mode, distance_m, manual_fee_vnd)
         for line in lines or [
             {
@@ -5296,6 +5328,542 @@ def scenario_deposit(console: Console) -> None:
         )
 
 
+# --- UNCLAIMED-001 (DEC-036): laundry waiting for pickup -----------------------------------------
+
+
+def _publish_storage(*extra: str, actor: str = "demo-owner") -> subprocess.CompletedProcess[str]:
+    """Run the owner's storage-policy script against the stack's database, as the owner would."""
+
+    staff = sql(f"select id from staff_users where oidc_subject='{actor}'")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return subprocess.run(
+        [
+            sys.executable,
+            os.path.join(root, "scripts", "publish_storage_policy.py"),
+            "--database-url",
+            arguments.database_url,
+            "--actor-id",
+            staff,
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+
+
+def _age_ready(order_id: str, days: int) -> str:
+    """HARNESS STEP (documented, `UNCLAIMED-001`): the laundry was accepted and reported ready
+    `days` days earlier than it was (both stamps, so ready is never before accepted). Nothing
+    else can make an order twenty-five or sixty-five days old inside a walk. One statement on the
+    order's `production_ready_at` and `production_accepted_at`, advancing its row version by one as
+    `0036`'s projection guard requires; it writes no event, and nothing the software decides is
+    touched -- the fee, the list and the disposal verdict are computed by the server from it."""
+
+    sql(
+        "update orders set production_ready_at = production_ready_at - "
+        f"make_interval(days => {days}), production_accepted_at = production_accepted_at - "
+        f"make_interval(days => {days}), row_version = row_version + 1 where id = '{order_id}'"
+    )
+    return stored(
+        order_id,
+        "((now() at time zone 'Asia/Ho_Chi_Minh')::date - "
+        "(production_ready_at at time zone 'Asia/Ho_Chi_Minh')::date)::text",
+    )
+
+
+def _past_attempt(order_id: str, days_ago: int) -> str:
+    """HARNESS STEP (documented): one contact attempt made `days_ago` shop days earlier. The walk
+    cannot wait for tomorrow, and the attempts table is append-only, so the earlier day's call is
+    inserted as its row -- the same columns the route writes, under the operator's name. It carries
+    no event (the route's attempts in this walk do); the disposal rule reads the rows."""
+
+    return sql(
+        "insert into order_contact_attempts (id, order_id, store_id, channel, outcome, note, "
+        "attempted_by_staff_id, attempted_at, created_at) select gen_random_uuid(), o.id, "
+        "o.store_id, 'CALL', 'NO_ANSWER', null, s.id, "
+        f"now() - make_interval(days => {days_ago}), now() from orders o, staff_users s "
+        f"where o.id = '{order_id}' and s.oidc_subject = 'demo-operations'"
+    )
+
+
+def _pickup_row(console: Console, order_id: str) -> Any:
+    return console.page.locator(f"#pickup-list [data-pickup='{order_id}']")
+
+
+def _open_pickup(console: Console) -> None:
+    """Đồ chờ lấy, reached the way a person reaches it: the sidebar, or "Thêm" on a phone."""
+
+    console.open("#/", settle=1400)
+    link = console.page.locator("nav a", has_text="Đồ chờ lấy").first
+    if link.count() and not link.is_visible():
+        console.page.locator("nav a", has_text="Thêm").first.click()
+        console.page.wait_for_timeout(700)
+        link = console.page.locator("main a[data-nav='/pickup']").first
+    if link.count():
+        link.click()
+        touched("shell.nav.pickup")
+        console.page.wait_for_timeout(1800)
+    else:
+        console.open("#/pickup", settle=1800)
+
+
+def _record_attempt(
+    console: Console, trigger: Any, channel: str, outcome: str, note_text: str, prefix: str
+) -> dict[str, Any]:
+    """Ghi lần liên hệ through its sheet: channel, outcome, a few words, one press."""
+
+    trigger.click()
+    touched(f"{prefix}.record" if prefix == "pickup" else f"{prefix}.contact-open")
+    console.page.wait_for_selector("dialog[open] #contact-submit", state="visible", timeout=8000)
+    console.page.locator(f"dialog[open] #contact-channel [data-value={channel}]").click()
+    touched("pickup.contact-channel")
+    console.page.locator(f"dialog[open] input[name=contact-outcome][value={outcome}]").check()
+    touched("pickup.contact-outcome")
+    if note_text:
+        console.type_into("dialog[open] #contact-note", note_text, "pickup.contact-note")
+    (answer,) = console.press_capturing(
+        console.page.locator("dialog[open] #contact-submit"), "/contact-attempts"
+    )
+    touched("pickup.contact-submit")
+    console.page.wait_for_timeout(1600)
+    return answer
+
+
+def scenario_unclaimed(console: Console) -> None:
+    """UNCLAIMED-001 (DEC-036): before the owner publishes, the waiting list and the contact
+    attempts work and nothing is charged; after, an order left 25 days shows its storage fee, an
+    approver waives one, the cash at pickup includes it, and -- moved to 65 days, with three
+    attempts on two days -- the owner disposes of one: money paid kept, money owed written off."""
+
+    head("17", "ĐỒ CHỜ LẤY — before the owner publishes the storage policy (DEC-036)")
+    if not READS_DATABASE or not arguments.database_url:
+        note(
+            "--database-url is required: the storage policy is published with the owner's own "
+            "script, and the ready time is moved by a documented harness step"
+        )
+        FAIL.append("unclaimed scenario needs --database-url")
+        return
+    if sql(
+        "select count(*) from configuration_versions where config_type='STORAGE_POLICY'"
+    ) not in (
+        "",
+        "0",
+    ):
+        withdrawn = _publish_storage("--withdraw")
+        ok(
+            "the owner's withdrawal returns the shop to no storage fee",
+            withdrawn.returncode == 0,
+            (withdrawn.stdout + withdrawn.stderr)[-200:],
+        )
+    console.sign_in("demo-operations")
+    shelf = console.build_order(kg="7", stop="ready")
+    order_id = shelf["order_id"]
+    total = int(
+        (console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}).get(
+            "payable_total_vnd"
+        )
+        or 0
+    )
+    waited = _age_ready(order_id, 25)
+    ok("harness: the laundry reads as ready 25 shop days ago", waited == "25", waited)
+
+    listed = console.call("GET", f"/internal/v1/stores/{STORE}/orders/awaiting-pickup")
+    body = listed.get("body") or {}
+    row = next((item for item in body.get("orders", []) if item.get("order_id") == order_id), {})
+    ok(
+        "before publication the waiting list works: the order is on it, 25 days, no fee",
+        listed["status"] == 200
+        and body.get("policy_published") is False
+        and row.get("days_waiting") == 25
+        and (row.get("storage_fee") or {}).get("status") == "POLICY_UNPUBLISHED"
+        and (row.get("storage_fee") or {}).get("amount_vnd") == 0,
+        listed["text"][:220],
+    )
+    _open_pickup(console)
+    screen = console.text()
+    entry = _pickup_row(console, order_id)
+    ok(
+        "Đồ chờ lấy says in one line that the owner has not published, and lists the order",
+        "Chủ tiệm chưa công bố phí lưu kho" in screen
+        and entry.count() == 1
+        and "Chờ 25 ngày" in entry.first.inner_text(),
+        screen[:240].replace("\n", " | "),
+    )
+    record = console.page.locator(f"[data-record-attempt='{order_id}']").first
+    answer = _record_attempt(console, record, "ZALO", "NO_ANSWER", "đã nhắn, chưa xem", "pickup")
+    ok(
+        "and a contact attempt is recorded from the list before publication",
+        answer["status"] == 201 and (answer.get("body") or {}).get("ordinal") == 1,
+        answer["text"][:160],
+    )
+    ok(
+        "the row now says one attempt",
+        "1 lần liên hệ" in _pickup_row(console, order_id).first.inner_text(),
+        _pickup_row(console, order_id).first.inner_text()[:160].replace("\n", " | "),
+    )
+    read = console.call("GET", f"/internal/v1/orders/{order_id}")
+    ok(
+        "and nothing is charged: the order owes its quoted total alone",
+        [c.get("kind") for c in (read.get("body") or {}).get("charges", [])] == ["QUOTED_TOTAL"]
+        and (read.get("body") or {}).get("owed_vnd") == total,
+        read["text"][:200],
+    )
+    console.sign_in("demo-owner")
+    version = (console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}).get(
+        "row_version"
+    )
+    waive = console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/storage-fee-waiver",
+        {"reason": "khách quen"},
+        if_match=version,
+    )
+    dispose = console.call("POST", f"/internal/v1/orders/{order_id}/disposal", if_match=version)
+    ok(
+        "a waiver and a disposal are refused by name until the owner publishes",
+        waive["status"] == 422
+        and (waive.get("body") or {}).get("detail", {}).get("reason_code")
+        == "STORAGE_POLICY_UNPUBLISHED"
+        and dispose["status"] == 422
+        and "STORAGE_POLICY_UNPUBLISHED"
+        in (dispose.get("body") or {}).get("detail", {}).get("reason_codes", []),
+        f"{waive['text'][:120]} || {dispose['text'][:120]}",
+    )
+    console.open(f"#/orders/{order_id}/receipt", settle=2500)
+    ok(
+        "the receipt prints no storage rule before publication",
+        console.page.locator("#receipt-paper [data-field=storage-rule]").count() == 0,
+        console.page.locator("#receipt-paper").inner_text()[-160:].replace("\n", " | "),
+    )
+
+    head("17a", "CÔNG BỐ — the owner publishes the storage policy with the script")
+    refused = _publish_storage(actor="demo-operations")
+    ok(
+        "nobody but the owner can publish it",
+        refused.returncode == 3 and "OWNER_ADMIN" in refused.stderr,
+        (refused.stdout + refused.stderr)[-200:],
+    )
+    published = _publish_storage()
+    ok(
+        "scripts/publish_storage_policy.py publishes DEC-036's figures (the owner's act)",
+        published.returncode == 0 and "storage policy published" in published.stdout,
+        (published.stdout + published.stderr)[-200:],
+    )
+
+    head("17b", "PHÍ LƯU KHO — 25 days: five started days past the free twenty")
+    read = console.call("GET", f"/internal/v1/orders/{order_id}")
+    charges = [
+        (c.get("kind"), c.get("amount_vnd")) for c in (read.get("body") or {}).get("charges", [])
+    ]
+    ok(
+        "the order read carries the storage fee as a charge: five days at 5.000 ₫",
+        charges == [("QUOTED_TOTAL", total), ("STORAGE_FEE", 25_000)]
+        and (read.get("body") or {}).get("owed_vnd") == total + 25_000,
+        read["text"][:220],
+    )
+    console.open("#/", settle=1800)
+    tile = console.page.locator("[data-queue=pickup]").first
+    ok(
+        "Hôm nay counts the laundry waiting for pickup and links to the list",
+        tile.count() == 1 and (tile.get_attribute("href") or "").endswith("#/pickup"),
+        tile.inner_text().replace("\n", " | ") if tile.count() else console.text()[:160],
+    )
+    board = console.call("GET", f"/internal/v1/stores/{STORE}/sla-board?limit=200")
+    ok(
+        "the harness step leaves the order readable by the SLA board (ready never before accepted)",
+        board["status"] == 200,
+        board["text"][:160],
+    )
+    if tile.count():
+        tile.click()
+        touched("today.pickup-link")
+        console.page.wait_for_timeout(1800)
+    entry = _pickup_row(console, order_id)
+    ok(
+        "the list shows the fee so far on the row",
+        console.page.url.endswith("#/pickup")
+        and entry.count() == 1
+        and "25.000" in entry.first.inner_text()
+        and "phí lưu kho" in entry.first.inner_text(),
+        entry.first.inner_text()[:200].replace("\n", " | ")
+        if entry.count()
+        else console.text()[:200],
+    )
+    console.open(f"#/orders/{order_id}", settle=2200)
+    storage_text = (
+        console.page.locator("#order-storage").inner_text()
+        if console.page.locator("#order-storage").count()
+        else ""
+    )
+    ok(
+        "the order page's Lưu kho line says the fee and the days, and the money card includes it",
+        "25.000" in storage_text
+        and "Chờ 25 ngày" in storage_text
+        and "Gồm phí lưu kho 25.000" in console.page.locator(".order__money").inner_text(),
+        storage_text[:200].replace("\n", " | "),
+    )
+    console.open(f"#/orders/{order_id}/receipt", settle=2500)
+    policy = (console.call("GET", f"/internal/v1/orders/{order_id}/storage").get("body") or {}).get(
+        "policy"
+    ) or {}
+    line = console.page.locator("#receipt-paper [data-field=storage-rule]")
+    ok(
+        "the receipt prints the storage rule in one line, the server's sentence",
+        line.count() == 1 and line.inner_text().strip() == policy.get("receipt_line_vi"),
+        line.inner_text() if line.count() else "absent",
+    )
+
+    head("17c", "MIỄN PHÍ — an approver waives a fee, with a reason")
+    console.sign_in("demo-operations")
+    regular = console.build_order(kg="7", stop="ready")
+    regular_id = regular["order_id"]
+    _age_ready(regular_id, 30)
+    console.open(f"#/orders/{regular_id}", settle=2200)
+    denied = console.page.locator("#order-storage-waive")
+    ok(
+        "the counter sees Miễn phí lưu kho, turned off with the reason",
+        denied.count() == 1 and denied.first.get_attribute("data-denied") == "true",
+        console.page.locator("#order-storage").inner_text()[:200].replace("\n", " | ")
+        if console.page.locator("#order-storage").count()
+        else "no storage section",
+    )
+    console.sign_in("demo-approver")
+    console.open(f"#/orders/{regular_id}", settle=2200)
+    before = console.call("GET", f"/internal/v1/orders/{regular_id}").get("body") or {}
+    console.page.locator("#order-storage-waive").click()
+    touched("orderDetail.storage-waive")
+    console.page.wait_for_selector("dialog[open] #waiver-submit", state="visible", timeout=8000)
+    console.type_into(
+        "dialog[open] #waiver-reason", "khách quen, chị Hoa", "orderDetail.waiver-reason"
+    )
+    (waived,) = console.press_capturing(
+        console.page.locator("dialog[open] #waiver-submit"), "/storage-fee-waiver"
+    )
+    touched("orderDetail.waiver-submit")
+    console.page.wait_for_timeout(1800)
+    after = waived.get("body") or {}
+    ok(
+        "Miễn phí lưu kho lands: what the order owes is its quoted total again, one version on",
+        waived["status"] == 200
+        and before.get("owed_vnd") == total + 50_000
+        and after.get("owed_vnd") == total
+        and after.get("row_version") == int(before.get("row_version") or 0) + 1,
+        waived["text"][:200],
+    )
+    ok(
+        "the waiver is recorded with its amount and reason, and the reason is in no payload",
+        sql(
+            "select waived_amount_vnd || '|' || days_waiting || '|' || reason "
+            f"from storage_fee_waivers where order_id = '{regular_id}'"
+        )
+        == "50000|30|khách quen, chị Hoa"
+        and sql(
+            "select count(*) from domain_events where payload::text like '%chị Hoa%' "
+            f"and aggregate_id = '{regular_id}'"
+        )
+        == "0",
+        "",
+    )
+
+    head("17d", "THU KÈM PHÍ — cash at pickup includes the storage fee")
+    console.sign_in("demo-operations")
+    pickup = console.build_order(kg="7", stop="ready")
+    pickup_id = pickup["order_id"]
+    _age_ready(pickup_id, 25)
+    said = console.pay(pickup_id, hand_over=True)
+    paid = console.call("GET", f"/internal/v1/orders/{pickup_id}").get("body") or {}
+    ok(
+        "one Thu tiền takes the quoted total and the fee together, and the bag goes home",
+        paid.get("balance") == "PAID"
+        and paid.get("paid_vnd") == total + 25_000
+        and paid.get("self_collection_recorded") is True,
+        said[:200],
+    )
+    ok(
+        "the fee is fixed with the settlement: settled = quoted total + fee, one fee row",
+        sql(f"select expected_total_vnd from order_settlements where order_id = '{pickup_id}'")
+        == str(total + 25_000)
+        and sql(
+            "select amount_vnd || '|' || chargeable_days from order_storage_fees "
+            f"where order_id = '{pickup_id}'"
+        )
+        == "25000|5",
+        "",
+    )
+    done = console.step(pickup_id, "HAND_OVER")
+    ok(
+        "and the order closes",
+        stored(pickup_id, "commercial_status") == "COMPLETED",
+        done[:160],
+    )
+
+    head("17e", "THANH LÝ — 65 days, three attempts on two days, the owner decides")
+    deposit = console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/payments",
+        {"amount_vnd": 50_000, "method": "TIEN_MAT", "transfer_seen": False},
+        if_match=(console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}).get(
+            "row_version"
+        ),
+    )
+    ok("a 50.000 ₫ deposit is on the order", deposit["status"] == 201, deposit["text"][:160])
+    waited = _age_ready(order_id, 40)
+    ok("harness: the same laundry now reads as ready 65 shop days ago", waited == "65", waited)
+    console.open(f"#/orders/{order_id}", settle=2200)
+    trigger = console.page.locator("#order-contact").first
+    answer = _record_attempt(console, trigger, "CALL", "NO_ANSWER", "", "orderDetail")
+    ok("a second attempt, from the order page", answer["status"] == 201, answer["text"][:120])
+    verdict = (
+        console.call("GET", f"/internal/v1/orders/{order_id}/storage").get("body") or {}
+    ).get("disposal_verdict") or {}
+    ok(
+        "two attempts on one day: disposal is not legal yet, and the server says why",
+        verdict.get("allowed") is False
+        and "CONTACT_ATTEMPTS_TOO_FEW" in verdict.get("refusals", [])
+        and "CONTACT_DAYS_TOO_FEW" in verdict.get("refusals", []),
+        verdict,
+    )
+    inserted = _past_attempt(order_id, 3)
+    ok("harness: the first call, three days ago, is on record", "INSERT 0 1" in inserted, inserted)
+    console.sign_in("demo-approver")
+    console.open(f"#/orders/{order_id}", settle=2200)
+    gate = console.page.locator("#order-dispose")
+    ok(
+        "an approver sees Thanh lý turned off, with the reason: it is the owner's",
+        gate.count() == 1 and gate.first.get_attribute("data-denied") == "true",
+        "",
+    )
+    console.sign_in("demo-owner")
+    console.open(f"#/orders/{order_id}", settle=2200)
+    storage = console.call("GET", f"/internal/v1/orders/{order_id}/storage").get("body") or {}
+    console.page.locator("#order-dispose").click()
+    touched("orderDetail.dispose")
+    console.page.wait_for_selector("dialog[open] #disposal-confirm", state="visible", timeout=8000)
+    rule = console.page.locator("dialog[open] [data-field=disposal-rule]").inner_text().strip()
+    ok(
+        "the confirm sheet states the rule verbatim, as the server built it from the figures",
+        rule == (storage.get("policy") or {}).get("disposal_rule_vi") and "60" in rule,
+        rule[:160],
+    )
+    confirm = console.page.locator("dialog[open] #disposal-confirm")
+    confirm.click()
+    console.page.wait_for_timeout(250)
+    (closed,) = console.press_capturing(confirm, "/disposal")
+    touched("orderDetail.disposal-confirm")
+    console.page.wait_for_timeout(1800)
+    owed = total + total // 2  # the reference figure: 65 days is past the 50% cap
+    ok(
+        "Thanh lý closes the order: cancelled, money paid kept, the rest written off",
+        closed["status"] == 200
+        and (closed.get("body") or {}).get("commercial") == "CANCELLED"
+        and (closed.get("body") or {}).get("balance") == "PARTIALLY_PAID"
+        and sql(
+            "select kept_vnd || '|' || written_off_vnd || '|' || attempts_counted || '|' || "
+            f"attempt_days from order_disposals where order_id = '{order_id}'"
+        )
+        == f"50000|{owed - 50_000}|3|2",
+        closed["text"][:200],
+    )
+    ok(
+        "the ledgers agree (0056): one payment kept, no refund, the custody resolution recorded",
+        sql(f"select coalesce(sum(amount_vnd),0) from order_payments where order_id='{order_id}'")
+        == "50000"
+        and sql(f"select count(*) from order_refunds where order_id='{order_id}'") == "0"
+        and sql(
+            "select count(*) from domain_events where event_type='ORDER_STATE_TRANSITIONED' "
+            f"and aggregate_id='{order_id}' and payload->>'custody_resolution'='UNCLAIMED_DISPOSED'"
+        )
+        == "1",
+        "",
+    )
+    ok(
+        "the Zalo note is in no event, audit or outbox payload",
+        sql(
+            "select (select count(*) from domain_events where payload::text like '%chưa xem%') + "
+            "(select count(*) from audit_events where details::text like '%chưa xem%') + "
+            "(select count(*) from outbox_events where payload::text like '%chưa xem%')"
+        )
+        == "0",
+        "",
+    )
+    ok(
+        "and the order is off the waiting list",
+        not any(
+            item.get("order_id") == order_id
+            for item in (
+                console.call("GET", f"/internal/v1/stores/{STORE}/orders/awaiting-pickup").get(
+                    "body"
+                )
+                or {}
+            ).get("orders", [])
+        ),
+        "",
+    )
+
+    head("17f", "GỌI — a customer with a phone on record; the auditor reads it masked")
+    notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
+    if (notice.get("body") or {}).get("published") is not True:
+        note(
+            "the privacy notice is not published on this stack, so no customer record can hold a "
+            "phone; the customers scenario publishes it, and a full run proves Gọi here"
+        )
+        return
+    digits = "09" + str(uuid.uuid4().int)[:8]
+    console.sign_in("demo-operations")
+    created = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/customers",
+        {"phone": digits, "display_name": "anh Tuấn", "service_consent": True},
+    )
+    customer_id = str(((created.get("body") or {}).get("customer") or {}).get("customer_id") or "")
+    ok("a customer with a phone on record", created["status"] == 201, created["text"][:120])
+    theirs = console.build_order(kg="5", stop="ready", customer=(customer_id, digits))
+    walk_in = console.build_order(kg="5", stop="ready")
+    _open_pickup(console)
+    call = console.page.locator(f"a[data-call='{theirs['order_id']}']")
+    ok(
+        "their row has Gọi, a tel: link to their number that the page never prints; a walk-in's "
+        "has none",
+        call.count() == 1
+        and call.first.get_attribute("href") == f"tel:+84{digits[1:]}"
+        and digits not in console.text()
+        and console.page.locator(f"a[data-call='{walk_in['order_id']}']").count() == 0,
+        call.first.get_attribute("href") if call.count() else "absent",
+    )
+    if call.count():
+        # The dialler is the phone's; the sheet opens here for what came of the call.
+        call.first.evaluate("(link) => link.addEventListener('click', (e) => e.preventDefault())")
+        call.first.click()
+        touched("pickup.call")
+        console.page.wait_for_timeout(700)
+        ok(
+            "Gọi opens Ghi lần liên hệ, ready for what came of the call",
+            console.page.locator("dialog[open] #contact-submit").count() == 1,
+            "",
+        )
+        console.page.keyboard.press("Escape")
+    console.sign_in("demo-auditor")
+    audited = console.call("GET", f"/internal/v1/stores/{STORE}/orders/awaiting-pickup")
+    theirs_row = next(
+        (
+            item
+            for item in (audited.get("body") or {}).get("orders", [])
+            if item.get("order_id") == theirs["order_id"]
+        ),
+        {},
+    )
+    ok(
+        "the auditor reads the list with the number masked: last four digits, no number",
+        audited["status"] == 200
+        and theirs_row.get("phone") is None
+        and theirs_row.get("phone_last4") == digits[-4:]
+        and digits not in audited["text"],
+        audited["text"][:160],
+    )
+    console.sign_in("demo-owner")
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -5323,6 +5891,10 @@ SCENARIOS = {
     # CUSTOMER-001. Before promise: it proves the refusal on a shop that has not published the
     # privacy notice, then publishes it; nothing after it depends on the notice being unpublished.
     "customers": scenario_customers,
+    # UNCLAIMED-001. After customers (a full run proves Gọi on a customer record, which needs the
+    # privacy notice customers publishes), before promise; it withdraws and publishes the storage
+    # policy itself, and leaves it published: nothing after it ages an order.
+    "unclaimed": scenario_unclaimed,
     # PROMISE-001. Last: it publishes the turnaround policy, and every scenario above proves its
     # own workflow on a shop that has not (the receipt's R4 line, the report's assumed rule).
     "promise": scenario_promise,

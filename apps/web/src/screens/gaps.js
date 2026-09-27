@@ -129,6 +129,29 @@ const GROUPS = [
         // account belongs to a BUSINESS customer record.
         blockedBy: "PAYMENT-002 — DEC-035 đã quyết; xây sau hồ sơ khách hàng (CUSTOMER-001).",
       },
+      // UNCLAIMED-001 (DEC-036) built the waiting list, contact attempts, the storage fee, the
+      // waiver and thanh lý. What it could not decide: whether an order paid in full before day 21
+      // owes a fee afterwards (the fee is fixed when the settling payment is taken, so there it is
+      // 0 ₫), and a reminder the software sends itself, which needs a connected channel.
+      {
+        ref: "DEC-036",
+        title: "Phí lưu kho cho đơn đã trả trước",
+        what:
+          "Tính phí lưu kho cho mọi túi đồ để quá hạn lấy, kể cả đơn khách đã trả đủ tiền lúc gửi " +
+          "đồ, và tự nhắc khách tới lấy.",
+        missing:
+          "Phí lưu kho được cộng vào số còn lại và chốt khi khách trả đủ. Đơn đã trả đủ trước ngày " +
+          "hết miễn phí thì phí đã chốt là 0 ₫: máy không tạo thêm khoản phải thu cho một đơn đã " +
+          "tất toán. Cũng chưa có tin tự động nhắc khách tới lấy.",
+        blockedBy:
+          "DEC-036 đã chốt phí và ngày thanh lý, nhưng không nói đơn đã trả đủ có tính thêm phí " +
+          "lưu kho hay không — cần chủ tiệm quyết; tin nhắc tự động cần kênh Zalo đã kết nối " +
+          "(CHANNEL-ZALO-APPLY-001)",
+        today:
+          "Gọi khách từ màn Đồ chờ lấy và ghi lại mỗi lần. Đơn đã trả trước mà quá hạn lâu thì " +
+          "báo chủ tiệm.",
+        link: { href: "#/pickup", label: "Đồ chờ lấy" },
+      },
       {
         ref: "M3",
         title: "Bàn giao / custody",

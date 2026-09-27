@@ -27,6 +27,7 @@ import { screen as newOrder } from "./newOrder.js";
 import { screen as orderDetail } from "./orderDetail.js";
 import { screen as orderRequests } from "./orderRequests.js";
 import { screen as orders } from "./orders.js";
+import { screen as pickup } from "./pickup.js";
 import { screen as quotes } from "./quotes.js";
 import { screen as receipt } from "./receipt.js";
 import { screen as remedies } from "./remedies.js";
@@ -46,6 +47,7 @@ export const ROUTES = [
   orders,
   orderDetail,
   receipt,
+  pickup,
   customers,
   customerDetail,
   slaBoard,

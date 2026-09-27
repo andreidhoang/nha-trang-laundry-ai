@@ -218,7 +218,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # `ReportRepository.store_report` behind the route's own `require_report_reader`.
     # 10 since CUSTOMER-001: `CUSTOMERS_READ`, `CUSTOMERS_WRITE` and `CUSTOMERS_ERASE` bind to the
     # exact sets `CustomerRepository` re-checks with MFA and store membership. 7 + 3 = 10.
-    assert counts.get("REPOSITORY_ROLES") == 10
+    # 14 since UNCLAIMED-001: `PICKUP_READ`, `PICKUP_CONTACT`, `STORAGE_FEE_WAIVE` and
+    # `UNCLAIMED_DISPOSE` bind to the exact sets `UnclaimedRepository` re-checks. 10 + 4 = 14.
+    assert counts.get("REPOSITORY_ROLES") == 14
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
     # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
@@ -926,7 +928,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   `blockedBy`, the payment sheet's hint, and three REASON_NOTE entries whose advice named a
     #   button that no longer exists ("Khách trả trước") or a refusal that no longer holds.
     # PAYMENT-001 merged on top (round 7 wave 1, all four slices): 516 + 8 = 524, as regenerated.
-    assert sum(counts.values()) == _registry()["total"] == 524
+    # UNCLAIMED-001 (round 7 wave 2, DEC-036) on its own branch: 524 + 18 = 542, none retired.
+    #   Eight REASON_NOTE sentences for the storage, waiver and disposal refusals; four
+    #   REPOSITORY_ROLES `why` (PICKUP_READ/_CONTACT, STORAGE_FEE_WAIVE, UNCLAIMED_DISPOSE, bound
+    #   to `nha_trang_laundry_db.unclaimed`'s sets); the new gaps entry's missing/blockedBy/today;
+    #   and three ui/unclaimed.js lines (the note hint, the fee ⓘ, the waiver sheet's note).
+    assert sum(counts.values()) == _registry()["total"] == 542
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -939,11 +946,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 23 with REPORT-DASHBOARD-001 merged on top: + `REPORTS_READ`.
     # 26 after CUSTOMER-001: + `CUSTOMERS_READ`, `CUSTOMERS_WRITE`, `CUSTOMERS_ERASE`, each on the
     #   exact role set `CustomerRepository` enforces.
+    # 30 after UNCLAIMED-001: + `PICKUP_READ`, `PICKUP_CONTACT`, `STORAGE_FEE_WAIVE`,
+    #   `UNCLAIMED_DISPOSE`, each on the exact role set `UnclaimedRepository` enforces.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 26
+        == 30
     )
 
 

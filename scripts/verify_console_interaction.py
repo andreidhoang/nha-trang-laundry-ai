@@ -856,6 +856,144 @@ def order_view(
     }
 
 
+# --- UNCLAIMED-001 (DEC-036): the waiting list and one order's storage, as the server answers ---
+
+STORAGE_POLICY = {
+    "version": 1,
+    "free_days": 20,
+    "fee_per_started_day_vnd": 5_000,
+    "fee_cap_percent": 50,
+    "disposal_from_day": 60,
+    "disposal_min_attempts": 3,
+    "disposal_min_attempt_days": 2,
+    "receipt_line_vi": "Lấy đồ trong 20 ngày kể từ khi đồ xong; từ ngày 21 phí lưu kho "
+    "5.000 ₫/ngày "
+    "(tối đa 50% tiền giặt); sau 60 ngày tiệm có thể thanh lý.",
+    "disposal_rule_vi": "Đồ chờ lấy từ ngày thứ 60 kể từ khi đồ xong, và tiệm đã liên hệ khách ít "
+    "nhất 3 lần trong ít nhất 2 ngày khác nhau, thì chủ tiệm được thanh lý (thường là tặng người "
+    "cần). Tiền khách đã trả giữ nguyên; tiền còn nợ được xoá. Đơn đóng lại và không mở lại được.",
+}
+UNCLAIMED_OTHER_ID = "77777777-8888-4333-8444-999999999998"
+
+
+def pickup_row(
+    order_id: str,
+    *,
+    ticket: int,
+    days: int,
+    fee: int,
+    status: str,
+    attempts: int,
+    allowed: bool,
+    name: str | None = None,
+    phone: str | None = None,
+    last4: str | None = None,
+) -> dict[str, object]:
+    """One `AwaitingPickupItemResponse`; every figure written out as the server computes it."""
+
+    return {
+        "order_id": order_id,
+        "row_version": 9,
+        "balance": "UNPAID",
+        "ticket_number": ticket,
+        "ticket_issued_on": "2026-08-01",
+        "customer_id": CUSTOMER_ID if (phone or last4) else None,
+        "customer_name": name,
+        "phone": phone,
+        "phone_last4": last4,
+        "has_phone": bool(phone or last4),
+        "ready_at": "2026-08-02T03:00:00+00:00",
+        "days_waiting": days,
+        "attempts_count": attempts,
+        "last_attempt_at": "2026-09-24T03:00:00+00:00" if attempts else None,
+        "last_attempt_outcome": "NO_ANSWER" if attempts else None,
+        "storage_fee": {
+            "status": status,
+            "amount_vnd": fee,
+            "chargeable_days": max(0, days - 20) or None,
+            "fee_per_started_day_vnd": 5_000,
+            "cap_vnd": 55_000,
+            "capped": fee == 55_000,
+        },
+        "remaining_vnd": 110_000 + fee,
+        "disposal": {
+            "allowed": allowed,
+            "refusals": [] if allowed else ["DISPOSAL_TOO_EARLY"],
+            "attempts_counted": attempts,
+            "attempt_days": 2 if allowed else 1,
+            "eligible_on": "2026-10-01",
+        },
+    }
+
+
+def pickup_list(*rows: dict[str, object], published: bool = True) -> dict[str, object]:
+    return {
+        "store_id": STORE,
+        "evaluated_at": "2026-09-27T03:00:00+00:00",
+        "policy_published": published,
+        "policy": STORAGE_POLICY if published else None,
+        "limit": 100,
+        "total_count": len(rows),
+        "truncated": False,
+        "phone_visible": any(row.get("phone") for row in rows),
+        "orders": list(rows),
+    }
+
+
+def storage_read(
+    *,
+    awaiting: bool,
+    fee: int = 0,
+    status: str = "NOT_WAITING",
+    allowed: bool = False,
+    days: int | None = None,
+) -> dict[str, object]:
+    """One `OrderStorageResponse`."""
+
+    return {
+        "order_id": PICKUP_ORDER_ID,
+        "row_version": 14,
+        "evaluated_at": "2026-09-27T03:00:00+00:00",
+        "policy_published": True,
+        "policy": STORAGE_POLICY,
+        "awaiting_pickup": awaiting,
+        "ready_at": "2026-08-02T03:00:00+00:00" if awaiting else None,
+        "days_waiting": days,
+        "storage_fee": {
+            "status": status,
+            "amount_vnd": fee,
+            "chargeable_days": 5 if fee else None,
+            "fee_per_started_day_vnd": 5_000 if fee else None,
+            "cap_vnd": 55_000 if fee else None,
+            "capped": False,
+        },
+        "waiver": None,
+        "attempts": [
+            {
+                "attempt_id": "abababab-0000-4000-8000-000000000001",
+                "channel": "CALL",
+                "outcome": "NO_ANSWER",
+                "note": "máy bận",
+                "attempted_by_staff_id": "11111111-aaaa-4333-8444-555555555555",
+                "attempted_by_name": "Chị Lan",
+                "attempted_at": "2026-09-24T03:00:00+00:00",
+            }
+        ]
+        if awaiting
+        else [],
+        "attempts_total": 1 if awaiting else 0,
+        "attempts_truncated": False,
+        "disposal_verdict": {
+            "allowed": allowed,
+            "refusals": [] if allowed else ["DISPOSAL_TOO_EARLY"],
+            "attempts_counted": 3 if allowed else 1,
+            "attempt_days": 2 if allowed else 1,
+            "eligible_on": "2026-10-01",
+        },
+        "disposal": None,
+    }
+
+
 #: One `PaymentViewResponse`: the 50.000 ₫ transfer deposit the section-15 checks read back.
 DEPOSIT_PAYMENT = {
     "payment_id": "13131313-2424-4333-8444-353535353535",
@@ -1962,6 +2100,45 @@ with sync_playwright() as playwright:
             # of Bắt đầu giặt still runs the step directly, as it did before the chooser existed.
             state.setdefault("machine_reads", []).append(url)
             body = {"store_id": STORE, "truncated": False, "machines": state.get("machines") or []}
+        elif route.request.method == "GET" and url.split("?")[0].endswith(
+            "/orders/awaiting-pickup"
+        ):
+            # UNCLAIMED-001: empty unless section 23 fills it, so Hôm nay's earlier sections still
+            # read an empty queue for it.
+            state.setdefault("pickup_reads", []).append(url)
+            body = state.get("pickup_list") or pickup_list(published=False)
+        elif route.request.method == "GET" and url.split("?")[0].endswith("/storage"):
+            body = state.get("storage") or storage_read(awaiting=False)
+        elif route.request.method == "POST" and url.split("?")[0].endswith(
+            ("/contact-attempts", "/storage-fee-waiver", "/disposal")
+        ):
+            state.setdefault("unclaimed_writes", []).append(
+                {
+                    "path": url.split("?")[0],
+                    "body": route.request.post_data,
+                    "if_match": route.request.headers.get("if-match"),
+                    "key": route.request.headers.get("idempotency-key"),
+                }
+            )
+            attempt = url.split("?")[0].endswith("/contact-attempts")
+            route.fulfill(
+                status=201 if attempt else 200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "attempt_id": "abababab-0000-4000-8000-000000000002",
+                        "order_id": UNCLAIMED_OTHER_ID,
+                        "ordinal": 2,
+                        "channel": "SMS",
+                        "outcome": "REACHED",
+                        "attempted_at": "2026-09-27T03:00:00+00:00",
+                        "replayed": False,
+                    }
+                    if attempt
+                    else state.get("order_view") or {}
+                ),
+            )
+            return
         elif url.split("?")[0].endswith("/capture") and route.request.method == "GET":
             body = state.get("capture") or {
                 **STUB_CAPTURE,
@@ -7880,6 +8057,216 @@ with sync_playwright() as playwright:
         "an operator sees Sổ thu chi under Thêm, disabled, naming who may open it",
         page.locator("[data-nav-denied='/expenses']").count() == 1,
     )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+
+    # ============================================================================================
+    # 23. UNCLAIMED-001 (DEC-036) -- Đồ chờ lấy: the list with Gọi only where a phone is on record
+    #     (never printed), Ghi lần liên hệ with no If-Match, Hôm nay's count, and on the order page
+    #     the fee, the approver's waiver (a reason, If-Match) and the owner's two-press thanh lý
+    #     whose sheet states the rule verbatim. An auditor reads four digits and records nothing.
+    # ============================================================================================
+    print()
+    print("[23] Đồ chờ lấy: Gọi, Ghi lần liên hệ, Miễn phí lưu kho, Thanh lý")
+    SESSION_OK["roles"] = ["OPERATOR"]
+    state["unclaimed_writes"] = []
+    state["pickup_list"] = pickup_list(
+        pickup_row(
+            PICKUP_ORDER_ID,
+            ticket=12,
+            days=25,
+            fee=25_000,
+            status="ACCRUING",
+            attempts=2,
+            allowed=False,
+            name="chị Lan",
+            phone="0905123456",
+            last4="3456",
+        ),
+        pickup_row(
+            UNCLAIMED_OTHER_ID,
+            ticket=17,
+            days=65,
+            fee=55_000,
+            status="ACCRUING",
+            attempts=3,
+            allowed=True,
+        ),
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/pickup", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    call = page.locator(f"a[data-call='{PICKUP_ORDER_ID}']")
+    text = rendered_text()
+    check(
+        "the list shows both waiting orders, oldest first as the server sent them, with the fee",
+        page.locator("#pickup-list [data-pickup]").count() == 2
+        and "Chờ 25 ngày" in text
+        and "25.000" in text
+        and "Thanh lý được" in text,
+        text[:200].replace("\n", " | "),
+    )
+    check(
+        "Gọi is a tel: link on the row with a phone, and the number is never printed",
+        call.count() == 1
+        and call.get_attribute("href") == "tel:+84905123456"
+        and page.locator(f"a[data-call='{UNCLAIMED_OTHER_ID}']").count() == 0
+        and "0905123456" not in text
+        and "0905 123 456" not in text,
+    )
+    page.locator(f"[data-record-attempt='{UNCLAIMED_OTHER_ID}']").click()
+    page.wait_for_timeout(600)
+    page.locator("dialog[open] #contact-submit").click()
+    page.wait_for_timeout(400)
+    check(
+        "Lưu with no outcome is refused inline and sends nothing",
+        "Chọn kết quả" in open_dialog_text() and not state["unclaimed_writes"],
+    )
+    page.locator("dialog[open] #contact-channel [data-value=SMS]").click()
+    page.locator("dialog[open] input[name=contact-outcome][value=REACHED]").check()
+    page.locator("dialog[open] #contact-note").fill("hẹn mai qua")
+    reads_before = len(state["pickup_reads"])
+    page.locator("dialog[open] #contact-submit").click()
+    page.wait_for_timeout(900)
+    writes = state["unclaimed_writes"]
+    check(
+        "Ghi lần liên hệ sends channel, outcome and note with a key, no If-Match, then re-reads",
+        len(writes) == 1
+        and writes[0]["path"].endswith(f"/orders/{UNCLAIMED_OTHER_ID}/contact-attempts")
+        and json.loads(writes[0]["body"] or "{}")
+        == {"channel": "SMS", "outcome": "REACHED", "note": "hẹn mai qua"}
+        and bool(writes[0]["key"])
+        and writes[0]["if_match"] is None
+        and len(state["pickup_reads"]) > reads_before,
+        repr(writes),
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    tile = page.locator("[data-queue=pickup]")
+    check(
+        "Hôm nay counts the waiting laundry and links to Đồ chờ lấy",
+        tile.count() == 1 and "2" in tile.inner_text() and tile.get_attribute("href") == "#/pickup",
+        tile.inner_text() if tile.count() else "absent",
+    )
+    SESSION_OK["roles"] = ["AUDITOR"]
+    masked = dict(state["pickup_list"])
+    masked["orders"] = [dict(row, phone=None) for row in state["pickup_list"]["orders"]]
+    masked["phone_visible"] = False
+    state["pickup_list"] = masked
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/pickup", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    check(
+        "an auditor sees the last four digits, no Gọi, and Ghi lần liên hệ shut with who may",
+        "••• 3456" in rendered_text()
+        and page.locator("a[data-call]").count() == 0
+        and page.locator(f"[data-record-attempt='{PICKUP_ORDER_ID}']").is_disabled(),
+    )
+
+    # The order page: the fee, the waiver and thanh lý.
+    waiting = order_view(
+        "SELF_DROP_SELF_COLLECT",
+        balance="UNPAID",
+        collected=False,
+        production="READY_AT_STORE",
+        steps=[step("TAKE_PAYMENT", primary=True, requires=["amount_vnd", "method"])],
+    )
+    waiting["charges"] = [
+        {"kind": "QUOTED_TOTAL", "amount_vnd": 110_000},
+        {"kind": "STORAGE_FEE", "amount_vnd": 25_000},
+    ]
+    waiting["owed_vnd"] = 135_000
+    waiting["remaining_vnd"] = 135_000
+    state["storage"] = storage_read(awaiting=True, fee=25_000, status="ACCRUING", days=25)
+    SESSION_OK["roles"] = ["OPERATOR"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    open_order(waiting)
+    page.wait_for_timeout(600)
+    storage_text = (
+        page.locator("#order-storage").inner_text()
+        if page.locator("#order-storage").count()
+        else ""
+    )
+    check(
+        "the order page says the fee and the days, and what is owed includes it",
+        "Chờ 25 ngày" in storage_text
+        and "25.000" in storage_text
+        and "Gồm phí lưu kho 25.000" in page.locator(".order__money").inner_text()
+        and "135.000" in page.locator(".order__money").inner_text(),
+        storage_text[:160].replace("\n", " | "),
+    )
+    check(
+        "the counter sees Miễn phí lưu kho shut with the reason; no Thanh lý before it is legal",
+        page.locator("#order-storage-waive").is_disabled()
+        and page.locator("#order-dispose").count() == 0,
+    )
+    SESSION_OK["roles"] = ["OPS_APPROVER"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    open_order(waiting)
+    page.wait_for_timeout(600)
+    state["unclaimed_writes"] = []
+    page.locator("#order-storage-waive").click()
+    page.wait_for_timeout(500)
+    page.locator("dialog[open] #waiver-submit").click()
+    page.wait_for_timeout(300)
+    check(
+        "the waiver needs a reason: refused inline, nothing sent",
+        "Cần ghi vài chữ lý do" in open_dialog_text() and not state["unclaimed_writes"],
+    )
+    page.locator("dialog[open] #waiver-reason").fill("khách quen")
+    page.locator("dialog[open] #waiver-submit").click()
+    page.wait_for_timeout(900)
+    writes = state["unclaimed_writes"]
+    check(
+        "Miễn phí lưu kho sends the reason with the order's version (If-Match) and a key",
+        len(writes) == 1
+        and writes[0]["path"].endswith(f"/orders/{PICKUP_ORDER_ID}/storage-fee-waiver")
+        and json.loads(writes[0]["body"] or "{}") == {"reason": "khách quen"}
+        and writes[0]["if_match"] == '"14"'
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    state["storage"] = storage_read(
+        awaiting=True, fee=55_000, status="ACCRUING", days=65, allowed=True
+    )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    open_order(waiting)
+    page.wait_for_timeout(600)
+    state["unclaimed_writes"] = []
+    page.locator("#order-dispose").click()
+    page.wait_for_timeout(500)
+    rule = page.locator("dialog[open] [data-field=disposal-rule]").inner_text().strip()
+    check(
+        "Thanh lý's sheet states the rule verbatim, as the server sent it",
+        rule == STORAGE_POLICY["disposal_rule_vi"],
+        rule[:120],
+    )
+    page.locator("dialog[open] #disposal-confirm").click()
+    page.wait_for_timeout(300)
+    armed = not state["unclaimed_writes"]
+    page.locator("dialog[open] #disposal-confirm").click()
+    page.wait_for_timeout(900)
+    writes = state["unclaimed_writes"]
+    check(
+        "the first press only arms it; the second sends the disposal with If-Match and a key",
+        armed
+        and len(writes) == 1
+        and writes[0]["path"].endswith(f"/orders/{PICKUP_ORDER_ID}/disposal")
+        and writes[0]["if_match"] == '"14"'
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    check(
+        "nothing about the waiting list is kept on the device",
+        page.evaluate("() => JSON.stringify(Object.keys(localStorage))") == '["staff_store_id"]',
+    )
+    state["pickup_list"] = None
+    state["storage"] = None
+    state["order_view"] = None
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
 
     print()

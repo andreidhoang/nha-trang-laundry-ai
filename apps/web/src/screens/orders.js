@@ -147,6 +147,11 @@ export function amountDue(item) {
   if (item.balance === "PARTIALLY_PAID" && !cancelled) {
     return { label: "Còn lại", text: money(item.remaining_vnd, "Chưa có tổng"), known };
   }
+  // UNCLAIMED-001 (DEC-036): laundry left past the free days owes a storage fee on top of the
+  // quote, so what is still to collect is the server's `remaining_vnd`, which includes it.
+  if (item.balance === "UNPAID" && !cancelled && Number.isInteger(item.remaining_vnd)) {
+    return { label: "Phải thu", text: money(item.remaining_vnd), known };
+  }
   const label =
     item.balance === "UNPAID"
       ? cancelled

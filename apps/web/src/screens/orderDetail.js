@@ -115,6 +115,8 @@ import {
   promisePill,
   receivePromise,
 } from "../ui/promise.js";
+// UNCLAIMED-001 (DEC-036): Lưu kho -- days waiting, the storage fee, contact attempts, thanh lý.
+import { readStorage, storageChargeLine, storageSection } from "../ui/unclaimed.js";
 // SHOP-CAPTURE-001: "Máy nào?", the trip-cost fields and the order's recorded cycles and trips.
 import {
   captureRows,
@@ -344,6 +346,8 @@ export function render_(context) {
   const legsHost = h("div");
   // SHOP-CAPTURE-001: the order's wash cycles and trip costs, when it has any.
   const captureHost = h("div", { id: "order-capture" });
+  // UNCLAIMED-001: the order's storage, when it is waiting for pickup or has a fee on record.
+  const storageHost = h("div", { id: "order-storage-host" });
   const techHost = h("div");
   // `display: contents`, so the sticky bar inside sticks to the screen, not to this wrapper.
   const actionHost = h("div", { class: "order__actions" });
@@ -420,6 +424,7 @@ export function render_(context) {
     if (found) {
       void loadTimeline(found.store_id || storeId());
       void loadCapture();
+      void loadStorage(found);
     }
     return found;
   }
@@ -514,6 +519,8 @@ export function render_(context) {
             { class: "order__money-split", dataMoneySplit: "true" },
             keyValues([
               ["Tổng", money(order.owed_vnd)],
+              // UNCLAIMED-001: the storage fee is one of the server's charges; said, not added.
+              storageChargeLine(order) ? ["Phí lưu kho", storageChargeLine(order)] : null,
               ["Đã trả", money(order.paid_vnd)],
               // Partly paid, the large figure above already is "Còn lại"; said once.
               partly ? null : ["Còn lại", money(order.remaining_vnd)],
@@ -548,10 +555,17 @@ export function render_(context) {
     const take = (order.next_steps || []).find(
       (entry) => String(entry.step) === "TAKE_PAYMENT" && !entry.primary,
     );
+    // UNCLAIMED-001: what "Phải thu" / "Còn lại" includes, in the server's own figure.
+    const storageLine = paid ? null : storageChargeLine(order);
     return h(
       "div",
       { class: "surface order__money" },
-      moneyHero({ label, amount, caption, state: paid ? "ok" : null }),
+      moneyHero({
+        label,
+        amount,
+        caption: [caption, storageLine].filter(Boolean).join(" · ") || null,
+        state: paid ? "ok" : null,
+      }),
       split,
       ledger,
       take ? stepControl(take) : null,
@@ -1475,9 +1489,15 @@ export function render_(context) {
           label: "Còn lại",
           amount: money(remaining, "Chưa có tổng"),
           caption:
-            order.paid_vnd && order.owed_vnd !== null
-              ? `Tổng ${money(order.owed_vnd)} · đã trả ${money(order.paid_vnd)}`
-              : null,
+            [
+              order.paid_vnd && order.owed_vnd !== null
+                ? `Tổng ${money(order.owed_vnd)} · đã trả ${money(order.paid_vnd)}`
+                : null,
+              // UNCLAIMED-001: what "Còn lại" includes, in the server's figure.
+              storageChargeLine(order),
+            ]
+              .filter(Boolean)
+              .join(" · ") || null,
         }),
         amountHost,
         h(
@@ -1698,6 +1718,28 @@ export function render_(context) {
         ),
       );
     });
+  }
+
+  /**
+   * UNCLAIMED-001: the order's storage facts -- a side read, re-read after every write. The waiver,
+   * the contact sheet and thanh lý re-read the order when they land.
+   *
+   * @param {any} order
+   */
+  async function loadStorage(order) {
+    const storage = await readStorage(orderId);
+    render(
+      storageHost,
+      storage
+        ? storageSection({
+            order,
+            storage,
+            sheetsHost,
+            title: orderName(order),
+            onChanged: () => void reread(),
+          })
+        : null,
+    );
   }
 
   /** What the order recorded: its cycles and trip costs, re-read after every write. */
@@ -2109,6 +2151,7 @@ export function render_(context) {
       void loadCredits(store);
       void loadTimeline(store);
       void loadCapture();
+      void loadStorage(found);
       return;
     }
     render(incidentsHost, empty("Chưa đọc khiếu nại vì chưa đọc được đơn."));
@@ -2157,6 +2200,7 @@ export function render_(context) {
     headHost,
     createdHost,
     summaryHost,
+    storageHost,
     infoHost,
     legsHost,
     captureHost,

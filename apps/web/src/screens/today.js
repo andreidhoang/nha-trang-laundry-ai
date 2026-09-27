@@ -120,6 +120,24 @@ const TILES = [
     url: (store) => `/internal/v1/stores/${encodeURIComponent(store)}/incidents?limit=100`,
   },
   {
+    // UNCLAIMED-001 (DEC-036): finished laundry the customer has not collected, counted from the
+    // waiting list's own page. `truncated` is the server's; a full page is shown as a floor.
+    id: "pickup",
+    title: "Đồ chờ lấy",
+    short: "đồ chờ lấy",
+    icon: "store",
+    capability: "PICKUP_READ",
+    needsStore: true,
+    limit: 200,
+    href: "/pickup",
+    url: (store) =>
+      `/internal/v1/stores/${encodeURIComponent(store)}/orders/awaiting-pickup?limit=200`,
+    pick: (payload) => ({
+      items: Array.isArray(payload?.orders) ? payload.orders : null,
+      more: Boolean(payload?.truncated),
+    }),
+  },
+  {
     // The SLA board's own read, one page of its ceiling, counted by the outcome the server gave
     // each row. Nothing here decides whether an order is late: `sla_outcome` is the domain
     // engine's, and a page that has a next page is shown as a floor ("3+"), never as a total.

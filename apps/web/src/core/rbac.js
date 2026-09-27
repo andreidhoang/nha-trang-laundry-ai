@@ -207,6 +207,30 @@ export const CAPABILITIES = {
     mfa: true,
     why: "Chỉ chủ tiệm hoặc người duyệt xoá thông tin khách khi khách yêu cầu.",
   },
+  // UNCLAIMED-001 (`DEC-036`). The exact role sets `nha_trang_laundry_db.unclaimed` enforces, each
+  // with MFA and store membership: the list and an order's storage for the operations roles and the
+  // auditor (who reads a phone masked); attempts by the people who make the call; the waiver by an
+  // approver or the owner; thanh lý by the owner alone.
+  PICKUP_READ: {
+    roles: [OWNER, APPROVER, OPERATOR, AUDITOR],
+    mfa: true,
+    why: "Danh sách đồ chờ lấy dành cho người làm ở cửa hàng đã xác thực hai bước.",
+  },
+  PICKUP_CONTACT: {
+    roles: [OWNER, APPROVER, OPERATOR],
+    mfa: true,
+    why: "Ghi lần liên hệ khách cần vai trò vận hành đã xác thực hai bước.",
+  },
+  STORAGE_FEE_WAIVE: {
+    roles: [OWNER, APPROVER],
+    mfa: true,
+    why: "Chỉ chủ tiệm hoặc người duyệt miễn phí lưu kho (DEC-036).",
+  },
+  UNCLAIMED_DISPOSE: {
+    roles: [OWNER],
+    mfa: true,
+    why: "Chỉ chủ tiệm duyệt thanh lý đồ không ai lấy (DEC-036).",
+  },
   ASSISTANT: {
     roles: [OWNER, APPROVER, OPERATOR],
     mfa: true,

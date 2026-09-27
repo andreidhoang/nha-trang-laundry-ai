@@ -171,3 +171,45 @@ def test_the_customer_list_is_in_no_export() -> None:
     for source in (WEB / "src" / "screens").glob("exports.js"):
         text = source.read_text(encoding="utf-8")
         assert "/customers" not in text
+
+
+# --- UNCLAIMED-001 (DEC-036): calling customers about laundry left on the shelf -------------------
+
+UNCLAIMED_MODULES = (
+    WEB / "src" / "ui" / "unclaimed.js",
+    WEB / "src" / "screens" / "pickup.js",
+)
+
+
+def test_the_waiting_list_prints_no_phone_and_writes_nothing_to_the_device() -> None:
+    """The list a shared counter phone shows all day.
+
+    The number reaches the screen only inside a `tel:` link built by `telHref` -- "Gọi" -- and is
+    never a text node; an auditor, whom the server gives no number, sees the last four digits. The
+    contact note warns, beside the field, not to type a customer's phone (the server refuses one,
+    `NOTE_LOOKS_LIKE_PHONE`, and keeps notes out of every event, audit and outbox payload:
+    `packages/db/tests/test_unclaimed_laundry.py`). Nothing is kept on the device.
+    """
+
+    for module in UNCLAIMED_MODULES:
+        assert module.is_file(), module
+        source = module.read_text(encoding="utf-8")
+        for sink in (
+            "localStorage",
+            "sessionStorage",
+            "indexedDB",
+            "document.cookie",
+            "caches.",
+            "history.pushState",
+            "history.replaceState",
+            "console.",
+        ):
+            assert sink not in source, f"{module.name} reaches {sink}"
+    pickup = (WEB / "src" / "screens" / "pickup.js").read_text(encoding="utf-8")
+    # `item.phone` is read in exactly two places: to build the link, and to decide the masked hint.
+    uses = re.findall(r"item\.phone\b(?!_)", pickup)
+    assert len(uses) == 2, uses
+    assert "telHref(item.phone)" in pickup
+    assert "formatPhone" not in pickup
+    shared = (WEB / "src" / "ui" / "unclaimed.js").read_text(encoding="utf-8")
+    assert "Không ghi số điện thoại khách" in shared

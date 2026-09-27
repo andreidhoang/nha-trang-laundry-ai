@@ -122,17 +122,20 @@ def _ready(client: TestClient, connection: Any, shop: Shop) -> UUID:
 
 
 def _age(connection: Any, order_id: UUID, days: int) -> None:
-    """The documented harness step: the laundry was reported ready `days` days earlier."""
+    """The documented harness step: the laundry was accepted and reported ready `days` days
+    earlier. Both stamps move together, so the order stays one the SLA engine can read (ready is
+    never before accepted); any promise, which is immutable once set, is left as it was."""
 
     with connection.transaction(), connection.cursor() as cursor:
         cursor.execute(
             """
             UPDATE orders
             SET production_ready_at = production_ready_at - make_interval(days => %s),
+                production_accepted_at = production_accepted_at - make_interval(days => %s),
                 row_version = row_version + 1
             WHERE id = %s
             """,
-            (days, order_id),
+            (days, days, order_id),
         )
     connection.commit()
 
@@ -364,6 +367,6 @@ def test_every_route_is_store_scoped(
     )
     assert attempt.json() == DENIED
     for route in ("storage-fee-waiver", "disposal"):
-        body = {"reason": "x"} if route == "storage-fee-waiver" else None
+        body: dict[str, object] | None = {"reason": "x"} if route == "storage-fee-waiver" else None
         response = _post(client, f"/internal/v1/orders/{order_id}/{route}", body, if_match=5)
         assert response.json() == DENIED, route

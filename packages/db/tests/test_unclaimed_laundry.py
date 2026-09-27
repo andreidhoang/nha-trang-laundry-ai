@@ -205,17 +205,20 @@ def _ready(connection: Any, shop: Shop, **kwargs: Any) -> UUID:
 
 
 def _age(connection: Any, order_id: UUID, days: int) -> None:
-    """The documented harness step: the laundry was reported ready `days` days earlier."""
+    """The documented harness step: the laundry was accepted and reported ready `days` days
+    earlier. Both stamps move together, so the order stays one the SLA engine can read (ready is
+    never before accepted); any promise, which is immutable once set, is left as it was."""
 
     with connection.transaction(), connection.cursor() as cursor:
         cursor.execute(
             """
             UPDATE orders
             SET production_ready_at = production_ready_at - make_interval(days => %s),
+                production_accepted_at = production_accepted_at - make_interval(days => %s),
                 row_version = row_version + 1
             WHERE id = %s
             """,
-            (days, order_id),
+            (days, days, order_id),
         )
     connection.commit()
 

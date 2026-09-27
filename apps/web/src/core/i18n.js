@@ -571,6 +571,40 @@ export const REASON_NOTE = {
   EXPENSE_DATE_TOO_OLD: "Ngày chi trong vòng 366 ngày gần đây.",
   EXPENSE_ALREADY_VOIDED: "Dòng này đã bị huỷ trước đó.",
   MONTH_INVALID: "Tháng không hợp lệ.",
+  // UNCLAIMED-001 (DEC-036): the waiting list, the storage fee, the waiver and thanh lý.
+  STORAGE_POLICY_UNPUBLISHED:
+    "Chủ tiệm chưa công bố phí lưu kho, nên chưa tính phí và chưa thanh lý được. Danh sách chờ " +
+    "lấy và việc ghi liên hệ vẫn dùng bình thường.",
+  NO_STORAGE_FEE_OWED: "Đơn này chưa có phí lưu kho nào để miễn (còn trong những ngày miễn phí).",
+  STORAGE_FEE_ALREADY_WAIVED: "Phí lưu kho của đơn này đã được miễn rồi.",
+  NOTE_REQUIRED: "Cần ghi vài chữ lý do.",
+  NOTE_TOO_LONG: "Tối đa 120 ký tự.",
+  NOT_AWAITING_PICKUP:
+    "Đơn này không còn là đồ chờ khách lấy (đồ chưa xong, đã lấy, đơn giao tận nơi hoặc đã đóng).",
+  DISPOSAL_TOO_EARLY: "Chưa đủ số ngày chờ để thanh lý.",
+  CONTACT_ATTEMPTS_TOO_FEW: "Chưa đủ số lần liên hệ khách để thanh lý.",
+  CONTACT_DAYS_TOO_FEW: "Các lần liên hệ chưa rải đủ số ngày khác nhau để thanh lý.",
+  NO_SINGLE_TOTAL: "Báo giá của đơn chưa có một tổng duy nhất, nên máy không thanh lý.",
+  STORAGE_FEE_OWED:
+    "Đơn này có phí lưu kho, nên phải thu bằng “Thu tiền” (số còn lại đã gồm phí lưu kho).",
+};
+
+/**
+ * UNCLAIMED-001 (`DEC-036`): `ContactChannel` and `ContactOutcome` as the "Ghi lần liên hệ" sheet's
+ * buttons and the attempt rows say them. Scoped, capitalised for a control label.
+ */
+export const CONTACT_CHANNEL_VI = {
+  CALL: "Gọi điện",
+  ZALO: "Zalo",
+  SMS: "Tin nhắn SMS",
+  VISIT: "Tới nhà",
+};
+
+export const CONTACT_OUTCOME_VI = {
+  REACHED: "Đã nói chuyện",
+  NO_ANSWER: "Không nghe máy",
+  WRONG_NUMBER: "Sai số",
+  PROMISED_TO_COME: "Hẹn sẽ tới lấy",
 };
 
 /**
@@ -713,6 +747,8 @@ export const ENUM_GLOSS = {
   NOT_RECEIVED: "chưa nhận đồ",
   RETURNED_UNWASHED_REFUNDED: "đã trả đồ chưa giặt và hoàn tiền",
   SHOP_FAULT_NO_CHARGE: "lỗi tiệm, không thu tiền",
+  // UNCLAIMED-001 (DEC-036): laundry nobody came back for, disposed of with the owner's approval.
+  UNCLAIMED_DISPOSED: "đồ không ai lấy, chủ tiệm đã thanh lý",
   // ORDER-STEPS-002. `RewashReason` (why laundry is washed again before it leaves) and
   // `IntakeRejectionReason` (why goods on the counter were refused); `OTHER` is in both.
   NOT_CLEAN: "chưa sạch",
@@ -1001,4 +1037,6 @@ export const NAV = {
   expenses: "Sổ thu chi",
   machines: "Máy giặt, sấy",
   customers: "Khách hàng",
+  // UNCLAIMED-001 (DEC-036).
+  pickup: "Đồ chờ lấy",
 };

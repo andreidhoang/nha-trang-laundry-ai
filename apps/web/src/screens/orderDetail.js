@@ -546,7 +546,11 @@ export function render_(context) {
             keyValues([
               ["Tổng", money(order.owed_vnd)],
               // UNCLAIMED-001: the storage fee is one of the server's charges; said, not added.
-              storageCharge(order) ? ["Phí lưu kho", money(storageCharge(order))] : null,
+              // Labelled "Trong đó" (round-7 desk review): as a bare "Phí lưu kho" row under
+              // "Tổng" it read as a sum on top of the total, 165.000 + 25.000.
+              storageCharge(order)
+                ? ["Trong đó phí lưu kho", money(storageCharge(order))]
+                : null,
               ["Đã trả", money(order.paid_vnd)],
               // Partly paid, the large figure above already is "Còn lại"; said once.
               partly ? null : ["Còn lại", money(order.remaining_vnd)],

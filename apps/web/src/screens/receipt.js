@@ -179,7 +179,8 @@ function lineAmount(line) {
  * @property {Array<{label: string, amount: string, kind: string}>} adjustments
  * @property {string|null} fee the storage fee among the server's charges, when there is one
  * @property {string} total
- * @property {{paid: string, remaining: string}|null} paid Đã trả / Còn lại, once anything is paid
+ * @property {{paid: string, remaining: string, remainingLabel: string}|null} paid Đã trả / Còn lại,
+ *   once anything is paid -- or / Ghi công nợ, once the order left on the customer's account
  * @property {string} closing
  * @property {string|null} storage the storage rule's one line, once published (`DEC-036`)
  *
@@ -223,9 +224,15 @@ function receiptModel(order, detail, catalog, storage = null) {
       ? money(order.owed_vnd, "Chưa có tổng")
       : money(order.payable_total_vnd, "Chưa có tổng"),
     // PAYMENT-001: a deposit or a part payment is printed, so the customer's slip says what is left.
+    // PAYMENT-002 (round 7 wave 2 integration): an order on the account says so on the slip the
+    // business customer is handed -- what is still owed goes on their statement, not paid here.
     paid:
-      Array.isArray(order.payments) && order.payments.length
-        ? { paid: money(order.paid_vnd), remaining: money(order.remaining_vnd, "Chưa có tổng") }
+      (Array.isArray(order.payments) && order.payments.length) || order.balance === "ON_ACCOUNT"
+        ? {
+            paid: money(order.paid_vnd),
+            remaining: money(order.remaining_vnd, "Chưa có tổng"),
+            remainingLabel: order.balance === "ON_ACCOUNT" ? "Ghi công nợ" : "Còn lại",
+          }
         : null,
     closing: closingLine(order),
     // UNCLAIMED-001: the customer is told the rule on the slip they take home; a closed order's
@@ -253,7 +260,7 @@ export function receiptText(model) {
     model.fee ? `Phí lưu kho: ${model.fee}` : null,
     `Tổng cộng: ${model.total}`,
     model.paid ? `Đã trả: ${model.paid.paid}` : null,
-    model.paid ? `Còn lại: ${model.paid.remaining}` : null,
+    model.paid ? `${model.paid.remainingLabel}: ${model.paid.remaining}` : null,
     `Nhận đơn: ${model.taken}`,
     `Mã đơn: ${model.reference}`,
     model.closing,
@@ -347,7 +354,7 @@ function paper(model, linesFallback) {
           "div",
           { class: "receipt-paper__adjustments", dataPaid: "true" },
           row("Đã trả", model.paid.paid, { field: "paid" }),
-          row("Còn lại", model.paid.remaining, { field: "remaining" }),
+          row(model.paid.remainingLabel, model.paid.remaining, { field: "remaining" }),
         )
       : null,
     h(

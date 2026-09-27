@@ -88,11 +88,15 @@ export function waitingText(days) {
 /**
  * The fee in words, from the server's `storage_fee` (status and amount) and the published figures.
  *
+ * A fixed fee is "đã thu" once the order is paid, and "đã ghi công nợ" while it sits on the
+ * customer's account (`PAYMENT-002`: the account charge fixed it, no money was taken yet).
+ *
  * @param {any} fee a `StorageFeeResponse`
  * @param {any|null} policy a `StoragePolicyResponse`, or null before publication
+ * @param {string} [balance] the order's balance, when the caller has the order
  * @returns {string}
  */
-export function feeText(fee, policy) {
+export function feeText(fee, policy, balance) {
   const status = String(fee?.status || "");
   if (status === "ACCRUING") {
     if (fee.capped) return `${money(fee.amount_vnd)} · mức tối đa`;
@@ -104,7 +108,12 @@ export function feeText(fee, policy) {
     return policy ? `Miễn phí tới hết ngày thứ ${policy.free_days}` : "Chưa tính phí";
   }
   if (status === "WAIVED") return "Đã miễn";
-  if (status === "FIXED") return fee.amount_vnd ? `${money(fee.amount_vnd)} · đã thu` : "Không có";
+  if (status === "FIXED") {
+    if (!fee.amount_vnd) return "Không có";
+    return balance === "ON_ACCOUNT"
+      ? `${money(fee.amount_vnd)} · đã ghi công nợ`
+      : `${money(fee.amount_vnd)} · đã thu`;
+  }
   if (status === "POLICY_UNPUBLISHED") return "Chưa tính (chủ tiệm chưa công bố)";
   return "Không có";
 }
@@ -350,7 +359,7 @@ export function storageSection(spec) {
           `${waitingText(storage.days_waiting)}${storage.ready_at ? ` (xong ${dateOnly(storage.ready_at)})` : ""}`,
         ]
       : null,
-    ["Phí lưu kho", h("span", { dataStorageFee: String(fee.status || "") }, feeText(fee, policy))],
+    ["Phí lưu kho", h("span", { dataStorageFee: String(fee.status || "") }, feeText(fee, policy, order?.balance))],
     storage.waiver
       ? ["Lý do miễn", `${storage.waiver.reason} · ${storage.waiver.waived_by_name || "—"}`]
       : null,

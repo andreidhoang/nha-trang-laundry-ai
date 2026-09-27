@@ -118,7 +118,7 @@ import {
 // PAYMENT-002 (`DEC-035`): "Giao đồ — ghi công nợ" for an account customer's order.
 import { accountHandover } from "../ui/accountHandover.js";
 // UNCLAIMED-001 (DEC-036): Lưu kho -- days waiting, the storage fee, contact attempts, thanh lý.
-import { readStorage, storageChargeLine, storageSection } from "../ui/unclaimed.js";
+import { readStorage, storageCharge, storageChargeLine, storageSection } from "../ui/unclaimed.js";
 // SHOP-CAPTURE-001: "Máy nào?", the trip-cost fields and the order's recorded cycles and trips.
 import {
   captureRows,
@@ -546,7 +546,7 @@ export function render_(context) {
             keyValues([
               ["Tổng", money(order.owed_vnd)],
               // UNCLAIMED-001: the storage fee is one of the server's charges; said, not added.
-              storageChargeLine(order) ? ["Phí lưu kho", storageChargeLine(order)] : null,
+              storageCharge(order) ? ["Phí lưu kho", money(storageCharge(order))] : null,
               ["Đã trả", money(order.paid_vnd)],
               // Partly paid, the large figure above already is "Còn lại"; said once.
               partly ? null : ["Còn lại", money(order.remaining_vnd)],

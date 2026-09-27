@@ -926,6 +926,8 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   `blockedBy`, the payment sheet's hint, and three REASON_NOTE entries whose advice named a
     #   button that no longer exists ("Khách trả trước") or a refusal that no longer holds.
     # PAYMENT-001 merged on top (round 7 wave 1, all four slices): 516 + 8 = 524, as regenerated.
+    # DAILY-SUMMARY-001 (round 7 wave 2, DEC-039): 524 + 0. Re-keyed, none added or retired: the
+    #   "Kênh và AI" lede and the FR-RPT-007 gap's `missing` now say the template summary exists.
     assert sum(counts.values()) == _registry()["total"] == 524
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002

@@ -168,6 +168,12 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
    **Ghi vào sổ**. Ghi sai thì mở dòng đó, bấm **Huỷ dòng này** hai lần rồi ghi lại dòng đúng.
    **Báo cáo** chỉ tính biên của một tháng khi sổ tháng đó đã có đủ điện, nước, hoá chất, lương và
    mặt bằng; thiếu thì ghi *Chưa đủ số liệu* và nêu mục còn thiếu. Biên đó không phải lợi nhuận.
+6. Chủ tiệm đóng ngày bằng thẻ **Tóm tắt cuối ngày** trên **Hôm nay** (sau 18:00 thẻ tự hiện;
+   trước đó bấm **Xem tóm tắt**): vài câu ngắn — đơn nhận, đơn hoàn tất, tiền mặt và chuyển
+   khoản, đơn trễ giờ hẹn, khiếu nại, khoản chi. Bấm **Sao chép** rồi dán vào Zalo, hoặc
+   **Chia sẻ** để chọn Zalo. Đây là mẫu câu cố định máy chủ điền số — không phải AI — và không
+   có tên hay số điện thoại khách. Dòng nào máy chưa có số thì ghi ở mục *Chưa có trong tóm tắt*
+   kèm lý do. Ghi khoản chi (bước 5) **trước** khi chép thì tóm tắt mới có khoản chi của ngày.
 
 ---
 

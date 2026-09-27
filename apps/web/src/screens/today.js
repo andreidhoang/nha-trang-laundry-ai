@@ -35,6 +35,7 @@ import { PAYMENT_METHOD_VI, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { snapshot } from "../core/session.js";
 import { errorNotice, gated, icon, markUpdated } from "../ui/components.js";
+import { dailySummaryCard, dailySummaryInfo } from "../ui/dailySummary.js";
 import {
   button,
   infoButton,
@@ -387,6 +388,11 @@ export function render_() {
     }
   }
 
+  // --- Tóm tắt cuối ngày (DAILY-SUMMARY-001, DEC-039) ----------------------------------------
+  // The owner's evening summary: a fixed server-side template over the report's figures, shown to
+  // the report's readers only, like the report link below. `ui/dailySummary.js` owns the card.
+  const summaryCard = can(snapshot().principal, "REPORTS_READ").allowed ? dailySummaryCard() : null;
+
   // --- Cần làm ------------------------------------------------------------------------------
   const queueHost = h("div", { class: "stack stack--tight" }, skeletonRows(3));
 
@@ -531,6 +537,9 @@ export function render_() {
     } else {
       void loadDaySummary(store);
     }
+
+    // DAILY-SUMMARY-001: after 18:00 the card reads the summary; before, it offers the button.
+    if (summaryCard && can(state.principal, "REPORTS_READ").allowed) summaryCard.load(store || "");
 
     /** @type {Outcome[]} */
     const fixed = [];
@@ -697,6 +706,14 @@ export function render_() {
         : null,
       children: takingsHost,
     }),
+    summaryCard
+      ? section({
+          title: "Tóm tắt cuối ngày",
+          info: dailySummaryInfo(),
+          id: "daily-summary",
+          children: summaryCard.node,
+        })
+      : null,
     section({ title: "Cần làm", card: false, children: queueHost }),
     section({
       title: "Đơn hôm nay",

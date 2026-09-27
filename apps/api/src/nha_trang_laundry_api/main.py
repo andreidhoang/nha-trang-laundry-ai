@@ -211,6 +211,12 @@ from nha_trang_laundry_api.customers import (
     CustomersUnavailable,
     install_access_log_redaction,
 )
+from nha_trang_laundry_api.daily_summary import (
+    DailySummaryResponse,
+    DailySummaryService,
+    DailySummaryUnavailable,
+    daily_summary_response,
+)
 from nha_trang_laundry_api.operations import (
     OperationsService,
     OperationsUnavailable,
@@ -6917,6 +6923,43 @@ def report_daily(
         evaluated_at=report.evaluated_at,
         sla_rule=_report_sla_rule(report),
     )
+
+
+# --- DAILY-SUMMARY-001 (DEC-039): the owner's evening summary, a fixed template, no model --------
+
+
+def get_daily_summary_service() -> DailySummaryService:
+    try:
+        return DailySummaryService(AuthSettings())
+    except DailySummaryUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="daily summary unavailable"
+        ) from error
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/reports/daily-summary", response_model=DailySummaryResponse
+)
+def report_daily_summary(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_report_reader)],
+    day: Annotated[date | None, Query(alias="date")] = None,
+    service: Annotated[DailySummaryService | None, Depends(get_daily_summary_service)] = None,
+) -> DailySummaryResponse:
+    """The owner's evening summary for one shop-local day, written by a versioned template."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="daily summary unavailable")
+    try:
+        summary = service.read(store_id=store_id, principal=principal, policy=SLA_POLICY, day=day)
+    except ReportAuthorizationError as error:
+        # The report's gate, re-checked inside the read: one opaque body for role, MFA and store.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    except ReportWindowError as error:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "NOT_SUPPORTED", "reason_code": error.reason_code},
+        ) from error
+    return daily_summary_response(summary)
 
 
 @app.post(

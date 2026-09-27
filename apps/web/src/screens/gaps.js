@@ -290,9 +290,10 @@ const GROUPS = [
     heading: "Kênh và AI",
     // REPORT-DASHBOARD-001: versioned metrics now exist for an AI to cite, so the lede's second
     // half moved from "nothing to summarise" to what really blocks it: no model may run.
+    // DAILY-SUMMARY-001 (DEC-039): the summary itself now exists as a fixed template.
     lede:
-      "Chưa có kênh nào nối vào hệ thống, nên chưa có tin nhắn nào để hợp nhất. Số liệu có phiên " +
-      "bản đã có ở màn Báo cáo, nhưng chưa có mô hình AI nào được phép chạy để tóm tắt chúng.",
+      "Chưa có kênh nào nối vào hệ thống, nên chưa có tin nhắn nào để hợp nhất. Tóm tắt cuối ngày " +
+      "đã có theo mẫu câu cố định, nhưng chưa có mô hình AI nào được phép chạy để viết lại nó.",
     entries: [
       {
         ref: "FR-RPT-006",
@@ -305,12 +306,14 @@ const GROUPS = [
       {
         ref: "FR-RPT-007",
         title: "Tóm tắt vận hành bằng AI",
-        what: "Một đoạn tóm tắt tình hình trong ngày, viết bằng AI, cho chủ đọc buổi tối.",
-        // REPORT-DASHBOARD-001 built the versioned metrics this used to wait for; what blocks it
-        // now is that no model is authorised to run at all.
+        what: "Tóm tắt cuối ngày do AI viết lại bằng lời tự nhiên, cho chủ đọc buổi tối.",
+        // REPORT-DASHBOARD-001 built the versioned metrics this used to wait for; DAILY-SUMMARY-001
+        // (DEC-039) built the summary itself as a fixed template on Hôm nay. What is still missing
+        // is only the model-written version, and what blocks it is that no model may run at all.
         missing:
-          "Chưa có mô hình AI nào được phép chạy: cả 13 năng lực AI đang ở trạng thái " +
-          "NOT_AUTHORIZED. Số liệu để trích dẫn thì đã có, ở màn Báo cáo.",
+          "Bản theo mẫu câu cố định đã có: “Tóm tắt cuối ngày” trên Hôm nay, có Sao chép và " +
+          "Chia sẻ sang Zalo. Bản do AI viết lại chưa có: cả 13 năng lực AI đang ở trạng thái " +
+          "NOT_AUTHORIZED.",
         blockedBy: "DEC-006 (chưa có mô hình được uỷ quyền)",
         note:
           "Theo đặc tả, AI chỉ được trích dẫn read model có phiên bản. Nó không được tự tính chỉ " +

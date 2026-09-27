@@ -1512,6 +1512,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/reports/daily-summary:
+    get:
+      operationId: report_daily_summary
+      summary: The owner's evening summary for one shop-local day, written by a versioned template.
+      x-authorization-dependencies:
+      - require_report_reader
+      - get_daily_summary_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/reports/summary:
     get:
       operationId: report_summary

@@ -2825,11 +2825,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#lede:0e8388025fa9
+- slot_id: screens/gaps.js#lede:d8beae431edc
   module: screens/gaps.js
   key: lede
-  text: Chưa có kênh nào nối vào hệ thống, nên chưa có tin nhắn nào để hợp nhất. Số liệu có phiên bản
-    đã có ở màn Báo cáo, nhưng chưa có mô hình AI nào được phép chạy để tóm tắt chúng.
+  text: Chưa có kênh nào nối vào hệ thống, nên chưa có tin nhắn nào để hợp nhất. Tóm tắt cuối ngày đã
+    có theo mẫu câu cố định, nhưng chưa có mô hình AI nào được phép chạy để viết lại nó.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2850,11 +2850,11 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:5c6806b4f206
+- slot_id: screens/gaps.js#missing:1cfb77df352b
   module: screens/gaps.js
   key: missing
-  text: 'Chưa có mô hình AI nào được phép chạy: cả 13 năng lực AI đang ở trạng thái NOT_AUTHORIZED. Số
-    liệu để trích dẫn thì đã có, ở màn Báo cáo.'
+  text: 'Bản theo mẫu câu cố định đã có: “Tóm tắt cuối ngày” trên Hôm nay, có Sao chép và Chia sẻ sang
+    Zalo. Bản do AI viết lại chưa có: cả 13 năng lực AI đang ở trạng thái NOT_AUTHORIZED.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

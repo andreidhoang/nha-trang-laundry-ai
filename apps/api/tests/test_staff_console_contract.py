@@ -188,6 +188,9 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         # screen that stops calling either leaves FR-RPT-001 back on the gaps register.
         "/internal/v1/stores/{}/reports/summary",
         "/internal/v1/stores/{}/reports/daily",
+        # DAILY-SUMMARY-001 (DEC-039). The owner's evening summary on Hôm nay. A screen that stops
+        # calling it leaves Sao chép with nothing but a model-shaped gap on #/gaps again.
+        "/internal/v1/stores/{}/reports/daily-summary",
         # SHOP-CAPTURE-001 (DEC-038). "Máy nào?" reads the machine list; the owner edits it; Sổ thu
         # chi reads, records and voids; the order page reads its cycles and trip costs. A screen
         # that stops calling these leaves the shop measuring nothing again.

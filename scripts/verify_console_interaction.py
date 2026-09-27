@@ -903,6 +903,65 @@ DAY_SUMMARY = {
     "business_timezone": "Asia/Ho_Chi_Minh",
 }
 
+#: DAILY-SUMMARY-001 (DEC-039). What `GET …/reports/daily-summary` returns: the server's lines, the
+#: lines it left out with the reason, and `text` -- what Sao chép copies byte for byte. The console
+#: prints the lines and copies `text`; it composes nothing, so the stub's sentences are arbitrary
+#: server text and the checks compare against them verbatim.
+DAILY_SUMMARY_LINES = [
+    ("HEADER", "Tóm tắt thứ Sáu 25/09/2026, tính đến 19:30.", {"date": "2026-09-25"}),
+    ("ORDERS", "Nhận 12 đơn mới. Hoàn tất 9 đơn. Huỷ 1 đơn.", {"orders_created": 12}),
+    (
+        "MONEY",
+        "Đã thu 1.285.000đ (9 khoản). Tiền mặt 885.000đ. Chuyển khoản 400.000đ.",
+        {"collected_vnd": 1_285_000, "cash_vnd": 885_000, "transfer_vnd": 400_000},
+    ),
+    (
+        "FINISHED_ON_TIME",
+        "Giặt xong 6 đơn. 5 trên 6 đơn xong đúng hẹn. "
+        "2 đơn không có giờ hẹn, được so với mốc nội bộ 8 giờ.",
+        {"finished": 6, "finished_on_time": 5, "finished_without_promise": 2},
+    ),
+    ("LATE_AGAINST_PROMISE", "3 đơn chưa trả khách đã trễ giờ hẹn.", {"promised_late": 3}),
+    (
+        "WITHOUT_PROMISE",
+        "4 đơn chưa trả khách không có giờ hẹn. 1 đơn trong số đó đã quá mốc nội bộ 8 giờ.",
+        {"unpromised": 4, "unpromised_late": 1},
+    ),
+    ("COMPLAINTS_NEW", "1 khiếu nại mới trong ngày.", {"complaints_opened": 1}),
+    ("COMPLAINTS_OPEN", "Còn 2 khiếu nại đang mở.", {"open_count": 2}),
+    (
+        "SPENDING",
+        "Ghi 3 khoản chi, tổng 1.200.000đ. Điện 500.000đ. Hoá chất 700.000đ.",
+        {"spending_vnd": 1_200_000},
+    ),
+]
+DAILY_SUMMARY = {
+    "store_id": STORE,
+    "date": "2026-09-25",
+    "template_version": "daily-summary-v1:0123456789abcdef",
+    "evaluated_at": "2026-09-25T12:30:00+00:00",
+    "so_far": True,
+    "lines": [
+        {"key": key, "text": text, "figures": figures} for key, text, figures in DAILY_SUMMARY_LINES
+    ],
+    "omitted": [
+        {
+            "key": "WAITING_PICKUP",
+            "reason": "SOURCE_NOT_BUILT",
+            "source": "UNCLAIMED-001",
+            "note": "Đồ chờ lấy lâu ngày: hệ thống chưa có phần này.",
+        },
+        {
+            "key": "ACCOUNTS_DUE",
+            "reason": "SOURCE_NOT_BUILT",
+            "source": "PAYMENT-002",
+            "note": "Công nợ đến hạn: hệ thống chưa có phần này.",
+        },
+    ],
+    "text": "\n".join(text for _, text, _ in DAILY_SUMMARY_LINES),
+    "sources": [{"key": "report", "query_version": "report-v3:ac05595a37f3c36d"}],
+}
+
 #: The SLA board, in the shape and the order the server really answers in: acceptance order,
 #: oldest accepted first. The durations are the server's integers -- section 13 asserts the console
 #: renders them as Vietnamese units and never as a raw microsecond count or a negative number.
@@ -2620,6 +2679,18 @@ with sync_playwright() as playwright:
             body = INCIDENTS if state.get("incidents_listed") else []
         elif "/settlements/today" in url:
             body = SETTLEMENTS_TODAY
+        elif "/reports/daily-summary" in url:
+            # DAILY-SUMMARY-001: every read is recorded, so section 23 can prove when the card asks
+            # (after 18:00, or on the button) and that a refused role never asks.
+            state.setdefault("summary_reads", []).append(url)
+            if state.get("summary_fails"):
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps({"detail": "daily summary unavailable"}),
+                )
+                return
+            body = DAILY_SUMMARY
         elif "/day-summary" in url:
             body = DAY_SUMMARY
         elif "/sla-board" in url:
@@ -7879,6 +7950,168 @@ with sync_playwright() as playwright:
     check(
         "an operator sees Sổ thu chi under Thêm, disabled, naming who may open it",
         page.locator("[data-nav-denied='/expenses']").count() == 1,
+    )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+
+    # ============================================================================================
+    # 23. DAILY-SUMMARY-001 (DEC-039) -- the owner's "Tóm tắt cuối ngày" on Hôm nay: before 18:00
+    #     one button, after 18:00 read by itself; the server's lines printed as sent; Sao chép
+    #     copies the server's text byte for byte; Chia sẻ hands the same text to the share sheet;
+    #     every line readable at 390 px; the counter sees no card and asks nothing.
+    # ============================================================================================
+    print()
+    print("[23] Tóm tắt cuối ngày: a fixed template, one press to Zalo")
+    state["summary_reads"] = []
+    # Shop-local 10:00 (UTC+7): the morning Hôm nay offers the summary, it does not read it.
+    page.clock.set_fixed_time("2026-09-25T03:00:00Z")
+    page.add_init_script(
+        "window.__copied = null;"
+        "Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {"
+        "  writeText: async (text) => {"
+        "    if (window.__clipboardRefuses) throw new Error('denied');"
+        "    window.__copied = text;"
+        "  }}});"
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    card = page.locator("#daily-summary")
+    load = page.locator("button[data-summary-load]")
+    check(
+        "before 18:00 the owner's Hôm nay offers 'Xem tóm tắt' and reads nothing",
+        card.count() == 1
+        and "Tóm tắt cuối ngày" in card.inner_text()
+        and load.count() == 1
+        and not state["summary_reads"],
+        repr(state["summary_reads"]),
+    )
+    load.click()
+    page.wait_for_timeout(900)
+    shown = [
+        (node.get_attribute("data-summary-line"), node.inner_text().strip())
+        for node in page.locator("#daily-summary [data-summary-line]").all()
+    ]
+    check(
+        "one press reads the summary once and prints the server's lines, in order, verbatim",
+        len(state["summary_reads"]) == 1
+        and shown == [(key, text) for key, text, _ in DAILY_SUMMARY_LINES],
+        repr(shown[:2]),
+    )
+    omitted = page.locator("#daily-summary [data-summary-omitted]")
+    check(
+        "what the summary could not say is listed with the server's reason, not as a zero",
+        omitted.count() == 1
+        and "Đồ chờ lấy lâu ngày: hệ thống chưa có phần này." in omitted.inner_text()
+        and "Công nợ đến hạn: hệ thống chưa có phần này." in omitted.inner_text(),
+        omitted.inner_text()[:160] if omitted.count() else "absent",
+    )
+    page.locator("button[data-summary-copy]").click()
+    page.wait_for_timeout(400)
+    check(
+        "Sao chép copies the server's text byte for byte, and says so",
+        page.evaluate("() => window.__copied") == DAILY_SUMMARY["text"]
+        and "Đã chép" in card.inner_text(),
+        repr(page.evaluate("() => window.__copied"))[:120],
+    )
+    share = page.locator("button[data-summary-share]")
+    if share.count():
+        share.click()
+        page.wait_for_timeout(300)
+    shared = page.evaluate("() => window.__shared || null") or {}
+    check(
+        "Chia sẻ hands the same text to the phone's share sheet (Zalo)",
+        share.count() == 1
+        and shared.get("text") == DAILY_SUMMARY["text"]
+        and shared.get("title") == "Tóm tắt cuối ngày",
+        repr(shared)[:120],
+    )
+    page.evaluate("() => { window.__clipboardRefuses = true; }")
+    page.locator("button[data-summary-copy]").click()
+    page.wait_for_timeout(400)
+    manual = page.locator("#daily-summary textarea.daily-summary__text")
+    check(
+        "a refused clipboard shows the whole text to select by hand",
+        manual.count() == 1
+        and manual.input_value() == DAILY_SUMMARY["text"]
+        and "Chép không được" in card.inner_text(),
+    )
+    page.evaluate("() => { window.__clipboardRefuses = false; }")
+    card.locator(".info-btn").first.click()
+    page.wait_for_timeout(500)
+    dialogs = page.locator("dialog[open]")
+    sheet = dialogs.last.inner_text() if dialogs.count() else ""
+    check(
+        "the ⓘ says it is a fixed template over the day's figures, not AI, and sends nothing",
+        "không phải AI" in sheet and "không tự gửi" in sheet and "DEC-006" in sheet,
+        sheet[:160],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(200)
+
+    # After 18:00 the card reads by itself as Hôm nay opens.
+    state["summary_reads"] = []
+    page.clock.set_fixed_time("2026-09-25T12:30:00Z")
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    check(
+        "after 18:00 shop-local the card reads the summary with no press",
+        len(state["summary_reads"]) == 1
+        and page.locator("button[data-summary-load]").count() == 0
+        and page.locator("#daily-summary [data-summary-line]").count() == len(DAILY_SUMMARY_LINES),
+        repr(state["summary_reads"]),
+    )
+    # Every line readable at 390 px: wrapped, never cut, and nothing wider than the screen.
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.wait_for_timeout(400)
+    overflow = page.evaluate(
+        """() => {
+            const lines = [...document.querySelectorAll('#daily-summary [data-summary-line]')];
+            const card = document.querySelector('#daily-summary');
+            return {
+                lines: lines.length,
+                cut: lines.filter((n) => n.scrollWidth > n.clientWidth + 1).length,
+                card: card ? card.getBoundingClientRect().right : 9999,
+                page: document.documentElement.scrollWidth,
+            };
+        }"""
+    )
+    check(
+        "at 390 px every line wraps inside the card and the page does not scroll sideways",
+        overflow["lines"] == len(DAILY_SUMMARY_LINES)
+        and overflow["cut"] == 0
+        and overflow["card"] <= 390
+        and overflow["page"] <= 390,
+        repr(overflow),
+    )
+    if os.environ.get("CONSOLE_SHOTS_DIR"):
+        shots = os.environ["CONSOLE_SHOTS_DIR"]
+        os.makedirs(shots, exist_ok=True)
+        page.locator("#daily-summary").screenshot(path=os.path.join(shots, "stub-summary-390.png"))
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    # A failed read is said, with a retry; the figures are never left from an earlier read.
+    state["summary_fails"] = True
+    page.locator("button[data-summary-reload]").click()
+    page.wait_for_timeout(900)
+    check(
+        "a failed read shows the failure and no stale line",
+        page.locator("#daily-summary [data-summary-line]").count() == 0
+        and page.locator("#daily-summary .notice").count() >= 1,
+        card.inner_text()[:160],
+    )
+    state["summary_fails"] = False
+
+    # The counter sees no card and asks for nothing: the summary is the report's readers'.
+    SESSION_OK["roles"] = ["OPERATOR"]
+    state["summary_reads"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    check(
+        "an operator's Hôm nay has no summary card and never asks for one",
+        page.locator("#daily-summary").count() == 0 and not state["summary_reads"],
+        repr(state["summary_reads"]),
     )
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
 

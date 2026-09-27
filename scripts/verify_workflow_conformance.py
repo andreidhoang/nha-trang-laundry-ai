@@ -5543,13 +5543,56 @@ def scenario_daily_summary(console: Console) -> None:
 
     head("22a", "TÓM TẮT CUỐI NGÀY — the card prints the server's words; one press to Zalo")
     console.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=BASE)
+    # The morning, in a second browser context carrying the same session (cookies and the chosen
+    # store) whose clock reads 10:00 shop-local: the card offers "Xem tóm tắt" and reads nothing
+    # until it is pressed. A context of its own because a Playwright clock belongs to the whole
+    # context -- pinned on the main one, it would reach every later page -- and so this check does
+    # not depend on the hour the run happens to start at.
+    morning_context = console.context.browser.new_context(
+        viewport=viewport(), storage_state=console.context.storage_state()
+    )
+    morning = morning_context.new_page()
+    morning.clock.set_fixed_time("2026-09-26T03:00:00Z")
+    reads: list[str] = []
+    morning.on(
+        "request",
+        lambda request: reads.append(request.url) if "/daily-summary" in request.url else None,
+    )
+    morning.goto(f"{CONSOLE}#/", wait_until="networkidle")
+    morning.wait_for_timeout(1500)
+    offered = morning.locator("button[data-summary-load]")
+    waited = offered.count() == 1 and not reads
+    if offered.count():
+        offered.click()
+        touched("today.summary-load")
+        morning.wait_for_timeout(1500)
+    ok(
+        "before 18:00 the card offers 'Xem tóm tắt', reads nothing until pressed, then the lines",
+        waited
+        and len(reads) == 1
+        and morning.locator("#daily-summary [data-summary-line]").count() > 1,
+        reads,
+    )
+    morning_context.close()
+
     console.open("#/")
     card = console.page.locator("#daily-summary")
     load = console.page.locator("button[data-summary-load]")
-    if load.count():
-        # Before 18:00 shop-local the card waits for the owner to ask.
+    hour = int(
+        console.page.evaluate(
+            "() => new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Ho_Chi_Minh', "
+            "hour: '2-digit', hourCycle: 'h23'}).format(new Date())"
+        )
+    )
+    if hour >= 18:
+        ok(
+            "after 18:00 shop-local the card has read the summary by itself",
+            load.count() == 0
+            and console.page.locator("#daily-summary [data-summary-line]").count() > 1,
+            f"hour {hour}",
+        )
+    elif load.count():
         load.click()
-        touched("today.summary-load")
         console.page.wait_for_timeout(1500)
     fresh = (_summary_read(console).get("body") or {}).get("lines") or []
     shown = [

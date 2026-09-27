@@ -35,6 +35,8 @@ import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
 import { errorNotice, gated, icon } from "../ui/components.js";
 import { customerSearch, newCustomerSheet, readNotice } from "../ui/customers.js";
+// PAYMENT-002 (`DEC-035`): công nợ on a business customer's page.
+import { accountSection } from "../ui/account.js";
 import {
   button,
   confirmButton,
@@ -256,6 +258,8 @@ export function renderDetail(context) {
             body: "Các đơn bên dưới vẫn giữ nguyên; không còn tên hay số điện thoại.",
           })
         : null,
+      // PAYMENT-002: the account card, for a business customer only (`DEC-035`).
+      customer.kind === "BUSINESS" ? accountSection({ store, customerId, customer, who }) : null,
       ordersSection("Đơn đang mở", detail.open_orders || [], "customer-open", {
         empty: "Không có đơn nào đang mở.",
         truncated: detail.open_orders_truncated

@@ -3742,3 +3742,137 @@ a.row-link {
     max-width: 28rem;
   }
 }
+
+/* --- PAYMENT-002 — Công nợ (account customers, DEC-035) ---------------------------------------- */
+/* The account card on a business customer's page, the order page's "Giao đồ — ghi công nợ", and
+ * the monthly statement. The statement's paper borrows the receipt's look on screen; its print
+ * form is in print.css. */
+
+.account__actions {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: 1fr 1fr;
+}
+
+.account__actions .btn,
+.account__actions .button {
+  justify-content: center;
+}
+
+.account__owner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.account__statement {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.account-handover {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.account-handover:empty {
+  display: none;
+}
+
+.account-handover__what,
+.account-handover__why {
+  margin: 0;
+}
+
+.account-handover__link {
+  white-space: nowrap;
+}
+
+.statement-screen__month-nav {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.statement-paper {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+  display: grid;
+  font-variant-numeric: tabular-nums;
+  gap: var(--space-3);
+  justify-self: center;
+  max-width: 32rem;
+  padding: var(--space-5) var(--space-4);
+  width: 100%;
+}
+
+.statement-paper__head {
+  display: grid;
+  gap: var(--space-1);
+  text-align: center;
+}
+
+.statement-paper__head > p,
+.statement-paper__section,
+.statement-paper__none,
+.statement-paper__closing {
+  margin: 0;
+}
+
+.statement-paper__store,
+.statement-paper__section {
+  font-weight: var(--weight-bold);
+}
+
+.statement-paper__title {
+  color: var(--text-secondary);
+}
+
+.statement-paper__customer {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-heavy);
+}
+
+.statement-paper__sums,
+.statement-paper__lines {
+  border-top: 1px dashed var(--border-strong);
+  display: grid;
+  gap: var(--space-1);
+  padding-top: var(--space-3);
+}
+
+.statement-paper__row {
+  align-items: baseline;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.statement-paper__row > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.statement-paper__row--strong {
+  font-weight: var(--weight-bold);
+}
+
+.statement-paper__value {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.statement-paper__none,
+.statement-paper__closing {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+@media (min-width: 48rem) {
+  .account__card {
+    max-width: 40rem;
+  }
+}

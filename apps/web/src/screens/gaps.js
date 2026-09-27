@@ -118,16 +118,21 @@ const GROUPS = [
         title: "Thanh toán / tất toán",
         what: "Ghi khoản phải thu, ghi khoản đã thu, phân bổ tiền thu vào từng khoản, và tất toán đơn.",
         // PAYMENT-001 (DEC-035, 2026-09-25) built the counter half: deposits and part payments
-        // with a method, on the `order_payments` ledger, shown on the order page, the receipt and
-        // Hôm nay. What is still absent is the account half (PAYMENT-002), named by its tables so
-        // the ABSENT_TABLE binding fails the day they exist.
+        // with a method, on the `order_payments` ledger. PAYMENT-002 built the account half this
+        // entry named by its tables until they existed: customer_accounts with the owner's limit,
+        // the monthly statement (customer_account_statements, frozen at month close) and the
+        // oldest-first allocation of an account payment (customer_account_allocations). What is
+        // still absent is what no decision or data source allows: an e-invoice and a bank feed.
         missing:
-          "Đặt cọc, trả nhiều lần, tiền mặt hay chuyển khoản đã có trên trang chi tiết đơn " +
-          "(PAYMENT-001). Còn thiếu khách công nợ: customer_accounts, account_statements và " +
-          "payment_allocations — hạn mức, sao kê tháng và phân bổ một khoản thu vào nhiều đơn.",
-        // DEC-035 decided account customers; PAYMENT-002 builds them after CUSTOMER-001, because an
-        // account belongs to a BUSINESS customer record.
-        blockedBy: "PAYMENT-002 — DEC-035 đã quyết; xây sau hồ sơ khách hàng (CUSTOMER-001).",
+          "Thu tiền tại quầy (đặt cọc, nhiều lần, tiền mặt hay chuyển khoản) và khách công nợ " +
+          "(hạn mức, sao kê tháng, tiền trả trừ vào đơn nợ cũ nhất) đã có. Còn thiếu hoá đơn điện " +
+          "tử, và xác nhận chuyển khoản tự động — không có nguồn dữ liệu ngân hàng.",
+        // SHOP_OPERATIONS_SPEC_V1.md §9: e-invoices wait on the tax treatment of the price, which
+        // is unconfirmed; no bank feed exists to confirm a transfer.
+        blockedBy:
+          "Chưa xác nhận giá đã gồm thuế hay chưa, nên chưa xuất hoá đơn; chưa có kết nối ngân hàng",
+        today:
+          "Chuyển khoản ghi khi đã thấy tiền vào tài khoản. Sao kê công nợ in từ trang của khách.",
       },
       {
         ref: "M3",

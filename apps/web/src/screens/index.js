@@ -13,6 +13,7 @@
  * @module screens/index
  */
 
+import { screen as accountStatement } from "./accountStatement.js";
 import { screen as approvals } from "./approvals.js";
 import { detailScreen as customerDetail, screen as customers } from "./customers.js";
 import { screen as assistant } from "./assistant.js";
@@ -48,6 +49,8 @@ export const ROUTES = [
   receipt,
   customers,
   customerDetail,
+  // PAYMENT-002: a business customer's monthly statement (four segments: no sibling to shadow).
+  accountStatement,
   slaBoard,
   approvals,
   assistant,

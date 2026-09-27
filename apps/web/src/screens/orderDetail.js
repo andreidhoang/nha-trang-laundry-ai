@@ -115,6 +115,8 @@ import {
   promisePill,
   receivePromise,
 } from "../ui/promise.js";
+// PAYMENT-002 (`DEC-035`): "Giao đồ — ghi công nợ" for an account customer's order.
+import { accountHandover } from "../ui/accountHandover.js";
 // SHOP-CAPTURE-001: "Máy nào?", the trip-cost fields and the order's recorded cycles and trips.
 import {
   captureRows,
@@ -358,6 +360,23 @@ export function render_(context) {
   /** @type {any|null} the order as last read */
   let current = null;
 
+  // PAYMENT-002: the account offer under the money card; the server decides, this page's own
+  // sheet, refusal and success machinery carries it out.
+  const accountOffer = accountHandover({
+    orderId,
+    verdict: can(me, "ACCOUNTS_COLLECT"),
+    hooks: {
+      openFresh: (spec) => openFresh(spec),
+      successState: (made, title, body, order) => successState(made, title, body, order),
+      reread: () => reread(),
+      refusal: (error) => refusal(error),
+      pressing: (control, work) => pressing(control, work),
+      keyFor: (intent) => keyFor(intent),
+      releaseKey: () => releaseKey(),
+      current: () => current,
+    },
+  });
+
   // --- idempotency: one key per intent --------------------------------------------------------
 
   /** @type {{intent: string, submission: Submission}|null} */
@@ -449,7 +468,9 @@ export function render_(context) {
       summaryHost,
       steps ? progress(steps, { label: "Tiến trình đơn" }) : null,
       moneyCard(order),
+      accountOffer.node,
     );
+    accountOffer.refresh(order);
     render(infoHost, infoSection(order));
     render(legsHost, legsSection(order));
     render(techHost, technical(order));
@@ -474,8 +495,11 @@ export function render_(context) {
       SELF_COLLECT_MODES.has(order.fulfillment_mode) &&
       order.commercial === "ACTIVE";
     const cancelled = order.commercial === "CANCELLED";
-    const label =
-      order.balance === "UNPAID"
+    // PAYMENT-002 (`DEC-035`): the goods left on the customer's account -- money owed, not taken.
+    const onAccount = order.balance === "ON_ACCOUNT";
+    const label = onAccount
+      ? "Ghi công nợ"
+      : order.balance === "UNPAID"
         ? cancelled
           ? "Tổng đơn"
           : "Phải thu"
@@ -486,12 +510,14 @@ export function render_(context) {
             : order.balance === "REFUNDED"
               ? "Tổng đơn · đã hoàn"
               : "Tổng đơn";
-    const amount = partly
+    const amount = partly || onAccount
       ? money(order.remaining_vnd, "Chưa có tổng")
       : due
         ? due.text
         : UNKNOWN;
-    const caption = paid
+    const caption = onAccount
+      ? "Tiền ghi vào công nợ của khách, không thu tại quầy. Thu ở trang của khách."
+      : paid
       ? `Đã thu đủ tiền.${waiting ? " Khách chưa nhận đồ." : ""}`
       : order.balance === "REFUNDED"
         ? "Đã hoàn tiền cho khách."

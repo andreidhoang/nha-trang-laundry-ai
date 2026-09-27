@@ -129,6 +129,16 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         # the rest -- goes through the payments route. The exact-total `/settlement` route stays
         # served for older clients; the console no longer calls it.
         "/internal/v1/orders/{}/payments",
+        # PAYMENT-002 (`DEC-035`, B2B half). The order page asks whether an account customer's order
+        # may leave on the account and charges it; the customer's page reads the account, takes a
+        # payment against it, and the owner opens and limits it; the statement is read by month.
+        # Losing any one leaves công nợ back on paper.
+        "/internal/v1/orders/{}/account-handover",
+        "/internal/v1/orders/{}/account-charge",
+        "/internal/v1/stores/{}/customers/{}/account",
+        "/internal/v1/stores/{}/customers/{}/account/payments",
+        "/internal/v1/stores/{}/customers/{}/account/block-lift",
+        "/internal/v1/stores/{}/customers/{}/account/statements/{}",
         # READ-ENRICH-001: the order page's "Khiếu nại" section. Without it the page cannot say
         # which complaints an order already has, and remedies start from a guess.
         "/internal/v1/stores/{}/orders/{}/incidents",

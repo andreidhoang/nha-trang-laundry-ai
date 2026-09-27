@@ -211,6 +211,11 @@
     border-color: #000;
     padding-top: 2mm;
   }
+
+  .statement-paper__none,
+  .statement-paper__closing {
+    font-size: 8pt;
+  }
 }
 
 @media print and (min-width: 100mm) {

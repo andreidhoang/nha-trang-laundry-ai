@@ -716,7 +716,8 @@ def test_takings_and_the_report_still_equal_the_payment_ledger(connection: Any) 
 def test_statements_total_the_charges_and_payments_month_by_month(connection: Any) -> None:
     shop = Shop(connection)
     hotel = shop.customer()
-    shop.open(hotel, 1_000_000, at=_local(date(2026, 8, 1), 9))
+    # Opened today, charged in August: the month close still freezes August (activity, not opening).
+    shop.open(hotel, 1_000_000)
     august = [shop.ready_order(hotel) for _ in range(2)]
     shop.charge(august[0], at=_local(date(2026, 8, 3)))
     # 23:59:59 on 31 August, local, is August.

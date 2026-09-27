@@ -171,3 +171,41 @@ def test_the_customer_list_is_in_no_export() -> None:
     for source in (WEB / "src" / "screens").glob("exports.js"):
         text = source.read_text(encoding="utf-8")
         assert "/customers" not in text
+
+
+# --- PAYMENT-002 (DEC-035): công nợ on the same shared counter device -----------------------------
+
+ACCOUNT_MODULES = (
+    WEB / "src" / "core" / "accounts.js",
+    WEB / "src" / "ui" / "account.js",
+    WEB / "src" / "ui" / "accountHandover.js",
+    WEB / "src" / "screens" / "accountStatement.js",
+)
+
+
+def test_the_account_modules_write_nothing_to_the_device() -> None:
+    """A business customer's debts, the owner's lift reason and the statement live in the page."""
+
+    for module in ACCOUNT_MODULES:
+        assert module.is_file(), module
+        source = module.read_text(encoding="utf-8")
+        for sink in (
+            "localStorage",
+            "sessionStorage",
+            "indexedDB",
+            "document.cookie",
+            "caches.",
+            "history.pushState",
+            "history.replaceState",
+            "console.",
+        ):
+            assert sink not in source, f"{module.name} reaches {sink}"
+
+
+def test_the_printed_statement_carries_no_phone_number() -> None:
+    """The statement a customer is handed names them and their money, never their number: the
+    paper reads `customer_name` from the statement read, which carries no phone at all."""
+
+    source = (WEB / "src" / "screens" / "accountStatement.js").read_text(encoding="utf-8")
+    assert "phone" not in source
+    assert "customer_name" in source

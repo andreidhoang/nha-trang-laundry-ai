@@ -5387,6 +5387,23 @@ def _account_order(console: Console, customer_id: str, last4: str, kg: str) -> d
     return read
 
 
+def _press_patch(console: Console, locator: Any, suffix: str) -> dict[str, Any]:
+    """`press_capturing` for a PATCH: the owner's limit is changed under `If-Match`."""
+
+    with console.page.expect_response(
+        lambda r: r.request.method == "PATCH" and r.url.split("?")[0].endswith(suffix),
+        timeout=20000,
+    ) as waited:
+        locator.click()
+    response = waited.value
+    text = response.text()
+    try:
+        body = json.loads(text)
+    except ValueError:
+        body = None
+    return {"status": response.status, "body": body, "text": text[:600]}
+
+
 def _account_read(console: Console, customer_id: str) -> dict[str, Any]:
     read = console.call("GET", f"/internal/v1/stores/{STORE}/customers/{customer_id}/account")
     return read.get("body") or {}
@@ -5600,8 +5617,8 @@ def scenario_accounts(console: Console) -> None:
     touched("customer.account-limit")
     console.page.wait_for_timeout(400)
     console.type_into("#account-limit-new", str(limit))
-    (typed,) = console.press_capturing(
-        console.page.locator("#account-limit-save"), f"/customers/{homestay}/account"
+    typed = _press_patch(
+        console, console.page.locator("#account-limit-save"), f"/customers/{homestay}/account"
     )
     touched("customer.account-limit-save")
     console.page.wait_for_timeout(1500)
@@ -5683,7 +5700,7 @@ def scenario_accounts(console: Console) -> None:
         and all(word in card.inner_text() for word in ("Đang nợ", "Hạn mức", "Đầu kỳ", "Hạn trả")),
         card.inner_text()[:240].replace("\n", " | ") if card.count() else "absent",
     )
-    amount = int(first["payable_total_vnd"]) + 10_000
+    amount = int(first["payable_total_vnd"]) + 20_000
     console.page.locator("#account-collect").click()
     touched("customer.account-collect")
     console.page.wait_for_timeout(500)
@@ -5700,12 +5717,12 @@ def scenario_accounts(console: Console) -> None:
         for item in (paid.get("body") or {}).get("allocations", [])
     ]
     ok(
-        "the payment is allocated oldest first: the first order in full, 10.000 ₫ to the second",
+        "the payment is allocated oldest first: the first order in full, 20.000 ₫ to the second",
         paid["status"] == 201
         and split
         == [
             (first["order_id"], first["payable_total_vnd"], True),
-            (second["order_id"], 10_000, False),
+            (second["order_id"], 20_000, False),
         ],
         paid["text"][:240],
     )
@@ -5738,7 +5755,7 @@ def scenario_accounts(console: Console) -> None:
             "JOIN order_payments p ON p.id = a.order_payment_id "
             f"WHERE a.account_payment_id = '{(paid.get('body') or {}).get('payment_id')}'"
         )
-        == f"1:{first['payable_total_vnd']}:TIEN_MAT,2:10000:TIEN_MAT",
+        == f"1:{first['payable_total_vnd']}:TIEN_MAT,2:20000:TIEN_MAT",
         "",
     )
     takings = _takings(console)

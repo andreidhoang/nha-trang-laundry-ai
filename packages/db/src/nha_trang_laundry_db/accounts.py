@@ -1303,13 +1303,22 @@ def freeze_statements(
         raise AccountRuleError(AccountRefusal.MONTH_NOT_ENDED)
     with connection.cursor() as cursor:
         _require_active_owner(cursor, actor_id)
+        # Every account open by the month's end, or with a charge or a payment in or before it.
+        end = month_start_instant(next_month(month))
         cursor.execute(
             """
-            SELECT id, store_id FROM customer_accounts
-            WHERE opened_at < %s AND (%s::uuid IS NULL OR store_id = %s::uuid)
-            ORDER BY store_id, opened_at, id
+            SELECT a.id, a.store_id FROM customer_accounts a
+            WHERE (%(store)s::uuid IS NULL OR a.store_id = %(store)s::uuid)
+              AND (
+                  a.opened_at < %(end)s
+                  OR EXISTS (SELECT 1 FROM customer_account_charges c
+                             WHERE c.account_id = a.id AND c.charged_at < %(end)s)
+                  OR EXISTS (SELECT 1 FROM customer_account_payments p
+                             WHERE p.account_id = a.id AND p.recorded_at < %(end)s)
+              )
+            ORDER BY a.store_id, a.opened_at, a.id
             """,
-            (month_start_instant(next_month(month)), store_id, store_id),
+            {"store": store_id, "end": end},
         )
         accounts = [(_uuid(row[0]), _uuid(row[1])) for row in cursor.fetchall()]
     outcomes: list[FreezeOutcome] = []

@@ -150,7 +150,7 @@ export function accountSection(spec) {
     const field = moneyInput({
       id: "account-limit",
       label: "Hạn mức công nợ",
-      placeholder: "Để trống nếu chưa đặt",
+      placeholder: "Chưa đặt",
       echo: (text) => {
         const parsed = parseDong(text);
         return text.trim() && parsed !== null ? `= ${money(parsed)}` : "";
@@ -346,7 +346,7 @@ export function accountSection(spec) {
             href: `#/orders/${encodeURIComponent(String(item.order_id))}`,
             leading: "order",
             title: Number.isInteger(item.ticket_number)
-              ? `Phiếu ${item.ticket_number} · ${calendarDay(item.ticket_issued_on, { weekday: false })}`
+              ? `Phiếu ${item.ticket_number}`
               : `Đơn ${String(item.order_id).slice(0, 8).toUpperCase()}`,
             meta: `Ghi nợ ${dateOnly(item.charged_at)}`,
             trailing: money(item.remaining_vnd),

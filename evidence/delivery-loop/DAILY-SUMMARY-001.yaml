@@ -1,0 +1,61 @@
+schema_version: 1
+work_item: DAILY-SUMMARY-001
+recorded_at: '2026-09-28T06:00:00+07:00'
+requirement_contract: 'DEC-039: GET .../reports/daily-summary returns a versioned Vietnamese template
+  (daily-summary-v2) over report-v3, the SLA board, open complaints, expenses, the waiting-for-pickup
+  count and accounts due; a source that cannot answer is omitted with its reason, never printed as 0;
+  no language model, no network, no personal data.'
+rollback_impact: A read route and a card; no migration. Hide the card or revert the merge. Rolling data
+  back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before
+  every upgrade.
+unresolved_assumptions: A model-written version waits for DEC-006; no automatic push until SHOP-ALERT-DELIVERY-001
+  passes.
+evidence:
+  every_sentence_names_a_versioned_figure: packages/domain/tests/test_daily_summary_template.py (golden
+    per line) and test_daily_summary_repository.py (a closed day restated from the report's own seeded
+    shop).
+  no_personal_data_in_the_text: test_daily_summary_repository.py scan after seeding named customers with
+    phones; packages/evals/tests/test_daily_summary_no_model.py (no model or network import on the path).
+  walked_on_the_real_api_at_phone_size: 'filmed at desk size (daily_summary): 32 ok, 0 failed; phone-size
+    run: 534 ok, 0 failed'
+  rollback_assessment: A read route and a card; no migration. Hide the card or revert the merge. Rolling
+    data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes
+    before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 721 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 381 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3337 passed, 5 skipped, 2 warnings in 784.32s (0:13:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 108 served
+    internal API operations against their contract. Validated 554 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 183 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 521 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls

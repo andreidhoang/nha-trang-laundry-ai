@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-25'
+last_updated: '2026-09-27'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -5391,7 +5391,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: 'A customer list with consent: phone, name, address, note; search by phone,
     last four digits or name'
-  status: PENDING
+  status: COMPLETE
   priority: 330
   depends_on:
   - CONTACT-PICK-001
@@ -5424,7 +5424,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: Part payments and deposits with a method (cash or transfer); goods leave
     only when paid
-  status: PENDING
+  status: COMPLETE
   priority: 331
   depends_on:
   - ORDER-STEPS-002
@@ -5456,7 +5456,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: 'Account customers (công nợ): owner-set limit, monthly statement, overdue
     block'
-  status: PENDING
+  status: COMPLETE
   priority: 332
   depends_on:
   - CUSTOMER-001
@@ -5489,7 +5489,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: A promised-ready time on every order, in opening hours, from the owner-confirmed
     turnaround rules
-  status: PENDING
+  status: COMPLETE
   priority: 333
   depends_on:
   - ORDER-STEPS-002
@@ -5521,7 +5521,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: 'Laundry waiting for pickup: contact attempts, storage fee after day 20,
     owner-approved disposal after day 60'
-  status: PENDING
+  status: COMPLETE
   priority: 334
   depends_on:
   - PAYMENT-001
@@ -5552,7 +5552,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: 'Measure the shop inside existing taps: machine per wash cycle, trip costs,
     Sổ thu chi, margin only when complete'
-  status: PENDING
+  status: COMPLETE
   priority: 335
   depends_on:
   - ORDER-STEPS-002
@@ -5584,7 +5584,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: The owner's evening summary from a versioned template over the report read
     model, no language model
-  status: PENDING
+  status: COMPLETE
   priority: 336
   depends_on:
   - REPORT-DASHBOARD-001
@@ -5617,7 +5617,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: Every shop-operations flow filmed at phone size against the real API, reviewed
     as the counter worker and the owner, every finding fixed
-  status: PENDING
+  status: COMPLETE
   priority: 337
   depends_on:
   - CUSTOMER-001
@@ -5651,8 +5651,9 @@ items:
   blocked_by_decisions: []
 - id: EXPORT-PAYMENTS-001
   phase: PRODUCTION_HARDENING
-  title: The sanitized export carries part payments and says truthfully which ledger its money comes from
-  status: PENDING
+  title: The sanitized export carries part payments and says truthfully which ledger
+    its money comes from
+  status: COMPLETE
   priority: 338
   depends_on:
   - PAYMENT-001

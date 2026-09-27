@@ -1,0 +1,60 @@
+schema_version: 1
+work_item: SHOP-CAPTURE-001
+recorded_at: '2026-09-28T06:00:00+07:00'
+requirement_contract: 'DEC-038: seeded machine list; START_WASH/REWASH take an optional machine and open
+  a wash cycle, QUALITY_CHECK closes it, inside the step''s transaction; delivery legs record vehicle,
+  km and cost; Sổ thu chi expenses (void, never edit); report capture lines and a month margin only when
+  electricity, water, chemicals, wages and rent are recorded, reading money from the payment ledger.'
+rollback_impact: Migration 0058 is additive; capture is optional at every tap; retire the machines to
+  stop asking. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+  section 8 takes before every upgrade.
+unresolved_assumptions: Labour minutes are not captured by decision; SHOP-INSTRUMENT-001 stays blocked
+  until weeks of real data exist; margin excludes trip costs (fuel is in Sổ thu chi).
+evidence:
+  a_cycle_opens_and_closes_inside_the_step_transaction: 'packages/db/tests/test_shop_capture.py (15):
+    a forced failure on the cycle insert rolls back the step; rewash versus hold; skipped machine counted.'
+  margin_is_shown_only_for_a_complete_month: test_shop_capture_rules.py (30, hypothesis) and the report
+    margin tests incomplete then complete.
+  walked_on_the_real_api_at_phone_size: 'filmed at desk size (shop_capture): 44 ok, 0 failed; phone-size
+    run: 534 ok, 0 failed'
+  rollback_assessment: Migration 0058 is additive; capture is optional at every tap; retire the machines
+    to stop asking. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+    section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 721 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 381 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3337 passed, 5 skipped, 2 warnings in 784.32s (0:13:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 108 served
+    internal API operations against their contract. Validated 554 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 183 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 521 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls

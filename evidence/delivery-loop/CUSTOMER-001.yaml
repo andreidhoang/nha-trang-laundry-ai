@@ -1,0 +1,67 @@
+schema_version: 1
+work_item: CUSTOMER-001
+recorded_at: '2026-09-28T06:00:00+07:00'
+requirement_contract: 'DEC-034: a customer record (phone normalised and stored encrypted with a keyed
+  digest and last four digits, optional name, address, note, kind RETAIL|BUSINESS) created only with the
+  staff-attested service consent under the owner''s published privacy notice; marketing consent separate
+  and off by default; search by phone, last four or diacritic-insensitive name; erasure keeps orders;
+  24-month retention job; no phone value in any ledger payload or log.'
+rollback_impact: Migration 0055 is additive; older code never reads its tables and columns. Unpublishing
+  is not offered; erasure keeps orders and money. Revert the merge. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: Whether an impact-assessment dossier is required is the owner's and an adviser's
+  question; one phone and one address per customer; no console button yet to link an old ticket or chat
+  to a customer (the route exists).
+evidence:
+  refused_until_the_owner_publishes_the_notice: 'test_customer_routes_postgres.py and the conformance
+    customers scenario: PRIVACY_NOTICE_UNPUBLISHED before scripts/publish_privacy_notice.py, then a record
+    at the counter.'
+  no_phone_value_in_any_audit_event_or_outbox_row: test_customer_records.py::test_no_phone_name_address_or_note_reaches_any_ledger_row
+    scans domain, audit, outbox and idempotency rows; the conformance run scans the same tables and the
+    API log.
+  search_by_phone_last_four_and_name: test_customers.py (70, hypothesis) and test_customer_records.py;
+    the second visit is found by four digits in one tap in the customers scenario.
+  erasure_keeps_orders: test_customer_records.py erasure and retention tests; test_migration_0055_populated.py.
+  walked_on_the_real_api_at_phone_size: 'filmed at desk size (customers): 33 ok, 0 failed; phone-size
+    run: 534 ok, 0 failed'
+  rollback_assessment: Migration 0055 is additive; older code never reads its tables and columns. Unpublishing
+    is not offered; erasure keeps orders and money. Revert the merge. Rolling data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 721 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 381 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3337 passed, 5 skipped, 2 warnings in 784.32s (0:13:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 108 served
+    internal API operations against their contract. Validated 554 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 183 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 521 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls

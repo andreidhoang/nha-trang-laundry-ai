@@ -1,0 +1,67 @@
+schema_version: 1
+work_item: SHOP-FILMED-REVIEW-004
+recorded_at: '2026-09-28T06:00:00+07:00'
+requirement_contract: Every round-7 flow filmed on the real API from an empty database at desk size (the
+  owner's primary device, amended 2026-09-27), reviewed as the counter worker and the owner, findings
+  fixed with guards; the phone layout verified as secondary.
+rollback_impact: Review fixes only. Revert the commits. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: Real channel delivery and the owner's alert phone test remain outside this round.
+evidence:
+  every_new_flow_filmed_at_phone_size: 'Desk size by the owner''s direction: filmed at desk size (shop_capture):
+    44 ok, 0 failed; filmed at desk size (deposit): 21 ok, 0 failed; filmed at desk size (export_payments):
+    24 ok, 0 failed; filmed at desk size (customers): 33 ok, 0 failed; filmed at desk size (accounts):
+    45 ok, 0 failed; filmed at desk size (unclaimed): 40 ok, 0 failed; filmed at desk size (promise):
+    31 ok, 0 failed; filmed at desk size (daily_summary): 32 ok, 0 failed; filmed at desk size (sessions):
+    24 ok, 0 failed; phone layout: 534 ok, 0 failed'
+  each_review_finding_is_fixed_with_a_guard: 'Integration found and fixed with tests: a deposit taken
+    in an earlier month missed or counted twice by the month margin; an account order''s storage fee dropped
+    at the charge (0061); every fee-bearing day refusing its own export; the pricing check reading the
+    receipt before both lines painted (waits on the returned revision); three console wordings from the
+    desk screenshots; and in the lead''s desk review, the storage fee under Tổng read as added on top
+    of the total, relabelled Trong đó phí lưu kho (stub suite 521/0 and the unclaimed scenario refilmed
+    after it).'
+  gaps_register_lists_exactly_what_is_missing: 'gaps.js updated by each slice: customers, payments, tabs,
+    promise, storage, measurement and summary entries rewritten to what remains (e-invoices, bank confirmation,
+    late-delivery credit, automatic reminders, model-written summary, labour minutes).'
+  no_capability_authorisation_changed: 'report_delivery_status.py: 13 capabilities, all NOT_AUTHORIZED.'
+  rollback_assessment: Review fixes only. Revert the commits. Rolling data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 721 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 381 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3337 passed, 5 skipped, 2 warnings in 784.32s (0:13:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 108 served
+    internal API operations against their contract. Validated 554 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 183 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 521 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls

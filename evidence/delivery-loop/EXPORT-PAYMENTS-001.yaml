@@ -1,0 +1,60 @@
+schema_version: 1
+work_item: EXPORT-PAYMENTS-001
+recorded_at: '2026-09-28T06:00:00+07:00'
+requirement_contract: The owner-approved export (store-day-orders-export-v4, store-window-orders-export-v3)
+  carries per order owed (charges including a storage fee), paid by method from order_payments, paid and
+  remaining; the signed statement names each money column's ledger and cut; an envelope approved under
+  a retired shape is refused by name; no customer or bank-reference column.
+rollback_impact: No migration; rolling back makes newer envelopes fail EXPORT_APPROVAL_NOT_BOUND, the
+  safe direction. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+  section 8 takes before every upgrade.
+unresolved_assumptions: refunded_vnd is the existing refunded_amount_vnd column.
+evidence:
+  a_partly_paid_order_exports_what_was_paid_by_method: packages/db/tests/test_export_payments.py (partly
+    paid, paid, unpaid, cancelled; storage fee owed; an account order owed not paid) and test_export_money.py.
+  an_envelope_approved_before_the_change_is_not_released_as_the_new_shape: EXPORT_QUERY_VERSION_RETIRED
+    for pinned old documents, one day and a window; conformance export_payments writes an old approval
+    straight into the database and the release is still refused.
+  walked_on_the_real_api_at_phone_size: 'filmed at desk size (export_payments): 24 ok, 0 failed; phone-size
+    run: 534 ok, 0 failed'
+  rollback_assessment: No migration; rolling back makes newer envelopes fail EXPORT_APPROVAL_NOT_BOUND,
+    the safe direction. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+    section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 721 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 381 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3337 passed, 5 skipped, 2 warnings in 784.32s (0:13:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 108 served
+    internal API operations against their contract. Validated 554 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 183 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 521 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls

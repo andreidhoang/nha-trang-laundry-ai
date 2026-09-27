@@ -1,0 +1,62 @@
+schema_version: 1
+work_item: PAYMENT-002
+recorded_at: '2026-09-28T06:00:00+07:00'
+requirement_contract: 'DEC-035 B2B half: an owner-opened account for a BUSINESS customer with an owner-typed
+  limit under published account terms; ON_ACCOUNT balance when goods leave unpaid within the limit (remaining
+  including any fixed storage fee) and no overdue statement or an owner lift with a reason; monthly statements
+  due the 15th; payments allocated oldest first through the payment ledger.'
+rollback_impact: Migrations 0059 and 0061 are additive and forward-only; unmark accounts by suspending
+  them; exact payment stays the default. Rolling data back is docs/runbooks/restore-drill.md from the
+  base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: A lift lasts at most 31 days per press; a limit can be changed but not cleared
+  (suspend to stop credit); the report and Hôm nay show no money-owed-on-account figure yet.
+evidence:
+  an_unpaid_handover_stays_within_the_owner_limit: test_accounts.py (hypothesis on the limit) and test_customer_accounts.py;
+    test_money_consistency.py::test_an_account_order_that_waited_is_charged_its_fee_and_the_limit_counts_it.
+  an_overdue_statement_blocks_new_account_orders: test_customer_accounts.py overdue block and lift; conformance
+    accounts 22g.
+  statement_totals_equal_orders_and_payments: test_customer_accounts.py statement totals and freezing;
+    test_money_consistency.py::test_an_account_order_paid_through_allocation_commits_and_money_around_it_is_refused.
+  walked_on_the_real_api_at_phone_size: 'filmed at desk size (accounts): 45 ok, 0 failed; phone-size run:
+    534 ok, 0 failed'
+  rollback_assessment: Migrations 0059 and 0061 are additive and forward-only; unmark accounts by suspending
+    them; exact payment stays the default. Rolling data back is docs/runbooks/restore-drill.md from the
+    base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 721 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 381 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3337 passed, 5 skipped, 2 warnings in 784.32s (0:13:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 108 served
+    internal API operations against their contract. Validated 554 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 183 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 521 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls

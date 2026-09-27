@@ -1,0 +1,64 @@
+schema_version: 1
+work_item: PAYMENT-001
+recorded_at: '2026-09-28T06:00:00+07:00'
+requirement_contract: 'DEC-035 counter half: append-only order_payments (TIEN_MAT|CHUYEN_KHOAN, optional
+  bank-ref tail), 1 <= amount <= remaining, overpayment refused, balance UNPAID|PARTIALLY_PAID|PAID, goods
+  leave only when paid (settlement.goods_may_leave), TAKE_PAYMENT replaces SETTLE/PREPAY, takings collected-today-v3
+  split by method; existing settlements backfilled as legacy cash payments.'
+rollback_impact: Migration 0056 is forward-only; rolling back the code needs a follow-up migration that
+  drops the ledger trigger, because old-code settlements would be refused without their payment row. Rolling
+  data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before
+  every upgrade.
+unresolved_assumptions: Refunds are not split by method (order_refunds does not record it). A zero-total
+  order settles with no payment row.
+evidence:
+  overpayment_is_refused_and_pickup_needs_paid: 'test_payments.py (37, hypothesis) and test_order_payments.py;
+    conformance deposit: OVERPAYMENT_REFUSED, pickup refused while partly paid.'
+  existing_paid_orders_migrate_with_their_sum: 'test_migration_0056_populated.py: each order''s sum preserved,
+    v3 takings equal v2 for every day.'
+  takings_split_by_method_equal_the_payments: test_order_payments.py and test_money_consistency.py; the
+    month margin reads the payment ledger (test_a_months_margin_takes_its_money_from_the_payment_ledger_each_payment_once).
+  walked_on_the_real_api_at_phone_size: 'filmed at desk size (deposit): 21 ok, 0 failed; phone-size run:
+    534 ok, 0 failed'
+  rollback_assessment: Migration 0056 is forward-only; rolling back the code needs a follow-up migration
+    that drops the ledger trigger, because old-code settlements would be refused without their payment
+    row. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section
+    8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 721 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 381 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3337 passed, 5 skipped, 2 warnings in 784.32s (0:13:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 108 served
+    internal API operations against their contract. Validated 554 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 183 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 521 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls

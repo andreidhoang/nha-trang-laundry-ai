@@ -1,0 +1,64 @@
+schema_version: 1
+work_item: PROMISE-001
+recorded_at: '2026-09-28T06:00:00+07:00'
+requirement_contract: 'DEC-037: promised_ready_at computed at RECEIVE by the pure promise module from
+  the owner-confirmed service-sla rules: 8 opening hours for standard clothing (08:00-20:00, published
+  closed days skipped), shoes/curtains/blankets 24 or 48 calendar hours rolled into opening hours, special
+  items and express by staff; first promise immutable, changes recorded with a reason; on-time counts
+  against the first promise.'
+rollback_impact: Migration 0057 is additive; publish_turnaround_policy.py --withdraw returns orders to
+  carrying no promise. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+  section 8 takes before every upgrade.
+unresolved_assumptions: Tết dates are the owner's to publish each year (the harness uses a 2027 fixture);
+  the late-delivery 10 % credit is reported as a gap, not issued.
+evidence:
+  the_promise_is_computed_by_the_domain_in_opening_hours: 'packages/domain/tests/test_promise.py (85):
+    opening-hour boundaries, 17:00 -> 13:00 next open day, Friday 17:00 + 48 h -> Sunday 17:00, closed
+    30/4 and 1/5, Tết unknown, property check minute by minute.'
+  a_human_sets_it_where_the_rule_says_so: PROMISE_REQUIRED for special items; test_order_promise_repository.py
+    (27) and test_order_promise_http.py (10).
+  on_time_counts_against_the_first_promise: test_order_promise_repository.py report test; report-v3 on-time
+    uses the first promise.
+  walked_on_the_real_api_at_phone_size: 'filmed at desk size (promise): 31 ok, 0 failed; phone-size run:
+    534 ok, 0 failed'
+  rollback_assessment: Migration 0057 is additive; publish_turnaround_policy.py --withdraw returns orders
+    to carrying no promise. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+    section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 721 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 381 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3337 passed, 5 skipped, 2 warnings in 784.32s (0:13:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 108 served
+    internal API operations against their contract. Validated 554 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 183 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 521 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls

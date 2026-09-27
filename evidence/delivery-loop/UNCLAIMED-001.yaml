@@ -1,0 +1,59 @@
+schema_version: 1
+work_item: UNCLAIMED-001
+recorded_at: '2026-09-28T06:00:00+07:00'
+requirement_contract: 'DEC-036: the waiting-for-pickup list with contact attempts; storage fee free through
+  day 20, 5.000 VND per order per day from day 21 capped at half the quoted total, fixed at the settling
+  payment or the account charge; waiver by an approver with a reason; disposal UNCLAIMED_DISPOSED by the
+  owner from day 60 with at least 3 attempts on 2 shop days; fee and disposal only after publish_storage_policy.py.
+  Ruling: an order paid in full before day 21 owes no fee.'
+rollback_impact: Migrations 0060 and 0061 are additive and forward-only; publish_storage_policy.py --withdraw
+  stops fees and disposal; recorded fees stay on their orders. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: No automatic reminder (no channel); delivery orders are not on the list.
+evidence:
+  the_fee_is_computed_by_the_domain_from_the_published_policy: packages/domain/tests/test_unclaimed.py
+    (27), test_unclaimed_laundry.py (14), test_unclaimed_http.py (5); test_money_consistency.py::test_a_fee_bearing_settled_order_commits_and_a_fee_outside_its_settlement_is_refused.
+  disposal_needs_the_attempts_the_rule_names: Disposal verdict lists every unmet rule; test_money_consistency.py::test_a_disposed_partly_paid_order_commits_and_a_close_without_it_is_refused.
+  walked_on_the_real_api_at_phone_size: 'filmed at desk size (unclaimed): 40 ok, 0 failed; phone-size
+    run: 534 ok, 0 failed'
+  rollback_assessment: Migrations 0060 and 0061 are additive and forward-only; publish_storage_policy.py
+    --withdraw stops fees and disposal; recorded fees stay on their orders. Rolling data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 721 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 381 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3337 passed, 5 skipped, 2 warnings in 784.32s (0:13:04)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 108 served
+    internal API operations against their contract. Validated 554 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 161 source references, 39 decisions, 4 gates, 9 phases, 183 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 521 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 534 ok, 0 failed, 162/162 declared controls

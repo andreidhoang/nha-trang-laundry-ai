@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
+from nha_trang_laundry_domain.accounts import AccountHandoverFacts, account_handover_refusal
 from nha_trang_laundry_domain.catalog import (
     MODES_EXPECTING_RETURN,
     CommercialOrderStatus,
@@ -66,6 +67,12 @@ class SettlementShape(StrEnum):
     #: the laundry, and the customer comes by the counter and pays before it is ready. Pickup is
     #: attested separately, by the staff member who hands the goods over (`evaluate_collection`).
     EXACT_PAYMENT_PREPAID_SELF_COLLECTION = "EXACT_PAYMENT_PREPAID_SELF_COLLECTION"
+    #: Paid through the account, after the goods left on it. `DEC-035`'s B2B half (`PAYMENT-002`):
+    #: an account customer's order left the shop reading `ON_ACCOUNT`, and the account's payments,
+    #: allocated oldest first, have now covered what it owed. Still the exact quoted total, summed
+    #: from the order's payment ledger; what differs is that the leaving came first and was
+    #: recorded by the account charge, not by this row -- which is what its `collected_by` says.
+    EXACT_PAYMENT_ON_ACCOUNT = "EXACT_PAYMENT_ON_ACCOUNT"
 
 
 class SettlementRefusal(StrEnum):
@@ -139,6 +146,7 @@ def evaluate_settlement(
     tendered_vnd: int,
     collected_by_customer: bool,
     fulfillment_mode: FulfillmentMode,
+    on_account: bool = False,
 ) -> SettlementOutcome:
     """Decide whether this is a supported settlement shape.
 
@@ -163,6 +171,12 @@ def evaluate_settlement(
     if tendered_vnd != quoted.minimum_vnd:
         # Under, over, or a deposit: all DEC-010, and all refused rather than partially recorded.
         return _refuse(SettlementRefusal.AMOUNT_IS_NOT_THE_EXACT_TOTAL)
+    if on_account:
+        # `PAYMENT-002`: the order already left on its account (its charge row says when, and who
+        # took it), so the collection question was answered then. A tick now would restate it.
+        if collected_by_customer:
+            return _refuse(SettlementRefusal.COLLECTION_WAS_NOT_BY_THE_CUSTOMER)
+        return SettlementAccepted(SettlementShape.EXACT_PAYMENT_ON_ACCOUNT, quoted.minimum_vnd)
     if collected_by_customer:
         if fulfillment_mode in MODES_EXPECTING_RETURN:
             # The goods were handed back at the counter on an order that says they travel. One of
@@ -215,24 +229,47 @@ def handover_refusal(production: ProductionStatus) -> str | None:
 #: The balances under which the goods may leave the shop in the customer's hands. `DEC-035`
 #: (2026-09-25): goods leave only when paid.
 #:
-#: **The `PAYMENT-002` seam.** An account customer (công nợ) may take goods unpaid while the
-#: account's outstanding total plus this order stays within the owner's limit. That is a decision
-#: over facts this set cannot see (the account, its limit, its overdue statements), so it will be a
-#: second input to `goods_may_leave`, not a member added here. Until then only `PAID` qualifies:
-#: `PARTIALLY_PAID` -- a deposit taken, money still owed -- does not.
-GOODS_MAY_LEAVE_BALANCES: Final = frozenset({OrderBalanceStatus.PAID})
+#: `PAYMENT-002` (the B2B half of `DEC-035`): an account customer's goods may leave unpaid while the
+#: account's outstanding total plus this order stays within the owner's limit and no statement is
+#: overdue. That is a decision over facts this set cannot see -- the account, its limit, its
+#: statements -- so it is the second input of `goods_may_leave`, not a member here. `ON_ACCOUNT` is
+#: a member because it is that decision's *result*: an order reads `ON_ACCOUNT` only once the
+#: account admitted it under the account's and the order's row locks (`0059` binds the balance to
+#: its charge row), so its goods have already been let go by the account rule and a later `RELEASE`
+#: or `HAND_OVER` must not ask again. `PARTIALLY_PAID` -- a deposit taken, money still owed -- is
+#: not a member.
+GOODS_MAY_LEAVE_BALANCES: Final = frozenset(
+    {OrderBalanceStatus.PAID, OrderBalanceStatus.ON_ACCOUNT}
+)
 
 
-def goods_may_leave(balance: OrderBalanceStatus) -> bool:
+def goods_may_leave(
+    balance: OrderBalanceStatus, account: AccountHandoverFacts | None = None
+) -> bool:
     """Whether the order's money lets the goods leave with the customer (`DEC-035`).
 
     The one statement of "goods leave only when paid", read by pickup (`evaluate_collection`), by
-    `RELEASE` for a self-collect order (`order_steps`), and -- through `transition_commercial`'s own
-    settled-balance guard -- by `HAND_OVER`. `PAYMENT-002` extends this function with the account
-    rule; nothing else should restate it.
+    `RELEASE` for a self-collect order (`order_steps`), by `HAND_OVER` through
+    `transition_commercial`'s own settled-balance guard, and by the account charge
+    (`account_charge.evaluate_account_charge`).
+
+    `account` is `PAYMENT-002`'s second input: the order's account and what the order still owes.
+    With it, an order still owing money may leave when `accounts.account_handover_refusal` finds
+    nothing to refuse -- a limit is typed, outstanding plus this order is within it, and no
+    statement is overdue unless the owner lifted the block. Without it, only a settled balance
+    (`GOODS_MAY_LEAVE_BALANCES`) lets goods leave; nothing else should restate the rule.
     """
 
-    return balance in GOODS_MAY_LEAVE_BALANCES
+    if balance in GOODS_MAY_LEAVE_BALANCES:
+        return True
+    if account is None or balance not in _OWING_BALANCES:
+        # A refunded or overpaid order is not money the account can carry.
+        return False
+    return account_handover_refusal(account) is None
+
+
+#: The balances on which money is still owed, the only ones the account can carry.
+_OWING_BALANCES: Final = frozenset({OrderBalanceStatus.UNPAID, OrderBalanceStatus.PARTIALLY_PAID})
 
 
 class CollectionRefusal(StrEnum):

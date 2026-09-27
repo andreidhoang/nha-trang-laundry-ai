@@ -594,6 +594,73 @@ NOTICE_PUBLISHED = {
     "legal_entity": "CÔNG TY TNHH A & T CARE",
 }
 
+#: PAYMENT-002 (DEC-035): a business customer with an account (công nợ), its card and its month.
+ACCOUNT_CUSTOMER_ID = "77777777-8888-4333-8444-aaaaaaaaaab1"
+ACCOUNT_CUSTOMER_DETAIL = {
+    "customer": {
+        **CUSTOMER_PROFILE,
+        "customer_id": ACCOUNT_CUSTOMER_ID,
+        "display_name": "Homestay Biển Xanh",
+        "kind": "BUSINESS",
+        "row_version": 1,
+    },
+    "open_orders": [],
+    "open_orders_truncated": False,
+    "recent_orders": [],
+    "credits": [],
+    "credits_truncated": False,
+    "links": [],
+}
+ACCOUNT_STATEMENT_FIGURES = {
+    "month": "2026-09",
+    "opening_vnd": 0,
+    "charges_vnd": 245_000,
+    "charge_count": 2,
+    "payments_vnd": 0,
+    "payment_count": 0,
+    "closing_vnd": 245_000,
+    "due_on": "2026-10-15",
+}
+ACCOUNT_READ = {
+    "customer_id": ACCOUNT_CUSTOMER_ID,
+    "customer_kind": "BUSINESS",
+    "terms_published": True,
+    "recommended_limit_vnd": 3_000_000,
+    "open_refusal": "ACCOUNT_ALREADY_OPEN",
+    "replayed": False,
+    "account": {
+        "account_id": "88888888-9999-4333-8444-aaaaaaaaaab2",
+        "status": "ACTIVE",
+        "credit_limit_vnd": 300_000,
+        "outstanding_vnd": 245_000,
+        "available_vnd": 55_000,
+        "overdue_vnd": 0,
+        "overdue_month": None,
+        "overdue_due_on": None,
+        "overdue_block_lifted_until": None,
+        "block_lifted": False,
+        "handover_refusal": None,
+        "current_statement": ACCOUNT_STATEMENT_FIGURES,
+        "open_charges": [
+            {
+                "charge_id": "99999999-0000-4333-8444-aaaaaaaaaab3",
+                "order_id": "99999999-0000-4333-8444-aaaaaaaaaab4",
+                "charged_at": "2026-09-20T03:00:00+00:00",
+                "amount_vnd": 125_000,
+                "remaining_vnd": 125_000,
+                "ticket_number": 12,
+                "ticket_issued_on": "2026-09-20",
+            }
+        ],
+        "open_charges_truncated": False,
+        "recent_payments": [],
+        "recent_payments_truncated": False,
+        "opened_at": "2026-09-01T03:00:00+00:00",
+        "row_version": 7,
+        "query_version": "account-statement-v1:0000000000000000",
+    },
+}
+
 #: CONTACT-PICK-001: one returning channel customer of the store, as `GET …/contacts/recent` returns
 #: it, and a second binding the conversation hand-off names. Neither is typed anywhere.
 RECENT_CONTACT = "55555555-6666-4333-8444-999999999991"
@@ -2018,6 +2085,60 @@ with sync_playwright() as playwright:
             body = {"store_ids": [STORE]}
         elif "/customer-privacy-notice" in url:
             body = NOTICE_PUBLISHED if state.get("notice_published") else NOTICE_UNPUBLISHED
+        elif "/account/payments" in url and route.request.method == "POST":
+            # PAYMENT-002: Thu công nợ, captured with its key and If-Match.
+            state.setdefault("account_writes", []).append(
+                {
+                    "path": url.split("?")[0],
+                    "body": route.request.post_data,
+                    "if_match": route.request.headers.get("if-match"),
+                    "key": route.request.headers.get("idempotency-key"),
+                }
+            )
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "payment_id": "99999999-0000-4333-8444-aaaaaaaaaab5",
+                        "account_id": ACCOUNT_READ["account"]["account_id"],
+                        "amount_vnd": 125_000,
+                        "method": "TIEN_MAT",
+                        "bank_ref_last": None,
+                        "recorded_at": "2026-09-27T03:00:00+00:00",
+                        "allocations": [
+                            {
+                                "order_id": "99999999-0000-4333-8444-aaaaaaaaaab4",
+                                "amount_vnd": 125_000,
+                                "settled": True,
+                                "position": 1,
+                            }
+                        ],
+                        "outstanding_after_vnd": 120_000,
+                        "row_version": 8,
+                        "replayed": False,
+                    }
+                ),
+            )
+            return
+        elif "/account/statements/" in url:
+            body = {
+                "account_id": ACCOUNT_READ["account"]["account_id"],
+                "customer_id": ACCOUNT_CUSTOMER_ID,
+                "customer_name": "Homestay Biển Xanh",
+                "statement": ACCOUNT_STATEMENT_FIGURES,
+                "month_ended": False,
+                "frozen": None,
+                "charges": [],
+                "charges_truncated": False,
+                "payments": [],
+                "payments_truncated": False,
+                "query_version": "account-statement-v1:0000000000000000",
+            }
+        elif url.split("?")[0].endswith(f"/customers/{ACCOUNT_CUSTOMER_ID}/account"):
+            body = ACCOUNT_READ
+        elif url.split("?")[0].endswith(f"/customers/{ACCOUNT_CUSTOMER_ID}"):
+            body = ACCOUNT_CUSTOMER_DETAIL
         elif url.split("?")[0].endswith("/customers") and route.request.method == "POST":
             # CUSTOMER-001: what the sheet sends, under what key. Never a query string.
             state.setdefault("customer_posts", []).append(
@@ -7961,6 +8082,79 @@ with sync_playwright() as playwright:
         page.locator("[data-nav-denied='/expenses']").count() == 1,
     )
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
+
+    print()
+    print("=" * 74)
+    print("22. CÔNG NỢ — the account card, Thu công nợ with its key and If-Match, the statement")
+    print("=" * 74)
+    state["account_writes"] = []
+    page.goto("about:blank")
+    page.goto(
+        f"http://localhost:{PORT}/#/customers/{ACCOUNT_CUSTOMER_ID}", wait_until="networkidle"
+    )
+    page.wait_for_timeout(1200)
+    card = page.locator("#customer-account-section")
+    check(
+        "a business customer's page shows the account card with the server's figures",
+        card.count() == 1
+        and "245.000" in card.inner_text()
+        and "Hạn mức 300.000" in card.inner_text()
+        and "15/10/2026" in card.inner_text(),
+        card.inner_text()[:200] if card.count() else "absent",
+    )
+    page.locator("#account-collect").click()
+    page.wait_for_timeout(400)
+    page.locator("#account-payment-edit").click()
+    page.locator("#account-payment-amount").click()
+    page.keyboard.type("125.000", delay=10)
+    page.locator("#account-payment-submit").click()
+    page.wait_for_timeout(1000)
+    writes = state["account_writes"]
+    sent = json.loads(writes[0]["body"] or "{}") if writes else {}
+    check(
+        "Thu công nợ sends the typed integer and the method, with If-Match and a key",
+        len(writes) == 1
+        and sent.get("amount_vnd") == 125_000
+        and sent.get("method") == "TIEN_MAT"
+        and writes[0]["if_match"] == '"7"'
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    check(
+        "the sheet says which order the payment reached",
+        "Trừ vào: Phiếu 12" in open_dialog_text() and "(đủ)" in open_dialog_text(),
+        open_dialog_text()[:200],
+    )
+    page.keyboard.press("Escape")
+    SESSION_OK["roles"] = ["OPERATOR"]
+    page.goto("about:blank")
+    page.goto(
+        f"http://localhost:{PORT}/#/customers/{ACCOUNT_CUSTOMER_ID}", wait_until="networkidle"
+    )
+    page.wait_for_timeout(1200)
+    check(
+        "the counter collects, but the owner's controls are not drawn for it",
+        page.locator("#account-collect").count() == 1
+        and page.locator("#account-limit-edit").count() == 0
+        and page.locator("#account-status").count() == 0,
+    )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    page.goto("about:blank")
+    page.goto(
+        f"http://localhost:{PORT}/#/customers/{ACCOUNT_CUSTOMER_ID}/statement/2026-09",
+        wait_until="networkidle",
+    )
+    page.wait_for_timeout(1200)
+    paper = page.locator("#statement-paper")
+    check(
+        "the statement prints the server's closing and due date",
+        paper.count() == 1
+        and "Cuối kỳ" in paper.inner_text()
+        and "245.000" in paper.inner_text()
+        and "15/10/2026" in paper.inner_text()
+        and page.locator("#statement-print").is_enabled(),
+        paper.inner_text()[:200] if paper.count() else "absent",
+    )
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

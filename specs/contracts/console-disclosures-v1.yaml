@@ -8,14 +8,14 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
   and verified by scripts/verify_contracts.py against a fresh generation, so a new disclosure cannot land
   unregistered and a reworded one cannot pass unnoticed: a slot''s identity includes the hash of its text.'
 counts:
-  ABSENT_TABLE: 4
+  ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 495
+  DESCRIPTIVE: 502
   MODEL_SEAM: 2
   POLICY_BOUND: 1
-  REPOSITORY_ROLES: 10
+  REPOSITORY_ROLES: 12
   SERVER_GATE: 15
-total: 528
+total: 536
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1927,6 +1927,30 @@ disclosures:
     why: The route gate for this capability admits every role, so binding to it could never fail. The
       claim is really enforced by an exact role set in the repository layer, and the test asserts the
       console's list equals it.
+- slot_id: core/rbac.js#why:f665ef31a243
+  module: core/rbac.js
+  key: why
+  text: Chỉ chủ tiệm mở công nợ, đặt hạn mức, ngưng công nợ hay tạm mở chặn (DEC-035).
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: ACCOUNTS_OWNER
+    module: nha_trang_laundry_db.accounts
+    symbol: ACCOUNT_OWNER_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
+- slot_id: core/rbac.js#why:dc24651d912b
+  module: core/rbac.js
+  key: why
+  text: Thu công nợ và giao đồ ghi công nợ cần vai trò vận hành đã xác thực hai bước.
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: ACCOUNTS_COLLECT
+    module: nha_trang_laundry_db.accounts
+    symbol: ACCOUNT_COUNTER_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
 - slot_id: core/rbac.js#why:c2476af7e68f
   module: core/rbac.js
   key: why
@@ -1937,6 +1961,31 @@ disclosures:
     gate: require_operations_staff
     why: The console declares which roles and MFA state this capability needs. The test probes the named
       server gate and requires the console to be no more permissive than it is.
+- slot_id: screens/accountStatement.js#hint:78898b34a930
+  module: screens/accountStatement.js
+  key: hint
+  text: Khi chủ tiệm chốt tháng, số liệu được lưu lại đúng như lúc chốt. Tháng chưa chốt thì số liệu tính
+    tới lúc đọc.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/accountStatement.js#notice:5725113a330c
+  module: screens/accountStatement.js
+  key: notice
+  text: Sao kê chỉ có khi chủ tiệm đã mở công nợ cho khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/accountStatement.js#notice__title:9d6c53944ef6
+  module: screens/accountStatement.js
+  key: notice__title
+  text: Địa chỉ này không chứa mã khách và tháng hợp lệ
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/approvals.js#hint:adc3c4f2811c
   module: screens/approvals.js
   key: hint
@@ -2687,24 +2736,28 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:09965b16428a
+- slot_id: screens/gaps.js#missing:d9e57959468f
   module: screens/gaps.js
   key: missing
-  text: 'Đặt cọc, trả nhiều lần, tiền mặt hay chuyển khoản đã có trên trang chi tiết đơn (PAYMENT-001).
-    Còn thiếu khách công nợ: customer_accounts, account_statements và payment_allocations — hạn mức, sao
-    kê tháng và phân bổ một khoản thu vào nhiều đơn.'
+  text: Thu tiền tại quầy (đặt cọc, nhiều lần, tiền mặt hay chuyển khoản) và khách công nợ (hạn mức, sao
+    kê tháng, tiền trả trừ vào đơn nợ cũ nhất) đã có. Còn thiếu hoá đơn điện tử, và xác nhận chuyển khoản
+    tự động — không có nguồn dữ liệu ngân hàng.
   binding:
-    kind: ABSENT_TABLE
-    tables:
-    - customer_accounts
-    - account_statements
-    - payment_allocations
-    why: Named literally in the sentence and structurally identical to the four gap notices already bound.
-      It was parked DESCRIPTIVE, which is the misclassification this item exists to correct.
-- slot_id: screens/gaps.js#blockedBy:939381d5d4c8
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#blockedBy:6261f5ba6f99
   module: screens/gaps.js
   key: blockedBy
-  text: PAYMENT-002 — DEC-035 đã quyết; xây sau hồ sơ khách hàng (CUSTOMER-001).
+  text: Chưa xác nhận giá đã gồm thuế hay chưa, nên chưa xuất hoá đơn; chưa có kết nối ngân hàng
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:b011b45b29af
+  module: screens/gaps.js
+  key: today
+  text: Chuyển khoản ghi khi đã thấy tiền vào tài khoản. Sao kê công nợ in từ trang của khách.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -4501,6 +4554,22 @@ disclosures:
   module: screens/today.js
   key: hint
   text: Chọn một cửa hàng để xem số đơn trong ngày.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/account.js#hint:81e6cb94a89b
+  module: ui/account.js
+  key: hint
+  text: Tiền trừ vào đơn nợ cũ nhất trước. Ghi rồi không sửa được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/account.js#hint:c4ad5307e6de
+  module: ui/account.js
+  key: hint
+  text: Mỗi lần mở chặn đều được ghi lại, kèm lý do.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

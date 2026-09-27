@@ -218,7 +218,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # `ReportRepository.store_report` behind the route's own `require_report_reader`.
     # 10 since CUSTOMER-001: `CUSTOMERS_READ`, `CUSTOMERS_WRITE` and `CUSTOMERS_ERASE` bind to the
     # exact sets `CustomerRepository` re-checks with MFA and store membership. 7 + 3 = 10.
-    assert counts.get("REPOSITORY_ROLES") == 10
+    # 12 since PAYMENT-002: `ACCOUNTS_OWNER` and `ACCOUNTS_COLLECT` bind to the sets
+    # `AccountRepository` re-checks with MFA and store membership. 10 + 2 = 12.
+    assert counts.get("REPOSITORY_ROLES") == 12
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
     # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
@@ -228,7 +230,11 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # same transaction as the credit. The three tables it *named* are still absent, so this test
     # would have stayed green over a false sentence — which is the reason the entry and its
     # binding were deleted together rather than the binding being left to outlive its claim.
-    assert counts.get("ABSENT_TABLE") == 4
+    # 3 since PAYMENT-002: the payments gap named customer_accounts, account_statements and
+    # payment_allocations as absent; `0059` built the account half, this failed, and the sentence
+    # and its binding went together. What it now says is missing (an e-invoice, a bank feed) has no
+    # table to wait for.
+    assert counts.get("ABSENT_TABLE") == 3
     # ABSENT_ROUTE is gone entirely: both slots claimed the intake and production transitions
     # had no route, and both became false on 2026-08-29 when the routes were added.
     assert "ABSENT_ROUTE" not in counts
@@ -930,7 +936,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   (EXPORT_QUERY_VERSION_RETIRED, EXPORT_MONEY_INCONSISTENT), the approvals card's
     #   retired-shape notice and #/exports' retired-request hint. Re-keyed, none retired: the
     #   #/exports ⓘ and the export gap's `missing` now say the money is the payment ledger's.
-    assert sum(counts.values()) == _registry()["total"] == 528
+    # PAYMENT-002 (round 7 wave 2, DEC-035 B2B half): 524 + 10 - 2 = 532. Added: two
+    #   REPOSITORY_ROLES `why` (ACCOUNTS_OWNER, ACCOUNTS_COLLECT), the statement screen's lines,
+    #   the account card's hints, and the payments gap's new `missing`/`blockedBy`/`today`. Retired:
+    #   the gap's old `missing` (ABSENT_TABLE on customer_accounts & co., which `0059` created) and
+    #   its `blockedBy` ("PAYMENT-002 ... xây sau"), both false once the account half exists.
+    # PAYMENT-002 merged onto EXPORT-PAYMENTS-001 (round 7 wave 2 integration): 528 + 10 - 2 = 536.
+    assert sum(counts.values()) == _registry()["total"] == 536
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -943,11 +955,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 23 with REPORT-DASHBOARD-001 merged on top: + `REPORTS_READ`.
     # 26 after CUSTOMER-001: + `CUSTOMERS_READ`, `CUSTOMERS_WRITE`, `CUSTOMERS_ERASE`, each on the
     #   exact role set `CustomerRepository` enforces.
+    # 28 after PAYMENT-002: + `ACCOUNTS_OWNER`, `ACCOUNTS_COLLECT`, on `AccountRepository`'s sets.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 26
+        == 28
     )
 
 

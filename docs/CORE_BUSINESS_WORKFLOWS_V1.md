@@ -171,7 +171,7 @@ method, the optional last characters of the bank reference, the staff member and
 | The customer hands over more than remains | refused — the counter gives change; no store credit is created | `OVERPAYMENT_REFUSED` |
 | A transfer nobody has seen arrive | refused; the sheet asks "Đã thấy tiền vào tài khoản" | `TRANSFER_NOT_SEEN` |
 | "The customer takes the goods now" with money still owed | refused: goods leave only when paid | `HANDOVER_REQUIRES_FULL_PAYMENT` |
-| Pickup, `RELEASE` for a self-collect order, or `HAND_OVER` while partly paid | refused (`settlement.goods_may_leave`, the seam where `PAYMENT-002`'s account customers will be admitted) | `COLLECTION_REQUIRES_PAYMENT` / `INVALID_STATE_TRANSITION` |
+| Pickup, `RELEASE` for a self-collect order, or `HAND_OVER` while partly paid | refused (`settlement.goods_may_leave`; an account customer's order leaves through *Giao đồ — ghi công nợ*, §4.1) | `COLLECTION_REQUIRES_PAYMENT` / `INVALID_STATE_TRANSITION` |
 | Quote has no single total (unresolved fee) | no payment can be measured against it | `NO_PRESENTABLE_TOTAL` (`DEC-003`) |
 | Quote is a range | same | `NO_PRESENTABLE_TOTAL` / `TOTAL_IS_A_RANGE` (`DEC-001`) |
 | A delivery order paid in full "and collected at the counter" | the tick and the mode disagree | `COLLECTION_WAS_NOT_BY_THE_CUSTOMER` (`DEC-003`) |
@@ -211,8 +211,35 @@ to charge.
 flag move in the same transaction, and `0056` refuses at commit a balance the ledger does not
 support.
 
-**Not yet:** account customers (công nợ: limit, monthly statement, allocation across orders) are
-`PAYMENT-002`, after `CUSTOMER-001`.
+### 4.1 Account customers (công nợ) — `PAYMENT-002`, the B2B half of `DEC-035`
+
+Hotels, homestays and spas take laundry unpaid and settle monthly. The terms are `DEC-035`'s and
+run only once the owner publishes them (`scripts/publish_account_terms.py`,
+`templates/account-terms-dec-035.json`); before that, opening an account and putting an order on
+one are refused `ACCOUNT_TERMS_UNPUBLISHED`.
+
+| What happens | Who | What the server does | Reason code if refused |
+|---|---|---|---|
+| **Mở công nợ** on a `BUSINESS` customer's page, with a limit typed or left empty | owner (MFA) | `customer_accounts` row; no limit typed = nothing leaves on the account; 3.000.000 ₫ is a hint only | `ACCOUNT_REQUIRES_BUSINESS`, `ACCOUNT_ALREADY_OPEN`, `ACCOUNT_LIMIT_INVALID` |
+| **Sửa hạn mức**, **Ngưng / Cho dùng lại công nợ** | owner | `If-Match` on the account; every change an event | `NOTHING_TO_CHANGE` |
+| **Giao đồ — ghi công nợ** on a finished order of an account customer | counter | re-decided under the account's then the order's lock by `goods_may_leave(balance, account)`: balance `ON_ACCOUNT`, a charge row of what the order still owed, the handover recorded for a counter customer; then **Giao đồ & đóng đơn** closes it | `ACCOUNT_LIMIT_UNSET`, `ACCOUNT_LIMIT_EXCEEDED` (outstanding + this order > limit; equal is within), `ACCOUNT_OVERDUE`, `ACCOUNT_SUSPENDED`, `GOODS_NOT_READY_FOR_HANDOVER` |
+| **Thu công nợ** on the customer's page | counter | one account payment, split **oldest order first** into ordinary `order_payments` rows tied by `customer_account_allocations`; an order paid off gets its settlement (`EXACT_PAYMENT_ON_ACCOUNT`) and reads `PAID` — a completed one included | `OVERPAYMENT_REFUSED` (more than the account owes), `TRANSFER_NOT_SEEN`, `NOTHING_OWED` |
+| **Tạm mở chặn** while a statement is overdue | owner | a lift through a local day (today to 31 days ahead), with a reason kept on its own row | `LIFT_REASON_REQUIRED`, `LIFT_EXPIRY_INVALID` |
+
+**Money owed, not money collected.** An order on the account writes no payment row, so Hôm nay and
+the report do not count it; the account payment is counted on the day it is taken, by its method,
+once (it *is* the payment rows). A counter payment on an `ON_ACCOUNT` order is refused
+(`NOTHING_OWED`): its money comes through the account.
+
+**The statement** is the calendar month in `Asia/Ho_Chi_Minh`: opening balance, charges, payments,
+closing balance, **due the 15th of the next month**, all summed by PostgreSQL
+(`account-statement-v1`). The customer's page shows this month's; **Xem sao kê** opens any month,
+printable. The owner freezes a month after it ends with `scripts/close_account_statements.py`.
+
+**Overdue.** From the 16th, if any money charged up to the end of the month before is still unpaid
+(payments settle the oldest money first), new orders are paid at the counter (`ACCOUNT_OVERDUE`)
+until it is paid or the owner lifts the block. The block reads the ledgers, not the frozen copy, so
+a month nobody closed still blocks.
 
 ---
 

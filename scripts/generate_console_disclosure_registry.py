@@ -121,6 +121,11 @@ CAPABILITY_REPOSITORY_ROLES: dict[str, tuple[str, str]] = {
     "CUSTOMERS_READ": ("nha_trang_laundry_db.customers", "CUSTOMER_READ_ROLES"),
     "CUSTOMERS_WRITE": ("nha_trang_laundry_db.customers", "CUSTOMER_WRITE_ROLES"),
     "CUSTOMERS_ERASE": ("nha_trang_laundry_db.customers", "CUSTOMER_ERASE_ROLES"),
+    # PAYMENT-002 (`DEC-035`). The routes gate on `require_account_owner` and
+    # `require_operations_staff`; `AccountRepository` re-checks the exact sets below with MFA and
+    # store membership. Bound to the repository sets, as CUSTOMER-001's are.
+    "ACCOUNTS_OWNER": ("nha_trang_laundry_db.accounts", "ACCOUNT_OWNER_ROLES"),
+    "ACCOUNTS_COLLECT": ("nha_trang_laundry_db.accounts", "ACCOUNT_COUNTER_ROLES"),
 }
 
 #: Authored bindings, keyed by slot id. A slot absent from this table is registered `DESCRIPTIVE`.
@@ -159,17 +164,11 @@ BINDINGS: dict[str, dict[str, Any]] = {
         "operational data and that what the assistant does not know, it says it does not know. The "
         "same one-line brain swap falsifies it.",
     },
-    # Re-keyed by PAYMENT-001 (`DEC-035`) from `9834ff94fcd7`. The counter half of payments now
-    # exists (`order_payments`, `0056`), so the sentence no longer says payments are missing; it
-    # names the account half's tables (PAYMENT-002), which are still absent. The binding moves with
-    # it and keeps its purpose: the day those tables exist, this fails and the sentence is reworded.
-    "screens/gaps.js#missing:09965b16428a": {
-        "kind": "ABSENT_TABLE",
-        "tables": ["customer_accounts", "account_statements", "payment_allocations"],
-        "why": "Named literally in the sentence and structurally identical to the four gap notices "
-        "already bound. It was parked DESCRIPTIVE, which is the misclassification this item exists "
-        "to correct.",
-    },
+    # The `ABSENT_TABLE` binding PAYMENT-001 re-keyed to `09965b16428a` is gone, with the sentence
+    # it bound: it named the account half's tables as missing, and PAYMENT-002 (`0059`) created
+    # them -- its test failing is how the sentence was found and reworded. The new sentence names
+    # no table (what is still absent is an e-invoice and a bank feed, which have no table to wait
+    # for), so the binding dies with the limitation rather than being re-keyed to something else.
     # The `RESPONSE_SHAPE` binding on `screens/gaps.js#missing:5f121897a2aa` is gone, with the entry
     # it bound. It claimed `SessionResponse` carried no `session_id`, which is why the console could
     # not name a session to revoke; SESSION-LIST-001 added the field and the two session reads, and

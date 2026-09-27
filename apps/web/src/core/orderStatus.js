@@ -116,7 +116,10 @@ export function orderProgress(order) {
   else if (released) states = ["done", "done", "done", "current"];
   else if (washed) states = ["done", "done", "current", "todo"];
   else states = ["done", interrupted ? "blocked" : "current", "todo", "todo"];
-  const labels = ["Nhận đồ", "Đang giặt", "Sẵn sàng", delivery ? "Đã giao" : "Đã trả"];
+  // PAYMENT-002: an order that left on the customer's account is owed, not paid.
+  const last =
+    order?.balance === "ON_ACCOUNT" ? "Ghi công nợ" : delivery ? "Đã giao" : "Đã trả";
+  const labels = ["Nhận đồ", "Đang giặt", "Sẵn sàng", last];
   return labels.map((label, index) => ({ label, state: states[index] }));
 }
 

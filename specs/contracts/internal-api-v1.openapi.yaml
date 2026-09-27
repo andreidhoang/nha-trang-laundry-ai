@@ -164,6 +164,40 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}/account-charge:
+    post:
+      operationId: charge_order_to_account
+      summary: '*Giao đồ — ghi công nợ*: the finished goods leave, what the order owes goes on the account.'
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_account_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/orders/{order_id}/account-handover:
+    get:
+      operationId: read_order_account_handover
+      summary: 'For the order page: may this order leave on its customer''s account now, and if not, why.'
+      x-authorization-dependencies:
+      - require_customer_reader
+      - get_account_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/orders/{order_id}/capture:
     get:
       operationId: read_order_capture
@@ -796,6 +830,142 @@ paths:
           description: Success response.
       parameters:
       - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/customers/{customer_id}/account:
+    get:
+      operationId: read_customer_account
+      summary: 'The customer''s account (công nợ): limit, outstanding, this month''s statement, overdue.'
+      x-authorization-dependencies:
+      - require_customer_reader
+      - get_account_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: update_customer_account
+      summary: The owner types or changes the limit, or stops or restarts the account, under `If-Match`.
+      x-authorization-dependencies:
+      - require_account_owner
+      - get_account_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: open_customer_account
+      summary: The owner opens an account for a BUSINESS customer, with a limit or none yet (`DEC-035`).
+      x-authorization-dependencies:
+      - require_account_owner
+      - get_account_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/customers/{customer_id}/account/block-lift:
+    post:
+      operationId: lift_customer_account_block
+      summary: The owner lets new orders leave on the account through a day while a statement is overdue.
+      x-authorization-dependencies:
+      - require_account_owner
+      - get_account_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/customers/{customer_id}/account/payments:
+    post:
+      operationId: record_customer_account_payment
+      summary: '*Thu công nợ*: a payment against the account, allocated to the oldest unpaid orders first.'
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_account_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}:
+    get:
+      operationId: read_customer_account_statement
+      summary: 'One month''s statement: opening, charges, payments, closing, due the 15th of the next
+        month.'
+      x-authorization-dependencies:
+      - require_customer_reader
+      - get_account_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: month
         in: path
         required: true
         schema:

@@ -247,6 +247,23 @@ DECLARED_CONTROLS = (
     "customer.call",
     "customer.zalo",
     "customer.erase",
+    # PAYMENT-002 (DEC-035): công nợ -- the owner opens an account and types its limit, the order
+    # page's "Giao đồ — ghi công nợ", Thu công nợ on the customer's page, the printable statement,
+    # and the owner's lift of an overdue block.
+    "customer.account-open",
+    "customer.account-open-save",
+    "customer.account-limit",
+    "customer.account-limit-save",
+    "orderDetail.account-charge",
+    "orderDetail.account-confirm",
+    "customer.account-collect",
+    "customer.account-payment-edit",
+    "customer.account-payment-amount",
+    "customer.account-payment-submit",
+    "customer.account-statement",
+    "statement.print",
+    "customer.account-lift",
+    "customer.account-lift-save",
 )
 
 PASS: list[str] = []
@@ -5584,6 +5601,694 @@ def scenario_export_payments(console: Console) -> None:
     context.close()
 
 
+# --- PAYMENT-002 (DEC-035, B2B half): công nợ --------------------------------------------
+
+
+def _script(name: str) -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), name)
+
+
+def _owner_id() -> str:
+    return sql("SELECT id FROM staff_users WHERE oidc_subject = 'demo-owner'")
+
+
+def _account_customer(console: Console, name: str) -> tuple[str, str]:
+    """A business customer recorded through the route the counter's sheet uses. Returns the id and
+    the last four digits the counter finds them by."""
+
+    digits = "09" + str(uuid.uuid4().int)[:8]
+    created = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/customers",
+        {
+            "phone": digits,
+            "display_name": name,
+            "kind": "BUSINESS",
+            "service_consent": True,
+        },
+    )
+    if created["status"] != 201:
+        raise AssertionError(f"could not record {name}: {created['status']} {created['text']}")
+    return str(created["body"]["customer"]["customer_id"]), digits[-4:]
+
+
+def _account_order(console: Console, customer_id: str, last4: str, kg: str) -> dict[str, Any]:
+    """An order for the account customer, taken on Nhận đồ the way the counter takes one -- found by
+    four digits, one tap, the bag, the price, one press -- then washed to the shelf over the API."""
+
+    console.open("#/new", settle=1500)
+    console.type_into("#new-customer-search", last4, "newOrder.customer-search")
+    console.page.wait_for_timeout(1500)
+    row = console.page.locator(f"#new-customer-search-list [data-customer='{customer_id}']")
+    (intake,) = console.press_capturing(row.first, "/order-requests")
+    touched("newOrder.customer-pick")
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#new-add-line", timeout=15000)
+    if intake["status"] >= 300:
+        raise AssertionError(f"could not open the intake: {intake['text']}")
+    console.add_line("STANDARD_WASH_DRY", kg)
+    quote = console.price()
+    if quote["status"] >= 300:
+        raise AssertionError(f"could not price: {quote['text']}")
+    done = console.confirm()
+    order = done["order"] or {}
+    if order.get("status", 0) >= 300:
+        raise AssertionError(f"could not create the order: {order.get('text')}")
+    order_id = str(order["body"]["order_id"])
+    version = order["body"]["row_version"]
+    for path, body in (
+        ("intake-transition", {"target": "RECEIVED_PENDING_INSPECTION", "slot_approved": False}),
+        ("intake-transition", {"target": "ACCEPTED", "slot_approved": True}),
+        ("transition", {"target": "STORE_CONFIRMATION_PENDING"}),
+        ("transition", {"target": "CONFIRMED"}),
+        ("transition", {"target": "ACTIVE"}),
+        ("production-transition", {"target": "QUEUED"}),
+        ("production-transition", {"target": "IN_PROCESS"}),
+        ("production-transition", {"target": "QUALITY_CHECK"}),
+        ("production-transition", {"target": "READY_AT_STORE"}),
+    ):
+        moved = console.call("POST", f"/internal/v1/orders/{order_id}/{path}", body, version)
+        if moved["status"] >= 300:
+            raise AssertionError(f"could not move to {body}: {moved['text']}")
+        version = moved["body"]["row_version"]
+    read = console.call("GET", f"/internal/v1/orders/{order_id}")["body"] or {}
+    return read
+
+
+def _press_patch(console: Console, locator: Any, suffix: str) -> dict[str, Any]:
+    """`press_capturing` for a PATCH: the owner's limit is changed under `If-Match`."""
+
+    with console.page.expect_response(
+        lambda r: r.request.method == "PATCH" and r.url.split("?")[0].endswith(suffix),
+        timeout=20000,
+    ) as waited:
+        locator.click()
+    response = waited.value
+    text = response.text()
+    try:
+        body = json.loads(text)
+    except ValueError:
+        body = None
+    return {"status": response.status, "body": body, "text": text[:600]}
+
+
+def _account_read(console: Console, customer_id: str) -> dict[str, Any]:
+    read = console.call("GET", f"/internal/v1/stores/{STORE}/customers/{customer_id}/account")
+    return read.get("body") or {}
+
+
+def _takings(console: Console) -> dict[str, Any]:
+    return console.call("GET", f"/internal/v1/stores/{STORE}/settlements/today").get("body") or {}
+
+
+def _charge_on_page(console: Console, order_id: str) -> tuple[dict[str, Any], bool]:
+    """On the order page: "Giao đồ — ghi công nợ", its sheet, the confirm; then the success state's
+    closing step. Returns the charge answer and whether the order closed."""
+
+    console.open_order(order_id, settle=2200)
+    console.page.locator("#order-account-charge").first.click()
+    touched("orderDetail.account-charge")
+    console.page.wait_for_timeout(500)
+    (charged,) = console.press_capturing(
+        console.page.locator("#order-account-confirm"), "/account-charge"
+    )
+    touched("orderDetail.account-confirm")
+    console.page.wait_for_timeout(1800)
+    closing = console.page.locator("dialog[open] button[data-step=HAND_OVER]")
+    closed = False
+    if closing.count():
+        closing.first.click()
+        console.page.wait_for_timeout(2000)
+        closed = True
+    return charged, closed
+
+
+def scenario_accounts(console: Console) -> None:
+    """`PAYMENT-002` (`DEC-035`, B2B half): công nợ. Refused until the owner publishes the terms; an
+    account opened with no limit refuses by name; the owner types a limit; two orders of a homestay
+    leave unpaid and a third is refused over the limit; a payment reaches the oldest first; the
+    statement totals it; an overdue statement blocks a spa's new order until the owner lifts it.
+    Every figure is read back from the server, never computed."""
+
+    head("22", "CÔNG NỢ — refused until the owner publishes the terms (DEC-035)")
+    if not arguments.database_url:
+        ok("publishing the terms uses the owner's script, which needs --database-url", False)
+        return
+    owner = _owner_id()
+    console.sign_in("demo-owner")
+    notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
+    if (notice.get("body") or {}).get("published") is not True:
+        # Only with --only: the customers scenario publishes the notice in a full run.
+        published = subprocess.run(
+            [
+                sys.executable,
+                _script("publish_privacy_notice.py"),
+                "--actor-id",
+                owner,
+                "--database-url",
+                arguments.database_url,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        note(
+            "the privacy notice was unpublished; the owner published it: "
+            + published.stdout.strip()
+        )
+    homestay, homestay_last4 = _account_customer(console, "Homestay Biển Xanh")
+    terms_rows = sql(
+        "SELECT count(*) FROM configuration_versions WHERE config_type = 'ACCOUNT_TERMS'"
+    )
+    unpublished = terms_rows == "0"
+    ok(
+        "the account terms are not published on this stack yet (the refusal can only be proven "
+        "before it)",
+        unpublished,
+        terms_rows,
+    )
+    console.open(f"#/customers/{homestay}", settle=2200)
+    section = console.page.locator("#customer-account-section")
+    opener = console.page.locator("#account-open")
+    if unpublished:
+        ok(
+            "the homestay's page says in tier 1 what the owner must do, and 'Mở công nợ' is off",
+            "Chủ tiệm cần công bố điều khoản công nợ trước khi mở công nợ" in section.inner_text()
+            and opener.count() == 1
+            and opener.is_disabled(),
+            section.inner_text()[:160].replace("\n", " | ") if section.count() else "absent",
+        )
+        refused = console.call(
+            "POST", f"/internal/v1/stores/{STORE}/customers/{homestay}/account", {}
+        )
+        ok(
+            "the server itself refuses: 422 ACCOUNT_TERMS_UNPUBLISHED (DEC-035), nothing written",
+            refused["status"] == 422
+            and (refused.get("body") or {}).get("detail", {}).get("reason_code")
+            == "ACCOUNT_TERMS_UNPUBLISHED"
+            and sql(f"SELECT count(*) FROM customer_accounts WHERE customer_id = '{homestay}'")
+            == "0",
+            refused["text"][:200],
+        )
+        operator = sql("SELECT id FROM staff_users WHERE oidc_subject = 'demo-operations'")
+        stranger = subprocess.run(
+            [
+                sys.executable,
+                _script("publish_account_terms.py"),
+                "--actor-id",
+                operator,
+                "--database-url",
+                arguments.database_url,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        ok(
+            "nobody but the owner can publish the terms",
+            stranger.returncode == 3 and "refused" in stranger.stderr,
+            stranger.stderr.strip()[:120],
+        )
+        head("22a", "CÔNG BỐ — the owner publishes the terms with the script")
+        publish = subprocess.run(
+            [
+                sys.executable,
+                _script("publish_account_terms.py"),
+                "--actor-id",
+                owner,
+                "--database-url",
+                arguments.database_url,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        ok(
+            "scripts/publish_account_terms.py publishes them (the owner's act, not the console's)",
+            publish.returncode == 0 and "account terms published" in publish.stdout,
+            (publish.stdout or publish.stderr).strip()[:160],
+        )
+    else:
+        note(
+            "the terms were published before this scenario began, so their refusal is not provable "
+            "here: run it on a stack that has not published them"
+        )
+
+    head("22b", "MỞ CÔNG NỢ — the owner opens it with no limit typed: nothing leaves on it")
+    console.open(f"#/customers/{homestay}", settle=2200)
+    console.page.locator("#account-open").click()
+    touched("customer.account-open")
+    console.page.wait_for_timeout(500)
+    hint = console.page.locator("#account-limit-hint")
+    ok(
+        "the sheet shows the recommended 3.000.000 ₫ as a hint only; the field is empty",
+        hint.count() == 1
+        and "3.000.000" in hint.inner_text()
+        and console.page.locator("#account-limit").input_value() == "",
+        hint.inner_text() if hint.count() else "absent",
+    )
+    (opened,) = console.press_capturing(
+        console.page.locator("#account-open-save"), f"/customers/{homestay}/account"
+    )
+    touched("customer.account-open-save")
+    console.page.wait_for_timeout(1500)
+    account = (opened.get("body") or {}).get("account") or {}
+    ok(
+        "opened with no limit: the server says ACCOUNT_LIMIT_UNSET is what a new order meets",
+        opened["status"] == 201
+        and account.get("credit_limit_vnd") is None
+        and account.get("handover_refusal") == "ACCOUNT_LIMIT_UNSET",
+        opened["text"][:200],
+    )
+    ok(
+        "the card says so: 'Chưa có hạn mức — chưa ghi nợ được.'",
+        "Chưa có hạn mức" in console.text(),
+        console.text()[:200].replace("\n", " | "),
+    )
+
+    console.sign_in("demo-operations")
+    orders = [_account_order(console, homestay, homestay_last4, kg) for kg in ("5", "6", "7")]
+    first, second, third = orders
+    note(
+        "three orders of the homestay on the shelf: "
+        + ", ".join(
+            f"{str(item.get('order_id'))[:8]}… {item.get('payable_total_vnd')} ₫" for item in orders
+        )
+    )
+    console.open_order(str(first["order_id"]), settle=2500)
+    why = console.page.locator("#order-account [data-account-refusal]")
+    ok(
+        "the order page says why it cannot leave on the account: no limit typed",
+        why.count() == 1
+        and why.first.get_attribute("data-account-refusal") == "ACCOUNT_LIMIT_UNSET"
+        and "chưa đặt hạn mức" in why.first.inner_text()
+        and console.page.locator("#order-account-charge").count() == 0,
+        why.first.inner_text() if why.count() else console.text()[:160],
+    )
+    refused = console.call(
+        "POST",
+        f"/internal/v1/orders/{first['order_id']}/account-charge",
+        {"collected_by_customer": True},
+        if_match=first["row_version"],
+    )
+    ok(
+        "and the server refuses the charge: 422 ACCOUNT_LIMIT_UNSET, the order still unpaid",
+        refused["status"] == 422
+        and (refused.get("body") or {}).get("detail", {}).get("reason_code")
+        == "ACCOUNT_LIMIT_UNSET"
+        and stored(str(first["order_id"]), "balance_status") == "UNPAID",
+        refused["text"][:200],
+    )
+
+    head("22c", "HẠN MỨC — the owner types the limit: the first two orders exactly")
+    console.sign_in("demo-owner")
+    limit = int(first["payable_total_vnd"]) + int(second["payable_total_vnd"])
+    console.open(f"#/customers/{homestay}", settle=2200)
+    console.page.locator("#account-limit-edit").click()
+    touched("customer.account-limit")
+    console.page.wait_for_timeout(400)
+    console.type_into("#account-limit-new", str(limit))
+    typed = _press_patch(
+        console, console.page.locator("#account-limit-save"), f"/customers/{homestay}/account"
+    )
+    touched("customer.account-limit-save")
+    console.page.wait_for_timeout(1500)
+    ok(
+        "the owner's limit is stored as typed (If-Match on the account's version)",
+        typed["status"] == 200
+        and ((typed.get("body") or {}).get("account") or {}).get("credit_limit_vnd") == limit,
+        typed["text"][:200],
+    )
+
+    head("22d", "GIAO ĐỒ — ghi công nợ: two leave unpaid, the third is refused over the limit")
+    console.sign_in("demo-operations")
+    before = _takings(console)
+    charged, closed = _charge_on_page(console, str(first["order_id"]))
+    ok(
+        "'Giao đồ — ghi công nợ' puts the first order on the account: ON_ACCOUNT, handed over",
+        charged["status"] == 201
+        and (charged.get("body") or {}).get("balance_status") == "ON_ACCOUNT"
+        and (charged.get("body") or {}).get("self_collection_recorded") is True,
+        charged["text"][:200],
+    )
+    read = console.call("GET", f"/internal/v1/orders/{first['order_id']}").get("body") or {}
+    ok(
+        "the sheet's closing step closes it: COMPLETED, still owed on the account, nothing paid",
+        closed
+        and read.get("commercial") == "COMPLETED"
+        and read.get("balance") == "ON_ACCOUNT"
+        and read.get("paid_vnd") == 0
+        and read.get("remaining_vnd") == first["payable_total_vnd"],
+        {k: read.get(k) for k in ("commercial", "balance", "paid_vnd", "remaining_vnd")},
+    )
+    ok(
+        "the money card reads 'Ghi công nợ' with the amount owed",
+        "Ghi công nợ" in console.text(),
+        [line for line in console.text().splitlines() if "công nợ" in line][:3],
+    )
+    charged, _ = _charge_on_page(console, str(second["order_id"]))
+    ok(
+        "the second leaves too: outstanding plus this order is exactly the limit",
+        charged["status"] == 201
+        and (charged.get("body") or {}).get("outstanding_after_vnd") == limit,
+        charged["text"][:200],
+    )
+    console.open_order(str(third["order_id"]), settle=2500)
+    why = console.page.locator("#order-account [data-account-refusal]")
+    ok(
+        "the third is not offered, and the page says why: over the limit",
+        why.count() == 1
+        and why.first.get_attribute("data-account-refusal") == "ACCOUNT_LIMIT_EXCEEDED"
+        and console.page.locator("#order-account-charge").count() == 0,
+        why.first.inner_text() if why.count() else console.text()[:160],
+    )
+    over = console.call(
+        "POST",
+        f"/internal/v1/orders/{third['order_id']}/account-charge",
+        {"collected_by_customer": True},
+        if_match=third["row_version"],
+    )
+    ok(
+        "and the server refuses it: 422 ACCOUNT_LIMIT_EXCEEDED",
+        over["status"] == 422
+        and (over.get("body") or {}).get("detail", {}).get("reason_code")
+        == "ACCOUNT_LIMIT_EXCEEDED",
+        over["text"][:200],
+    )
+    after = _takings(console)
+    ok(
+        "money owed, not money collected: today's takings did not move",
+        after.get("collected_vnd") == before.get("collected_vnd"),
+        f"{before.get('collected_vnd')} -> {after.get('collected_vnd')}",
+    )
+
+    head("22e", "THU CÔNG NỢ — a payment reaches the oldest order first")
+    console.open(f"#/customers/{homestay}", settle=2200)
+    card = console.page.locator("#customer-account-section")
+    ok(
+        "the account card: Đang nợ is the two orders, the limit, and this month's statement",
+        card.count() == 1
+        and all(word in card.inner_text() for word in ("Đang nợ", "Hạn mức", "Đầu kỳ", "Hạn trả")),
+        card.inner_text()[:240].replace("\n", " | ") if card.count() else "absent",
+    )
+    amount = int(first["payable_total_vnd"]) + 20_000
+    console.page.locator("#account-collect").click()
+    touched("customer.account-collect")
+    console.page.wait_for_timeout(500)
+    console.page.locator("#account-payment-edit").click()
+    touched("customer.account-payment-edit")
+    console.type_into("#account-payment-amount", str(amount), "customer.account-payment-amount")
+    (paid,) = console.press_capturing(
+        console.page.locator("#account-payment-submit"), "/account/payments"
+    )
+    touched("customer.account-payment-submit")
+    console.page.wait_for_timeout(1800)
+    split = [
+        (item.get("order_id"), item.get("amount_vnd"), item.get("settled"))
+        for item in (paid.get("body") or {}).get("allocations", [])
+    ]
+    ok(
+        "the payment is allocated oldest first: the first order in full, 20.000 ₫ to the second",
+        paid["status"] == 201
+        and split
+        == [
+            (first["order_id"], first["payable_total_vnd"], True),
+            (second["order_id"], 20_000, False),
+        ],
+        paid["text"][:240],
+    )
+    ok(
+        "the sheet says which orders it reached",
+        "Trừ vào" in console.page.locator("dialog[open]").inner_text()
+        and "(đủ)" in console.page.locator("dialog[open]").inner_text(),
+        console.page.locator("dialog[open]").inner_text()[:200].replace("\n", " | "),
+    )
+    console.page.keyboard.press("Escape")
+    ok(
+        "the first order is now paid in full through the account, completed; the second still owes",
+        stored(str(first["order_id"]), "balance_status") == "PAID"
+        and stored(str(first["order_id"]), "commercial_status") == "COMPLETED"
+        and stored(str(second["order_id"]), "balance_status") == "ON_ACCOUNT"
+        and sql(
+            f"SELECT settlement_shape FROM order_settlements WHERE order_id = '{first['order_id']}'"
+        )
+        == "EXACT_PAYMENT_ON_ACCOUNT",
+        (
+            stored(str(first["order_id"]), "balance_status"),
+            stored(str(second["order_id"]), "balance_status"),
+        ),
+    )
+    ok(
+        "the allocation ledger ties the account payment to one ordinary payment row per order",
+        sql(
+            "SELECT string_agg(a.position || ':' || a.amount_vnd || ':' || p.method, ',' "
+            "ORDER BY a.position) FROM customer_account_allocations a "
+            "JOIN order_payments p ON p.id = a.order_payment_id "
+            f"WHERE a.account_payment_id = '{(paid.get('body') or {}).get('payment_id')}'"
+        )
+        == f"1:{first['payable_total_vnd']}:TIEN_MAT,2:20000:TIEN_MAT",
+        "",
+    )
+    takings = _takings(console)
+    ok(
+        "today's takings counted the account payment once, as cash",
+        takings.get("cash_vnd") == (after.get("cash_vnd") or 0) + amount
+        if isinstance(after.get("cash_vnd"), int)
+        else False,
+        f"cash {after.get('cash_vnd')} -> {takings.get('cash_vnd')}",
+    )
+    by_method = sql(
+        "select coalesce(sum(amount_vnd) filter (where method='TIEN_MAT'),0) || ':' || "
+        "coalesce(sum(amount_vnd) filter (where method='CHUYEN_KHOAN'),0) "
+        f"from order_payments where store_id='{STORE}' and "
+        "(recorded_at at time zone 'Asia/Ho_Chi_Minh')::date = "
+        "(now() at time zone 'Asia/Ho_Chi_Minh')::date"
+    )
+    ok(
+        "and the takings by method still equal the payment ledger, method by method",
+        by_method == f"{takings.get('cash_vnd')}:{takings.get('transfer_vnd')}",
+        f"ledger {by_method} / takings {takings.get('cash_vnd')}:{takings.get('transfer_vnd')}",
+    )
+    freed = console.call("GET", f"/internal/v1/orders/{third['order_id']}/account-handover")
+    ok(
+        "the payment freed room: the third order may now leave on the account",
+        ((freed.get("body") or {}).get("handover") or {}).get("offered") is True,
+        freed["text"][:200],
+    )
+
+    head("22f", "SAO KÊ — this month's statement totals the charges and the payment")
+    console.open(f"#/customers/{homestay}", settle=2200)
+    console.page.locator("#account-statement").click()
+    touched("customer.account-statement")
+    console.page.wait_for_timeout(2200)
+    paper = console.page.locator("#statement-paper")
+    month = console.page.evaluate(
+        "() => new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', "
+        "month: '2-digit'}).format(new Date())"
+    )
+    statement = (
+        console.call(
+            "GET", f"/internal/v1/stores/{STORE}/customers/{homestay}/account/statements/{month}"
+        ).get("body")
+        or {}
+    ).get("statement") or {}
+    ledger = sql(
+        "SELECT (SELECT sum(amount_vnd) FROM customer_account_charges "
+        f"WHERE customer_id = '{homestay}') || ':' || (SELECT sum(amount_vnd) "
+        f"FROM customer_account_payments WHERE customer_id = '{homestay}')"
+    )
+    ok(
+        "the statement's charges, payments and closing equal the ledgers; due the 15th next month",
+        f"{statement.get('charges_vnd')}:{statement.get('payments_vnd')}" == ledger
+        and statement.get("charge_count") == 2
+        and statement.get("payment_count") == 1
+        and statement.get("closing_vnd") == limit - amount
+        and str(statement.get("due_on", "")).endswith("-15"),
+        {
+            **{
+                k: statement.get(k)
+                for k in ("opening_vnd", "charges_vnd", "payments_vnd", "closing_vnd", "due_on")
+            },
+            "ledger": ledger,
+        },
+    )
+    ok(
+        "the printable paper names the customer, the month, Cuối kỳ and the due date",
+        paper.count() == 1
+        and "Homestay Biển Xanh" in paper.inner_text()
+        and "Cuối kỳ" in paper.inner_text()
+        and "Hạn thanh toán" in paper.inner_text(),
+        paper.inner_text()[:240].replace("\n", " | ") if paper.count() else "absent",
+    )
+    console.page.evaluate(
+        "() => { window.__printed = 0; window.print = () => { window.__printed += 1; }; }"
+    )
+    printer = console.page.locator("#statement-print")
+    if printer.count() and printer.first.is_enabled():
+        printer.first.click()
+        touched("statement.print")
+    ok(
+        "'In sao kê' opens the print dialog, once",
+        console.page.evaluate("() => window.__printed") == 1,
+    )
+
+    head("22g", "QUÁ HẠN — an overdue statement blocks a spa's new order; the owner lifts it")
+    console.sign_in("demo-owner")
+    spa, spa_last4 = _account_customer(console, "Spa Hoa Sen")
+    opened = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/customers/{spa}/account",
+        {"credit_limit_vnd": 2_000_000},
+    )
+    ok(
+        "the owner opens the spa's account with a limit",
+        opened["status"] == 201,
+        opened["text"][:120],
+    )
+    console.sign_in("demo-operations")
+    old_order = _account_order(console, spa, spa_last4, "5")
+    new_order = _account_order(console, spa, spa_last4, "5")
+    # The one write in this scenario not made through the console: a live API reads its own clock,
+    # and no clock on this stack is two months back. The charge is written by the same repository
+    # code the route calls, with every check it makes, only at an instant in last month's month
+    # before -- the way the repository tests hold the clock still.
+    from datetime import UTC, datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    import psycopg
+    from nha_trang_laundry_db.accounts import AccountChargeCommand, AccountRepository
+    from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+
+    local_now = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh"))
+    two_back = (local_now.replace(day=1) - timedelta(days=1)).replace(day=1) - timedelta(days=1)
+    back_then = two_back.replace(day=10, hour=10, minute=0, second=0, microsecond=0)
+    operator = sql("SELECT id FROM staff_users WHERE oidc_subject = 'demo-operations'")
+    with psycopg.connect(arguments.database_url) as connection:
+        AccountRepository().charge(
+            connection,
+            AccountChargeCommand(
+                order_id=uuid.UUID(str(old_order["order_id"])),
+                expected_row_version=int(old_order["row_version"]),
+                collected_by_customer=True,
+                principal=StaffPrincipal(
+                    uuid.UUID(operator),
+                    "demo-operations",
+                    frozenset({StaffRole.OPERATOR}),
+                    True,
+                    uuid.uuid4(),
+                ),
+                correlation_id=uuid.uuid4(),
+                at=back_then.astimezone(UTC),
+            ),
+        )
+        connection.commit()
+    note(f"the spa's first order was charged on {back_then:%d/%m/%Y} (harness clock), and not paid")
+    console.open_order(str(new_order["order_id"]), settle=2500)
+    why = console.page.locator("#order-account [data-account-refusal]")
+    ok(
+        "the new order is not offered: a statement is overdue, and the page says so",
+        why.count() == 1
+        and why.first.get_attribute("data-account-refusal") == "ACCOUNT_OVERDUE"
+        and "quá hạn" in why.first.inner_text(),
+        why.first.inner_text() if why.count() else console.text()[:160],
+    )
+    blocked = console.call(
+        "POST",
+        f"/internal/v1/orders/{new_order['order_id']}/account-charge",
+        {"collected_by_customer": True},
+        if_match=new_order["row_version"],
+    )
+    ok(
+        "the server refuses it: 422 ACCOUNT_OVERDUE",
+        blocked["status"] == 422
+        and (blocked.get("body") or {}).get("detail", {}).get("reason_code") == "ACCOUNT_OVERDUE",
+        blocked["text"][:200],
+    )
+    console.open(f"#/customers/{spa}", settle=2200)
+    banner = console.page.locator("#customer-account-section .alert[data-state=danger]")
+    ok(
+        "the spa's card shows the overdue banner: the amount, the month and its due date",
+        banner.count() == 1
+        and "Quá hạn" in banner.inner_text()
+        and "Đơn mới trả tại quầy" in banner.inner_text(),
+        banner.inner_text() if banner.count() else console.text()[:200],
+    )
+    ok(
+        "the counter is not offered the owner's lift",
+        console.page.locator("#account-lift").count() == 0,
+    )
+    console.sign_in("demo-owner")
+    console.open(f"#/customers/{spa}", settle=2200)
+    console.page.locator("#account-lift").click()
+    touched("customer.account-lift")
+    console.page.wait_for_timeout(400)
+    console.type_into("#account-lift-reason", "Khách hẹn chuyển khoản cuối tuần")
+    (lifted,) = console.press_capturing(console.page.locator("#account-lift-save"), "/block-lift")
+    touched("customer.account-lift-save")
+    console.page.wait_for_timeout(1500)
+    account = ((lifted.get("body") or {}).get("account")) or {}
+    ok(
+        "the owner lifts the block with a reason and an end: recorded, the card says until when",
+        lifted["status"] == 200
+        and account.get("block_lifted") is True
+        and "tạm mở chặn tới hết" in console.text()
+        and sql(
+            "SELECT count(*) FROM customer_account_block_lifts l "
+            "JOIN customer_accounts a ON a.id = l.account_id "
+            f"WHERE a.customer_id = '{spa}' AND l.reason = 'Khách hẹn chuyển khoản cuối tuần'"
+        )
+        == "1",
+        lifted["text"][:200],
+    )
+    ok(
+        "the reason stays on the lift's own row: no event, audit or outbox row carries it",
+        sql(
+            "SELECT (SELECT count(*) FROM domain_events "
+            "WHERE payload::text LIKE '%Khách hẹn chuyển%') "
+            "+ (SELECT count(*) FROM audit_events WHERE details::text LIKE '%Khách hẹn chuyển%') "
+            "+ (SELECT count(*) FROM outbox_events WHERE payload::text LIKE '%Khách hẹn chuyển%')"
+        )
+        == "0",
+    )
+    console.sign_in("demo-operations")
+    charged, _ = _charge_on_page(console, str(new_order["order_id"]))
+    ok(
+        "while lifted, the spa's new order leaves on the account",
+        charged["status"] == 201
+        and (charged.get("body") or {}).get("balance_status") == "ON_ACCOUNT",
+        charged["text"][:200],
+    )
+    closed = subprocess.run(
+        [
+            sys.executable,
+            _script("close_account_statements.py"),
+            "--actor-id",
+            owner,
+            "--month",
+            f"{back_then:%Y-%m}",
+            "--store-id",
+            STORE,
+            "--database-url",
+            arguments.database_url,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    frozen = (
+        console.call(
+            "GET",
+            f"/internal/v1/stores/{STORE}/customers/{spa}/account/statements/{back_then:%Y-%m}",
+        ).get("body")
+        or {}
+    )
+    ok(
+        "the owner's month close freezes that month's statement exactly as it reads live",
+        closed.returncode == 0
+        and frozen.get("frozen") is not None
+        and frozen["frozen"]["closing_vnd"]
+        == frozen["statement"]["closing_vnd"]
+        == old_order["payable_total_vnd"],
+        (closed.stdout or closed.stderr).strip()[:200],
+    )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -5614,6 +6319,10 @@ SCENARIOS = {
     # CUSTOMER-001. Before promise: it proves the refusal on a shop that has not published the
     # privacy notice, then publishes it; nothing after it depends on the notice being unpublished.
     "customers": scenario_customers,
+    # PAYMENT-002. After customers (its accounts belong to customer records) and before promise:
+    # it proves the refusal on a shop that has not published the account terms, then publishes
+    # them; nothing after it depends on the terms being unpublished.
+    "accounts": scenario_accounts,
     # PROMISE-001. Last: it publishes the turnaround policy, and every scenario above proves its
     # own workflow on a shop that has not (the receipt's R4 line, the report's assumed rule).
     "promise": scenario_promise,

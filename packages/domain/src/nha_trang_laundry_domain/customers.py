@@ -79,6 +79,8 @@ class CustomerRefusal(StrEnum):
     #: The ticket or binding is already linked to a customer.
     LINK_EXISTS = "LINK_EXISTS"
     NOTHING_TO_CHANGE = "NOTHING_TO_CHANGE"
+    #: `PAYMENT-002` (`DEC-035`): a customer with an account (công nợ) stays a business customer.
+    CUSTOMER_HAS_ACCOUNT = "CUSTOMER_HAS_ACCOUNT"
 
 
 class CustomerRuleError(ValueError):

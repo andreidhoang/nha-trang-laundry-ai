@@ -116,6 +116,26 @@ phần còn lại), mỗi lần bằng **Tiền mặt** hoặc **Chuyển khoả
 - Huỷ đơn đã đặt cọc: **Khác** → **Huỷ đơn**, chọn cách xử lý; máy ghi hoàn **đúng số khách đã
   trả** — đưa lại khách số đó.
 
+### Khách công nợ (khách sạn, homestay, spa) — trả theo tháng
+
+Chỉ khách **doanh nghiệp** mà **chủ tiệm** đã mở công nợ (DEC-035). Chủ tiệm phải công bố điều
+khoản công nợ trước; chưa công bố thì trang của khách ghi *“Chủ tiệm cần công bố điều khoản công nợ
+trước khi mở công nợ”* — mọi đơn trả tại quầy như thường.
+
+| | Làm gì | Ở màn hình |
+|---|---|---|
+| C1 | (Chủ tiệm) Mở trang của khách → **Mở công nợ**, gõ **hạn mức** (gợi ý 3.000.000 ₫, chủ tiệm tự quyết). Để trống thì chưa ghi nợ được | Khách hàng |
+| C2 | Đồ của khách công nợ giặt xong: mở đơn, bấm **Giao đồ — ghi công nợ** dưới ô tiền, xem số ghi nợ, bấm **Giao đồ — ghi công nợ**, rồi **Giao đồ & đóng đơn**. Không thu tiền tại quầy | Chi tiết đơn |
+| C3 | Không có nút đó thì dòng dưới ô tiền nói vì sao (chưa có hạn mức, vượt hạn mức, có kỳ quá hạn). Khi đó **Thu tiền** tại quầy như khách thường | Chi tiết đơn |
+| C4 | Khách trả công nợ: trang của khách → **Thu công nợ**. Trả đủ để nguyên số **Đang nợ**; trả một phần bấm **Khách trả một phần** rồi gõ số. Tiền trừ vào **đơn nợ cũ nhất trước** | Khách hàng |
+| C5 | Khách cần sao kê: **Xem sao kê** → **In sao kê**. Hạn trả là **ngày 15 tháng sau** | Khách hàng |
+| C6 | (Chủ tiệm) Có kỳ quá hạn nhưng muốn cho khách nhận đồ tiếp: **Tạm mở chặn**, chọn ngày, ghi lý do | Khách hàng |
+
+- Đơn ghi công nợ **không** tính vào *Đã thu tại quầy* hôm đó; tiền khách trả công nợ tính vào ngày
+  khách trả, theo Tiền mặt hay Chuyển khoản.
+- Chủ tiệm chốt sổ tháng bằng lệnh `close_account_statements.py`; chưa chốt thì sao kê vẫn đọc được,
+  và việc chặn quá hạn vẫn chạy.
+
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
 
 Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **khoảng giá**, vì phải nhìn món đồ mới

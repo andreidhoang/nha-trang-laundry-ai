@@ -171,3 +171,55 @@
     max-width: 90mm;
   }
 }
+
+/* PAYMENT-002 — Sao kê công nợ. The receipt's rules for the statement: only the paper prints,
+ * black on white, the width the print dialog chose (A5 for the owner's copy, a roll at the
+ * counter). */
+@media print {
+  .statement-screen > :not(.statement-paper) {
+    display: none !important;
+  }
+
+  html:has(.statement-screen),
+  html:has(.statement-screen) body,
+  html:has(.statement-screen) .app,
+  html:has(.statement-screen) .main {
+    background: #fff;
+  }
+
+  .statement-paper {
+    background: #fff;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    color: #000;
+    font-size: 9pt;
+    gap: 2mm;
+    margin: 0 auto;
+    max-width: none;
+    padding: 0;
+    page: receipt;
+    width: 100%;
+  }
+
+  .statement-paper * {
+    color: #000 !important;
+  }
+
+  .statement-paper__sums,
+  .statement-paper__lines {
+    border-color: #000;
+    padding-top: 2mm;
+  }
+
+  .statement-paper__none,
+  .statement-paper__closing {
+    font-size: 8pt;
+  }
+}
+
+@media print and (min-width: 100mm) {
+  .statement-paper {
+    max-width: 120mm;
+  }
+}

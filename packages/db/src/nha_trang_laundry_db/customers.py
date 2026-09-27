@@ -718,6 +718,13 @@ class CustomerRepository:
                 and changes.kind is not None
                 and CustomerKind(changes.kind) is not current.kind
             ):
+                if CustomerKind(changes.kind) is not CustomerKind.BUSINESS:
+                    # `PAYMENT-002`: `0059` refuses it too; this names the refusal.
+                    cursor.execute(
+                        "SELECT 1 FROM customer_accounts WHERE customer_id = %s", (customer_id,)
+                    )
+                    if cursor.fetchone() is not None:
+                        raise CustomerRuleError(CustomerRefusal.CUSTOMER_HAS_ACCOUNT)
                 assignments["kind"] = CustomerKind(changes.kind).value
                 changed.append("kind")
             consent = (

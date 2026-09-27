@@ -207,6 +207,18 @@ export const CAPABILITIES = {
     mfa: true,
     why: "Chỉ chủ tiệm hoặc người duyệt xoá thông tin khách khi khách yêu cầu.",
   },
+  // PAYMENT-002 (`DEC-035`, B2B half). Each bound to the role set `AccountRepository` enforces
+  // (`nha_trang_laundry_db.accounts`), with MFA and store membership.
+  ACCOUNTS_OWNER: {
+    roles: [OWNER],
+    mfa: true,
+    why: "Chỉ chủ tiệm mở công nợ, đặt hạn mức, ngưng công nợ hay tạm mở chặn (DEC-035).",
+  },
+  ACCOUNTS_COLLECT: {
+    roles: [OWNER, APPROVER, OPERATOR],
+    mfa: true,
+    why: "Thu công nợ và giao đồ ghi công nợ cần vai trò vận hành đã xác thực hai bước.",
+  },
   ASSISTANT: {
     roles: [OWNER, APPROVER, OPERATOR],
     mfa: true,

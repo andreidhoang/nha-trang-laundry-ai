@@ -131,6 +131,9 @@ def test_every_shape_traces_to_a_signed_decision() -> None:
         "EXACT_PAYMENT_SELF_COLLECTION",  # the original, DEC-010
         "EXACT_PAYMENT_PREPAID_DELIVERY",  # DEC-023, 2026-08-26
         "EXACT_PAYMENT_PREPAID_SELF_COLLECTION",  # DEC-032, 2026-09-25
+        # DEC-035's B2B half (PAYMENT-002, 2026-09-25): the exact total, paid through an account
+        # after the goods left on it. The owner decided account customers; `0059` widens the CHECK.
+        "EXACT_PAYMENT_ON_ACCOUNT",
     ]
 
 

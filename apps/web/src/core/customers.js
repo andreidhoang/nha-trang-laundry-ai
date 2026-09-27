@@ -101,6 +101,9 @@ const REFUSAL = {
   NOTE_TOO_LONG: "Ghi chú dài quá 200 ký tự.",
   ADDRESS_TOO_LONG: "Địa chỉ dài quá 300 ký tự.",
   NOTHING_TO_CHANGE: "Không có gì thay đổi để lưu.",
+  // PAYMENT-002 (`DEC-035`): a customer with an account (công nợ) stays a business customer.
+  CUSTOMER_HAS_ACCOUNT:
+    "Khách này có công nợ nên vẫn là khách doanh nghiệp. Chủ tiệm ngưng công nợ nếu cần.",
   CUSTOMER_UNKNOWN: "Không tìm thấy khách này trong cửa hàng (có thể vừa bị xoá). Tìm lại.",
 };
 

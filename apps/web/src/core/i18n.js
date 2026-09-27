@@ -847,6 +847,8 @@ export const ENUM_GLOSS = {
   ORDER_SETTLEMENT_RECORD: "ghi nhận tất toán",
   ORDER_PAYMENT_RECORD: "ghi nhận thu tiền",
   ORDER_COLLECTION_RECORD: "ghi nhận khách nhận đồ",
+  // PAYMENT-002: the order left on its customer's account (công nợ).
+  ORDER_ACCOUNT_CHARGE: "giao đồ, ghi công nợ",
   // PROMISE-001: the first promise at Nhận đồ, and a Hẹn lại.
   ORDER_PROMISE_SET: "hẹn giờ trả đồ",
   ORDER_PROMISE_CHANGE: "hẹn lại giờ trả đồ",

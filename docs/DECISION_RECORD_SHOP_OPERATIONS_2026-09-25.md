@@ -277,7 +277,7 @@ AI may only restate figures that versioned queries computed.
 | `scripts/publish_privacy_notice.py` (after reading `docs/POLICY_CUSTOMER_PRIVACY_NOTICE_V1.md`) | Creating customer records |
 | `scripts/publish_storage_policy.py` | The storage fee and disposal approval |
 | `scripts/publish_turnaround_policy.py` (and entering this year's Tết days) | Promised-ready times |
-| Mark an account customer and type its limit on the customer's page | Công nợ for that customer |
+| `scripts/publish_account_terms.py` (the terms in `templates/account-terms-dec-035.json`), then open the account and type its limit on the customer's page | Công nợ for that customer |
 
 Everything else (part payments with a method, the waiting list, machine taps, trip costs, Sổ thu
 chi, the evening summary) works as soon as it is deployed, because it records facts rather than

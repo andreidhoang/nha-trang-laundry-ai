@@ -1,10 +1,29 @@
 # Production continuation brief
 
 **Last reconciled:** 2026-09-26 (Asia/Ho_Chi_Minh)
-**Active work item:** round 7 wave 1 in build (`CUSTOMER-001`, `PAYMENT-001`, `PROMISE-001`,
-`SHOP-CAPTURE-001`). **182 queue items.** Migrations run `0001`–`0054` (`0055`–`0058` reserved
-for wave 1).
+**Active work item:** none. **183 queue items.** Migrations run `0001`–`0061`.
 Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
+
+## Shop operations built: round 7, 2026-09-27
+
+`context/tasks/TASK-shop-operations-001.md`, nine items, contract `docs/SHOP_OPERATIONS_SPEC_V1.md`,
+decisions `DEC-034`–`DEC-039`. Built: the customer list with consent and encrypted phone
+(`CUSTOMER-001`, 0055); deposits and part payments by method, goods leave only when paid
+(`PAYMENT-001`, 0056); account customers — công nợ — with an owner-typed limit, monthly statement
+due the 15th and an overdue block (`PAYMENT-002`, 0059); a promised-ready time from the
+owner-confirmed turnaround rules, 24/48 h as calendar days (`PROMISE-001`, 0057); the waiting-for-
+pickup list, storage fee after day 20 and owner-approved disposal from day 60 (`UNCLAIMED-001`,
+0060, and 0061 for an account order's fee); machines, wash cycles, trip costs and Sổ thu chi with a
+margin only for a complete month (`SHOP-CAPTURE-001`, 0058); the owner's evening summary as a
+versioned template, no model (`DAILY-SUMMARY-001`); the export carrying part payments
+(`EXPORT-PAYMENTS-001`). **Owner switches** (each feature refuses by name until run):
+`publish_privacy_notice.py`, `publish_turnaround_policy.py` (with this year's Tết dates),
+`publish_storage_policy.py`, `publish_account_terms.py`. **Owner decisions taken this round:** staff
+sign out their own devices; the desktop is the primary device (spec V2 amended; review and film at
+desk size first). **Lessons:** three slices changing the same ledger trigger each passed alone and
+could still disagree together — the integration round wrote `test_money_consistency.py`, which
+asserts the final functions carry every slice's rule; a usage-limit interruption also stopped
+PostgreSQL and the identity provider, so check shared services before trusting a failed run.
 
 ## The owner's six open questions decided; round 7 queued, 2026-09-26
 

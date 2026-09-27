@@ -7412,7 +7412,8 @@ with sync_playwright() as playwright:
     state["revoke_posts"] = []
     page.keyboard.press("Escape")
 
-    # A member of staff: their other device is shown, its sign-out shut, the reason said first.
+    # A member of staff: their other device is shown and theirs to sign out (owner decision
+    # 2026-09-27: a lost phone is the person's to cut off, not a request to the owner).
     state["sessions_live"] = [
         device(SESSION_CURRENT, True, "2026-09-25T03:00:00+00:00"),
         device(SESSION_OTHER, False, "2026-09-25T01:30:00+00:00"),
@@ -7422,26 +7423,23 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(1500)
     page.locator("button.appbar__account").first.click()
     page.wait_for_timeout(1000)
-    shut = page.locator(f"#account-devices button[data-revoke-session='{SESSION_OTHER}']")
-    reason = page.locator("#account-devices-revoke-reason")
+    own = page.locator(f"#account-devices button[data-revoke-session='{SESSION_OTHER}']")
     check(
-        "an operator sees the other device's sign-out shut, marked denied, with who may do it",
-        shut.count() == 1
-        and not shut.is_enabled()
-        and shut.get_attribute("data-denied") == "true"
-        and shut.get_attribute("aria-describedby") == "account-devices-revoke-reason"
-        and "Chỉ chủ đăng xuất được một thiết bị khác" in (reason.inner_text() or ""),
+        "an operator may sign out their own other device: the control is live and no refusal shows",
+        own.count() == 1
+        and own.is_enabled()
+        and own.get_attribute("data-denied") is None
+        and page.locator("#account-devices-revoke-reason").count() == 0,
     )
+    state["revoke_posts"] = []
+    own.click()
+    page.wait_for_timeout(200)
+    own.click()
+    page.wait_for_timeout(1200)
     check(
-        "and the reason is read before the rows, not under them",
-        page.evaluate(
-            """() => {
-                const reason = document.querySelector('#account-devices-revoke-reason');
-                const list = document.querySelector('#account-devices ul.rows');
-                return Boolean(reason && list &&
-                  (reason.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING));
-            }"""
-        ),
+        "and two presses send the sign-out for exactly that device",
+        any(SESSION_OTHER in str(post) for post in state.get("revoke_posts", [])),
+        repr(state.get("revoke_posts", []))[:160],
     )
     page.keyboard.press("Escape")
     SESSION_OK["roles"] = ["OWNER_ADMIN"]

@@ -51,6 +51,7 @@ from nha_trang_laundry_db.exports import (
 from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import (
     MAX_SESSION_LIST,
+    IdentityPermissionError,
     IdentityStateError,
     LiveSessionList,
     StaffPrincipal,
@@ -2126,14 +2127,19 @@ def revoke_session(
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
     service: Annotated[StaffIdentityService | None, Depends(get_identity_service)] = None,
 ) -> None:
-    if principal.session_id != session_id and StaffRole.OWNER_ADMIN not in principal.roles:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="session revoke denied")
+    # Owner decision 2026-09-27: anyone may sign out any of their *own* sessions -- a lost phone
+    # is the person's to cut off at once, not a request to the owner. Another person's session
+    # still needs an active OWNER_ADMIN. The repository decides both under the row lock and
+    # re-reads the owner role from the database, so a session minted while its holder was an
+    # owner decides nothing after the role is gone.
     if service is None:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, detail="staff identity unavailable"
         )
     try:
         service.revoke_session(session_id, principal.staff_user_id)
+    except IdentityPermissionError as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="session revoke denied") from error
     except IdentityStateError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="session unavailable") from error
 

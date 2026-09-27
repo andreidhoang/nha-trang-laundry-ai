@@ -295,10 +295,10 @@ person (`SESSION-LIST-001`). Everyone's account sheet lists **Thiết bị đang
 sessions that would still be accepted, each named by when it signed in and was last used (no device
 name is stored), with **Thiết bị này** marking the one in hand — and a person's sheet on `#/staff`
 shows the owner the same list for them. **Đăng xuất thiết bị này** (two presses) ends that one
-session at its next request; every other device of the person keeps working. The revoke rule is the
-server's and is unchanged: a session may end itself, and only `OWNER_ADMIN` may end any other — so a
-member of staff who lost their phone asks the owner, and the console shows them the control shut
-with that reason.
+session at its next request; every other device of the person keeps working. **Who may press it**
+(owner decision 2026-09-27): anyone signs out any of their *own* devices — a lost phone is the
+person's to cut off at once — and only `OWNER_ADMIN` signs out another person's. The server decides
+both under the row lock and re-reads the owner role from the database.
 
 **What each role may actually do**, measured against the running server rather than read from the
 published matrix:

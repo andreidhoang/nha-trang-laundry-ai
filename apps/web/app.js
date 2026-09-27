@@ -192,7 +192,7 @@ const accountSheet = sheet({
 
 /**
  * "Thiết bị đang đăng nhập" in the account sheet (`SESSION-LIST-001`): the caller's own devices,
- * this one marked, the others signable-out by the owner. Built once per signed-in session and kept,
+ * this one marked, the others signable-out by the person themselves (owner decision 2026-09-27). Built once per signed-in session and kept,
  * because `renderAppbar` runs on every chrome sync and a list rebuilt there would re-request on
  * each one; it is read when the sheet opens, which is when somebody is looking at it.
  *
@@ -212,7 +212,8 @@ function devicesFor(principal) {
       key,
       list: deviceList({
         path: "/internal/v1/sessions",
-        revokeOthers: can(principal, "SESSIONS_REVOKE_OTHER"),
+        // Anyone may sign out their own other devices; the server decides under the row lock.
+        revokeOthers: { allowed: true, reason: "" },
         ownSessionId: principal.sessionId,
         id: "account-devices",
       }),

@@ -46,6 +46,14 @@ class IdentityStateError(ValueError):
     """Raised when a database identity or session is inactive, stale, or invalid."""
 
 
+class IdentityPermissionError(IdentityStateError):
+    """The actor lacks the owner role an identity action needs, re-read from the database.
+
+    A subclass, so every caller that already maps `IdentityStateError` keeps its answer; a route
+    that must say "not yours" rather than "not there" (`revoke_session`) catches this first.
+    """
+
+
 @dataclass(frozen=True)
 class StaffPrincipal:
     staff_user_id: UUID
@@ -702,7 +710,7 @@ def _require_owner(cursor: Any, actor_id: UUID) -> None:
         (actor_id, StaffRole.OWNER_ADMIN),
     )
     if cursor.fetchone() is None:
-        raise IdentityStateError("owner authorization is required")
+        raise IdentityPermissionError("owner authorization is required")
 
 
 def _require_owner_survives_disable(cursor: Any, staff_id: UUID) -> None:

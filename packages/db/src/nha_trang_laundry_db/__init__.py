@@ -36,6 +36,7 @@ from nha_trang_laundry_db.idempotency import (
 )
 from nha_trang_laundry_db.identity import (
     SENSITIVE_MFA_ROLES,
+    IdentityPermissionError,
     IdentityRepository,
     IdentityStateError,
     SessionToken,
@@ -116,6 +117,7 @@ __all__ = [
     "IdempotencyStateError",
     "IdempotentCommand",
     "IdempotentResult",
+    "IdentityPermissionError",
     "IdentityRepository",
     "IdentityStateError",
     "InboundWebhook",

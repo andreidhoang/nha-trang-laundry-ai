@@ -3149,11 +3149,14 @@ def scenario_sessions(console: Console) -> None:
     finally:
         phone.context.close()
 
-    head("13a", "THIẾT BỊ CỦA MỘT NGƯỜI — the owner sees them; nobody else can")
+    head("13a", "THIẾT BỊ CỦA MỘT NGƯỜI — a person signs out their own; only the owner another's")
     worker = _second_device(console, "demo-operations")
     try:
-        # A second sign-in in the same browser leaves the first session alive on the server: the
-        # shape of "I signed in on the shop tablet yesterday and never pressed Thoát".
+        # Each sign-in in the same browser leaves the previous session alive on the server: the
+        # shape of "I signed in on the shop tablet yesterday and never pressed Thoát". Two are
+        # left behind -- one the person cuts off themselves, one the owner cuts off for them.
+        own_forgotten = _session_id(worker)
+        worker.sign_in("demo-operations")
         forgotten = _session_id(worker)
         worker.sign_in("demo-operations")
         current = _session_id(worker)
@@ -3164,25 +3167,34 @@ def scenario_sessions(console: Console) -> None:
             worker.call("GET", f"/internal/v1/staff/{owner_id}/sessions")["status"] == 403,
         )
         ok(
-            "nor sign out anyone else's, nor even another of their own — that is the owner's press",
-            worker.call("POST", f"/internal/v1/sessions/{forgotten}/revoke")["status"] == 403
-            and worker.call("POST", f"/internal/v1/sessions/{_session_id(console)}/revoke")[
-                "status"
-            ]
-            == 403,
+            "nor sign out anyone else's device — that is the owner's press",
+            worker.call("POST", f"/internal/v1/sessions/{_session_id(console)}/revoke")["status"]
+            == 403
+            and console.call("GET", "/internal/v1/session")["status"] == 200,
         )
         worker.open("#/")
         worker.page.locator("button.appbar__account").first.click()
         worker.page.wait_for_selector(
-            f"#account-devices [data-session-id='{forgotten}']", timeout=10000
+            f"#account-devices [data-session-id='{own_forgotten}']", timeout=10000
         )
-        shut = worker.page.locator(f"#account-devices button[data-revoke-session='{forgotten}']")
+        live = worker.page.locator(
+            f"#account-devices button[data-revoke-session='{own_forgotten}']"
+        )
         ok(
-            "their account sheet shows the forgotten device, its sign-out shut, and why",
-            shut.count() == 1
-            and shut.first.is_disabled()
-            and "Chỉ chủ đăng xuất được một thiết bị khác"
-            in (worker.page.locator("#account-devices").inner_text() or ""),
+            "their account sheet offers their own forgotten device's sign-out, live, no refusal",
+            live.count() == 1
+            and live.first.is_enabled()
+            and worker.page.locator("#account-devices-revoke-reason").count() == 0,
+        )
+        answer = _revoke_from_list(worker, "#account-devices", own_forgotten)
+        touched("shell.device-revoke")
+        ok(
+            "two presses sign their own lost device out (owner decision 2026-09-27)",
+            answer["status"] == 204
+            and worker.page.locator(f"#account-devices [data-session-id='{own_forgotten}']").count()
+            == 0
+            and worker.call("GET", "/internal/v1/session")["status"] == 200,
+            answer["text"][:120],
         )
         worker.page.keyboard.press("Escape")
 

@@ -324,11 +324,14 @@ def test_the_owner_signs_out_one_of_a_persons_devices_from_their_list(
     assert _get(client, "/internal/v1/session", owner).status_code == 200
 
 
-def test_the_revoke_rules_are_unchanged(connection: Any, client: TestClient) -> None:
-    """`SESSION-LIST-001` uses the revoke route as it was: this very session, or any session for
-    OWNER_ADMIN. A non-owner may not sign out someone else, and -- the rule the console has to
-    show rather than discover -- not even another device of their own: that is the owner's press.
-    Signing out an already signed-out device is the route's own 404, as it always was."""
+def test_a_person_signs_out_their_own_devices_and_only_the_owner_signs_out_anothers(
+    connection: Any, client: TestClient
+) -> None:
+    """Owner decision 2026-09-27: a lost phone is the person's own to cut off, not a request to the
+    owner. A non-owner signs out any of *their own* sessions, and never someone else's; the owner
+    signs out anyone's. Signing out an already signed-out device is the route's own 404.
+
+    Fails on the previous route, which refused a non-owner every session but the one in use."""
 
     _, owner_subject = _person(connection, StaffRole.OWNER_ADMIN)
     owner = _device(connection, owner_subject)
@@ -336,15 +339,25 @@ def test_the_revoke_rules_are_unchanged(connection: Any, client: TestClient) -> 
     _, lan_subject = _person(connection, StaffRole.OPERATOR)
     lan = _device(connection, lan_subject)
     lan_other = _device(connection, lan_subject)
+    lan_third = _device(connection, lan_subject)
 
+    # Someone else's: refused, and nothing changes.
     assert _revoke(client, owner.session_id, lan).status_code == 403
-    assert _revoke(client, lan_other.session_id, lan).status_code == 403
     assert _get(client, "/internal/v1/session", owner).status_code == 200
-    assert _get(client, "/internal/v1/session", lan_other).status_code == 200
 
+    # Their own other device: signed out; the device in their hand keeps working.
+    assert _revoke(client, lan_other.session_id, lan).status_code == 204
+    assert _get(client, "/internal/v1/session", lan_other).status_code == 401
+    assert _get(client, "/internal/v1/session", lan).status_code == 200
+    assert _revoke(client, lan_other.session_id, lan).status_code == 404
+
+    # The session in use, as before.
     assert _revoke(client, lan.session_id, lan).status_code == 204
     assert _get(client, "/internal/v1/session", lan).status_code == 401
-    assert _get(client, "/internal/v1/session", lan_other).status_code == 200
+    assert _get(client, "/internal/v1/session", lan_third).status_code == 200
 
+    # The owner: anyone's.
+    assert _revoke(client, lan_third.session_id, owner).status_code == 204
+    assert _get(client, "/internal/v1/session", lan_third).status_code == 401
     assert _revoke(client, owner_other.session_id, owner).status_code == 204
     assert _revoke(client, owner_other.session_id, owner).status_code == 404

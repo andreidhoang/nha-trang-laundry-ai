@@ -126,6 +126,13 @@ CAPABILITY_REPOSITORY_ROLES: dict[str, tuple[str, str]] = {
     # store membership. Bound to the repository sets, as CUSTOMER-001's are.
     "ACCOUNTS_OWNER": ("nha_trang_laundry_db.accounts", "ACCOUNT_OWNER_ROLES"),
     "ACCOUNTS_COLLECT": ("nha_trang_laundry_db.accounts", "ACCOUNT_COUNTER_ROLES"),
+    # UNCLAIMED-001 (`DEC-036`). The routes gate on `require_unclaimed_reader`,
+    # `require_operations_staff`, `require_storage_waiver` and `require_disposal_owner`;
+    # `UnclaimedRepository` re-checks the exact sets below with MFA and store membership.
+    "PICKUP_READ": ("nha_trang_laundry_db.unclaimed", "UNCLAIMED_READ_ROLES"),
+    "PICKUP_CONTACT": ("nha_trang_laundry_db.unclaimed", "CONTACT_ROLES"),
+    "STORAGE_FEE_WAIVE": ("nha_trang_laundry_db.unclaimed", "WAIVER_ROLES"),
+    "UNCLAIMED_DISPOSE": ("nha_trang_laundry_db.unclaimed", "DISPOSAL_ROLES"),
 }
 
 #: Authored bindings, keyed by slot id. A slot absent from this table is registered `DESCRIPTIVE`.

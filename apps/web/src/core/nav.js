@@ -48,6 +48,15 @@ export const NAV_ITEMS = [
     group: "Vận hành",
     hint: "Khách quen: SĐT, 4 số cuối hoặc tên",
   },
+  // UNCLAIMED-001 (DEC-036).
+  {
+    path: "/pickup",
+    label: NAV.pickup,
+    capability: "PICKUP_READ",
+    icon: "store",
+    group: "Vận hành",
+    hint: "Đồ xong chưa lấy: gọi khách, phí lưu kho",
+  },
   {
     path: "/order-requests",
     label: NAV.orderRequests,

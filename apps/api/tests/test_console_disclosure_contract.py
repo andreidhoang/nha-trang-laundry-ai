@@ -220,7 +220,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # exact sets `CustomerRepository` re-checks with MFA and store membership. 7 + 3 = 10.
     # 12 since PAYMENT-002: `ACCOUNTS_OWNER` and `ACCOUNTS_COLLECT` bind to the sets
     # `AccountRepository` re-checks with MFA and store membership. 10 + 2 = 12.
-    assert counts.get("REPOSITORY_ROLES") == 12
+    # 14 since UNCLAIMED-001: `PICKUP_READ`, `PICKUP_CONTACT`, `STORAGE_FEE_WAIVE` and
+    # `UNCLAIMED_DISPOSE` bind to the exact sets `UnclaimedRepository` re-checks. 10 + 4 = 14.
+    # 16 with both merged (round 7 wave 2 integration): 10 + 2 + 4 = 16.
+    assert counts.get("REPOSITORY_ROLES") == 16
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
     # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
@@ -942,7 +945,13 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   the gap's old `missing` (ABSENT_TABLE on customer_accounts & co., which `0059` created) and
     #   its `blockedBy` ("PAYMENT-002 ... xây sau"), both false once the account half exists.
     # PAYMENT-002 merged onto EXPORT-PAYMENTS-001 (round 7 wave 2 integration): 528 + 10 - 2 = 536.
-    assert sum(counts.values()) == _registry()["total"] == 536
+    # UNCLAIMED-001 (round 7 wave 2, DEC-036) on its own branch: 524 + 18 = 542, none retired.
+    #   Eight REASON_NOTE sentences for the storage, waiver and disposal refusals; four
+    #   REPOSITORY_ROLES `why` (PICKUP_READ/_CONTACT, STORAGE_FEE_WAIVE, UNCLAIMED_DISPOSE, bound
+    #   to `nha_trang_laundry_db.unclaimed`'s sets); the new gaps entry's missing/blockedBy/today;
+    #   and three ui/unclaimed.js lines (the note hint, the fee ⓘ, the waiver sheet's note).
+    # UNCLAIMED-001 merged onto PAYMENT-002 (round 7 wave 2 integration): 536 + 18 = 554.
+    assert sum(counts.values()) == _registry()["total"] == 554
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -956,11 +965,14 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 26 after CUSTOMER-001: + `CUSTOMERS_READ`, `CUSTOMERS_WRITE`, `CUSTOMERS_ERASE`, each on the
     #   exact role set `CustomerRepository` enforces.
     # 28 after PAYMENT-002: + `ACCOUNTS_OWNER`, `ACCOUNTS_COLLECT`, on `AccountRepository`'s sets.
+    # 30 after UNCLAIMED-001: + `PICKUP_READ`, `PICKUP_CONTACT`, `STORAGE_FEE_WAIVE`,
+    #   `UNCLAIMED_DISPOSE`, each on the exact role set `UnclaimedRepository` enforces.
+    # 32 with both merged (round 7 wave 2 integration): 26 + 2 + 4.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 28
+        == 32
     )
 
 

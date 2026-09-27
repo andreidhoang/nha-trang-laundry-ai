@@ -136,6 +136,32 @@ trước khi mở công nợ”* — mọi đơn trả tại quầy như thườ
 - Chủ tiệm chốt sổ tháng bằng lệnh `close_account_statements.py`; chưa chốt thì sao kê vẫn đọc được,
   và việc chặn quá hạn vẫn chạy.
 
+### Đồ chờ lấy — khách chưa tới lấy (DEC-036)
+
+Điều khoản của tiệm: **lấy đồ trong 20 ngày; sau đó tính phí lưu kho; sau 60 ngày tiệm có thể
+thanh lý.** Màn hình **Đồ chờ lấy** (trong **Thêm**, hoặc bấm dòng **Đồ chờ lấy** ở **Hôm nay**)
+liệt kê mọi đơn đã giặt xong mà khách chưa lấy, đơn chờ lâu nhất ở trên, với số ngày chờ, số lần
+đã liên hệ và phí lưu kho tới giờ.
+
+| | Làm gì | Ở màn hình |
+|---|---|---|
+| L1 | Khách có số trong hồ sơ: bấm **Gọi** — máy gọi số đó (màn hình không in số ra). Khách chỉ có số phiếu thì không có nút **Gọi** | Đồ chờ lấy |
+| L2 | Gọi xong (hoặc nhắn Zalo, SMS, tới nhà): bấm **Ghi lần liên hệ**, chọn cách liên hệ và kết quả (**Đã nói chuyện**, **Không nghe máy**, **Sai số**, **Hẹn sẽ tới lấy**), ghi vài chữ nếu cần, bấm **Lưu lần liên hệ** | Đồ chờ lấy, hoặc trang đơn |
+| L3 | Khách tới lấy sau 20 ngày: mở đơn — **Phải thu** đã gồm phí lưu kho (ghi rõ *Gồm phí lưu kho …*). Thu như bước 11. Phí được chốt khi khách trả đủ | Chi tiết đơn |
+| L4 | Khách quen, chủ tiệm cho miễn: người duyệt hoặc chủ tiệm bấm **Miễn phí lưu kho** ở ô **Lưu kho** của đơn, ghi lý do, bấm **Miễn phí lưu kho**. Miễn rồi thì đơn đó không tính phí nữa | Chi tiết đơn |
+| L5 | Từ ngày 60, khi đã liên hệ **ít nhất 3 lần trong ít nhất 2 ngày khác nhau**: chủ tiệm bấm **Thanh lý**, đọc quy định trên phiếu, bấm hai lần. Đơn đóng; tiền khách đã trả giữ nguyên, tiền còn nợ được xoá | Chi tiết đơn |
+
+- **Chưa công bố thì chưa tính phí.** Khi chủ tiệm chưa chạy lệnh công bố phí lưu kho, màn hình
+  ghi *Chủ tiệm chưa công bố phí lưu kho*: danh sách và việc ghi liên hệ vẫn dùng được, nhưng không
+  có phí và không thanh lý được. Công bố rồi thì phiếu in cho khách có thêm một dòng về điều khoản
+  này.
+- **Không ghi số điện thoại khách vào ghi chú** — máy sẽ từ chối. Ghi chú chỉ để nói chuyện gì đã
+  xảy ra (*hẹn chiều mai qua*).
+- Phí tính theo **ngày lịch** của tiệm, từ ngày đồ xong: ngày 20 vẫn miễn phí, ngày 21 là 5.000 ₫,
+  tối đa bằng một nửa tiền giặt của đơn. Máy tính, quầy không tính tay.
+- Đơn **đã trả đủ từ trước** (trả khi gửi đồ) không bị cộng thêm phí sau đó — chưa có quyết định
+  cho trường hợp này; quá hạn lâu thì báo chủ tiệm.
+
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
 
 Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **khoảng giá**, vì phải nhìn món đồ mới

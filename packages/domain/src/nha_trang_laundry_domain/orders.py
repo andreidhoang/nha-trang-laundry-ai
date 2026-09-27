@@ -135,8 +135,23 @@ def transition_commercial(
     cancellation_approved: bool = False,
     custody_and_financial_resolution_recorded: bool = False,
     custody_resolution: CustodyResolution | None = None,
+    unclaimed_disposal_verified: bool = False,
 ) -> OrderState:
-    """Apply a commercial transition after checking all orthogonal state requirements."""
+    """Apply a commercial transition after checking all orthogonal state requirements.
+
+    `unclaimed_disposal_verified` is set only by the owner's disposal route (`UNCLAIMED-001`), after
+    it has checked `DEC-036`'s published days and contact attempts under the order's lock. Without
+    it `UNCLAIMED_DISPOSED` is refused, so no ordinary cancellation -- and no dry run listing the
+    answers a cancellation would take -- can close an order that way.
+    """
+    if (
+        custody_resolution is CustodyResolution.UNCLAIMED_DISPOSED
+        and not unclaimed_disposal_verified
+    ):
+        raise OrderTransitionError(
+            "HUMAN_APPROVAL_REQUIRED: disposal of unclaimed laundry is the owner's, "
+            "on its own route (DEC-036)"
+        )
     if target is CommercialOrderStatus.COMPLETED:
         if state.commercial is not CommercialOrderStatus.ACTIVE:
             raise OrderTransitionError("INVALID_STATE_TRANSITION: order is not active")
@@ -201,11 +216,21 @@ def _balance_after_cancellation(
       a resolution that charges the customer nothing the deposit goes back through the same refund
       path, up to what was paid -- the sum of the payment ledger, read by the repository -- and any
       other resolution is refused, because nobody has decided the shop may keep a deposit.
+    * `UNCLAIMED_DISPOSED` (`DEC-036`) keeps an `UNPAID`, `PARTIALLY_PAID` or `PAID` balance as it
+      is: what was paid stays paid, what was owed is written off on the disposal record. No refund.
     * Every other balance (`ON_ACCOUNT`, `OVERPAID`) cannot be written today. A cancellation of one
       is refused rather than guessed at.
     """
 
     if balance is OrderBalanceStatus.UNPAID:
+        return balance
+    if resolution is CustodyResolution.UNCLAIMED_DISPOSED and balance in {
+        OrderBalanceStatus.PAID,
+        OrderBalanceStatus.PARTIALLY_PAID,
+    }:
+        # `DEC-036`: money already paid is kept, money still owed is written off. The balance says
+        # what the ledger holds -- `0056`'s rules stay true as they stand -- and the disposal record
+        # (`order_disposals`, `0060`) says what was kept and what was written off.
         return balance
     if balance in {OrderBalanceStatus.PAID, OrderBalanceStatus.PARTIALLY_PAID}:
         if resolution in CUSTOMER_NOT_CHARGED_RESOLUTIONS:
@@ -248,6 +273,13 @@ def _reject_resolution_contradicting_the_record(
         raise OrderTransitionError(
             "INVALID_STATE_TRANSITION: production has begun on the goods, "
             "so they cannot be resolved as returned unwashed"
+        )
+    if resolution is CustodyResolution.UNCLAIMED_DISPOSED and (
+        state.production is not ProductionStatus.READY_AT_STORE or state.self_collection_recorded
+    ):
+        raise OrderTransitionError(
+            "INVALID_STATE_TRANSITION: only finished laundry still on the shelf "
+            "can be disposed of as unclaimed"
         )
 
 

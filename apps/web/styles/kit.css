@@ -3880,3 +3880,71 @@ a.row-link {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* =============================================================================================
+ * UNCLAIMED-001 — Đồ chờ lấy (DEC-036): the waiting list's row with its two actions, the storage
+ * section's button row, the disposal rule quoted verbatim, and the receipt's storage line.
+ * ============================================================================================= */
+
+.pickup-row {
+  display: grid;
+}
+
+.pickup-row .row-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
+
+/* "Gọi" and "Ghi lần liên hệ": two thumb-sized buttons under the row, side by side at 390 px. */
+.pickup-row__actions {
+  align-items: center;
+  display: grid;
+  gap: var(--space-2);
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+.pickup-row__actions .btn,
+.pickup-row__actions .button {
+  justify-content: center;
+  width: 100%;
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.btn-row > * {
+  flex: 1 1 10rem;
+}
+
+.btn-row .btn {
+  justify-content: center;
+  width: 100%;
+}
+
+.rule-quote {
+  background: var(--surface-sunken);
+  border-left: 3px solid var(--danger-fg);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  margin: 0;
+  padding: var(--space-3);
+}
+
+.receipt-paper__storage {
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  margin: var(--space-2) 0 0;
+}
+
+@media (min-width: 48rem) {
+  .pickup-row__actions {
+    max-width: 28rem;
+  }
+}

@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 502
+  DESCRIPTIVE: 516
   MODEL_SEAM: 2
   POLICY_BOUND: 1
-  REPOSITORY_ROLES: 12
+  REPOSITORY_ROLES: 16
   SERVER_GATE: 15
-total: 536
+total: 554
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1618,6 +1618,71 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.STORAGE_POLICY_UNPUBLISHED:67dc449257b7
+  module: core/i18n.js
+  key: REASON_NOTE.STORAGE_POLICY_UNPUBLISHED
+  text: Chủ tiệm chưa công bố phí lưu kho, nên chưa tính phí và chưa thanh lý được. Danh sách chờ lấy
+    và việc ghi liên hệ vẫn dùng bình thường.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.NO_STORAGE_FEE_OWED:31dc56821231
+  module: core/i18n.js
+  key: REASON_NOTE.NO_STORAGE_FEE_OWED
+  text: Đơn này chưa có phí lưu kho nào để miễn (còn trong những ngày miễn phí).
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.STORAGE_FEE_ALREADY_WAIVED:931668980bdf
+  module: core/i18n.js
+  key: REASON_NOTE.STORAGE_FEE_ALREADY_WAIVED
+  text: Phí lưu kho của đơn này đã được miễn rồi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.NOT_AWAITING_PICKUP:e80250713bab
+  module: core/i18n.js
+  key: REASON_NOTE.NOT_AWAITING_PICKUP
+  text: Đơn này không còn là đồ chờ khách lấy (đồ chưa xong, đã lấy, đơn giao tận nơi hoặc đã đóng).
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.CONTACT_ATTEMPTS_TOO_FEW:2878d60fce86
+  module: core/i18n.js
+  key: REASON_NOTE.CONTACT_ATTEMPTS_TOO_FEW
+  text: Chưa đủ số lần liên hệ khách để thanh lý.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.CONTACT_DAYS_TOO_FEW:67d6fd224d6b
+  module: core/i18n.js
+  key: REASON_NOTE.CONTACT_DAYS_TOO_FEW
+  text: Các lần liên hệ chưa rải đủ số ngày khác nhau để thanh lý.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.NO_SINGLE_TOTAL:90fc83a41bbd
+  module: core/i18n.js
+  key: REASON_NOTE.NO_SINGLE_TOTAL
+  text: Báo giá của đơn chưa có một tổng duy nhất, nên máy không thanh lý.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.STORAGE_FEE_OWED:f362b8097b5d
+  module: core/i18n.js
+  key: REASON_NOTE.STORAGE_FEE_OWED
+  text: Đơn này có phí lưu kho, nên phải thu bằng “Thu tiền” (số còn lại đã gồm phí lưu kho).
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: core/rbac.js#why:f1857f4fe905
   module: core/rbac.js
   key: why
@@ -1948,6 +2013,54 @@ disclosures:
     capability: ACCOUNTS_COLLECT
     module: nha_trang_laundry_db.accounts
     symbol: ACCOUNT_COUNTER_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
+- slot_id: core/rbac.js#why:9fa431327325
+  module: core/rbac.js
+  key: why
+  text: Danh sách đồ chờ lấy dành cho người làm ở cửa hàng đã xác thực hai bước.
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: PICKUP_READ
+    module: nha_trang_laundry_db.unclaimed
+    symbol: UNCLAIMED_READ_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
+- slot_id: core/rbac.js#why:0803fc2b9029
+  module: core/rbac.js
+  key: why
+  text: Ghi lần liên hệ khách cần vai trò vận hành đã xác thực hai bước.
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: PICKUP_CONTACT
+    module: nha_trang_laundry_db.unclaimed
+    symbol: CONTACT_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
+- slot_id: core/rbac.js#why:f1e0b758ddab
+  module: core/rbac.js
+  key: why
+  text: Chỉ chủ tiệm hoặc người duyệt miễn phí lưu kho (DEC-036).
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: STORAGE_FEE_WAIVE
+    module: nha_trang_laundry_db.unclaimed
+    symbol: WAIVER_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
+- slot_id: core/rbac.js#why:9345616231ba
+  module: core/rbac.js
+  key: why
+  text: Chỉ chủ tiệm duyệt thanh lý đồ không ai lấy (DEC-036).
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: UNCLAIMED_DISPOSE
+    module: nha_trang_laundry_db.unclaimed
+    symbol: DISPOSAL_ROLES
     why: The route gate for this capability admits every role, so binding to it could never fail. The
       claim is really enforced by an exact role set in the repository layer, and the test asserts the
       console's list equals it.
@@ -2758,6 +2871,33 @@ disclosures:
   module: screens/gaps.js
   key: today
   text: Chuyển khoản ghi khi đã thấy tiền vào tài khoản. Sao kê công nợ in từ trang của khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:d4d6b0d6650d
+  module: screens/gaps.js
+  key: missing
+  text: 'Phí lưu kho được cộng vào số còn lại và chốt khi khách trả đủ. Đơn đã trả đủ trước ngày hết miễn
+    phí thì phí đã chốt là 0 ₫: máy không tạo thêm khoản phải thu cho một đơn đã tất toán. Cũng chưa có
+    tin tự động nhắc khách tới lấy.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#blockedBy:dedf1fce23c5
+  module: screens/gaps.js
+  key: blockedBy
+  text: DEC-036 đã chốt phí và ngày thanh lý, nhưng không nói đơn đã trả đủ có tính thêm phí lưu kho hay
+    không — cần chủ tiệm quyết; tin nhắc tự động cần kênh Zalo đã kết nối (CHANNEL-ZALO-APPLY-001)
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:d989fdb9d442
+  module: screens/gaps.js
+  key: today
+  text: Gọi khách từ màn Đồ chờ lấy và ghi lại mỗi lần. Đơn đã trả trước mà quá hạn lâu thì báo chủ tiệm.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -4801,6 +4941,31 @@ disclosures:
   key: hint
   text: Máy chủ không lưu tên hay loại thiết bị, nên mỗi dòng được gọi theo lúc đăng nhập và lần dùng
     gần nhất. Thiết bị đang cầm trên tay được đánh dấu “Thiết bị này”; muốn đăng xuất nó thì bấm Thoát.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/unclaimed.js#hint:02776c31808b
+  module: ui/unclaimed.js
+  key: hint
+  text: Tối đa 120 ký tự. Không ghi số điện thoại khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/unclaimed.js#hint:6a8d97d04c75
+  module: ui/unclaimed.js
+  key: hint
+  text: Máy chủ đếm ngày theo lịch của tiệm, từ ngày đồ xong. Phí cộng vào số còn lại của đơn và được
+    chốt khi khách trả đủ; khách đã trả gì thì đúng số lúc đó.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/unclaimed.js#hint:44933cad5e74
+  module: ui/unclaimed.js
+  key: hint
+  text: Miễn rồi thì đơn này không tính phí lưu kho nữa. Lý do được ghi lại.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

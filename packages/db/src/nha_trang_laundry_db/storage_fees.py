@@ -1,0 +1,267 @@
+"""The owner's storage policy, and the storage fee one order owes at one instant (`UNCLAIMED-001`).
+
+`DEC-036`. The policy is a configuration version like the messaging and turnaround policies: an
+immutable, hashed document in `configuration_versions`, published by
+`scripts/publish_storage_policy.py` -- a script the owner runs, never a seed a process applies on
+boot. Only an active `OWNER_ADMIN` may publish it, because it is money the shop charges its
+customers. Until it is published no fee is charged and no disposal is offered; the waiting list and
+the contact attempts work regardless. Publishing `withdrawn: true` returns a shop to that state;
+fees already paid stay on the orders they were paid on (`order_storage_fees`).
+
+This module is deliberately small and imports nothing from `orders.py`, so the order read, the
+payment and the exact-total settlement can all ask it the same question without an import cycle:
+*what storage fee does this order owe now?* The answer is always `unclaimed.order_storage_fee`'s.
+"""
+
+from __future__ import annotations
+
+import hmac
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Final
+from uuid import UUID, uuid4
+
+from nha_trang_laundry_domain.catalog import (
+    CommercialOrderStatus,
+    FulfillmentMode,
+    ProductionStatus,
+)
+from nha_trang_laundry_domain.unclaimed import (
+    STORAGE_POLICY_CONFIG_TYPE,
+    OrderStorageFee,
+    StoragePolicy,
+    StoragePolicyError,
+    awaiting_pickup,
+    order_storage_fee,
+    parse_storage_policy,
+    validate_storage_document,
+)
+
+from nha_trang_laundry_db.configurations import (
+    ConfigurationDraft,
+    ConfigurationRepository,
+    JsonObject,
+    snapshot_hash,
+)
+from nha_trang_laundry_db.identity import StaffRole
+
+#: The refusal a fee- or disposal-dependent request gets while no storage policy is in force.
+STORAGE_POLICY_UNPUBLISHED: Final = "STORAGE_POLICY_UNPUBLISHED"
+
+
+class StoragePolicyAuthorizationError(PermissionError):
+    """Only an active owner may publish the fee the shop charges for laundry left waiting."""
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedStoragePolicy:
+    policy: StoragePolicy
+    version_id: UUID
+    version: int
+    snapshot_hash: str
+
+
+def publish_storage_policy(
+    connection: Any, *, actor_id: UUID, payload: JsonObject
+) -> tuple[str, bool]:
+    """Publish one storage document; return its digest and whether this call created it.
+
+    Idempotent on the version in force, as the messaging and turnaround policies are: the document
+    already in force changes nothing; a different one (or an earlier one again) is a new version.
+    """
+
+    validate_storage_document(payload)
+    digest = snapshot_hash(payload)
+    repository = ConfigurationRepository({STORAGE_POLICY_CONFIG_TYPE: validate_storage_document})
+    with connection.transaction(), connection.cursor() as cursor:
+        _require_active_owner(cursor, actor_id)
+        in_force = ConfigurationRepository.latest_published(cursor, STORAGE_POLICY_CONFIG_TYPE)
+        if in_force is not None and in_force.snapshot_hash == digest:
+            return digest, False
+        cursor.execute(
+            "SELECT coalesce(max(version), 0) FROM configuration_versions WHERE config_type = %s",
+            (STORAGE_POLICY_CONFIG_TYPE,),
+        )
+        row = cursor.fetchone()
+        next_version = int(row[0]) + 1 if row else 1
+    config_id = repository.create_draft(
+        connection,
+        ConfigurationDraft(
+            config_type=STORAGE_POLICY_CONFIG_TYPE,
+            version=next_version,
+            payload=payload,
+            created_by=actor_id,
+        ),
+        correlation_id=uuid4(),
+    )
+    repository.publish(
+        connection,
+        config_id=config_id,
+        version=next_version,
+        snapshot_hash_value=digest,
+        published_by=actor_id,
+        correlation_id=uuid4(),
+    )
+    return digest, True
+
+
+def published_from_document(
+    *, version_id: object, version: object, digest: object, payload: object
+) -> PublishedStoragePolicy | None:
+    """The policy in force, from its stored row, or `None` -- which means no fee and no disposal.
+
+    Re-hashed against the digest recorded at publication and re-parsed before use, as the other
+    published policies are: a payload that no longer matches or no longer parses is not a published
+    policy whatever the lifecycle column says. A withdrawal in force is `None`.
+    """
+
+    if not isinstance(payload, Mapping) or payload.get("withdrawn") is True:
+        return None
+    if not hmac.compare_digest(snapshot_hash(payload), str(digest)):
+        return None
+    try:
+        policy = parse_storage_policy(payload)
+    except StoragePolicyError:
+        return None
+    return PublishedStoragePolicy(
+        policy=policy,
+        version_id=version_id if isinstance(version_id, UUID) else UUID(str(version_id)),
+        version=int(str(version)),
+        snapshot_hash=str(digest),
+    )
+
+
+#: The latest published storage policy as one JSON value, for reads that want it beside each row.
+#: Uncorrelated, so PostgreSQL evaluates it once per statement (an InitPlan), not once per order.
+_POLICY_DOCUMENT_SQL: Final = f"""
+    (
+        SELECT jsonb_build_object(
+            'id', c.id, 'version', c.version, 'hash', c.snapshot_hash, 'payload', c.payload
+        )
+        FROM configuration_versions c
+        WHERE c.config_type = '{STORAGE_POLICY_CONFIG_TYPE}' AND c.lifecycle = 'PUBLISHED'
+        ORDER BY c.version DESC
+        LIMIT 1
+    )
+"""
+
+#: `UNCLAIMED-001`'s three columns on the order read, appended after the payment columns: the fee a
+#: settling payment fixed (null when none), whether the fee was waived, and the policy in force.
+STORAGE_VIEW_COLUMNS: Final = f"""
+    , (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = o.id)
+        AS storage_fee_fixed_vnd
+    , EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id) AS storage_fee_waived
+    , {_POLICY_DOCUMENT_SQL} AS storage_policy
+"""
+
+
+def policy_from_column(value: object) -> PublishedStoragePolicy | None:
+    """`STORAGE_VIEW_COLUMNS`' `storage_policy` value as the published policy, or `None`."""
+
+    if not isinstance(value, Mapping):
+        return None
+    return published_from_document(
+        version_id=value.get("id"),
+        version=value.get("version"),
+        digest=value.get("hash"),
+        payload=value.get("payload"),
+    )
+
+
+def read_published_storage_policy(cursor: Any) -> PublishedStoragePolicy | None:
+    """The policy in force, or `None` -- which means no fee is charged and no disposal offered."""
+
+    cursor.execute("SELECT " + _POLICY_DOCUMENT_SQL)
+    row = cursor.fetchone()
+    return None if row is None else policy_from_column(row[0])
+
+
+@dataclass(frozen=True, slots=True)
+class LockedStorageFee:
+    """What one order owes for storage at one instant, and the policy it was computed under."""
+
+    fee: OrderStorageFee
+    published: PublishedStoragePolicy | None
+    awaiting: bool
+    ready_at: datetime | None
+
+
+def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> LockedStorageFee:
+    """The storage fee the order owes at `moment`, read from its stored facts.
+
+    Called by the payment and the exact-total settlement while they hold the order's row lock, so
+    the fee they measure the money against cannot move under them.
+    """
+
+    cursor.execute(
+        """
+        SELECT o.commercial_status, o.production_status, o.fulfillment_mode,
+               o.self_collection_recorded, o.production_ready_at,
+               CASE WHEN r.display_total_min_vnd = r.display_total_max_vnd
+                    THEN r.display_total_min_vnd END,
+               EXISTS (SELECT 1 FROM order_settlements s WHERE s.order_id = o.id),
+               (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = o.id),
+               EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id),
+        """
+        + _POLICY_DOCUMENT_SQL
+        + """
+        FROM orders o
+        JOIN quote_revisions r
+          ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
+        WHERE o.id = %s
+        """,
+        (order_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise LookupError("order is missing")
+    published = policy_from_column(row[9])
+    awaiting = awaiting_pickup(
+        commercial=CommercialOrderStatus(str(row[0])),
+        production=ProductionStatus(str(row[1])),
+        fulfillment_mode=FulfillmentMode(str(row[2])),
+        self_collection_recorded=bool(row[3]),
+    )
+    ready_at = row[4] if isinstance(row[4], datetime) else None
+    fee = order_storage_fee(
+        None if published is None else published.policy,
+        awaiting=awaiting,
+        ready_at=ready_at,
+        as_of=moment,
+        quoted_total_vnd=None if row[5] is None else int(str(row[5])),
+        waived=bool(row[8]),
+        settled=bool(row[6]),
+        fixed_vnd=None if row[7] is None else int(str(row[7])),
+    )
+    return LockedStorageFee(fee=fee, published=published, awaiting=awaiting, ready_at=ready_at)
+
+
+def _require_active_owner(cursor: Any, actor_id: UUID) -> None:
+    cursor.execute(
+        """
+        SELECT 1
+        FROM staff_users u
+        JOIN staff_role_assignments r ON r.staff_user_id = u.id
+        WHERE u.id = %s AND u.status = 'ACTIVE' AND r.role = %s AND r.revoked_at IS NULL
+        """,
+        (actor_id, StaffRole.OWNER_ADMIN.value),
+    )
+    if cursor.fetchone() is None:
+        raise StoragePolicyAuthorizationError(
+            "only an active OWNER_ADMIN may publish the storage policy"
+        )
+
+
+__all__ = [
+    "STORAGE_POLICY_UNPUBLISHED",
+    "STORAGE_VIEW_COLUMNS",
+    "LockedStorageFee",
+    "PublishedStoragePolicy",
+    "StoragePolicyAuthorizationError",
+    "policy_from_column",
+    "publish_storage_policy",
+    "published_from_document",
+    "read_published_storage_policy",
+    "storage_fee_for_order",
+]

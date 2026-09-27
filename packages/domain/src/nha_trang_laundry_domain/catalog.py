@@ -160,7 +160,8 @@ class CustodyResolution(StrEnum):
     `DEC-024`. The two flags on `transition_commercial` existed and no caller ever passed them, so
     the one guarded cancellation path always refused while the unguarded one always succeeded. This
     enum is the content of `custody_and_financial_resolution_recorded`: a named staff member says
-    which of three things happened, and the order records it.
+    which of three things happened, and the order records it. `DEC-036` added a fourth,
+    `UNCLAIMED_DISPOSED`, which only the owner's disposal route records.
 
     There is deliberately **no code for "washed, walked away, no money"**. A customer whose laundry
     has been washed does not cancel -- they pay and collect, or the goods stay with the shop. The
@@ -177,6 +178,11 @@ class CustodyResolution(StrEnum):
     #: `DEC-004` -- free rewash within 7 days on store fault, compensation capped at 5x the
     #: cleaning fee, staff approving up to 100,000d.
     SHOP_FAULT_NO_CHARGE = "SHOP_FAULT_NO_CHARGE"
+    #: `DEC-036` (`UNCLAIMED-001`). Finished laundry nobody came back for, disposed of (in practice
+    #: donated) with the owner's approval after the published number of days and contact attempts.
+    #: Money already paid is kept; money still owed is written off. Recorded only by the owner's
+    #: disposal route, never offered as an answer to an ordinary cancellation.
+    UNCLAIMED_DISPOSED = "UNCLAIMED_DISPOSED"
 
 
 class RewashReason(StrEnum):

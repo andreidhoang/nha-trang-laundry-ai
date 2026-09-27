@@ -47,6 +47,7 @@ from nha_trang_laundry_domain.payments import (
 )
 from nha_trang_laundry_domain.promise import PromiseChoice
 from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
+from nha_trang_laundry_domain.unclaimed import awaiting_pickup, order_storage_fee
 
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
@@ -62,6 +63,7 @@ from nha_trang_laundry_db.promise_policy import (
 from nha_trang_laundry_db.quotes import PRICED_FULFILLMENT_MODE_SQL
 from nha_trang_laundry_db.remedies import RemedyStateError, spend_reserved_remedy_credits
 from nha_trang_laundry_db.shop_capture import apply_cycle_effect, require_cycle_machine
+from nha_trang_laundry_db.storage_fees import STORAGE_VIEW_COLUMNS, policy_from_column
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -146,6 +148,10 @@ class OrderTransitionCommand:
     #: succeed while the unreviewed one always did. Supplying a resolution *is* the approval --
     #: there is no separate boolean, because a second field nobody sets is how this defect started.
     custody_resolution: CustodyResolution | None = None
+    #: `UNCLAIMED-001` (`DEC-036`). Set only by the owner's disposal route, after it checked the
+    #: published days and contact attempts under the order's lock; the domain refuses
+    #: `UNCLAIMED_DISPOSED` without it, so no ordinary cancellation can close an order that way.
+    unclaimed_disposal_verified: bool = False
     #: `ORDER-STEPS-002`. Set only on the first transition of a `REWASH` / `REJECT_INTAKE` step,
     #: by `execute_step` from the domain's plan; the per-axis routes never set them. Written onto
     #: that transition's event payload and audit details, with the step's name, so the order's
@@ -378,6 +384,8 @@ _PROMISE_VIEW_COLUMNS: Final = """,
 _VIEW_PROMISED_READY_AT: Final = 27
 #: `PAYMENT-001`: the payment ledger's sum and rows, after the customer's three (35 and 36).
 _VIEW_PAID_VND: Final = 35
+#: `UNCLAIMED-001`: the fixed storage fee, the waiver flag and the storage policy (37 to 39).
+_VIEW_STORAGE_FEE_FIXED: Final = 37
 #: `CUSTOMER-001` (columns 32-34, after the promise's five): the customer the order was taken for,
 #: read live. The name is personal data an erasure removes, so it is never copied into a stored
 #: step result.
@@ -428,6 +436,8 @@ _ORDER_VIEW_SELECT: Final = (
     + _CUSTOMER_VIEW_COLUMNS
     # `PAYMENT-001`: row[35] the ledger's sum, row[36] its first rows (`payments.py`).
     + PAYMENT_VIEW_COLUMNS
+    # `UNCLAIMED-001`: row[37] the fixed storage fee, row[38] waived, row[39] the policy.
+    + STORAGE_VIEW_COLUMNS
     + """
     FROM orders o
     JOIN quote_revisions r
@@ -976,6 +986,7 @@ class OrderRepository:
                     cancellation_approved=resolved,
                     custody_and_financial_resolution_recorded=resolved,
                     custody_resolution=command.custody_resolution,
+                    unclaimed_disposal_verified=command.unclaimed_disposal_verified,
                 )
                 dimension = "commercial"
                 target = command.commercial_target.value
@@ -1672,7 +1683,10 @@ def _stored_order(response: dict[str, object], replayed: bool) -> StoredOrder:
         raise OrderStateError("stored idempotent order result is invalid") from error
 
 
-def _order_view_row(row: tuple[object, ...]) -> OrderView:
+def _order_view_row(row: tuple[object, ...], *, as_of: datetime | None = None) -> OrderView:
+    """One read-model row as a view. `as_of` is the instant the storage fee is computed for
+    (`UNCLAIMED-001`); a read passes nothing and the server's clock is read here, once."""
+
     facts = _step_facts(row)
     return OrderView(
         order_id=_uuid(row[0]),
@@ -1703,14 +1717,22 @@ def _order_view_row(row: tuple[object, ...]) -> OrderView:
         customer_id=_uuid_or_none(row[32]),
         customer_name=None if row[33] is None else str(row[33]),
         customer_has_phone=bool(row[34]),
-        **_money_fields(row, facts),
+        **_money_fields(row, facts, as_of or datetime.now(UTC)),
     )
 
 
-def _money_fields(row: tuple[object, ...], facts: StepFacts) -> dict[str, Any]:
-    """`PAYMENT-001`: Tổng · Đã trả · Còn lại. The sum is SQL's; the rest is the domain's."""
+def _money_fields(row: tuple[object, ...], facts: StepFacts, as_of: datetime) -> dict[str, Any]:
+    """`PAYMENT-001`: Tổng · Đã trả · Còn lại. The sum is SQL's; the rest is the domain's.
 
-    position = payment_position(owed_charges(facts.quoted_total), int(str(row[_VIEW_PAID_VND])))
+    `UNCLAIMED-001`: the storage fee the order owes at `as_of` is a second charge when above zero
+    (`unclaimed.order_storage_fee`), so `owed_vnd` and `remaining_vnd` include it.
+    """
+
+    storage = _storage_fee_of_row(row, facts, as_of)
+    position = payment_position(
+        owed_charges(facts.quoted_total, storage_fee_vnd=storage),
+        int(str(row[_VIEW_PAID_VND])),
+    )
     try:
         payments, truncated = payment_views(row[_VIEW_PAID_VND + 1])
     except (KeyError, ValueError) as error:
@@ -1724,6 +1746,34 @@ def _money_fields(row: tuple[object, ...], facts: StepFacts) -> dict[str, Any]:
         "payments_truncated": truncated,
         "payment_may_hand_over": payment_may_hand_over(facts),
     }
+
+
+def _storage_fee_of_row(row: tuple[object, ...], facts: StepFacts, as_of: datetime) -> int:
+    """`UNCLAIMED-001`: the storage fee this read-model row owes at `as_of`, in whole đồng."""
+
+    published = policy_from_column(row[_VIEW_STORAGE_FEE_FIXED + 2])
+    state = facts.state
+    fixed = row[_VIEW_STORAGE_FEE_FIXED]
+    quoted = facts.quoted_total
+    return order_storage_fee(
+        None if published is None else published.policy,
+        awaiting=awaiting_pickup(
+            commercial=state.commercial,
+            production=state.production,
+            fulfillment_mode=state.fulfillment_mode,
+            self_collection_recorded=state.self_collection_recorded,
+        ),
+        ready_at=_optional_datetime(row[29]),
+        as_of=as_of,
+        quoted_total_vnd=(
+            quoted.minimum_vnd
+            if quoted.minimum_vnd is not None and quoted.minimum_vnd == quoted.maximum_vnd
+            else None
+        ),
+        waived=bool(row[_VIEW_STORAGE_FEE_FIXED + 1]),
+        settled=facts.settlement_shape is not None,
+        fixed_vnd=None if fixed is None else int(str(fixed)),
+    ).amount_vnd
 
 
 def _read_view_row(connection: Any, order_id: UUID) -> tuple[object, ...]:

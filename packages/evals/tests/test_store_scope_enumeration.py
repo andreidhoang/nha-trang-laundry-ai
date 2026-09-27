@@ -119,6 +119,37 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/orders/{order_id}/payments"): store_scoped(
         "payments", "PaymentRepository.record"
     ),
+    # UNCLAIMED-001 (`DEC-036`). The waiting list is store-scoped by URL; the other four are keyed
+    # by `order_id`, so the store is read off the order row and membership required on that cursor
+    # -- before the idempotency lookup and again under the row lock for the three writes.
+    ("GET", "/internal/v1/stores/{store_id}/orders/awaiting-pickup"): store_scoped(
+        "unclaimed", "UnclaimedRepository.list_awaiting_pickup"
+    ),
+    ("GET", "/internal/v1/orders/{order_id}/storage"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "keyed by order_id. UnclaimedRepository.read_order_storage reads the store off the order "
+        "row and answers OrderNotVisibleError (404) unless the caller is a member of it -- the "
+        "order read's rule; asserted in packages/db/tests/test_unclaimed_laundry.py and "
+        "apps/api/tests/test_unclaimed_http.py",
+    ),
+    ("POST", "/internal/v1/orders/{order_id}/contact-attempts"): store_scoped(
+        "unclaimed", "UnclaimedRepository.record_contact_attempt"
+    ),
+    ("POST", "/internal/v1/orders/{order_id}/storage-fee-waiver"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "keyed by order_id. UnclaimedRepository.waive_storage_fee calls _require_member_of_order "
+        "before the idempotency lookup and _lock_versioned (require_store_membership on the "
+        "cursor holding FOR UPDATE) inside it; asserted in apps/api/tests/test_unclaimed_http.py",
+    ),
+    ("POST", "/internal/v1/orders/{order_id}/disposal"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "keyed by order_id. UnclaimedRepository.dispose calls _require_member_of_order before the "
+        "idempotency lookup and _lock_versioned (require_store_membership under FOR UPDATE) "
+        "inside it; asserted in apps/api/tests/test_unclaimed_http.py",
+    ),
     ("GET", "/internal/v1/stores/{store_id}/settlements/today"): store_scoped(
         "settlement", "SettlementRepository.collected_today"
     ),

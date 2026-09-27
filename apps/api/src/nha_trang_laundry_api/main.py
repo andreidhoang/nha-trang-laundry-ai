@@ -247,6 +247,22 @@ from nha_trang_laundry_api.promises import PromiseService, PromiseServiceUnavail
 from nha_trang_laundry_api.readiness import readyz
 from nha_trang_laundry_api.security import BrowserSecurityMiddleware, RequestSizeLimitMiddleware
 from nha_trang_laundry_api.shop_capture import ShopCaptureService, ShopCaptureUnavailable
+from nha_trang_laundry_api.unclaimed import (
+    DISPOSAL_ROLES,
+    UNCLAIMED_FREE_TEXT_PATH_SUFFIXES,
+    UNCLAIMED_LIST_MAX_LIMIT,
+    UNCLAIMED_READ_ROLES,
+    WAIVER_ROLES,
+    ContactChannel,
+    ContactOutcome,
+    DisposalVerdict,
+    OrderStorageFee,
+    StoragePolicySummary,
+    UnclaimedAuthorizationError,
+    UnclaimedRefused,
+    UnclaimedService,
+    UnclaimedServiceUnavailable,
+)
 
 # SHOP-OBSERVABILITY-001. Before this call, every `_LOGGER.record(...)` below was a no-op in the
 # container: uvicorn's default LOGGING_CONFIG leaves this logger at WARNING with no handler
@@ -4083,7 +4099,11 @@ async def _customer_validation_failed(request: Request, error: Exception) -> Res
     """
     if not isinstance(error, RequestValidationError):
         raise error
-    if CUSTOMER_PATH_MARKER not in request.url.path:
+    # UNCLAIMED-001: a contact note or a waiver reason is free text a person typed, and is refused
+    # when it looks like a phone number -- so it is answered the same way, without its value.
+    if CUSTOMER_PATH_MARKER not in request.url.path and not request.url.path.endswith(
+        UNCLAIMED_FREE_TEXT_PATH_SUFFIXES
+    ):
         return await request_validation_exception_handler(request, error)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -8387,6 +8407,529 @@ def read_order_capture(
     except _SHOP_CAPTURE_ERRORS as error:
         _raise_shop_capture_error(error)
     return _order_capture_response(capture)
+
+
+# --- UNCLAIMED-001: laundry waiting for pickup (DEC-036) ----------------------------------------
+#
+# The waiting list ("Đồ chờ lấy"), one order's storage facts, contact attempts, the fee waiver and
+# the owner's disposal. Every figure and every verdict is `nha_trang_laundry_domain.unclaimed`'s;
+# the storage fee reaches what an order owes through the order read's own `charges`.
+
+
+def get_unclaimed_service() -> UnclaimedService:
+    try:
+        return UnclaimedService(AuthSettings())
+    except UnclaimedServiceUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable"
+        ) from error
+
+
+def require_unclaimed_reader(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """The operations roles and the auditor, with MFA. The auditor reads phone numbers masked."""
+    if not principal.roles & UNCLAIMED_READ_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("UNCLAIMED_READ_ROLE_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+def require_storage_waiver(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """`DEC-036`: an `OPS_APPROVER` or the owner waives the storage fee. MFA."""
+    if not principal.roles & WAIVER_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("STORAGE_WAIVER_ROLE_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+def require_disposal_owner(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """`DEC-036`: only the owner approves thanh lý. MFA."""
+    if not principal.roles & DISPOSAL_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("DISPOSAL_OWNER_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+class StoragePolicyResponse(BaseModel):
+    """The owner's published figures, and the two sentences built from them."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int
+    free_days: int
+    fee_per_started_day_vnd: int
+    fee_cap_percent: int
+    disposal_from_day: int
+    disposal_min_attempts: int
+    disposal_min_attempt_days: int
+    #: The one line the receipt prints.
+    receipt_line_vi: str
+    #: The rule the owner's confirm sheet states verbatim before *Thanh lý*.
+    disposal_rule_vi: str
+
+
+class StorageFeeResponse(BaseModel):
+    """What the order owes for storage now, with the figures it came from."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: `FIXED`, `WAIVED`, `POLICY_UNPUBLISHED`, `NOT_WAITING`, `NO_SINGLE_TOTAL`, `FREE_PERIOD`,
+    #: `ACCRUING`.
+    status: str
+    amount_vnd: int = Field(ge=0)
+    chargeable_days: int | None
+    fee_per_started_day_vnd: int | None
+    cap_vnd: int | None
+    capped: bool
+
+
+class DisposalVerdictResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allowed: bool
+    #: Every rule that is not met: `STORAGE_POLICY_UNPUBLISHED`, `NOT_AWAITING_PICKUP`,
+    #: `DISPOSAL_TOO_EARLY`, `CONTACT_ATTEMPTS_TOO_FEW`, `CONTACT_DAYS_TOO_FEW`.
+    refusals: list[str]
+    attempts_counted: int
+    attempt_days: int
+    #: The first shop day the day rule allows it (the attempts rule still applies).
+    eligible_on: date | None
+
+
+class AwaitingPickupItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    row_version: int
+    balance: str
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    customer_id: UUID | None
+    customer_name: str | None
+    #: The national form, for the roles that call customers; null for an auditor or with none.
+    phone: str | None
+    phone_last4: str | None
+    has_phone: bool
+    ready_at: datetime | None
+    days_waiting: int | None
+    attempts_count: int
+    last_attempt_at: datetime | None
+    last_attempt_outcome: str | None
+    storage_fee: StorageFeeResponse
+    remaining_vnd: int | None
+    disposal: DisposalVerdictResponse
+
+
+class AwaitingPickupResponse(BaseModel):
+    """Đồ chờ lấy: waiting orders, longest-waiting first, bounded."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    evaluated_at: datetime
+    #: False until the owner runs `scripts/publish_storage_policy.py` (or after a withdrawal): no
+    #: fee is charged and no disposal is offered; the list and the attempts work regardless.
+    policy_published: bool
+    policy: StoragePolicyResponse | None
+    limit: int
+    #: Every waiting order in the store; `orders` holds at most `limit` of them.
+    total_count: int
+    truncated: bool
+    phone_visible: bool
+    orders: list[AwaitingPickupItemResponse]
+
+
+class ContactAttemptViewResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attempt_id: UUID
+    channel: ContactChannel
+    outcome: ContactOutcome
+    note: str | None
+    attempted_by_staff_id: UUID
+    attempted_by_name: str | None
+    attempted_at: datetime
+
+
+class StorageWaiverResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    waived_amount_vnd: int
+    days_waiting: int
+    reason: str
+    waived_by_staff_id: UUID
+    waived_by_name: str | None
+    waived_at: datetime
+
+
+class DisposalRecordResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    days_waiting: int
+    attempts_counted: int
+    attempt_days: int
+    owed_vnd: int
+    storage_fee_vnd: int
+    kept_vnd: int
+    written_off_vnd: int
+    disposed_by_staff_id: UUID
+    disposed_by_name: str | None
+    disposed_at: datetime
+
+
+class OrderStorageResponse(BaseModel):
+    """One order's storage facts: the fee now, the waiver, the attempts, the disposal verdict."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    row_version: int
+    evaluated_at: datetime
+    policy_published: bool
+    policy: StoragePolicyResponse | None
+    awaiting_pickup: bool
+    ready_at: datetime | None
+    days_waiting: int | None
+    storage_fee: StorageFeeResponse
+    waiver: StorageWaiverResponse | None
+    #: Oldest first, the latest `ATTEMPT_READ_LIMIT`; `attempts_total` counts all of them.
+    attempts: list[ContactAttemptViewResponse]
+    attempts_total: int
+    attempts_truncated: bool
+    disposal_verdict: DisposalVerdictResponse
+    disposal: DisposalRecordResponse | None
+
+
+class ContactAttemptRequest(StrictRequest):
+    """Ghi lần liên hệ: how the shop tried, and what came of it."""
+
+    channel: ContactChannel
+    outcome: ContactOutcome
+    #: A few words about what happened; at most 120 characters and never a phone number
+    #: (`NOTE_TOO_LONG` / `NOTE_LOOKS_LIKE_PHONE`, decided by the domain).
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class ContactAttemptResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attempt_id: UUID
+    order_id: UUID
+    ordinal: int
+    channel: ContactChannel
+    outcome: ContactOutcome
+    attempted_at: datetime
+    replayed: bool
+
+
+class StorageWaiverRequest(StrictRequest):
+    """Miễn phí lưu kho: why. At most 120 characters, never a phone number."""
+
+    reason: str = Field(max_length=2000)
+
+
+def _storage_policy_response(policy: StoragePolicySummary | None) -> StoragePolicyResponse | None:
+    if policy is None:
+        return None
+    return StoragePolicyResponse(
+        version=policy.version,
+        free_days=policy.free_days,
+        fee_per_started_day_vnd=policy.fee_per_started_day_vnd,
+        fee_cap_percent=policy.fee_cap_percent,
+        disposal_from_day=policy.disposal_from_day,
+        disposal_min_attempts=policy.disposal_min_attempts,
+        disposal_min_attempt_days=policy.disposal_min_attempt_days,
+        receipt_line_vi=policy.receipt_line_vi,
+        disposal_rule_vi=policy.disposal_rule_vi,
+    )
+
+
+def _storage_fee_response(fee: OrderStorageFee) -> StorageFeeResponse:
+    trace = fee.fee
+    return StorageFeeResponse(
+        status=fee.status.value,
+        amount_vnd=fee.amount_vnd,
+        chargeable_days=None if trace is None else trace.chargeable_days,
+        fee_per_started_day_vnd=None if trace is None else trace.fee_per_started_day_vnd,
+        cap_vnd=None if trace is None else trace.cap_vnd,
+        capped=trace is not None and trace.capped,
+    )
+
+
+def _disposal_verdict_response(verdict: DisposalVerdict) -> DisposalVerdictResponse:
+    return DisposalVerdictResponse(
+        allowed=verdict.allowed,
+        refusals=[refusal.value for refusal in verdict.refusals],
+        attempts_counted=verdict.attempts_counted,
+        attempt_days=verdict.attempt_days,
+        eligible_on=verdict.eligible_on,
+    )
+
+
+def _raise_unclaimed_error(error: Exception) -> NoReturn:
+    if isinstance(error, (UnclaimedAuthorizationError, StoreAccessError)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    if isinstance(error, OrderNotVisibleError):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order unavailable") from error
+    if isinstance(error, UnclaimedRefused):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "reason_code": error.code,
+                "reason_codes": list(error.reason_codes),
+                "decision": "DEC-036",
+            },
+        ) from error
+    _raise_operations_error(error)
+
+
+_UNCLAIMED_ERRORS = (
+    UnclaimedAuthorizationError,
+    UnclaimedRefused,
+    StoreAccessError,
+    OrderNotVisibleError,
+    OrderStateError,
+    OrderAuthorizationError,
+    IdempotencyConflictError,
+)
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/orders/awaiting-pickup",
+    response_model=AwaitingPickupResponse,
+)
+def list_awaiting_pickup(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_unclaimed_reader)],
+    limit: Annotated[int, Query(ge=1, le=UNCLAIMED_LIST_MAX_LIMIT)] = 100,
+    service: Annotated[UnclaimedService | None, Depends(get_unclaimed_service)] = None,
+) -> AwaitingPickupResponse:
+    """Đồ chờ lấy: finished laundry the customer has not collected (`UNCLAIMED-001`, `DEC-036`).
+
+    Longest-waiting first, bounded by `limit` (`truncated`, `total_count`). Each row: ticket or
+    customer, days waiting, contact attempts, the storage fee owed now and the disposal verdict. A
+    linked customer's phone is returned to the roles that call customers; an auditor gets the last
+    four digits. Membership of the store is required.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        found = service.awaiting_pickup(store_id=store_id, principal=principal, limit=limit)
+    except _UNCLAIMED_ERRORS as error:
+        _raise_unclaimed_error(error)
+    return AwaitingPickupResponse(
+        store_id=found.store_id,
+        evaluated_at=found.evaluated_at,
+        policy_published=found.policy is not None,
+        policy=_storage_policy_response(found.policy),
+        limit=found.limit,
+        total_count=found.total_count,
+        truncated=found.truncated,
+        phone_visible=found.phone_visible,
+        orders=[
+            AwaitingPickupItemResponse(
+                order_id=item.order_id,
+                row_version=item.row_version,
+                balance=item.balance,
+                ticket_number=item.ticket_number,
+                ticket_issued_on=item.ticket_issued_on,
+                customer_id=item.customer_id,
+                customer_name=item.customer_name,
+                phone=item.phone,
+                phone_last4=item.phone_last4,
+                has_phone=item.has_phone,
+                ready_at=item.ready_at,
+                days_waiting=item.days_waiting,
+                attempts_count=item.attempts_count,
+                last_attempt_at=item.last_attempt_at,
+                last_attempt_outcome=item.last_attempt_outcome,
+                storage_fee=_storage_fee_response(item.fee),
+                remaining_vnd=item.remaining_vnd,
+                disposal=_disposal_verdict_response(item.disposal),
+            )
+            for item in found.orders
+        ],
+    )
+
+
+@app.get("/internal/v1/orders/{order_id}/storage", response_model=OrderStorageResponse)
+def read_order_storage(
+    order_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_unclaimed_reader)],
+    service: Annotated[UnclaimedService | None, Depends(get_unclaimed_service)] = None,
+) -> OrderStorageResponse:
+    """One order's storage: the fee owed now, the waiver, the contact attempts, the disposal
+    verdict and, once disposed of, the record (`UNCLAIMED-001`). 404 outside the caller's stores,
+    as the order read."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        found = service.order_storage(order_id=order_id, principal=principal)
+    except _UNCLAIMED_ERRORS as error:
+        _raise_unclaimed_error(error)
+    waiver = found.waiver
+    disposal = found.disposal
+    return OrderStorageResponse(
+        order_id=found.order_id,
+        row_version=found.row_version,
+        evaluated_at=found.evaluated_at,
+        policy_published=found.policy is not None,
+        policy=_storage_policy_response(found.policy),
+        awaiting_pickup=found.awaiting,
+        ready_at=found.ready_at,
+        days_waiting=found.days_waiting,
+        storage_fee=_storage_fee_response(found.fee),
+        waiver=None
+        if waiver is None
+        else StorageWaiverResponse(
+            waived_amount_vnd=waiver.waived_amount_vnd,
+            days_waiting=waiver.days_waiting,
+            reason=waiver.reason,
+            waived_by_staff_id=waiver.waived_by_staff_id,
+            waived_by_name=waiver.waived_by_name,
+            waived_at=waiver.waived_at,
+        ),
+        attempts=[
+            ContactAttemptViewResponse(
+                attempt_id=item.attempt_id,
+                channel=ContactChannel(item.channel),
+                outcome=ContactOutcome(item.outcome),
+                note=item.note,
+                attempted_by_staff_id=item.attempted_by_staff_id,
+                attempted_by_name=item.attempted_by_name,
+                attempted_at=item.attempted_at,
+            )
+            for item in found.attempts
+        ],
+        attempts_total=found.attempts_total,
+        attempts_truncated=found.attempts_total > len(found.attempts),
+        disposal_verdict=_disposal_verdict_response(found.disposal_verdict),
+        disposal=None
+        if disposal is None
+        else DisposalRecordResponse(
+            days_waiting=disposal.days_waiting,
+            attempts_counted=disposal.attempts_counted,
+            attempt_days=disposal.attempt_days,
+            owed_vnd=disposal.owed_vnd,
+            storage_fee_vnd=disposal.storage_fee_vnd,
+            kept_vnd=disposal.kept_vnd,
+            written_off_vnd=disposal.written_off_vnd,
+            disposed_by_staff_id=disposal.disposed_by_staff_id,
+            disposed_by_name=disposal.disposed_by_name,
+            disposed_at=disposal.disposed_at,
+        ),
+    )
+
+
+@app.post(
+    "/internal/v1/orders/{order_id}/contact-attempts",
+    response_model=ContactAttemptResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_contact_attempt(
+    order_id: UUID,
+    request: ContactAttemptRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[UnclaimedService | None, Depends(get_unclaimed_service)] = None,
+) -> ContactAttemptResponse:
+    """Ghi lần liên hệ: one call, Zalo, SMS or visit, with its outcome (`UNCLAIMED-001`).
+
+    Append-only; legal while the order is waiting for pickup (422 `NOT_AWAITING_PICKUP`); works
+    before the storage policy is published. The note stays in the attempt row: no event, audit or
+    outbox payload carries it. `Idempotency-Key` replays the first answer; no `If-Match`, because
+    an attempt changes nothing on the order.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        stored = service.record_contact_attempt(
+            order_id=order_id,
+            idempotency_key=idempotency_key,
+            principal=principal,
+            channel=request.channel,
+            outcome=request.outcome,
+            note=request.note,
+        )
+    except _UNCLAIMED_ERRORS as error:
+        _raise_unclaimed_error(error)
+    return ContactAttemptResponse(
+        attempt_id=stored.attempt_id,
+        order_id=stored.order_id,
+        ordinal=stored.ordinal,
+        channel=ContactChannel(stored.channel),
+        outcome=ContactOutcome(stored.outcome),
+        attempted_at=stored.attempted_at,
+        replayed=stored.replayed,
+    )
+
+
+@app.post("/internal/v1/orders/{order_id}/storage-fee-waiver", response_model=OrderViewResponse)
+def waive_storage_fee(
+    order_id: UUID,
+    request: StorageWaiverRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_storage_waiver)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[UnclaimedService | None, Depends(get_unclaimed_service)] = None,
+) -> OrderViewResponse:
+    """Miễn phí lưu kho: an `OPS_APPROVER` or the owner waives the storage fee, with a reason.
+
+    `If-Match` is the order's row version, which the waiver advances (what the order owes changed).
+    Refusals: 422 `{"reason_code", "decision": "DEC-036"}` with `STORAGE_POLICY_UNPUBLISHED`,
+    `NO_STORAGE_FEE_OWED`, `STORAGE_FEE_ALREADY_WAIVED`, `NOTE_REQUIRED`, `NOTE_TOO_LONG` or
+    `NOTE_LOOKS_LIKE_PHONE`. The reply is the order view after the waiver.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    expected = _parse_if_match(if_match)
+    try:
+        result = service.waive_storage_fee(
+            order_id=order_id,
+            expected_row_version=expected,
+            idempotency_key=idempotency_key,
+            principal=principal,
+            reason=request.reason,
+        )
+    except _UNCLAIMED_ERRORS as error:
+        _raise_unclaimed_error(error)
+    return _order_view_response(result.view, replayed=result.replayed)
+
+
+@app.post("/internal/v1/orders/{order_id}/disposal", response_model=OrderViewResponse)
+def dispose_unclaimed_order(
+    order_id: UUID,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_disposal_owner)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    service: Annotated[UnclaimedService | None, Depends(get_unclaimed_service)] = None,
+) -> OrderViewResponse:
+    """Thanh lý: the owner closes an order whose laundry nobody came back for (`DEC-036`).
+
+    Legal only while the storage policy is published, the laundry has waited at least its
+    `disposal_from_day` shop days, and the published number of contact attempts is recorded on
+    the published number of different days; otherwise 422 with every unmet rule in
+    `reason_codes`. The order closes CANCELLED with custody resolution `UNCLAIMED_DISPOSED`; money
+    already paid is kept and money owed is written off (the disposal record says how much).
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    expected = _parse_if_match(if_match)
+    try:
+        result = service.dispose(
+            order_id=order_id,
+            expected_row_version=expected,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except _UNCLAIMED_ERRORS as error:
+        _raise_unclaimed_error(error)
+    return _order_view_response(result.view, replayed=result.replayed)
 
 
 if WEB_DIRECTORY.is_dir():

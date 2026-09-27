@@ -51,6 +51,8 @@ import { snapshot } from "../core/session.js";
 import { errorNotice } from "../ui/components.js";
 import { clock, serviceName, unitShort } from "../ui/quoting.js";
 import { actionBar, button, infoButton, page, skeletonRows } from "../ui/kit.js";
+// UNCLAIMED-001 (DEC-036): the storage rule's one line, once the owner published it.
+import { readStorage, receiptStorageLine } from "../ui/unclaimed.js";
 // The same helper the order list and page use, so the paper cannot word the ticket differently.
 import { orderName } from "./orders.js";
 
@@ -178,13 +180,15 @@ function lineAmount(line) {
  * @property {string} total
  * @property {{paid: string, remaining: string}|null} paid Đã trả / Còn lại, once anything is paid
  * @property {string} closing
+ * @property {string|null} storage the storage rule's one line, once published (`DEC-036`)
  *
  * @param {any} order an `OrderViewResponse`
  * @param {any|null} detail the bound `QuoteRevisionDetailResponse`, once read
  * @param {any[]|null} catalog the published services, for their names
+ * @param {any|null} [storage] the order's `OrderStorageResponse`, when read
  * @returns {ReceiptModel}
  */
-function receiptModel(order, detail, catalog) {
+function receiptModel(order, detail, catalog, storage = null) {
   const state = snapshot();
   const numbered = order.ticket_number !== null && order.ticket_number !== undefined;
   return {
@@ -217,6 +221,12 @@ function receiptModel(order, detail, catalog) {
         ? { paid: money(order.paid_vnd), remaining: money(order.remaining_vnd, "Chưa có tổng") }
         : null,
     closing: closingLine(order),
+    // UNCLAIMED-001: the customer is told the rule on the slip they take home; a closed order's
+    // slip does not repeat it.
+    storage:
+      order.commercial === "CANCELLED" || order.commercial === "COMPLETED"
+        ? null
+        : receiptStorageLine(storage),
   };
 }
 
@@ -239,6 +249,7 @@ export function receiptText(model) {
     `Nhận đơn: ${model.taken}`,
     `Mã đơn: ${model.reference}`,
     model.closing,
+    model.storage,
   ]
     .filter(Boolean)
     .join("\n");
@@ -331,6 +342,9 @@ function paper(model, linesFallback) {
       row("Mã đơn", model.reference, { field: "reference" }),
     ),
     h("p", { class: "receipt-paper__closing", dataField: "closing" }, model.closing),
+    model.storage
+      ? h("p", { class: "receipt-paper__storage", dataField: "storage-rule" }, model.storage)
+      : null,
   ];
 }
 
@@ -379,6 +393,8 @@ export function render_(context) {
   let detail = null;
   /** @type {any[]|null} */
   let catalog = null;
+  /** @type {any|null} UNCLAIMED-001: the order's storage read, for the rule's one line */
+  let storage = null;
   /** @type {unknown} */
   let linesError = null;
   /** @type {string} why the receipt cannot be printed yet, when it is not loading */
@@ -416,7 +432,7 @@ export function render_(context) {
 
   async function share() {
     if (!order || !detail) return;
-    const model = receiptModel(order, detail, catalog);
+    const model = receiptModel(order, detail, catalog, storage);
     try {
       await navigator.share({ title: `${model.ticket} · Phiếu cho khách`, text: receiptText(model) });
       render(statusHost);
@@ -432,7 +448,7 @@ export function render_(context) {
 
   function drawPaper() {
     if (!order) return;
-    const model = receiptModel(order, detail, catalog);
+    const model = receiptModel(order, detail, catalog, storage);
     const fallback = linesError
       ? errorNotice(linesError, {
           title: "Chưa đọc được các món của đơn. Tổng ở dưới là số máy chủ đã trả.",
@@ -452,7 +468,7 @@ export function render_(context) {
     const store = encodeURIComponent(String(order.store_id));
     const quote = encodeURIComponent(String(order.quote_id));
     const revision = encodeURIComponent(String(order.quote_revision));
-    const [read, services] = await Promise.all([
+    const [read, services, stored] = await Promise.all([
       request(`/internal/v1/stores/${store}/quotes/${quote}?revision=${revision}`).catch((error) => {
         linesError = error;
         return null;
@@ -460,7 +476,9 @@ export function render_(context) {
       catalog
         ? Promise.resolve(catalog)
         : request("/internal/v1/pricebook/services").catch(() => null),
+      readStorage(String(order.order_id)),
     ]);
+    storage = stored;
     catalog = Array.isArray(services) ? services : null;
     detail = read;
     drawPaper();

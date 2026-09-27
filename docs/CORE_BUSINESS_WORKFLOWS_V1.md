@@ -270,6 +270,21 @@ cancel step never offers it.
 
 - **`#/` Hôm nay** opens on what needs a person, then money **taken at the counter today** — named
   as money collected, never as revenue and never as profit.
+- **Tóm tắt cuối ngày** (`DAILY-SUMMARY-001`, `DEC-039`) is the owner's evening card on Hôm nay,
+  for the report's four readers. After 18:00 shop-local it reads by itself; before, **Xem tóm tắt**
+  reads it on demand ("tính đến" the time in its first line). `GET …/reports/daily-summary?date=`
+  returns short Vietnamese sentences a versioned Python template (`daily-summary-v1:<digest>`)
+  writes from the report's one-day figures and the live lists: orders taken in, completed and
+  cancelled; money in split cash / transfer (and refunds when any); finished on time against the
+  first promise and how many had none; orders not yet handed back that are late against their
+  promise, and those with no promise past the stated mark (the SLA board, today only); new and open
+  complaints; the day's Sổ thu chi. Every amount goes through one formatter; counts carry their
+  unit; no name, phone or note can reach the text. A line whose source cannot answer is left out
+  and listed with its reason — laundry waiting over 20 / 60 days (`UNCLAIMED-001`) and accounts
+  coming due (`PAYMENT-002`) until those reads exist, the board for an accountant, the live lines
+  for a past day, "late against promise" while no turnaround policy and no promise exist.
+  **Sao chép** copies the server's text; **Chia sẻ** opens the phone's share sheet (Zalo). Nothing
+  is sent by itself and no model is involved.
 - **`#/orders`** is the board: four labels per order, read as four answers.
 - **`#/orders/{id}`** is the working surface: the audit timeline, the settlement panel, the delivery
   legs.
@@ -367,6 +382,10 @@ its correct behaviour is to decline. That is a designed state, not an outage.
   reconciliation queue for a channel that is not connected.
 - **Manual send** is the only way a message could leave, and it demands an approved envelope and an
   attestation with the exact content hash.
+- **The owner's evening summary is not AI** (`DEC-039`). *Tóm tắt cuối ngày* on Hôm nay is a fixed
+  template the server fills with the day's figures, and its ⓘ says so. `FR-RPT-007`'s model-written
+  version — the same figures rephrased by a language model — waits for `DEC-006` and the capability
+  gates, and stays on `#/gaps`; the template is the baseline it must beat.
 
 "The AI works correctly" in this release means: **the refusal is real, it is enforced in more than
 one place, and no screen pretends otherwise.**

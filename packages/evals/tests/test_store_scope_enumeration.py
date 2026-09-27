@@ -403,6 +403,15 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "the same repository call as the summary -- one statement yields the per-day rows and the "
         "window row -- so it carries the same membership check and the same store predicate.",
     ),
+    # --- DAILY-SUMMARY-001 (DEC-039) -----------------------------------------------------------
+    ("GET", "/internal/v1/stores/{store_id}/reports/daily-summary"): RouteScope(
+        "STORE_SCOPED",
+        ("daily_summary", "DailySummaryRepository.read"),
+        "the report's role, MFA and membership check first, on the summary's own read-only "
+        "snapshot, then the report itself (which checks again); the SLA board read after it "
+        "checks membership once more, and the open-complaint count and Sổ thu chi totals are "
+        "selected WHERE store_id = the named store.",
+    ),
     # --- SHOP-CAPTURE-001 (DEC-038) --------------------------------------------------------------
     ("GET", "/internal/v1/stores/{store_id}/machines"): RouteScope(
         "STORE_SCOPED",

@@ -281,6 +281,12 @@ DECLARED_CONTROLS = (
     "orderDetail.waiver-submit",
     "orderDetail.dispose",
     "orderDetail.disposal-confirm",
+    # DAILY-SUMMARY-001 (DEC-039): the owner's evening summary on Hôm nay -- read on demand, its ⓘ,
+    # Sao chép to the clipboard and Chia sẻ to the share sheet.
+    "today.summary-load",
+    "today.summary-info",
+    "today.summary-copy",
+    "today.summary-share",
 )
 
 PASS: list[str] = []
@@ -6857,6 +6863,405 @@ def scenario_unclaimed(console: Console) -> None:
     console.sign_in("demo-owner")
 
 
+# --- DAILY-SUMMARY-001: the owner's evening summary (DEC-039) ---------------------------------
+
+
+def _summary_read(console: Console, day: str = "") -> dict[str, Any]:
+    path = f"/internal/v1/stores/{STORE}/reports/daily-summary"
+    return console.call("GET", f"{path}?date={day}" if day else path)
+
+
+def _summary_figures(body: dict[str, Any]) -> dict[str, Any]:
+    figures: dict[str, Any] = {}
+    for line in body.get("lines") or []:
+        figures.update(line.get("figures") or {})
+    return figures
+
+
+def scenario_daily_summary(console: Console) -> None:
+    """`DAILY-SUMMARY-001` (`DEC-039`): after known actions the evening summary's figures are the
+    report's, the board's, the complaint list's and Sổ thu chi's; the card prints the server's
+    sentences, Sao chép puts exactly that text on the clipboard and Chia sẻ hands it to the share
+    sheet; no customer's name or phone reaches any of it; the counter is refused; a past day
+    leaves out what only today can say."""
+
+    head("22", "TÓM TẮT CUỐI NGÀY — the summary's figures are the report's, after known actions")
+    console.sign_in("demo-owner")
+    today = console.page.evaluate(
+        "() => new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', "
+        "month: '2-digit', day: '2-digit'}).format(new Date())"
+    )
+    first = _summary_read(console)
+    ok(
+        "the owner reads today's summary: a versioned template, lines and what it left out",
+        first["status"] == 200
+        and str((first["body"] or {}).get("template_version", "")).startswith("daily-summary-v1:")
+        and (first["body"] or {}).get("date") == today
+        and (first["body"] or {}).get("so_far") is True,
+        first["text"][:160],
+    )
+    before = _summary_figures(first["body"] or {})
+
+    # A named customer with a phone number, so the scan below has something to find.
+    notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
+    if not (notice.get("body") or {}).get("published") and arguments.database_url:
+        owner_id = sql("SELECT id FROM staff_users WHERE oidc_subject = 'demo-owner'")
+        subprocess.run(
+            [
+                sys.executable,
+                os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "publish_privacy_notice.py"
+                ),
+                "--actor-id",
+                owner_id,
+                "--database-url",
+                arguments.database_url,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        note("published the privacy notice with the owner's script, to record a named customer")
+    digits = "0906" + str(uuid.uuid4().int)[:6]
+    spaced = f"{digits[:4]} {digits[4:7]} {digits[7:]}"
+    name = "chị Hồng Nhung Tóm"
+    created = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/customers",
+        {
+            "phone": spaced,
+            "display_name": name,
+            "delivery_address": "45 Lê Thánh Tôn, Nha Trang",
+            "note": "Thích gấp áo sơ mi",
+            "service_consent": True,
+        },
+    )
+    note(f"customer recorded: HTTP {created['status']}")
+
+    # The known actions: one order washed, paid in cash and completed; a second one with a
+    # 50.000 ₫ transfer deposit; a complaint naming the customer; one line of Sổ thu chi.
+    washed = console.build_order(kg="7", stop="released")
+    console.pay(washed["order_id"])
+    console.step(washed["order_id"], "COMPLETE")
+    paid = int(
+        next(
+            (
+                p["amount_vnd"]
+                for p in (
+                    console.call("GET", f"/internal/v1/orders/{washed['order_id']}").get("body")
+                    or {}
+                ).get("payments", [])
+            ),
+            0,
+        )
+    )
+    deposit = console.build_order(kg="5", stop="active")
+    console.pay(deposit["order_id"], "50.000", method="CHUYEN_KHOAN", seen=True, ref="ft 2209")
+    complaint = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/incidents",
+        {
+            "order_id": washed["order_id"],
+            "evidence_summary": f"{name} ({spaced}) báo áo còn vết ố",
+        },
+    )
+    spent = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/expenses",
+        {"spent_on": today, "category": "HOA_CHAT", "amount_vnd": 250_000, "note": "Bột giặt"},
+    )
+    ok(
+        "the known actions were accepted (a paid, completed order; a deposit; a complaint; a "
+        "Sổ thu chi line)",
+        paid > 0 and complaint["status"] == 201 and spent["status"] == 201,
+        f"paid={paid} complaint={complaint['status']} expense={spent['status']}",
+    )
+
+    second = _summary_read(console)
+    body = second["body"] or {}
+    after = _summary_figures(body)
+
+    def moved(key: str) -> int:
+        return int(after.get(key) or 0) - int(before.get(key) or 0)
+
+    ok(
+        "orders: two more taken in, one more completed",
+        moved("orders_created") == 2 and moved("orders_completed") == 1,
+        (moved("orders_created"), moved("orders_completed")),
+    )
+    ok(
+        "money: the cash order's payment in cash, the 50.000 ₫ deposit as transfer",
+        moved("cash_vnd") == paid and moved("transfer_vnd") == 50_000,
+        (moved("cash_vnd"), paid, moved("transfer_vnd")),
+    )
+    ok(
+        "one more complaint opened today, and one more still open",
+        moved("complaints_opened") == 1 and moved("open_count") == 1,
+        (moved("complaints_opened"), moved("open_count")),
+    )
+    ok(
+        "Sổ thu chi: one more line, 250.000 ₫ more, and the sentence names the category",
+        moved("spending_entries") == 1
+        and moved("spending_vnd") == 250_000
+        and "Hoá chất"
+        in next((line["text"] for line in body.get("lines", []) if line["key"] == "SPENDING"), ""),
+        (moved("spending_entries"), moved("spending_vnd")),
+    )
+
+    # Every figure is the report's own, read at the same moment for the same day.
+    report = console.call(
+        "GET", f"/internal/v1/stores/{STORE}/reports/summary?from={today}&to={today}"
+    )
+    kpis = {kpi["key"]: kpi for kpi in (report.get("body") or {}).get("kpis", [])}
+    methods = {
+        item["kind"]: item["amount_vnd"]
+        for item in (kpis.get("MONEY_COLLECTED") or {}).get("by_kind") or []
+    }
+    ok(
+        "the summary's figures equal the report's: orders, finished on time, complaints, money",
+        after.get("orders_created") == kpis["ORDERS_CREATED"]["numerator"]
+        and after.get("orders_completed") == kpis["ORDERS_COMPLETED"]["numerator"]
+        and after.get("orders_cancelled") == kpis["ORDERS_CANCELLED"]["numerator"]
+        and after.get("finished_on_time") == kpis["ON_TIME_INTERNAL"]["numerator"]
+        and after.get("finished") == kpis["ON_TIME_INTERNAL"]["denominator"]
+        and after.get("finished_without_promise") == kpis["ON_TIME_INTERNAL"]["rule_assumed"]
+        and after.get("complaints_opened") == kpis["COMPLAINTS"]["numerator"]
+        and after.get("collected_vnd") == kpis["MONEY_COLLECTED"]["numerator"]
+        and after.get("cash_vnd") == methods.get("TIEN_MAT")
+        and after.get("transfer_vnd") == methods.get("CHUYEN_KHOAN")
+        and after.get("net_vnd") == kpis["MONEY_NET"]["numerator"],
+        {k: after.get(k) for k in ("orders_created", "collected_vnd", "finished_on_time")},
+    )
+    ok(
+        "and it names the report's version among its sources",
+        {"key": "report", "query_version": report["body"]["query_version"]}
+        in body.get("sources", []),
+        body.get("sources"),
+    )
+    board = console.call("GET", f"/internal/v1/stores/{STORE}/sla-board?limit=200")
+    rows = (board.get("body") or {}).get("items") or []
+    promised = [row for row in rows if row.get("rule_source") == "ORDER_PROMISE"]
+    unpromised = [row for row in rows if row.get("rule_source") != "ORDER_PROMISE"]
+    omitted = {item["key"]: item["reason"] for item in body.get("omitted", [])}
+    late_line = "promised_late" in after
+    ok(
+        "late against promise and without a promise are the SLA board's own outcomes, counted",
+        not (board.get("body") or {}).get("next_order_id")
+        and after.get("unpromised") == len(unpromised)
+        and after.get("unpromised_late")
+        == sum(1 for row in unpromised if row.get("sla_outcome") == "BREACHED")
+        and (
+            (
+                late_line
+                and after.get("promised") == len(promised)
+                and after.get("promised_late")
+                == sum(1 for row in promised if row.get("sla_outcome") == "BREACHED")
+            )
+            or (
+                not late_line
+                and not promised
+                and omitted.get("LATE_AGAINST_PROMISE") == "TURNAROUND_POLICY_UNPUBLISHED"
+            )
+        ),
+        {k: after.get(k) for k in ("promised", "promised_late", "unpromised", "unpromised_late")},
+    )
+    incidents = console.call("GET", f"/internal/v1/stores/{STORE}/incidents?limit=200")
+    listed = incidents.get("body") or []
+    if isinstance(listed, list) and len(listed) < 200:
+        ok(
+            "open complaints equal the incident list's OPEN and UNDER_REVIEW rows",
+            after.get("open_count")
+            == sum(1 for item in listed if item.get("status") in ("OPEN", "UNDER_REVIEW")),
+            after.get("open_count"),
+        )
+    ok(
+        "what is not built yet is left out with its reason, never printed as a zero",
+        omitted.get("WAITING_PICKUP") == "SOURCE_NOT_BUILT"
+        and omitted.get("ACCOUNTS_DUE") == "SOURCE_NOT_BUILT"
+        and "20 ngày" not in body.get("text", ""),
+        omitted,
+    )
+    everything = json.dumps(body, ensure_ascii=False)
+    ok(
+        "no name, phone, address or note of the customer is anywhere in the summary",
+        created["status"] == 201
+        and all(
+            value not in everything
+            for value in (
+                name,
+                "Hồng Nhung",
+                digits,
+                spaced,
+                "+84" + digits[1:],
+                digits[-6:],
+                "Lê Thánh Tôn",
+                "sơ mi",
+                "vết ố",
+            )
+        ),
+        f"customer HTTP {created['status']}",
+    )
+
+    head("22a", "TÓM TẮT CUỐI NGÀY — the card prints the server's words; one press to Zalo")
+    console.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=BASE)
+    # The morning, in a second browser context carrying the same session (cookies and the chosen
+    # store) whose clock reads 10:00 shop-local: the card offers "Xem tóm tắt" and reads nothing
+    # until it is pressed. A context of its own because a Playwright clock belongs to the whole
+    # context -- pinned on the main one, it would reach every later page -- and so this check does
+    # not depend on the hour the run happens to start at.
+    morning_context = console.context.browser.new_context(
+        viewport=viewport(), storage_state=console.context.storage_state()
+    )
+    morning = morning_context.new_page()
+    morning.clock.set_fixed_time("2026-09-26T03:00:00Z")
+    reads: list[str] = []
+    morning.on(
+        "request",
+        lambda request: reads.append(request.url) if "/daily-summary" in request.url else None,
+    )
+    morning.goto(f"{CONSOLE}#/", wait_until="networkidle")
+    morning.wait_for_timeout(1500)
+    offered = morning.locator("button[data-summary-load]")
+    waited = offered.count() == 1 and not reads
+    if offered.count():
+        offered.click()
+        touched("today.summary-load")
+        morning.wait_for_timeout(1500)
+    ok(
+        "before 18:00 the card offers 'Xem tóm tắt', reads nothing until pressed, then the lines",
+        waited
+        and len(reads) == 1
+        and morning.locator("#daily-summary [data-summary-line]").count() > 1,
+        reads,
+    )
+    morning_context.close()
+
+    console.open("#/")
+    card = console.page.locator("#daily-summary")
+    load = console.page.locator("button[data-summary-load]")
+    hour = int(
+        console.page.evaluate(
+            "() => new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Ho_Chi_Minh', "
+            "hour: '2-digit', hourCycle: 'h23'}).format(new Date())"
+        )
+    )
+    if hour >= 18:
+        ok(
+            "after 18:00 shop-local the card has read the summary by itself",
+            load.count() == 0
+            and console.page.locator("#daily-summary [data-summary-line]").count() > 1,
+            f"hour {hour}",
+        )
+    elif load.count():
+        load.click()
+        console.page.wait_for_timeout(1500)
+    fresh = (_summary_read(console).get("body") or {}).get("lines") or []
+    shown = [
+        (node.get_attribute("data-summary-line"), node.inner_text().strip())
+        for node in console.page.locator("#daily-summary [data-summary-line]").all()
+    ]
+    ok(
+        "the card prints the server's sentences, in order, verbatim (the header's minute aside)",
+        card.count() == 1
+        and [key for key, _ in shown] == [line["key"] for line in fresh]
+        and shown[1:] == [(line["key"], line["text"]) for line in fresh][1:],
+        shown[:3],
+    )
+    card.locator(".info-btn").first.click()
+    touched("today.summary-info")
+    console.page.wait_for_timeout(500)
+    sheet = console.dialog_text()
+    ok(
+        "its ⓘ says it is a fixed template over the day's figures, not AI, and sends nothing",
+        "không phải AI" in sheet and "không tự gửi" in sheet,
+        sheet[:140],
+    )
+    console.page.keyboard.press("Escape")
+    console.page.wait_for_timeout(300)
+    console.page.locator("button[data-summary-copy]").click()
+    touched("today.summary-copy")
+    console.page.wait_for_timeout(600)
+    copied = console.page.evaluate("() => navigator.clipboard.readText()")
+    ok(
+        "Sao chép puts exactly the card's lines on the clipboard, one per row",
+        copied == "\n".join(text for _, text in shown) and "Đã chép" in card.inner_text(),
+        repr(copied)[:160],
+    )
+    # Headless Chromium has no share sheet; the page is given one that records what it was
+    # handed, and the card is read again so it offers Chia sẻ (it asks the browser at render).
+    console.page.evaluate(
+        "() => { navigator.share = async (data) => { window.__shared = data; }; }"
+    )
+    console.page.locator("button[data-summary-reload]").click()
+    console.page.wait_for_timeout(1500)
+    share = console.page.locator("button[data-summary-share]")
+    if share.count():
+        share.click()
+        touched("today.summary-share")
+        console.page.wait_for_timeout(400)
+    shared = console.page.evaluate("() => window.__shared || null") or {}
+    reshown = "\n".join(
+        node.inner_text().strip()
+        for node in console.page.locator("#daily-summary [data-summary-line]").all()
+    )
+    ok(
+        "Chia sẻ hands the same text to the phone's share sheet (then Zalo)",
+        share.count() == 1 and shared.get("text") == reshown,
+        repr(shared)[:160],
+    )
+    shown_text = card.inner_text()
+    ok(
+        "and nothing the card shows names the customer or their number",
+        all(value not in shown_text for value in (name, "Hồng Nhung", digits, spaced)),
+    )
+
+    head("22b", "TÓM TẮT CUỐI NGÀY — a past day, another reader, and the counter")
+    yesterday = console.page.evaluate(
+        "(d) => new Date(Date.parse(d + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10)",
+        today,
+    )
+    past = _summary_read(console, yesterday)
+    reasons = {item["key"]: item["reason"] for item in (past.get("body") or {}).get("omitted", [])}
+    ok(
+        "a past day keeps the report's lines and leaves out what only today can say",
+        past["status"] == 200
+        and (past["body"] or {}).get("so_far") is False
+        and reasons.get("LATE_AGAINST_PROMISE") == "LIVE_ONLY_TODAY"
+        and reasons.get("COMPLAINTS_OPEN") == "LIVE_ONLY_TODAY",
+        reasons,
+    )
+    later = console.page.evaluate(
+        "(d) => new Date(Date.parse(d + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10)",
+        today,
+    )
+    refused = _summary_read(console, later)
+    ok(
+        "a day after today is refused with the report's reason",
+        refused["status"] == 422 and "REPORT_WINDOW_IN_FUTURE" in refused["text"],
+        refused["text"][:120],
+    )
+    console.sign_in("demo-auditor")
+    audited = _summary_read(console)
+    ok(
+        "an auditor reads the same summary",
+        audited["status"] == 200 and (audited["body"] or {}).get("lines"),
+        f"HTTP {audited['status']}",
+    )
+    console.sign_in("demo-operations")
+    denied = _summary_read(console)
+    ok(
+        "the counter is refused by the server, with no sentence in the answer",
+        denied["status"] == 403 and "Tóm tắt" not in denied["text"],
+        f"HTTP {denied['status']}",
+    )
+    console.open("#/")
+    ok(
+        "and an operator's Hôm nay has no summary card",
+        console.page.locator("#daily-summary").count() == 0,
+    )
+    console.sign_in("demo-owner")
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -6898,6 +7303,9 @@ SCENARIOS = {
     # PROMISE-001. Last: it publishes the turnaround policy, and every scenario above proves its
     # own workflow on a shop that has not (the receipt's R4 line, the report's assumed rule).
     "promise": scenario_promise,
+    # DAILY-SUMMARY-001 (DEC-039). After promise, so the late-against-promise line has promises to
+    # count; on a shop without a turnaround policy it proves the omission instead.
+    "daily_summary": scenario_daily_summary,
 }
 
 

@@ -951,6 +951,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   to `nha_trang_laundry_db.unclaimed`'s sets); the new gaps entry's missing/blockedBy/today;
     #   and three ui/unclaimed.js lines (the note hint, the fee ⓘ, the waiver sheet's note).
     # UNCLAIMED-001 merged onto PAYMENT-002 (round 7 wave 2 integration): 536 + 18 = 554.
+    # DAILY-SUMMARY-001 (round 7 wave 2, DEC-039): 524 + 0. Re-keyed, none added or retired: the
+    #   "Kênh và AI" lede and the FR-RPT-007 gap's `missing` now say the template summary exists.
+    # DAILY-SUMMARY-001 merged onto both (round 7 wave 2 integration): 554 + 0 = 554.
     assert sum(counts.values()) == _registry()["total"] == 554
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002

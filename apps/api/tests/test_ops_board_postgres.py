@@ -21,7 +21,7 @@ import os
 import re
 import sys
 from collections.abc import Generator, Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -52,6 +52,7 @@ from nha_trang_laundry_db.shadow_console import (
     sla_board_query_version,
 )
 from nha_trang_laundry_db.stores import StoreRepository
+from nha_trang_laundry_domain.canonical import canonical_document
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
     FulfillmentMode,
@@ -468,8 +469,9 @@ def test_an_export_cannot_be_approved_by_the_person_who_defined_it_and_can_by_an
     released = produced.json()
     assert released["approval_request_id"] == approval_id
     # And the header is the column list the owner was shown, with no always-false incident column.
-    # It sits below the five `key,value` rows naming the query version and the window
-    # (`EXPORT-RANGE-001`), which for a one-day export name the one day twice.
+    # It sits below the six `key,value` rows naming the query version and the window
+    # (`EXPORT-RANGE-001`), which for a one-day export name the one day twice, and the moment the
+    # money columns stand at (`EXPORT-PAYMENTS-001`) -- the release's own `produced_at`.
     lines = released["content_csv"].splitlines()
     assert lines[:5] == [
         f"export_query_version,{request_body['query_version']}",
@@ -478,7 +480,10 @@ def test_an_export_cannot_be_approved_by_the_person_who_defined_it_and_can_by_an
         "business_timezone,Asia/Ho_Chi_Minh",
         "day_boundary,orders.created_at",
     ]
-    assert lines[5] == ",".join(request_body["columns"])
+    key, stamp = lines[5].split(",", 1)
+    assert key == "produced_at"
+    assert datetime.fromisoformat(stamp) == datetime.fromisoformat(released["produced_at"])
+    assert lines[6] == ",".join(request_body["columns"])
     assert "incident_open" not in released["content_csv"]
 
 
@@ -656,7 +661,7 @@ def test_an_export_window_approved_for_one_week_releases_that_week_and_no_other(
         "2026-09-07",
     )
     assert week_body["window_days"] == 7
-    assert week_body["query_version"].startswith("store-window-orders-export-v1:")
+    assert week_body["query_version"].startswith("store-window-orders-export-v2:")
     assert "từ 2026-09-01 đến hết 2026-09-07 (7 ngày" in week_body["statement_vi"]
     next_week = _post(
         client,
@@ -787,7 +792,21 @@ def test_a_one_day_export_request_answers_exactly_as_before(
     for body in (omitted, explicit):
         assert body["business_date"] == body["business_date_to"] == "2026-09-16"
         assert body["window_days"] == 1
-        assert body["query_version"] == "store-day-orders-export-v2:3f884e227d6a2d05"
+        # `EXPORT-PAYMENTS-001` moved the one-day rule to v3 (the payment ledger's columns);
+        # v2 (`3f884e227d6a2d05`) is retired, and an envelope bound to it is refused by name.
+        assert body["query_version"] == "store-day-orders-export-v3:7b7e01eef9314061"
+        assert body["shape_retired"] is False
+        assert [item["column"] for item in body["money_sources"]] == [
+            "expected_total_vnd",
+            "paid_amount_vnd",
+            "refunded_amount_vnd",
+            "owed_vnd",
+            "paid_cash_vnd",
+            "paid_transfer_vnd",
+            "paid_vnd",
+            "remaining_vnd",
+        ]
+        assert body["money_line_vi"].startswith("Tiền trong tệp:")
         assert body["statement_vi"].startswith(
             "Xuất bản sao hồ sơ của chính cửa hàng cho ngày 2026-09-16 "
         )
@@ -803,3 +822,82 @@ def test_a_one_day_export_request_answers_exactly_as_before(
         "2026-09-16",
         1,
     )
+    # `EXPORT-PAYMENTS-001`: the envelope binds the live shape, and the read says so by name.
+    assert content["bound_query_version"] == omitted["query_version"]
+    assert content["bound_shape_retired"] is False
+    assert content["money_line_vi"] == omitted["money_line_vi"]
+
+
+def test_an_envelope_signed_over_the_retired_export_shape_is_refused_by_name_over_http(
+    connection: psycopg.Connection[Any], client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`EXPORT-PAYMENTS-001`, both directions, through the routes the console calls.
+
+    An envelope raised and approved while the retired shape was live (the decision is taken with
+    `exports._statement` patched to the retired document, which is what the code deployed then
+    derived) is refused at release with 422 `REQUIRE_HUMAN` / `EXPORT_QUERY_VERSION_RETIRED` --
+    never released as the new shape it did not sign, and nothing is written. The approval read
+    names it. The same request, re-raised under an envelope over the live document, releases the
+    live shape once.
+    """
+    from nha_trang_laundry_db import exports
+
+    now = datetime.now(UTC)
+    store_id, owner, approver = _store_with_member(
+        connection, now, roles=frozenset({StaffRole.OPS_APPROVER})
+    )
+    _as(approver)
+    body = _post(
+        client, f"/internal/v1/stores/{store_id}/exports", {"business_date": "2026-09-16"}
+    ).json()
+    facts = exports._facts("STORE_DAY_ORDERS_V1", store_id, date(2026, 9, 16), None)
+    retired_hash = canonical_document(exports._retired_statement(facts)).snapshot_hash
+    retired_body = {**body, "rendered_hash": retired_hash}
+    envelope = _post(client, "/internal/v1/approvals", _envelope_body(store_id, retired_body))
+    assert envelope.status_code in (200, 201), envelope.text
+    approval_id = envelope.json()["approval_request_id"]
+
+    _as(owner)
+    # Under the live code the owner cannot sign it at all: the rendering moved under it.
+    refused = _post(
+        client, f"/internal/v1/approvals/{approval_id}/decisions", _decision_body(retired_body)
+    )
+    assert refused.status_code not in (200, 201)
+    # Under the code deployed when it was raised, the owner signed it.
+    with monkeypatch.context() as patched:
+        patched.setattr(exports, "_statement", exports._retired_statement)
+        signed = _post(
+            client, f"/internal/v1/approvals/{approval_id}/decisions", _decision_body(retired_body)
+        )
+    assert signed.status_code == 200, signed.text
+
+    disclosed = client.get(f"/internal/v1/approvals/{approval_id}/export-request").json()
+    assert disclosed["bound_shape_retired"] is True
+    assert disclosed["bound_query_version"] == "store-day-orders-export-v2:3f884e227d6a2d05"
+    assert disclosed["query_version"] == body["query_version"]
+
+    _as(approver)
+    path = f"/internal/v1/stores/{store_id}/exports/{body['export_request_id']}/execution"
+    retired = _post(client, path, {"approval_id": approval_id})
+    assert retired.status_code == 422, retired.text
+    assert retired.json()["detail"] == {
+        "outcome": "REQUIRE_HUMAN",
+        "reason_code": "EXPORT_QUERY_VERSION_RETIRED",
+    }
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM data_exports WHERE store_id = %s", (store_id,))
+        assert cursor.fetchone() == (0,)
+    connection.commit()
+
+    # The other direction: the same request under an envelope over the live document releases.
+    fresh = _post(client, "/internal/v1/approvals", _envelope_body(store_id, body))
+    fresh_id = fresh.json()["approval_request_id"]
+    _as(owner)
+    decided = _post(client, f"/internal/v1/approvals/{fresh_id}/decisions", _decision_body(body))
+    assert decided.status_code == 200, decided.text
+    _as(approver)
+    released = _post(client, path, {"approval_id": fresh_id})
+    assert released.status_code == 200, released.text
+    produced = released.json()
+    assert produced["query_version"] == body["query_version"]
+    assert produced["content_csv"].splitlines()[6] == ",".join(body["columns"])

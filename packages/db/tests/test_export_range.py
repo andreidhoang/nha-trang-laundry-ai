@@ -7,9 +7,11 @@ Three properties, and the order is their weight:
   one, or the same first day alone -- and an envelope carrying one window's digests cannot even be
   raised against another window's request;
 * **one day is exactly what it was.** A one-day request stores the pre-window row (no last day),
-  binds the pre-window digests, runs the pre-window SQL under the pre-window query version, and
+  binds the pre-window facts digest, runs the one-day SQL under the one-day query version, and
   replays under a key first used before windows existed. `test_migration_0054_populated.py` proves
-  the same for a request and an envelope written before migration `0054` existed at all;
+  the same for a request written before migration `0054` existed at all. (The one-day RENDERING
+  moved with `EXPORT-PAYMENTS-001`, deliberately; `test_export_payments.py` covers what that does
+  to an envelope signed before it.);
 * **the cut is the one-day cut, repeated.** A window holds exactly the orders opened on its days in
   shop-local time: the first instant of the first day is in, the instant before it is out, the last
   instant of the last day is in, the instant after it is out.
@@ -179,8 +181,10 @@ def test_the_window_query_version_is_pinned_to_the_rule_it_names() -> None:
     The one-day version is pinned unchanged in `test_sanitized_export.py`: rewriting the one-day SQL
     as a range would have moved that label and orphaned every one-day approval already signed.
     """
-    assert EXPORT_WINDOW_QUERY.identifier == "store-window-orders-export-v1"
-    assert EXPORT_WINDOW_QUERY.label == "store-window-orders-export-v1:b0ae2bdf3725ab24"
+    # v2 since `EXPORT-PAYMENTS-001` (the payment ledger's columns); v1 (`b0ae2bdf3725ab24`) is
+    # retired and an envelope bound to it is refused by name -- `test_export_payments.py`.
+    assert EXPORT_WINDOW_QUERY.identifier == "store-window-orders-export-v2"
+    assert EXPORT_WINDOW_QUERY.label == "store-window-orders-export-v2:b95cdf70557262f8"
     assert EXPORT_WINDOW_QUERY.label != EXPORT_QUERY.label
 
 
@@ -193,10 +197,15 @@ def test_one_day_normalises_to_the_pre_window_shape_and_binds_the_pre_window_dig
 
     Both digests are also pinned as literals: `PRE_WINDOW_SNAPSHOT` and `PRE_WINDOW_RENDERED` were
     computed by the pre-window module (`exports.py` at `028538d`) for this store and this day. A
-    one-day export after this item binds exactly what it bound before it, so an envelope raised
-    under the old code is still decidable and still releases.
+    one-day export after `EXPORT-RANGE-001` bound exactly what it bound before it.
+
+    `EXPORT-PAYMENTS-001` then moved the one-day RENDERING on purpose (the payment ledger's columns
+    and a statement naming each ledger), so the live document no longer hashes to
+    `PRE_WINDOW_RENDERED` -- the retired one does, which is how an envelope signed over it is
+    recognised and refused by name rather than released (`test_export_payments.py`). The FACTS
+    digest does not move: a request is still the same request.
     """
-    from nha_trang_laundry_db.exports import _facts, _statement
+    from nha_trang_laundry_db.exports import _facts, _retired_statement, _statement
 
     day = date(2026, 9, 16)
     assert export_window(day, None) == (day, None)
@@ -211,7 +220,8 @@ def test_one_day_normalises_to_the_pre_window_shape_and_binds_the_pre_window_dig
     assert canonical_document(facts).snapshot_hash == legacy.snapshot_hash
     one_day = _facts("STORE_DAY_ORDERS_V1", STORE, *export_window(day, day))
     assert canonical_document(one_day).snapshot_hash == PRE_WINDOW_SNAPSHOT
-    assert canonical_document(_statement(one_day)).snapshot_hash == PRE_WINDOW_RENDERED
+    assert canonical_document(_retired_statement(one_day)).snapshot_hash == PRE_WINDOW_RENDERED
+    assert canonical_document(_statement(one_day)).snapshot_hash != PRE_WINDOW_RENDERED
 
 
 def test_both_dates_are_inside_what_the_approval_binds() -> None:
@@ -425,6 +435,7 @@ def test_a_window_holds_exactly_the_orders_opened_on_its_days_cut_at_shop_local_
     produced = _release(connection, shop, created, approval_id)
 
     header_rows, columns, body = _file_parts(produced.content_csv)
+    assert datetime.fromisoformat(header_rows.pop("produced_at")) == produced.produced_at
     assert header_rows == {
         "export_query_version": EXPORT_WINDOW_QUERY.label,
         "business_date_from": "2026-09-01",

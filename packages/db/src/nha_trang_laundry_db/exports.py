@@ -53,8 +53,21 @@ the statement the owner signs and inside the digests the release re-derives: an 
 first week of January cannot release the second, because the second week has a different document.
 A one-day export (`business_date_to` absent or equal) is the pre-window shape exactly -- same facts,
 same sentence, same SQL, same query version -- so the digests of every request and envelope written
-before the window existed re-derive unchanged and still release. A window uses its own SQL and its
-own query version, cut on the same `orders.created_at` in the same timezone.
+before the window existed re-derived unchanged and still released (until `EXPORT-PAYMENTS-001`
+retired that sentence, below). A window uses its own SQL and its own query version, cut on the same
+`orders.created_at` in the same timezone.
+
+**The money comes from the ledger it is really in, since `EXPORT-PAYMENTS-001`.** `PAYMENT-001`
+moved the counter's money onto `order_payments` (deposits and part payments, cash or transfer) and
+left `order_settlements` with one row per order *paid in full*. A file that read the settlement
+alone exported a partly paid order with empty money cells. The rows now carry the ledger's sums by
+method, what is owed and what remains, beside the settlement columns they always had -- each money
+column named with its ledger and the timestamp it is cut on (`EXPORT_MONEY_SOURCES`), inside the
+document the owner signs. Both query versions moved (`store-day-orders-export-v3`,
+`store-window-orders-export-v2`). An envelope signed over the retired shape is recognised by its
+digest and refused by name, `EXPORT_QUERY_VERSION_RETIRED`, rather than released: the retired
+document promised "số tiền đã thu" and would now ship a partly paid order as unpaid. See
+`_RETIRED_SHAPE`.
 
 The bytes are produced here and never stored. What is stored is `data_exports`: the approval that
 authorised the release, the versioned query that produced its columns, the row count and a digest of
@@ -76,7 +89,9 @@ from uuid import UUID, uuid4
 
 from nha_trang_laundry_domain.approvals import APPROVAL_RESOURCE_TYPES
 from nha_trang_laundry_domain.canonical import canonical_document
-from nha_trang_laundry_domain.catalog import ApprovalAction
+from nha_trang_laundry_domain.catalog import ApprovalAction, CommercialOrderStatus
+from nha_trang_laundry_domain.export_money import exported_money
+from nha_trang_laundry_domain.settlement import QuotedTotal
 from psycopg.errors import UniqueViolation
 
 from .approvals import ApprovalBinding, read_approval_binding
@@ -145,88 +160,207 @@ EXPORT_COLUMNS: tuple[str, ...] = (
     "balance_status",
     "refunded_amount_vnd",
     "refunded_at",
+    # `EXPORT-PAYMENTS-001`. Appended rather than interleaved, so a spreadsheet built over the
+    # fifteen columns above still finds each of them in the column it was in. Since `PAYMENT-001`
+    # the settlement columns above are filled only once an order is paid in full; these five are the
+    # payment ledger's sums and the domain's position, filled for every order. `balance_status`
+    # above now reads `PARTIALLY_PAID` as well, and `refunded_amount_vnd` is still the refund
+    # ledger's one row per order -- which is why neither is repeated here under a second name.
+    "owed_vnd",
+    "paid_cash_vnd",
+    "paid_transfer_vnd",
+    "paid_vnd",
+    "remaining_vnd",
 )
 
 #: What this export withholds, named rather than implied, and hashed into the same document.
 #:
 #: A reader who is told only what a file contains cannot tell the difference between "the complaint
-#: text is not here" and "no complaint was recorded". These are the four things a person would
+#: text is not here" and "no complaint was recorded". These are the things a person would
 #: reasonably expect and will not find, each with the reason it is absent.
+#:
+#: `EXPORT-PAYMENTS-001` added two, because the file now reads a ledger that sits next to them.
+#: `CUSTOMER-001` gave orders a `customer_id` pointing at a customer record with a name and a phone
+#: number. The key is not carried (the same reasoning as `bound_contact_id`), and no statement in
+#: this module joins the customer record at all -- `test_staff_console_privacy.py` holds this file
+#: to never even naming that table or its personal columns (spec §0: no phone value in an export).
+#: The payment ledger keeps the last characters of a transfer's bank reference, which can identify
+#: the sender's account; the sums by method are exported, the reference is not.
 EXPORT_EXCLUSIONS: tuple[str, ...] = (
     "customer_incident_evidence.summary",
     "assistant_turn_payloads.question",
     "assistant_turn_payloads.answer",
     "orders.bound_contact_id",
+    "orders.customer_id",
+    "order_payments.bank_ref_last",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ExportMoneySource:
+    """One money column of the file: the ledger its value is read from and what cuts it.
+
+    Part of the signed statement. `EXPORT-PAYMENTS-001` was found because the old statement said,
+    in effect, "the money in this file" -- and after `PAYMENT-001` there were two ledgers that could
+    mean, which disagree on every partly paid order.
+    """
+
+    column: str
+    #: Where the value comes from, as table and column (a filter in brackets).
+    ledger: str
+    #: What decides which movements are in it. `produced_at` is the moment the file is made: the
+    #: sums cover every row recorded against the order until then, whatever day it was recorded on.
+    cut_on: str
+
+
+#: Every money column, its ledger, and its cut -- hashed into the query version and the statement.
+#: Rows are chosen by `EXPORT_DAY_BOUNDARY`; these say what each money cell on a chosen row holds.
+EXPORT_MONEY_SOURCES: tuple[ExportMoneySource, ...] = (
+    ExportMoneySource(
+        "expected_total_vnd",
+        "order_settlements.expected_total_vnd",
+        "order_settlements.attested_at (only once paid in full)",
+    ),
+    ExportMoneySource(
+        "paid_amount_vnd",
+        "order_settlements.paid_amount_vnd",
+        "order_settlements.attested_at (only once paid in full)",
+    ),
+    ExportMoneySource(
+        "refunded_amount_vnd", "order_refunds.refunded_amount_vnd", "order_refunds.refunded_at"
+    ),
+    ExportMoneySource(
+        "owed_vnd",
+        "quote_revisions.display_total_min_vnd (current revision, when min = max)",
+        "produced_at",
+    ),
+    ExportMoneySource(
+        "paid_cash_vnd",
+        "order_payments.amount_vnd [method = TIEN_MAT]",
+        "order_payments.recorded_at, every row up to produced_at",
+    ),
+    ExportMoneySource(
+        "paid_transfer_vnd",
+        "order_payments.amount_vnd [method = CHUYEN_KHOAN]",
+        "order_payments.recorded_at, every row up to produced_at",
+    ),
+    ExportMoneySource(
+        "paid_vnd",
+        "order_payments.amount_vnd",
+        "order_payments.recorded_at, every row up to produced_at",
+    ),
+    ExportMoneySource(
+        "remaining_vnd",
+        "owed_vnd - paid_vnd (0 once CANCELLED)",
+        "produced_at",
+    ),
 )
 
 #: Which event cuts the shop's day for this file, named rather than left to be inferred from the
 #: SQL below -- and named because there are two answers in this system and they are not the same.
 #:
-#: `settlement.COLLECTED_TODAY_QUERY` buckets by `order_settlements.attested_at`: money that came
-#: across the counter today, which is what `#/today` labels *tiền đã thu*. This file buckets by
-#: `orders.created_at`: the orders opened on a named day, with whatever has since been paid against
-#: them. An order opened yesterday and paid this morning is in today's takings and in *yesterday's*
-#: export, so the two figures answer different questions and will differ most on exactly the busy
-#: days somebody would reconcile them on.
+#: `settlement.COLLECTED_TODAY_QUERY` buckets money by when it was taken -- since `PAYMENT-001`,
+#: `order_payments.recorded_at` (`collected-today-v3`) -- which is what `#/today` labels *tiền đã
+#: thu*. This file buckets ORDERS by `orders.created_at`: the orders opened on a named day, with
+#: whatever has since been paid against them. An order opened yesterday with a deposit taken this
+#: morning is in today's takings and in *yesterday's* export, so the two figures answer different
+#: questions and will differ most on exactly the busy days somebody would reconcile them on.
 #:
 #: Neither is wrong and they are not aligned here: a dataset called `STORE_DAY_ORDERS_V1` is the
 #: day's orders by definition, and re-cutting it on payment would silently make it something else.
 #: What is refused is shipping both under one label. The boundary is hashed into `EXPORT_QUERY`,
 #: stated in the Vietnamese document the owner approves, and rendered on both console surfaces --
-#: `#/exports` and the approval card -- beside the money columns it governs.
+#: `#/exports` and the approval card -- beside the money columns it governs. Which ledger each money
+#: cell on a chosen row is read from, and what cuts it, is `EXPORT_MONEY_SOURCES`.
 EXPORT_DAY_BOUNDARY = "orders.created_at"
 
 #: The rows, as one statement so that one edit moves one rule.
 #:
-#: A LEFT JOIN, so an order with no settlement appears with empty money cells rather than
-#: disappearing from its own day. That matters for what this file is for: an unpaid order is part of
-#: the day's record, and a total that silently dropped it would read as smaller takings rather than
-#: as a missing row.
+#: LEFT JOINs, so an order with no settlement, no refund or no payment appears with its cells empty
+#: (settlement, refund) or 0 (payments: an empty ledger is "nothing taken", which is a fact) rather
+#: than disappearing from its own day. An unpaid order is part of the day's record, and a total that
+#: silently dropped it would read as smaller takings rather than as a missing row.
+#:
+#: `EXPORT-PAYMENTS-001`: the payment ledger is summed here, by method, in one LATERAL aggregate per
+#: order (an aggregate without GROUP BY always returns its one row), and the order's current quote
+#: revision is joined for what is owed. The last five selected values are not cells:
+#: `_money_rows` hands them to `export_money.exported_money`, and the domain decides what is owed
+#: and what remains.
 _EXPORT_SQL = """
     SELECT o.id, o.created_at, o.commercial_status, o.intake_status, o.production_status,
            o.production_accepted_at, o.production_ready_at, o.production_released_at,
            o.closed_at,
            s.expected_total_vnd, s.paid_amount_vnd, s.attested_at,
-           o.balance_status, rf.refunded_amount_vnd, rf.refunded_at
+           o.balance_status, rf.refunded_amount_vnd, rf.refunded_at,
+           q.display_total_min_vnd, q.display_total_max_vnd,
+           coalesce(p.cash, 0), coalesce(p.transfer, 0), coalesce(p.paid, 0)
     FROM orders o
     LEFT JOIN order_settlements s ON s.order_id = o.id
     LEFT JOIN order_refunds rf ON rf.order_id = o.id
+    LEFT JOIN quote_revisions q
+      ON q.quote_id = o.current_quote_id AND q.revision = o.current_quote_revision
+    LEFT JOIN LATERAL (
+        SELECT sum(amount_vnd) FILTER (WHERE method = 'TIEN_MAT') AS cash,
+               sum(amount_vnd) FILTER (WHERE method = 'CHUYEN_KHOAN') AS transfer,
+               sum(amount_vnd) AS paid
+        FROM order_payments
+        WHERE order_id = o.id
+    ) p ON TRUE
     WHERE o.store_id = %(store)s
       AND (o.created_at AT TIME ZONE %(zone)s)::date = %(business_date)s
     ORDER BY o.created_at, o.id
 """
 
+
+def _money_sources_text(sources: tuple[ExportMoneySource, ...]) -> str:
+    """The money sources as one hashed input: moving a ledger or a cut moves the version."""
+    return ";".join(f"{item.column}={item.ledger}@{item.cut_on}" for item in sources)
+
+
 #: The published version of the rule above, travelling with the file and onto its `data_exports`
-#: row. The column list, the timezone and the boundary event are hashed with the SQL: any of them
-#: could change what a figure in the file means while leaving the statement itself untouched.
+#: row. The column list, the timezone, the boundary event and the money sources are hashed with the
+#: SQL: any of them could change what a figure in the file means while leaving the statement itself
+#: untouched.
+#:
+#: v3 (`EXPORT-PAYMENTS-001`): the payment ledger, what is owed and what remains. v2
+#: (`store-day-orders-export-v2:3f884e227d6a2d05`) read money from `order_settlements` alone and is
+#: retired; see `_RETIRED_SHAPE`.
 EXPORT_QUERY = query_version(
-    "store-day-orders-export-v2",
+    "store-day-orders-export-v3",
     _EXPORT_SQL,
     BUSINESS_TIMEZONE,
     EXPORT_DAY_BOUNDARY,
     ",".join(EXPORT_COLUMNS),
     ",".join(EXPORT_EXCLUSIONS),
+    _money_sources_text(EXPORT_MONEY_SOURCES),
 )
 
 #: `EXPORT-RANGE-001`. The same rows as `_EXPORT_SQL`, for every shop-local day from the window's
 #: first to its last, inclusive -- the same boundary expression, the same timezone, the same joins
 #: and the same order, so a window is exactly the concatenation of its days' one-day files.
 #:
-#: A second statement rather than `_EXPORT_SQL` rewritten as a range, and that is a compatibility
-#: decision rather than an oversight. `EXPORT_QUERY` is hashed into the statement every one-day
-#: approval signs; rewriting its SQL would move that label and with it the rendered digest of every
-#: one-day request already written, so an envelope raised the minute before a deploy would stop
-#: releasing. Keeping the one-day rule byte-identical keeps one-day exports exactly as they were;
-#: a window is a new rule and gets a new identifier.
+#: A second statement with its own identifier, so a window and a day are never mistaken for each
+#: other on a `data_exports` row or in a file's header.
 _EXPORT_WINDOW_SQL = """
     SELECT o.id, o.created_at, o.commercial_status, o.intake_status, o.production_status,
            o.production_accepted_at, o.production_ready_at, o.production_released_at,
            o.closed_at,
            s.expected_total_vnd, s.paid_amount_vnd, s.attested_at,
-           o.balance_status, rf.refunded_amount_vnd, rf.refunded_at
+           o.balance_status, rf.refunded_amount_vnd, rf.refunded_at,
+           q.display_total_min_vnd, q.display_total_max_vnd,
+           coalesce(p.cash, 0), coalesce(p.transfer, 0), coalesce(p.paid, 0)
     FROM orders o
     LEFT JOIN order_settlements s ON s.order_id = o.id
     LEFT JOIN order_refunds rf ON rf.order_id = o.id
+    LEFT JOIN quote_revisions q
+      ON q.quote_id = o.current_quote_id AND q.revision = o.current_quote_revision
+    LEFT JOIN LATERAL (
+        SELECT sum(amount_vnd) FILTER (WHERE method = 'TIEN_MAT') AS cash,
+               sum(amount_vnd) FILTER (WHERE method = 'CHUYEN_KHOAN') AS transfer,
+               sum(amount_vnd) AS paid
+        FROM order_payments
+        WHERE order_id = o.id
+    ) p ON TRUE
     WHERE o.store_id = %(store)s
       AND (o.created_at AT TIME ZONE %(zone)s)::date
           BETWEEN %(business_date)s AND %(business_date_to)s
@@ -234,14 +368,16 @@ _EXPORT_WINDOW_SQL = """
 """
 
 #: The published version of the window rule. Same hashed inputs as `EXPORT_QUERY`, so widening the
-#: columns or moving the boundary moves both.
+#: columns, moving the boundary or re-sourcing a money column moves both. v2 since
+#: `EXPORT-PAYMENTS-001`; v1 (`store-window-orders-export-v1:b0ae2bdf3725ab24`) is retired.
 EXPORT_WINDOW_QUERY = query_version(
-    "store-window-orders-export-v1",
+    "store-window-orders-export-v2",
     _EXPORT_WINDOW_SQL,
     BUSINESS_TIMEZONE,
     EXPORT_DAY_BOUNDARY,
     ",".join(EXPORT_COLUMNS),
     ",".join(EXPORT_EXCLUSIONS),
+    _money_sources_text(EXPORT_MONEY_SOURCES),
 )
 
 #: The longest window, in shop-local days counted inclusively (spec `EXPORT-RANGE-001`: "at most 92
@@ -255,12 +391,18 @@ EXPORT_MAX_WINDOW_DAYS = 92
 #: `len(EXPORT_HEADER_KEYS) + 1`. They carry nothing the owner did not already sign (the query
 #: version, the window, the timezone and the boundary are all in the approved statement), which is
 #: why they are formatting and not part of the rendered digest.
+#:
+#: `produced_at` joined with `EXPORT-PAYMENTS-001`: `paid_vnd` and `remaining_vnd` move every time a
+#: deposit or the rest is taken, so a file that carries them must say when they stood so. It is the
+#: same instant recorded on the file's `data_exports` row, and the one every `produced_at` in
+#: `EXPORT_MONEY_SOURCES` refers to.
 EXPORT_HEADER_KEYS: tuple[str, ...] = (
     "export_query_version",
     "business_date_from",
     "business_date_to",
     "business_timezone",
     "day_boundary",
+    "produced_at",
 )
 
 
@@ -373,6 +515,29 @@ class ExportStatement:
     excludes: tuple[str, ...]
     query_version: str
     statement_vi: str
+    #: `EXPORT-PAYMENTS-001`: which ledger each money column is read from and what cuts it, and the
+    #: one line both console surfaces print beside the approve and export controls. Both hashed, so
+    #: the line a person reads at a glance is a line the owner signed, not a console's paraphrase.
+    money_sources: tuple[ExportMoneySource, ...]
+    money_line_vi: str
+
+
+@dataclass(frozen=True, slots=True)
+class _RetiredExportStatement:
+    """The document every envelope signed before `EXPORT-PAYMENTS-001` binds, field for field.
+
+    Kept only to *recognise* such an envelope, never to release under it. `canonical_document`
+    hashes a dataclass by its field names, so this has exactly the seven fields `ExportStatement`
+    had; adding `money_sources` to the live statement must not move the digest of the old one.
+    """
+
+    facts: ExportRequestFacts | ExportWindowFacts
+    business_timezone: str
+    day_boundary: str
+    columns: tuple[str, ...]
+    excludes: tuple[str, ...]
+    query_version: str
+    statement_vi: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,6 +583,14 @@ class StoredExportRequest:
     #: wording, so a screen writing its own would be describing a document nobody signed.
     day_boundary: str
     statement_vi: str
+    #: `EXPORT-PAYMENTS-001`. Empty and `None` only when replaying a request stored before the
+    #: money columns existed: a replay repeats what was said then, and never composes the rest.
+    money_sources: tuple[ExportMoneySource, ...] = ()
+    money_line_vi: str | None = None
+    #: True when the stored document is a retired shape (`_RETIRED_SHAPE`): a replay of a request
+    #: first answered before `EXPORT-PAYMENTS-001`. Its envelope can no longer be approved or
+    #: released, so the console offers a new request instead of "xin duyệt".
+    shape_retired: bool = False
     #: True when this answer was replayed from a stored idempotency record rather than written now.
     replayed: bool = False
 
@@ -467,6 +640,15 @@ class ExportApprovalDisclosure:
     #: True when the caller is the staff member who defined this export, and therefore the one
     #: person separation of duty forbids from approving it.
     requested_by_you: bool
+    money_sources: tuple[ExportMoneySource, ...]
+    money_line_vi: str
+    #: Which query version the ENVELOPE's own digest was taken under: the current one, a retired
+    #: one (`_RETIRED_SHAPE`), or `None` when it matches neither. Read off the envelope and
+    #: re-derived, never trusted: it is the name the approvals card gives a digest mismatch.
+    bound_query_version: str | None
+    #: True when the envelope binds the retired shape, which the release refuses with
+    #: `EXPORT_QUERY_VERSION_RETIRED` and the decision with `RESOURCE_CHANGED_SINCE_REQUEST`.
+    bound_shape_retired: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -597,6 +779,10 @@ class SanitizedExportRepository:
                 "query_version": statement.query_version,
                 "day_boundary": statement.day_boundary,
                 "statement_vi": statement.statement_vi,
+                "money_sources": [
+                    [item.column, item.ledger, item.cut_on] for item in statement.money_sources
+                ],
+                "money_line_vi": statement.money_line_vi,
             }
 
         result = self._idempotency.execute(
@@ -618,6 +804,8 @@ class SanitizedExportRepository:
             create,
         )
         response = result.response
+        stored_version = str(response["query_version"])
+        stored_line = response.get("money_line_vi")
         return StoredExportRequest(
             export_request_id=UUID(str(response["export_request_id"])),
             store_id=command.store_id,
@@ -633,9 +821,12 @@ class SanitizedExportRepository:
             requested_at=_datetime(response["requested_at"]),
             columns=tuple(str(item) for item in _sequence(response["columns"])),
             excludes=tuple(str(item) for item in _sequence(response["excludes"])),
-            query_version=str(response["query_version"]),
+            query_version=stored_version,
             day_boundary=_text(response, "day_boundary"),
             statement_vi=_text(response, "statement_vi"),
+            money_sources=_stored_money_sources(response.get("money_sources")),
+            money_line_vi=None if stored_line is None else _text(response, "money_line_vi"),
+            shape_retired=stored_version in _RETIRED_QUERY_LABELS,
             replayed=result.replayed,
         )
 
@@ -662,7 +853,7 @@ class SanitizedExportRepository:
         cursor.execute(
             """
             SELECT e.id, e.store_id, e.dataset, e.business_date, e.requested_by_staff_id,
-                   e.requested_at, e.business_date_to
+                   e.requested_at, e.business_date_to, r.rendered_hash
             FROM approval_requests r
             JOIN export_requests e ON e.id = r.resource_id
             WHERE r.id = %s AND r.action = %s AND r.resource_type = %s
@@ -685,7 +876,16 @@ class SanitizedExportRepository:
         )
         business_date = row[3]
         last = row[6]
-        statement = _statement(_facts(str(row[2]), store_id, business_date, last))
+        facts = _facts(str(row[2]), store_id, business_date, last)
+        statement = _statement(facts)
+        rendered_hash = canonical_document(statement).snapshot_hash
+        bound_retired = _binds_retired_shape(str(row[7]), facts, current=rendered_hash)
+        if hmac.compare_digest(str(row[7]), rendered_hash):
+            bound_query_version: str | None = statement.query_version
+        elif bound_retired:
+            bound_query_version = _retired_statement(facts).query_version
+        else:
+            bound_query_version = None
         return ExportApprovalDisclosure(
             approval_request_id=approval_id,
             export_request_id=_uuid(row[0]),
@@ -700,9 +900,13 @@ class SanitizedExportRepository:
             excludes=statement.excludes,
             query_version=statement.query_version,
             statement_vi=statement.statement_vi,
-            rendered_hash=canonical_document(statement).snapshot_hash,
+            rendered_hash=rendered_hash,
             requested_at=row[5],
             requested_by_you=principal.staff_user_id == _uuid(row[4]),
+            money_sources=statement.money_sources,
+            money_line_vi=statement.money_line_vi,
+            bound_query_version=bound_query_version,
+            bound_shape_retired=bound_retired,
         )
 
     def execute(self, connection: Any, command: ExportExecutionCommand) -> ProducedExport:
@@ -766,13 +970,15 @@ class SanitizedExportRepository:
             # signed now fails `EXPORT_APPROVAL_NOT_BOUND` instead of shipping. The stored pair
             # stays where it is, for display and for replaying the request -- storing rendered
             # content is fine, deciding from it is not.
-            released = _statement(_facts(str(row[1]), store_id, business_date, last))
+            facts = _facts(str(row[1]), store_id, business_date, last)
+            released = _statement(facts)
             _require_export_approval(
                 binding,
                 store_id=store_id,
                 export_request_id=command.export_request_id,
                 snapshot_hash=canonical_document(released.facts).snapshot_hash,
                 rendered_hash=canonical_document(released).snapshot_hash,
+                retired_rendered_hash=canonical_document(_retired_statement(facts)).snapshot_hash,
                 at=executed_at,
             )
             # Separation of duty, checked against the person who DEFINED this export rather than
@@ -786,8 +992,9 @@ class SanitizedExportRepository:
                 approval_request_id=command.approval_request_id,
                 defined_by=defined_by,
             )
-            # One day runs the one-day statement, byte for byte what it always ran; a window runs
-            # the window statement. The label written below is the one hashed into what was signed.
+            # One day runs the one-day statement and a window the window statement. The label
+            # written below is the one hashed into what was signed; an envelope signed over a
+            # retired shape never reaches this line (`EXPORT_QUERY_VERSION_RETIRED` above).
             cursor.execute(
                 _EXPORT_SQL if last is None else _EXPORT_WINDOW_SQL,
                 {
@@ -797,7 +1004,7 @@ class SanitizedExportRepository:
                     "business_date_to": last or business_date,
                 },
             )
-            rows = cursor.fetchall()
+            rows = _money_rows(cursor.fetchall())
 
         label = released.query_version
         content = _csv_bytes(
@@ -808,6 +1015,7 @@ class SanitizedExportRepository:
                 (last or business_date).isoformat(),
                 BUSINESS_TIMEZONE,
                 EXPORT_DAY_BOUNDARY,
+                executed_at,
             ),
         )
         content_hash = f"sha256:{sha256(content.encode('utf-8')).hexdigest()}"
@@ -906,16 +1114,19 @@ class SanitizedExportRepository:
 def _statement(facts: ExportRequestFacts | ExportWindowFacts) -> ExportStatement:
     """The document an owner approves, in the words they will read it in.
 
-    The second sentence is the day boundary, and it is in the signed document rather than only in
-    a comment because it is the difference between two numbers this console calls *tiền đã thu*.
-    An owner who signs this is signing a file cut on `orders.created_at`; the counter's takings
-    figure is cut on `order_settlements.attested_at`, and the two disagree by every order that was
-    opened on one day and paid on another. Saying which one this is costs a sentence. Discovering
-    it by subtracting two spreadsheets costs an afternoon and an argument about who is right.
+    The day boundary is in the signed document rather than only in a comment because it is the
+    difference between two numbers this console calls *tiền đã thu*. An owner who signs this is
+    signing a file cut on `orders.created_at`; the counter's takings figure is cut on when money was
+    taken, and the two disagree by every order that was opened on one day and paid on another.
+    Saying which one this is costs a sentence. Discovering it by subtracting two spreadsheets costs
+    an afternoon and an argument about who is right.
+
+    `EXPORT-PAYMENTS-001` added the ledger sentence: since `PAYMENT-001` the money is in two ledgers
+    that disagree on every partly paid order, so the document names which column comes from which,
+    and when each is cut -- in words here, and column by column in `money_sources`.
 
     A window (`EXPORT-RANGE-001`) is signed in its own words -- both days named, and how many -- and
-    under its own query version. The one-day document below is untouched, character for character:
-    it is what every one-day digest already written was taken over.
+    under its own query version.
     """
     if isinstance(facts, ExportWindowFacts):
         return _window_statement(facts)
@@ -928,19 +1139,50 @@ def _statement(facts: ExportRequestFacts | ExportWindowFacts) -> ExportStatement
         query_version=EXPORT_QUERY.label,
         statement_vi=(
             "Xuất bản sao hồ sơ của chính cửa hàng cho ngày "
-            f"{facts.business_date} (theo giờ Việt Nam): mã đơn, trạng thái, mốc thời gian, "
-            "số tiền đã thu và số tiền đã hoàn lại cho khách của những đơn MỞ trong ngày đó. "
-            "Đơn đã thu tiền rồi bị huỷ và hoàn tiền vẫn hiện số tiền đã thu, kèm số tiền đã "
-            "hoàn và lúc hoàn trên cùng dòng — cả hai việc đều đã xảy ra. "
-            "Ngày được cắt theo lúc mở đơn, không phải theo lúc thu tiền: đơn mở hôm trước mà "
+            f"{facts.business_date} (theo giờ Việt Nam): mã đơn, trạng thái, mốc thời gian và "
+            "tiền của những đơn MỞ trong ngày đó. "
+            + _MONEY_STATEMENT_VI
+            + "Ngày được cắt theo lúc mở đơn, không phải theo lúc thu tiền: đơn mở hôm trước mà "
             "thu tiền hôm sau vẫn nằm ở ngày mở. Vì vậy tổng tiền trong tệp này không bằng ô "
-            "“tiền đã thu hôm nay” trên màn hình Hôm nay — ô đó cộng theo lúc thu. Hai con số "
-            "trả lời hai câu hỏi khác nhau, không phải một con số sai. "
-            "Bản xuất không kèm lời khách phàn nàn, không kèm mô tả bằng chứng "
-            "và không kèm mã liên hệ của khách — những phần đó nằm trong lịch xoá dữ liệu, và một "
-            "bản sao mang ra ngoài sẽ không còn được lịch đó bảo vệ."
+            "“tiền đã thu hôm nay” trên màn hình Hôm nay — ô đó cộng sổ thu từng lần theo lúc "
+            "thu (order_payments.recorded_at). Hai con số trả lời hai câu hỏi khác nhau, không "
+            "phải một con số sai. " + _EXCLUSION_STATEMENT_VI
         ),
+        money_sources=EXPORT_MONEY_SOURCES,
+        money_line_vi=EXPORT_MONEY_LINE_VI,
     )
+
+
+#: The money half of the signed statement, the same words for one day and for a window. Every
+#: money column is named with its ledger and its cut (`EXPORT_MONEY_SOURCES` says the same thing
+#: column by column). Written once so the two documents cannot describe the money differently.
+_MONEY_STATEMENT_VI = (
+    "Tiền đã trả lấy từ sổ thu từng lần (order_payments): paid_cash_vnd là tiền mặt, "
+    "paid_transfer_vnd là chuyển khoản, paid_vnd là tổng hai khoản — cộng mọi lần thu đã ghi "
+    "cho đơn tới lúc tạo tệp (produced_at ở đầu tệp), dù thu vào ngày nào; đơn chưa thu lần nào "
+    "ghi 0. owed_vnd là tổng tiền của báo giá đang gắn với đơn; remaining_vnd là owed_vnd trừ "
+    "paid_vnd, và bằng 0 khi đơn đã huỷ vì đơn huỷ không thu thêm; hai ô này để trống khi báo giá "
+    "chưa ra một con số duy nhất. expected_total_vnd, paid_amount_vnd và settlement_attested_at "
+    "lấy từ sổ tất toán (order_settlements): chỉ có khi đơn đã trả đủ, cắt theo lúc trả đủ — đơn "
+    "mới trả một phần thì ba ô này trống. refunded_amount_vnd và refunded_at lấy từ sổ hoàn tiền "
+    "(order_refunds), cắt theo lúc hoàn. Đơn đã thu tiền rồi bị huỷ và hoàn tiền vẫn hiện số tiền "
+    "đã trả, kèm số tiền đã hoàn và lúc hoàn trên cùng dòng — cả hai việc đều đã xảy ra. "
+)
+
+#: The withheld half, the same words for one day and for a window.
+_EXCLUSION_STATEMENT_VI = (
+    "Bản xuất không kèm tên, số điện thoại, địa chỉ hay mã của khách, không kèm đuôi mã chuyển "
+    "khoản, không kèm lời khách phàn nàn và không kèm mô tả bằng chứng — lời phàn nàn và bằng "
+    "chứng nằm trong lịch xoá dữ liệu, và một bản sao mang ra ngoài sẽ không còn được lịch đó "
+    "bảo vệ."
+)
+
+#: The one line `#/exports` and the approvals card print beside their control (tier 1, at most 25
+#: words): which money the file carries and which ledger it is read from. Hashed into the statement.
+EXPORT_MONEY_LINE_VI = (
+    "Tiền trong tệp: đã trả (tiền mặt, chuyển khoản) theo sổ thu từng lần, còn lại, đã hoàn — "
+    "tính tới lúc xuất."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -968,20 +1210,136 @@ def _window_statement(facts: ExportWindowFacts) -> ExportStatement:
         statement_vi=(
             "Xuất bản sao hồ sơ của chính cửa hàng cho các ngày từ "
             f"{facts.business_date} đến hết {facts.business_date_to} ({days} ngày, theo giờ "
-            "Việt Nam): mã đơn, trạng thái, mốc thời gian, số tiền đã thu và số tiền đã hoàn lại "
-            "cho khách của những đơn MỞ trong các ngày đó. "
-            "Đơn đã thu tiền rồi bị huỷ và hoàn tiền vẫn hiện số tiền đã thu, kèm số tiền đã "
-            "hoàn và lúc hoàn trên cùng dòng — cả hai việc đều đã xảy ra. "
-            "Ngày được cắt theo lúc mở đơn, không phải theo lúc thu tiền: đơn mở hôm trước mà "
+            "Việt Nam): mã đơn, trạng thái, mốc thời gian và tiền của những đơn MỞ trong các "
+            "ngày đó. "
+            + _MONEY_STATEMENT_VI
+            + "Ngày được cắt theo lúc mở đơn, không phải theo lúc thu tiền: đơn mở hôm trước mà "
             "thu tiền hôm sau vẫn nằm ở ngày mở, và đơn mở trước ngày đầu hay sau ngày cuối "
             "không có trong tệp dù được thu tiền trong khoảng này. Vì vậy tổng tiền trong tệp "
             "này không bằng tổng các ô “tiền đã thu hôm nay” trên màn hình Hôm nay — ô đó cộng "
-            "theo lúc thu. Hai con số trả lời hai câu hỏi khác nhau, không phải một con số sai. "
+            "sổ thu từng lần theo lúc thu (order_payments.recorded_at). Hai con số trả lời hai "
+            "câu hỏi khác nhau, không phải một con số sai. " + _EXCLUSION_STATEMENT_VI
+        ),
+        money_sources=EXPORT_MONEY_SOURCES,
+        money_line_vi=EXPORT_MONEY_LINE_VI,
+    )
+
+
+# --- the retired shape ----------------------------------------------------------------------------
+#
+# `_RETIRED_SHAPE`. Before `EXPORT-PAYMENTS-001` every request was rendered with the fifteen columns
+# and four exclusions below, under `store-day-orders-export-v2` (one day) or
+# `store-window-orders-export-v1` (a window), in the two sentences below. Envelopes raised and
+# approved under that code bind those digests. The choice for such an envelope is to REFUSE it by
+# name, `EXPORT_QUERY_VERSION_RETIRED`, rather than release the old shape it bound:
+#
+# * the retired SQL reads money from `order_settlements` alone, and since `PAYMENT-001` that row
+#   exists only once an order is paid in full -- so the retired file ships every partly paid order
+#   with empty money cells, under a signed sentence promising "số tiền đã thu". Releasing it would
+#   release a document this system now knows to be understating what was collected;
+# * an export approval lives ten minutes (`_OWNER_FINANCIAL`), so what is refused is at most the
+#   envelopes in flight at the deploy, and the remedy is one new request and one new decision;
+# * keeping the retired SQL alive to serve them would be a second release path that no test of the
+#   live shape exercises.
+#
+# So the retired documents are rebuilt here -- verbatim, pinned by digests the retired code itself
+# produced (`test_export_payments.py`) -- only to RECOGNISE an envelope and name the refusal.
+# A digest that matches neither the live nor the retired document is still
+# `EXPORT_APPROVAL_NOT_BOUND`.
+
+_RETIRED_COLUMNS: tuple[str, ...] = (
+    "order_id",
+    "created_at",
+    "commercial_status",
+    "intake_status",
+    "production_status",
+    "production_accepted_at",
+    "production_ready_at",
+    "production_released_at",
+    "closed_at",
+    "expected_total_vnd",
+    "paid_amount_vnd",
+    "settlement_attested_at",
+    "balance_status",
+    "refunded_amount_vnd",
+    "refunded_at",
+)
+_RETIRED_EXCLUSIONS: tuple[str, ...] = (
+    "customer_incident_evidence.summary",
+    "assistant_turn_payloads.question",
+    "assistant_turn_payloads.answer",
+    "orders.bound_contact_id",
+)
+#: The labels the retired statements carried, exactly as `query_version` produced them then.
+_RETIRED_DAY_QUERY_LABEL = "store-day-orders-export-v2:3f884e227d6a2d05"
+_RETIRED_WINDOW_QUERY_LABEL = "store-window-orders-export-v1:b0ae2bdf3725ab24"
+_RETIRED_QUERY_LABELS = frozenset({_RETIRED_DAY_QUERY_LABEL, _RETIRED_WINDOW_QUERY_LABEL})
+
+
+def _retired_statement(facts: ExportRequestFacts | ExportWindowFacts) -> _RetiredExportStatement:
+    """The pre-`EXPORT-PAYMENTS-001` document for these facts, character for character."""
+    if isinstance(facts, ExportWindowFacts):
+        days = _window_days(
+            date.fromisoformat(facts.business_date), date.fromisoformat(facts.business_date_to)
+        )
+        return _RetiredExportStatement(
+            facts=facts,
+            business_timezone=BUSINESS_TIMEZONE,
+            day_boundary=EXPORT_DAY_BOUNDARY,
+            columns=_RETIRED_COLUMNS,
+            excludes=_RETIRED_EXCLUSIONS,
+            query_version=_RETIRED_WINDOW_QUERY_LABEL,
+            statement_vi=(
+                "Xuất bản sao hồ sơ của chính cửa hàng cho các ngày từ "
+                f"{facts.business_date} đến hết {facts.business_date_to} ({days} ngày, theo giờ "
+                "Việt Nam): mã đơn, trạng thái, mốc thời gian, số tiền đã thu và số tiền đã hoàn "
+                "lại cho khách của những đơn MỞ trong các ngày đó. "
+                "Đơn đã thu tiền rồi bị huỷ và hoàn tiền vẫn hiện số tiền đã thu, kèm số tiền đã "
+                "hoàn và lúc hoàn trên cùng dòng — cả hai việc đều đã xảy ra. "
+                "Ngày được cắt theo lúc mở đơn, không phải theo lúc thu tiền: đơn mở hôm trước mà "
+                "thu tiền hôm sau vẫn nằm ở ngày mở, và đơn mở trước ngày đầu hay sau ngày cuối "
+                "không có trong tệp dù được thu tiền trong khoảng này. Vì vậy tổng tiền trong tệp "
+                "này không bằng tổng các ô “tiền đã thu hôm nay” trên màn hình Hôm nay — ô đó cộng "
+                "theo lúc thu. Hai con số trả lời hai câu hỏi khác nhau, "
+                "không phải một con số sai. "
+                "Bản xuất không kèm lời khách phàn nàn, không kèm mô tả bằng chứng "
+                "và không kèm mã liên hệ của khách — những phần đó nằm trong lịch xoá dữ liệu, và "
+                "một bản sao mang ra ngoài sẽ không còn được lịch đó bảo vệ."
+            ),
+        )
+    return _RetiredExportStatement(
+        facts=facts,
+        business_timezone=BUSINESS_TIMEZONE,
+        day_boundary=EXPORT_DAY_BOUNDARY,
+        columns=_RETIRED_COLUMNS,
+        excludes=_RETIRED_EXCLUSIONS,
+        query_version=_RETIRED_DAY_QUERY_LABEL,
+        statement_vi=(
+            "Xuất bản sao hồ sơ của chính cửa hàng cho ngày "
+            f"{facts.business_date} (theo giờ Việt Nam): mã đơn, trạng thái, mốc thời gian, "
+            "số tiền đã thu và số tiền đã hoàn lại cho khách của những đơn MỞ trong ngày đó. "
+            "Đơn đã thu tiền rồi bị huỷ và hoàn tiền vẫn hiện số tiền đã thu, kèm số tiền đã "
+            "hoàn và lúc hoàn trên cùng dòng — cả hai việc đều đã xảy ra. "
+            "Ngày được cắt theo lúc mở đơn, không phải theo lúc thu tiền: đơn mở hôm trước mà "
+            "thu tiền hôm sau vẫn nằm ở ngày mở. Vì vậy tổng tiền trong tệp này không bằng ô "
+            "“tiền đã thu hôm nay” trên màn hình Hôm nay — ô đó cộng theo lúc thu. Hai con số "
+            "trả lời hai câu hỏi khác nhau, không phải một con số sai. "
             "Bản xuất không kèm lời khách phàn nàn, không kèm mô tả bằng chứng "
             "và không kèm mã liên hệ của khách — những phần đó nằm trong lịch xoá dữ liệu, và một "
             "bản sao mang ra ngoài sẽ không còn được lịch đó bảo vệ."
         ),
     )
+
+
+def _binds_retired_shape(
+    envelope_rendered_hash: str, facts: ExportRequestFacts | ExportWindowFacts, *, current: str
+) -> bool:
+    """True when an envelope's digest is the retired document's for these facts, and not the live
+    one's. Both compared in constant time, like every other digest comparison on this path."""
+    if hmac.compare_digest(envelope_rendered_hash, current):
+        return False
+    retired = canonical_document(_retired_statement(facts)).snapshot_hash
+    return hmac.compare_digest(envelope_rendered_hash, retired)
 
 
 def _window_days(first: date, last: date | None) -> int:
@@ -1034,6 +1392,7 @@ def _require_export_approval(
     export_request_id: UUID,
     snapshot_hash: str,
     rendered_hash: str,
+    retired_rendered_hash: str,
     at: datetime,
 ) -> None:
     """Prove the envelope in hand is an approved, unexpired export of *this* request.
@@ -1047,6 +1406,13 @@ def _require_export_approval(
     never read back off `export_requests`. The caller does that rather than this function so that
     the comparison here is unmistakably between what the owner signed and what is about to leave;
     a stored digest passed in would make this read the same and prove nothing.
+
+    `retired_rendered_hash` is the same request's document in the shape retired by
+    `EXPORT-PAYMENTS-001` (`_RETIRED_SHAPE`). An envelope that binds it is refused by that name,
+    `EXPORT_QUERY_VERSION_RETIRED`, and not as a generic mismatch: the owner signed exactly what
+    they were shown, the rule changed under it, and the person waiting for the file needs to know
+    that a new request -- not a different approval -- is the way forward. It is checked before the
+    decision's status because such an envelope cannot become releasable by being approved.
     """
     if binding is None:
         raise ExportStateError(
@@ -1065,6 +1431,15 @@ def _require_export_approval(
         raise ExportStateError(
             "the approval names a different export request",
             reason_code="EXPORT_APPROVAL_NOT_BOUND",
+        )
+    if (
+        hmac.compare_digest(binding.snapshot_hash, snapshot_hash)
+        and not hmac.compare_digest(binding.rendered_hash, rendered_hash)
+        and hmac.compare_digest(binding.rendered_hash, retired_rendered_hash)
+    ):
+        raise ExportStateError(
+            "the approval binds an export shape this system no longer produces",
+            reason_code="EXPORT_QUERY_VERSION_RETIRED",
         )
     if not hmac.compare_digest(binding.snapshot_hash, snapshot_hash) or not hmac.compare_digest(
         binding.rendered_hash, rendered_hash
@@ -1146,13 +1521,15 @@ def _text(response: dict[str, object], key: str) -> str:
     return value
 
 
-def _csv_bytes(rows: list[tuple[Any, ...]], *, header: tuple[str, ...]) -> str:
+def _csv_bytes(rows: list[tuple[Any, ...]], *, header: tuple[object, ...]) -> str:
     """Render the fetched rows as CSV, converting nothing and computing nothing.
 
     `EXPORT-RANGE-001`: the file opens with one `key,value` row per `EXPORT_HEADER_KEYS` -- the
-    query version, the window's first and last day, the timezone and the day boundary -- then the
-    column header, then the orders. A file on somebody's laptop names the rule and the days that
-    produced it without the database beside it. Header values go through `_cell` like every other
+    query version, the window's first and last day, the timezone, the day boundary and (since
+    `EXPORT-PAYMENTS-001`) the moment the money columns stand at -- then the column header, then
+    the orders. The rows arrive already shaped by `_money_rows`; nothing is computed here. A
+    file on somebody's laptop names the rule and the days that produced it without the database
+    beside it. Header values go through `_cell` like every other
     cell: the file is sanitised as a whole, not only its body.
 
     Two rendering rules, both house style rather than taste. A null money cell is written empty and
@@ -1172,6 +1549,68 @@ def _csv_bytes(rows: list[tuple[Any, ...]], *, header: tuple[str, ...]) -> str:
     for row in rows:
         writer.writerow([_cell(value) for value in row])
     return buffer.getvalue()
+
+
+#: How many values `_EXPORT_SQL` selects before the five that feed the domain: the fifteen cells
+#: the file has always carried, in `EXPORT_COLUMNS` order.
+_LEADING_CELLS = 15
+
+
+def _money_rows(fetched: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+    """Each fetched order as its file row: the leading cells as read, then the money cells.
+
+    The SQL sums the payment ledger by method; `export_money.exported_money` decides what is owed
+    and what remains, from the order's current quote revision and its commercial status. Nothing
+    is added, subtracted or rounded here. A contradiction the domain refuses (sums that do not add
+    up, payments above what is owed) stops the export by name rather than writing a wrong figure
+    into a signed file -- the same direction `_cell` fails in.
+    """
+    shaped: list[tuple[Any, ...]] = []
+    for row in fetched:
+        leading = tuple(row[:_LEADING_CELLS])
+        minimum, maximum, cash, transfer, paid = row[_LEADING_CELLS:]
+        try:
+            money = exported_money(
+                commercial=CommercialOrderStatus(str(leading[2])),
+                quoted=QuotedTotal(_optional_int(minimum), _optional_int(maximum)),
+                paid_cash_vnd=int(cash),
+                paid_transfer_vnd=int(transfer),
+                paid_vnd=int(paid),
+            )
+        except ValueError as error:
+            raise ExportStateError(
+                "an order's payments contradict what it owes",
+                reason_code="EXPORT_MONEY_INCONSISTENT",
+            ) from error
+        shaped.append(
+            (
+                *leading,
+                money.owed_vnd,
+                money.paid_cash_vnd,
+                money.paid_transfer_vnd,
+                money.paid_vnd,
+                money.remaining_vnd,
+            )
+        )
+    return shaped
+
+
+def _optional_int(value: object) -> int | None:
+    return None if value is None else int(str(value))
+
+
+def _stored_money_sources(value: object) -> tuple[ExportMoneySource, ...]:
+    """The money sources off a stored request response; empty for a response stored before them."""
+    if value is None:
+        return ()
+    sources: list[ExportMoneySource] = []
+    for item in _sequence(value):
+        if not isinstance(item, list) or len(item) != 3:
+            raise ExportStateError(
+                "the stored export request is not readable", reason_code="EXPORT_REQUEST_CORRUPT"
+            )
+        sources.append(ExportMoneySource(str(item[0]), str(item[1]), str(item[2])))
+    return tuple(sources)
 
 
 #: The four characters that make a spreadsheet cell executable, plus the two whitespace prefixes
@@ -1238,6 +1677,8 @@ __all__ = [
     "EXPORT_EXCLUSIONS",
     "EXPORT_HEADER_KEYS",
     "EXPORT_MAX_WINDOW_DAYS",
+    "EXPORT_MONEY_LINE_VI",
+    "EXPORT_MONEY_SOURCES",
     "EXPORT_POLICY_VERSION",
     "EXPORT_QUERY",
     "EXPORT_ROLES",
@@ -1246,6 +1687,7 @@ __all__ = [
     "ExportAuthorizationError",
     "ExportDataset",
     "ExportExecutionCommand",
+    "ExportMoneySource",
     "ExportRequestBinding",
     "ExportRequestCommand",
     "ExportStateError",

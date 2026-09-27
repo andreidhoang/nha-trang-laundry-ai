@@ -1,6 +1,6 @@
 """Staff-only API entry point. Public customer endpoints are intentionally absent."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from contextlib import suppress
 from datetime import UTC, date, datetime
 from hashlib import sha256
@@ -6348,6 +6348,27 @@ class ExportRequestBody(StrictRequest):
     business_date_to: date | None = None
 
 
+class ExportMoneySourceResponse(BaseModel):
+    """`EXPORT-PAYMENTS-001`: one money column of the file, its ledger and what cuts it.
+
+    Part of the document the owner signs (hashed into `rendered_hash`), served so a reader of the
+    approval never has to infer from a column's name which of two ledgers it came from.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    column: str
+    ledger: str
+    cut_on: str
+
+
+def _money_sources(sources: Iterable[Any]) -> list[ExportMoneySourceResponse]:
+    return [
+        ExportMoneySourceResponse(column=item.column, ledger=item.ledger, cut_on=item.cut_on)
+        for item in sources
+    ]
+
+
 class ExportRequestResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -6375,9 +6396,17 @@ class ExportRequestResponse(BaseModel):
     #: Both come from the server because both are hashed into `rendered_hash`: a console composing
     #: its own wording would be describing a document nobody signed. `day_boundary` is on the wire
     #: because this system cuts the shop's day two ways -- an export by `orders.created_at`, the
-    #: counter's takings by `order_settlements.attested_at` -- and both surfaces say *tiền đã thu*.
+    #: counter's takings by `order_payments.recorded_at` -- and both surfaces say *tiền đã thu*.
     day_boundary: str
     statement_vi: str
+    #: `EXPORT-PAYMENTS-001`: which ledger each money column is read from and when it is cut, and
+    #: the one line the console prints beside the next control. Empty / null only on a replay of a
+    #: request stored before the money columns existed -- a replay repeats what was said then.
+    money_sources: list[ExportMoneySourceResponse]
+    money_line_vi: str | None
+    #: True for such a replay: the stored document is a retired shape, its envelope can no longer
+    #: be approved or released (`EXPORT_QUERY_VERSION_RETIRED`), and a new request is the way on.
+    shape_retired: bool
     replayed: bool
 
 
@@ -6419,6 +6448,15 @@ class ExportRequestContentResponse(BaseModel):
     rendered_hash: str
     requested_at: datetime
     requested_by_you: bool
+    #: `EXPORT-PAYMENTS-001`: the money columns' ledgers and cuts, and the tier-1 line, as signed.
+    money_sources: list[ExportMoneySourceResponse]
+    money_line_vi: str
+    #: Which query version the ENVELOPE's own digest was taken under -- the current one, a retired
+    #: one, or null for neither -- and whether it is the retired shape. The name the approvals card
+    #: gives a digest mismatch, so an owner reads "raised under the old file shape" rather than a
+    #: bare "does not match".
+    bound_query_version: str | None
+    bound_shape_retired: bool
 
 
 class ExportExecutionBody(StrictRequest):
@@ -6974,6 +7012,9 @@ def request_export(
         query_version=stored.query_version,
         day_boundary=stored.day_boundary,
         statement_vi=stored.statement_vi,
+        money_sources=_money_sources(stored.money_sources),
+        money_line_vi=stored.money_line_vi,
+        shape_retired=stored.shape_retired,
         replayed=stored.replayed,
     )
 
@@ -7031,6 +7072,10 @@ def read_export_request_for_approval(
         rendered_hash=record.rendered_hash,
         requested_at=record.requested_at,
         requested_by_you=record.requested_by_you,
+        money_sources=_money_sources(record.money_sources),
+        money_line_vi=record.money_line_vi,
+        bound_query_version=record.bound_query_version,
+        bound_shape_retired=record.bound_shape_retired,
     )
 
 
@@ -7099,12 +7144,16 @@ def execute_export(
 #: `EXPORT_APPROVAL_SELF_DECIDED` joined them when separation of duty was bound to the person who
 #: defined the export rather than to whoever raised the envelope. It is the same kind of answer as
 #: the other three -- a different owner has to decide this -- and never a retype.
+#: `EXPORT_QUERY_VERSION_RETIRED` (`EXPORT-PAYMENTS-001`) is the envelope binding the file shape
+#: that read money from settlements alone: somebody has to raise a new request and an owner decide
+#: it again.
 _EXPORT_REQUIRES_HUMAN = frozenset(
     {
         "EXPORT_APPROVAL_REQUIRED",
         "EXPORT_APPROVAL_EXPIRED",
         "EXPORT_APPROVAL_NOT_BOUND",
         "EXPORT_APPROVAL_SELF_DECIDED",
+        "EXPORT_QUERY_VERSION_RETIRED",
     }
 )
 

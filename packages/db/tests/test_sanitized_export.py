@@ -365,8 +365,16 @@ def test_the_export_query_version_is_pinned_to_the_rule_it_names() -> None:
     # cancelled with the cash handed back exactly like a paid order, so a sum of `paid_amount_vnd`
     # overstated the day by every refund. Approvals signed over v1's twelve columns stop matching,
     # which is the point of hashing the column list.
-    assert EXPORT_QUERY.identifier == "store-day-orders-export-v2"
-    assert EXPORT_QUERY.label == "store-day-orders-export-v2:3f884e227d6a2d05"
+    #
+    # v3 (`EXPORT-PAYMENTS-001`): `owed_vnd`, `paid_cash_vnd`, `paid_transfer_vnd`, `paid_vnd` and
+    # `remaining_vnd` joined the columns, `order_payments` and the current quote revision joined the
+    # SELECT, two exclusions (the customer key and the bank reference tail) and
+    # `EXPORT_MONEY_SOURCES` joined the hashed inputs. v2 (`3f884e227d6a2d05`) read money from
+    # `order_settlements` alone, which since `PAYMENT-001` is written only once an order is paid in
+    # full, so a partly paid order exported as unpaid. An envelope signed over v2 is refused by
+    # name (`EXPORT_QUERY_VERSION_RETIRED`, `test_export_payments.py`).
+    assert EXPORT_QUERY.identifier == "store-day-orders-export-v3"
+    assert EXPORT_QUERY.label == "store-day-orders-export-v3:7b7e01eef9314061"
 
 
 # --- refusals -----------------------------------------------------------------------------------

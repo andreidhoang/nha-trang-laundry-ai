@@ -171,3 +171,18 @@ def test_the_customer_list_is_in_no_export() -> None:
     for source in (WEB / "src" / "screens").glob("exports.js"):
         text = source.read_text(encoding="utf-8")
         assert "/customers" not in text
+
+
+def test_the_export_statements_select_no_customer_key_and_no_bank_reference() -> None:
+    """`EXPORT-PAYMENTS-001`: the export now reads the payment ledger, which sits beside two things
+    that identify a person -- the order's customer key and a transfer's bank reference tail. Neither
+    export statement selects either, and the exclusion list the owner signs names both."""
+
+    exports = (ROOT / "packages/db/src/nha_trang_laundry_db/exports.py").read_text(encoding="utf-8")
+    statements = re.findall(r'^_EXPORT(?:_WINDOW)?_SQL = """(.*?)"""', exports, re.S | re.M)
+    assert len(statements) == 2
+    for statement in statements:
+        for column in ("customer_id", "bank_ref", "bound_contact_id", "recorded_by"):
+            assert column not in statement, column
+    for excluded in ('"orders.customer_id"', '"order_payments.bank_ref_last"'):
+        assert excluded in exports, excluded

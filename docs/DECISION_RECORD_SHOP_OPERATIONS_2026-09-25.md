@@ -144,6 +144,13 @@ fee amount was never written down.
 **Reversal.** Unpublish or republish with different figures; recorded fees stay on the orders they
 were charged to.
 
+**Ruling added 2026-09-27 (founder, on the engineer's question):** an order already paid in full
+before its fee starts (day 21) owes no storage fee: the fee is fixed when the settling payment is
+taken, and reopening a paid bill at pickup is friction at the counter and risk in the ledgers for
+the shop's most reliable customers. Its laundry can still be disposed of from day 60 under the same
+contact-attempt rule. Reversal: charge the fee as a new charge on a paid order (needs a ledger
+change, not a setting).
+
 ## DEC-037 — Every order gets a promised-ready time ("hẹn trả")
 
 **Grounding.** Every rule below is already owner-confirmed in `templates/service-sla.csv` and

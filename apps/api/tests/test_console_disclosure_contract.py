@@ -954,7 +954,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # DAILY-SUMMARY-001 (round 7 wave 2, DEC-039): 524 + 0. Re-keyed, none added or retired: the
     #   "Kênh và AI" lede and the FR-RPT-007 gap's `missing` now say the template summary exists.
     # DAILY-SUMMARY-001 merged onto both (round 7 wave 2 integration): 554 + 0 = 554.
-    assert sum(counts.values()) == _registry()["total"] == 554
+    # LATE-CREDIT-002 (round 8, DEC-042): 554 + 6 = 560 -- four REASON_NOTE refusals (NOT_LATE,
+    #   ALREADY_DECIDED, LATE_DELIVERY_NOT_MEASURABLE, LATE_DELIVERY_REASON_REQUIRED) and two hints
+    #   on Giao trễ cần xử lý; the FR-RPT-006 gap's three texts re-keyed (now the self-collect gap).
+    assert sum(counts.values()) == _registry()["total"] == 560
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

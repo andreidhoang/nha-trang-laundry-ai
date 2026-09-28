@@ -57,6 +57,15 @@ export const NAV_ITEMS = [
     group: "Vận hành",
     hint: "Đồ xong chưa lấy: gọi khách, phí lưu kho",
   },
+  // LATE-CREDIT-002 (DEC-042).
+  {
+    path: "/late-deliveries",
+    label: NAV.lateDeliveries,
+    capability: "INCIDENTS_READ",
+    icon: "truck",
+    group: "Vận hành",
+    hint: "Chuyến giao trễ hẹn: lỗi tiệm hay không",
+  },
   {
     path: "/order-requests",
     label: NAV.orderRequests,

@@ -272,7 +272,7 @@ mức chủ tiệm đã chốt được máy chủ tự áp — nhân viên **kh
 |---|---|---|---|
 | Giặt lại miễn phí | Không có tiền nào chuyển | 7 ngày kể từ khi khách nhận đồ | Nhân viên |
 | Bồi thường món hỏng | Trần = 5 lần phí giặt **một món** (xem dưới) | 24 giờ kể từ khi khách nhận đồ | Tới 100.000đ **cho mỗi món** là nhân viên, trên mức đó **chủ tiệm** |
-| Giảm trừ do giao trễ | Máy tính 10% tổng đã thu | Không tính theo hạn, tính theo mức trễ | Theo số tiền, như trên |
+| Giảm trừ do giao trễ | **Máy chủ đo mức trễ** (từ giờ hẹn tới lúc giao thành công) và tính 10% tổng đã thu — làm ở **Giao trễ cần xử lý** (dưới) | Không tính theo hạn, tính theo mức trễ | Theo số tiền, như trên |
 | **Mất đồ** | Trần như món hỏng | 24 giờ kể từ khi khách nhận đồ | **Luôn là chủ tiệm**, dù số tiền nhỏ |
 
 **“Phí giặt một món” là gì (DEC-031):** đồ tính theo cái, đôi, bộ thì lấy **giá một cái** — ba
@@ -321,6 +321,26 @@ dòng. Dòng chỉ có một món thì không cần chọn. Đồ tính theo ký
   Việt Nam) rồi tự hết hạn — chủ tiệm đi vắng cũng kịp duyệt, nhưng đừng để lâu hơn thế.
 - **Vượt trần thì máy từ chối, không tự hạ xuống.** Nếu màn hình báo vượt trần, nói đúng con số
   trần cho khách nghe. Gõ một số khác cho lọt là tự quyết thay chủ tiệm.
+
+### Giao trễ cần xử lý — máy chủ đo, bạn chỉ chọn lỗi của ai (`DEC-042`)
+
+Không cần tự nhớ chuyến nào giao trễ, không gõ số phút. Chuyến giao trễ **hơn 2 giờ** so với giờ
+hẹn hiện ở **Hôm nay → Giao trễ** (và **Thêm → Giao trễ**). Máy chủ đo từ **giờ hẹn trả đầu tiên**;
+chỉ khi **khách xin hẹn lại** thì mới tính theo giờ khách hẹn. Hẹn lại vì máy hỏng, đông việc hay
+trời mưa **không dời giờ hẹn** — khách không mất quyền được giảm vì tiệm tự dời. Mỗi dòng ghi
+*Hẹn … → giao …*, **trễ bao lâu**, và nếu có, *“Giao 14:05 không gặp khách”* (lần giao trước giờ
+hẹn mà khách vắng).
+
+1. **Lỗi của tiệm — giảm …**: bấm một lần. Máy mở khiếu nại và khoản giảm 10% đúng số phút đã đo.
+   Dòng chuyển xuống **Đã ghi lỗi của tiệm**: bấm **Cấp giảm trừ** để mở trang khiếu nại rồi bấm
+   **“Thực hiện bồi hoàn”** như mọi khoản khác; khoản trên mức nhân viên thì dòng ghi
+   **Chờ chủ tiệm duyệt**.
+2. **Không phải lỗi tiệm**: chọn lý do — khách không có nhà, khách cho sai địa chỉ hoặc số, khách
+   hẹn giờ muộn hơn, hoặc lý do khác (ghi vài chữ, không ghi số điện thoại). Đơn rời danh sách, lý do
+   được giữ lại.
+
+Mỗi đơn chỉ giảm **một lần**; đơn đã hoàn tiền thì không giảm. Chủ tiệm chưa công bố mức bồi hoàn
+thì màn hình nói chưa đo được, và không có dòng nào.
 
 **Khách quay lại dùng phiếu giảm trừ:** tính giá như bình thường ở **＋ Nhận đồ**, rồi — **trước
 khi khách đồng ý** — bấm **Dùng khoản giảm trừ** dưới hoá đơn tạm. Máy liệt kê các khoản chưa dùng

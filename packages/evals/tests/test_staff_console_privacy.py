@@ -266,3 +266,53 @@ def test_the_waiting_list_prints_no_phone_and_writes_nothing_to_the_device() -> 
     assert "formatPhone" not in pickup
     shared = (WEB / "src" / "ui" / "unclaimed.js").read_text(encoding="utf-8")
     assert "Không ghi số điện thoại khách" in shared
+
+
+# --- LATE-CREDIT-002 (DEC-042): late deliveries, whose fault --------------------------------------
+
+LATE_DELIVERY_MODULES = (
+    WEB / "src" / "screens" / "lateDeliveries.js",
+    WEB / "src" / "ui" / "lateDelivery.js",
+)
+
+
+def test_the_late_delivery_list_reads_no_phone_and_writes_nothing_to_the_device() -> None:
+    """The list is ticket, customer name, times and figures -- the server returns no phone for it.
+
+    The one free-text field, the note on "Lý do khác", warns beside it not to type a customer's
+    phone; the server refuses one (`NOTE_LOOKS_LIKE_PHONE`) and keeps the note out of every event,
+    audit and outbox payload (`packages/db/tests/test_late_deliveries.py`). Nothing is kept on the
+    device.
+    """
+
+    for module in LATE_DELIVERY_MODULES:
+        assert module.is_file(), module
+        source = module.read_text(encoding="utf-8")
+        for sink in (
+            "localStorage",
+            "sessionStorage",
+            "indexedDB",
+            "document.cookie",
+            "caches.",
+            "history.pushState",
+            "history.replaceState",
+            "console.",
+            ".phone",
+            "telHref",
+        ):
+            assert sink not in source, f"{module.name} reaches {sink}"
+    screen = (WEB / "src" / "screens" / "lateDeliveries.js").read_text(encoding="utf-8")
+    assert "Không ghi số điện thoại khách" in screen
+
+
+def test_the_late_delivery_route_returns_no_phone_field() -> None:
+    """The response models carry a display name at most -- never a phone, masked or not."""
+
+    from nha_trang_laundry_api.main import (
+        LateDeliveryFollowUpResponse,
+        LateDeliveryItemResponse,
+        LateDeliveryListResponse,
+    )
+
+    for model in (LateDeliveryItemResponse, LateDeliveryFollowUpResponse, LateDeliveryListResponse):
+        assert not [name for name in model.model_fields if "phone" in name], model.__name__

@@ -290,24 +290,21 @@ const GROUPS = [
           "chứng. Các chỉ số của cùng khoảng ngày xem ở màn hình Báo cáo.",
       },
       {
-        // PROMISE-001 (DEC-037) built the per-order promise this entry was about: every order
-        // taken after the owner publishes the turnaround rules gets a promised-ready time at Nhận
-        // đồ, the SLA board ranks by it, and the report's on-time figure counts against the first
-        // one. What DEC-037 deliberately left for later is the owner's late-delivery credit, so the
-        // entry now names that, and nothing else.
-        ref: "FR-RPT-006 · DEC-037",
-        title: "Bù 10% khi giao trễ hẹn",
+        // PROMISE-001 (DEC-037) built the per-order promise; LATE-CREDIT-002 (DEC-042) built the
+        // late-delivery credit on it: the server measures the lateness, Giao trễ cần xử lý lists
+        // it and one tap records the shop's fault and the 10% credit. What the ratified rule does
+        // not cover is a self-collect order that was not ready on time, so the entry names that.
+        ref: "FR-RPT-006 · DEC-042",
+        title: "Bù khi đồ tự lấy chưa xong đúng hẹn",
         what:
-          "Giao tận nơi trễ hơn 2 giờ so với giờ đã hẹn thì khách được giảm 10% đơn sau (lời chủ " +
-          "tiệm).",
+          "Khách tự đến lấy mà đồ chưa xong đúng giờ hẹn thì có được bù không, và bù bao nhiêu.",
         missing:
-          "Mỗi đơn đã có giờ hẹn trả tại tiệm, nhưng chưa có giờ hẹn giao tận nơi, và khoản giảm " +
-          "10% không được tạo tự động.",
-        blockedBy:
-          "DEC-037 đã chốt: đợt này chỉ hẹn và đo, chưa tự bù; nối vào Bồi hoàn là bước sau",
+          "Luật chủ tiệm đã chốt chỉ nói giao tận nơi trễ hơn 2 giờ được giảm 10%. Đồ tự lấy chưa " +
+          "xong đúng hẹn chưa có luật bù nào.",
+        blockedBy: "Không nằm trong luật đã chốt (DEC-004, DEC-042); chủ tiệm phải thêm",
         today:
-          "Đơn trễ hẹn hiện nhãn “Trễ hẹn” ở Đơn hàng và Bảng trễ hạn. Muốn bù cho khách thì tạo " +
-          "khoản bù ở màn Bồi hoàn như trước.",
+          "Giao tận nơi trễ: máy chủ tự đo, hiện ở Giao trễ cần xử lý, một chạm ghi lỗi của tiệm " +
+          "và giảm 10%. Đồ tự lấy trễ hẹn chỉ hiện nhãn “Trễ hẹn” ở Đơn hàng và Bảng trễ hạn.",
       },
     ],
   },

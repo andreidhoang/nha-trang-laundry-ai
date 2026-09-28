@@ -139,6 +139,30 @@ const TILES = [
     }),
   },
   {
+    // LATE-CREDIT-002 (DEC-042): deliveries the server measured as late and nobody has decided
+    // about, plus credited ones whose credit the counter still has to give. Both lists are the
+    // server's; a truncated page is shown as a floor.
+    id: "late-deliveries",
+    title: "Giao trễ",
+    short: "giao trễ",
+    icon: "truck",
+    capability: "INCIDENTS_READ",
+    needsStore: true,
+    limit: 50,
+    href: "/late-deliveries",
+    url: (store) => `/internal/v1/stores/${encodeURIComponent(store)}/late-deliveries?limit=50`,
+    pick: (payload) => {
+      const orders = Array.isArray(payload?.orders) ? payload.orders : null;
+      const follow = Array.isArray(payload?.follow_up) ? payload.follow_up : [];
+      return {
+        items: orders
+          ? [...orders, ...follow.filter((item) => item.next_step === "EXECUTE")]
+          : null,
+        more: Boolean(payload?.truncated),
+      };
+    },
+  },
+  {
     // The SLA board's own read, one page of its ceiling, counted by the outcome the server gave
     // each row. Nothing here decides whether an order is late: `sla_outcome` is the domain
     // engine's, and a page that has a next page is shown as a floor ("3+"), never as a total.

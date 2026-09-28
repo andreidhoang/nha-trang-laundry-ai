@@ -3999,3 +3999,135 @@ a.row-link {
   font: inherit;
   width: 100%;
 }
+
+/* LATE-CREDIT-002 (DEC-042) ---------------------------------------------------------------------
+ * "Giao trễ cần xử lý": on a phone each late delivery is a card (order, hẹn → giao, the lateness,
+ * then the two buttons at thumb size); from 64rem it is a table — one line per delivery, the
+ * columns aligned under a header, the two buttons side by side at the right. */
+
+.late-table {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  display: grid;
+  overflow: hidden;
+}
+
+.late-table__head {
+  display: none;
+}
+
+.late-row {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
+.late-row:first-of-type,
+.late-table__head + .late-row {
+  border-top: 0;
+}
+
+.late-row__order {
+  color: inherit;
+  display: grid;
+  gap: 2px;
+  text-decoration: none;
+}
+
+.late-row__title {
+  font-weight: var(--weight-medium);
+}
+
+.late-row__meta,
+.late-row__hint {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.late-row__hint {
+  color: var(--warn-fg);
+}
+
+.late-row__times {
+  display: grid;
+  gap: 2px;
+}
+
+.late-row__actions {
+  align-items: center;
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: 1fr;
+}
+
+.late-row__actions .btn {
+  justify-content: center;
+  min-height: var(--tap-min);
+  width: 100%;
+}
+
+.late-row__actions .hint {
+  margin: 0;
+}
+
+.late-row__alert:empty {
+  display: none;
+}
+
+.late-follow {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  justify-content: space-between;
+}
+
+.late-follow + .late-follow {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+
+.late-follow__main {
+  display: grid;
+  gap: 2px;
+}
+
+@media (min-width: 64rem) {
+  .late-table__head,
+  .late-row {
+    align-items: center;
+    column-gap: var(--space-4);
+    display: grid;
+    grid-template-columns: minmax(10rem, 1.1fr) minmax(14rem, 1.6fr) minmax(8rem, 0.8fr) minmax(24rem, 2.2fr);
+  }
+
+  .late-table__head {
+    background: var(--surface-sunken);
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .late-row__actions {
+    grid-template-columns: auto auto;
+    justify-content: end;
+  }
+
+  .late-row__actions .btn {
+    width: auto;
+  }
+
+  .late-row__actions > .hint {
+    grid-column: 1 / -1;
+    text-align: right;
+  }
+
+  .late-row__alert {
+    grid-column: 1 / -1;
+  }
+}

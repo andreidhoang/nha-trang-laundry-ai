@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 516
+  DESCRIPTIVE: 522
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 16
   SERVER_GATE: 15
-total: 554
+total: 560
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1683,6 +1683,38 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.NOT_LATE:90d06d59398f
+  module: core/i18n.js
+  key: REASON_NOTE.NOT_LATE
+  text: Máy chủ đo lại thấy chuyến này không trễ quá mức chủ tiệm đặt, nên không cần xử lý.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.ALREADY_DECIDED:70ba336b4402
+  module: core/i18n.js
+  key: REASON_NOTE.ALREADY_DECIDED
+  text: Chuyến giao này đã có người xử lý rồi. Tải lại danh sách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.LATE_DELIVERY_NOT_MEASURABLE:daa878def98d
+  module: core/i18n.js
+  key: REASON_NOTE.LATE_DELIVERY_NOT_MEASURABLE
+  text: 'Đơn này không đo được giao trễ: không giao tận nơi, không có giờ hẹn, hoặc chưa giao xong.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.LATE_DELIVERY_REASON_REQUIRED:dda0448b3419
+  module: core/i18n.js
+  key: REASON_NOTE.LATE_DELIVERY_REASON_REQUIRED
+  text: Chọn lý do vì sao không phải lỗi của tiệm.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: core/rbac.js#why:f1857f4fe905
   module: core/rbac.js
   key: why
@@ -3028,28 +3060,28 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:d2b85cf90130
+- slot_id: screens/gaps.js#missing:e7730e9f601e
   module: screens/gaps.js
   key: missing
-  text: Mỗi đơn đã có giờ hẹn trả tại tiệm, nhưng chưa có giờ hẹn giao tận nơi, và khoản giảm 10% không
-    được tạo tự động.
+  text: Luật chủ tiệm đã chốt chỉ nói giao tận nơi trễ hơn 2 giờ được giảm 10%. Đồ tự lấy chưa xong đúng
+    hẹn chưa có luật bù nào.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:a96ed7b67835
+- slot_id: screens/gaps.js#blockedBy:eb6d97d540d2
   module: screens/gaps.js
   key: blockedBy
-  text: 'DEC-037 đã chốt: đợt này chỉ hẹn và đo, chưa tự bù; nối vào Bồi hoàn là bước sau'
+  text: Không nằm trong luật đã chốt (DEC-004, DEC-042); chủ tiệm phải thêm
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:09a1596aaac5
+- slot_id: screens/gaps.js#today:f85438b91c48
   module: screens/gaps.js
   key: today
-  text: Đơn trễ hẹn hiện nhãn “Trễ hẹn” ở Đơn hàng và Bảng trễ hạn. Muốn bù cho khách thì tạo khoản bù
-    ở màn Bồi hoàn như trước.
+  text: 'Giao tận nơi trễ: máy chủ tự đo, hiện ở Giao trễ cần xử lý, một chạm ghi lỗi của tiệm và giảm
+    10%. Đồ tự lấy trễ hẹn chỉ hiện nhãn “Trễ hẹn” ở Đơn hàng và Bảng trễ hạn.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3210,6 +3242,23 @@ disclosures:
   text: 'Không còn giữ lời khách phàn nàn. Sự cố do đường agent ghi vốn không kèm mô tả, còn mô tả do
     nhân viên ghi bị xoá sau 365 ngày theo lịch giữ dữ liệu. Bản ghi sự cố thì vẫn nguyên: đây là chuyện
     bình thường, không phải mất dữ liệu.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/lateDeliveries.js#hint:02776c31808b
+  module: screens/lateDeliveries.js
+  key: hint
+  text: Tối đa 120 ký tự. Không ghi số điện thoại khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/lateDeliveries.js#hint:33fbce9a80c8
+  module: screens/lateDeliveries.js
+  key: hint
+  text: Mức trễ (hơn 2 giờ) và 10% là số chủ tiệm công bố trong chính sách bồi hoàn (DEC-004, DEC-042).
+    Chưa công bố thì chưa đo được đơn nào.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

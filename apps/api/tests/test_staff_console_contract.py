@@ -232,6 +232,11 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/orders/{}/contact-attempts",
         "/internal/v1/orders/{}/storage-fee-waiver",
         "/internal/v1/orders/{}/disposal",
+        # LATE-CREDIT-002 (DEC-042). Giao trễ cần xử lý and Hôm nay's count read the measured list;
+        # the two buttons decide. A screen that stops calling either puts the lateness back to a
+        # person noticing it and typing minutes into a remedy form.
+        "/internal/v1/stores/{}/late-deliveries",
+        "/internal/v1/stores/{}/late-deliveries/{}/decision",
     }
     missing = sorted(required - referenced)
     assert not missing, f"no screen calls these routes any more: {missing}"

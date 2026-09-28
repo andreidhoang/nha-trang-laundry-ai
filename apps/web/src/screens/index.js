@@ -22,6 +22,7 @@ import { screen as expenses } from "./expenses.js";
 import { screen as exports_ } from "./exports.js";
 import { screen as gaps } from "./gaps.js";
 import { detailScreen as incidentDetail, screen as incidents } from "./incidents.js";
+import { screen as lateDeliveries } from "./lateDeliveries.js";
 import { screen as machines } from "./machines.js";
 import { screen as more } from "./more.js";
 import { screen as newOrder } from "./newOrder.js";
@@ -49,6 +50,7 @@ export const ROUTES = [
   orderDetail,
   receipt,
   pickup,
+  lateDeliveries,
   customers,
   customerDetail,
   // PAYMENT-002: a business customer's monthly statement (four segments: no sibling to shadow).

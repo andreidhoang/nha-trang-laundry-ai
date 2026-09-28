@@ -249,6 +249,7 @@ from nha_trang_laundry_api.auth import (
     AuthSettings,
     StaffIdentityService,
 )
+from nha_trang_laundry_api.authorization import RouteGate, register_gate
 from nha_trang_laundry_api.customers import (
     CUSTOMER_PATH_MARKER,
     CustomerService,
@@ -1879,50 +1880,59 @@ def _database_unavailable(_request: Request, error: Exception) -> JSONResponse:
     return _database_refusal(DATABASE_UNAVAILABLE, DATABASE_UNAVAILABLE_RETRY_AFTER_SECONDS)
 
 
-def require_owner(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    if StaffRole.OWNER_ADMIN not in principal.roles:
-        _record_authorization_denial("OWNER_ROLE_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+def staff_gate(gate: RouteGate) -> Callable[..., StaffPrincipal]:
+    """A FastAPI dependency enforcing `gate`, named after it so the contract records the name.
 
-
-def require_operations_staff(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    allowed = {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.OPERATOR}
-    if not principal.roles & allowed or not principal.mfa_verified:
-        _record_authorization_denial("OPERATIONS_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
-
-
-def require_approval_staff(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    allowed = {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER}
-    if not principal.roles & allowed or not principal.mfa_verified:
-        _record_authorization_denial("APPROVAL_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
-
-
-def require_report_reader(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """`REPORT-DASHBOARD-001`: the owner's numbers. Owner, approver, accountant, auditor; MFA.
-
-    `OPERATOR` is refused here on purpose (`COUNTER_COMPLETENESS_SPEC_V1.md` §3.5): the counter
-    keeps today's takings under `DEC-014` and today's counts; a period report is not a counter
-    screen.
-    The repository checks the same set again, plus membership of the store, so a route rewrite that
-    dropped this gate would still be refused below it.
+    `AUTHZ-MATRIX-001`. The gate is registered by name in `authorization.GATES`, which is how
+    `scripts/generate_internal_api_contract.py` turns a route's gate into the roles it admits. The
+    denial is the one opaque 403 every gate gives; the specific reason goes to the structured log.
     """
-    if not principal.roles & REPORT_READ_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("REPORT_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+
+    def dependency(
+        principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    ) -> StaffPrincipal:
+        if not gate.admits(principal):
+            _record_authorization_denial(gate.reason_code)
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+        return principal
+
+    dependency.__name__ = dependency.__qualname__ = register_gate(gate, dependency).name
+    return dependency
+
+
+require_owner = staff_gate(
+    RouteGate("require_owner", frozenset({StaffRole.OWNER_ADMIN}), "OWNER_ROLE_REQUIRED")
+)
+
+
+require_operations_staff = staff_gate(
+    RouteGate(
+        "require_operations_staff",
+        frozenset({StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.OPERATOR}),
+        "OPERATIONS_ROLE_OR_MFA_REQUIRED",
+    )
+)
+
+
+require_approval_staff = staff_gate(
+    RouteGate(
+        "require_approval_staff",
+        frozenset({StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER}),
+        "APPROVAL_ROLE_OR_MFA_REQUIRED",
+    )
+)
+
+
+#: `REPORT-DASHBOARD-001`: the owner's numbers. Owner, approver, accountant, auditor; MFA.
+#:
+#: `OPERATOR` is refused here on purpose (`COUNTER_COMPLETENESS_SPEC_V1.md` §3.5): the counter
+#: keeps today's takings under `DEC-014` and today's counts; a period report is not a counter
+#: screen.
+#: The repository checks the same set again, plus membership of the store, so a route rewrite that
+#: dropped this gate would still be refused below it.
+require_report_reader = staff_gate(
+    RouteGate("require_report_reader", REPORT_READ_ROLES, "REPORT_ROLE_OR_MFA_REQUIRED")
+)
 
 
 @app.post(
@@ -1976,6 +1986,34 @@ def assign_staff_role(
         service.assign_role(staff_user_id, request.role, principal.staff_user_id)
     except IdentityStateError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="staff user unavailable") from error
+
+
+@app.delete(
+    "/internal/v1/staff/{staff_user_id}/roles/{role}", status_code=status.HTTP_204_NO_CONTENT
+)
+def revoke_staff_role(
+    staff_user_id: UUID,
+    role: StaffRole,
+    principal: Annotated[StaffPrincipal, Depends(require_owner)],
+    service: Annotated[StaffIdentityService | None, Depends(get_identity_service)] = None,
+) -> None:
+    """Take one role away; the person's live sessions stop at their next request.
+
+    `AUTHZ-LIFECYCLE-001`. 409 covers every refusal the owner can act on the same way -- the person
+    is not there, does not hold that role, or is the last owner -- and says nothing about which.
+    """
+
+    if service is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="staff identity unavailable"
+        )
+    try:
+        service.revoke_role(staff_user_id, role, principal.staff_user_id)
+    except IdentityPermissionError as error:
+        _record_authorization_denial("OWNER_ROLE_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    except IdentityStateError as error:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="role cannot be revoked") from error
 
 
 @app.post(
@@ -4153,14 +4191,10 @@ def get_customer_service() -> CustomerService:
         ) from error
 
 
-def require_customer_reader(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """`DEC-034`: the operations roles and the auditor, with MFA. The auditor reads masked."""
-    if not principal.roles & CUSTOMER_READ_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("CUSTOMER_READ_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: `DEC-034`: the operations roles and the auditor, with MFA. The auditor reads masked.
+require_customer_reader = staff_gate(
+    RouteGate("require_customer_reader", CUSTOMER_READ_ROLES, "CUSTOMER_READ_ROLE_OR_MFA_REQUIRED")
+)
 
 
 @app.exception_handler(RequestValidationError)
@@ -4748,14 +4782,10 @@ def get_account_service() -> AccountService:
         ) from error
 
 
-def require_account_owner(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """`DEC-035`: the owner opens an account, types its limit, stops it and lifts its block. MFA."""
-    if not principal.roles & ACCOUNT_OWNER_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("ACCOUNT_OWNER_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: `DEC-035`: the owner opens an account, types its limit, stops it and lifts its block. MFA.
+require_account_owner = staff_gate(
+    RouteGate("require_account_owner", ACCOUNT_OWNER_ROLES, "ACCOUNT_OWNER_OR_MFA_REQUIRED")
+)
 
 
 _ACCOUNT_ERRORS = (
@@ -8092,44 +8122,28 @@ def get_shop_capture_service() -> ShopCaptureService:
         ) from error
 
 
-def require_machine_reader(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """The counter picks a machine; the owner, approver and auditor read the list too. MFA."""
-    if not principal.roles & MACHINE_READ_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("MACHINE_READ_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: The counter picks a machine; the owner, approver and auditor read the list too. MFA.
+require_machine_reader = staff_gate(
+    RouteGate("require_machine_reader", MACHINE_READ_ROLES, "MACHINE_READ_ROLE_OR_MFA_REQUIRED")
+)
 
 
-def require_machine_owner(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """`DEC-038`: the owner adds, renames or retires a machine. MFA."""
-    if not principal.roles & MACHINE_WRITE_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("MACHINE_OWNER_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: `DEC-038`: the owner adds, renames or retires a machine. MFA.
+require_machine_owner = staff_gate(
+    RouteGate("require_machine_owner", MACHINE_WRITE_ROLES, "MACHINE_OWNER_OR_MFA_REQUIRED")
+)
 
 
-def require_expense_reader(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """Sổ thu chi is read by the owner, the accountant and the auditor. MFA."""
-    if not principal.roles & EXPENSE_READ_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("EXPENSE_READ_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: Sổ thu chi is read by the owner, the accountant and the auditor. MFA.
+require_expense_reader = staff_gate(
+    RouteGate("require_expense_reader", EXPENSE_READ_ROLES, "EXPENSE_READ_ROLE_OR_MFA_REQUIRED")
+)
 
 
-def require_expense_writer(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """Sổ thu chi is written by the owner and the accountant. MFA."""
-    if not principal.roles & EXPENSE_WRITE_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("EXPENSE_WRITE_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: Sổ thu chi is written by the owner and the accountant. MFA.
+require_expense_writer = staff_gate(
+    RouteGate("require_expense_writer", EXPENSE_WRITE_ROLES, "EXPENSE_WRITE_ROLE_OR_MFA_REQUIRED")
+)
 
 
 #: Everything a shop-capture repository refuses with, mapped by `_raise_shop_capture_error`.
@@ -8581,34 +8595,24 @@ def get_unclaimed_service() -> UnclaimedService:
         ) from error
 
 
-def require_unclaimed_reader(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """The operations roles and the auditor, with MFA. The auditor reads phone numbers masked."""
-    if not principal.roles & UNCLAIMED_READ_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("UNCLAIMED_READ_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: The operations roles and the auditor, with MFA. The auditor reads phone numbers masked.
+require_unclaimed_reader = staff_gate(
+    RouteGate(
+        "require_unclaimed_reader", UNCLAIMED_READ_ROLES, "UNCLAIMED_READ_ROLE_OR_MFA_REQUIRED"
+    )
+)
 
 
-def require_storage_waiver(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """`DEC-036`: an `OPS_APPROVER` or the owner waives the storage fee. MFA."""
-    if not principal.roles & WAIVER_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("STORAGE_WAIVER_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: `DEC-036`: an `OPS_APPROVER` or the owner waives the storage fee. MFA.
+require_storage_waiver = staff_gate(
+    RouteGate("require_storage_waiver", WAIVER_ROLES, "STORAGE_WAIVER_ROLE_OR_MFA_REQUIRED")
+)
 
 
-def require_disposal_owner(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """`DEC-036`: only the owner approves thanh lý. MFA."""
-    if not principal.roles & DISPOSAL_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("DISPOSAL_OWNER_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: `DEC-036`: only the owner approves thanh lý. MFA.
+require_disposal_owner = staff_gate(
+    RouteGate("require_disposal_owner", DISPOSAL_ROLES, "DISPOSAL_OWNER_OR_MFA_REQUIRED")
+)
 
 
 class StoragePolicyResponse(BaseModel):
@@ -9297,34 +9301,22 @@ def get_invoice_request_service() -> InvoiceRequestService:
         ) from error
 
 
-def require_invoice_reader(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """`DEC-040`: whoever reads the customer reads the requests. MFA."""
-    if not principal.roles & INVOICE_READ_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("INVOICE_READ_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: `DEC-040`: whoever reads the customer reads the requests. MFA.
+require_invoice_reader = staff_gate(
+    RouteGate("require_invoice_reader", INVOICE_READ_ROLES, "INVOICE_READ_ROLE_OR_MFA_REQUIRED")
+)
 
 
-def require_invoice_writer(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """`DEC-040`: the operations roles create and cancel their own store's requests. MFA."""
-    if not principal.roles & INVOICE_WRITE_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("INVOICE_WRITE_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: `DEC-040`: the operations roles create and cancel their own store's requests. MFA.
+require_invoice_writer = staff_gate(
+    RouteGate("require_invoice_writer", INVOICE_WRITE_ROLES, "INVOICE_WRITE_ROLE_OR_MFA_REQUIRED")
+)
 
 
-def require_invoice_closer(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """`DEC-040`: the owner and the approver record an issued invoice and download. MFA."""
-    if not principal.roles & INVOICE_CLOSE_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("INVOICE_CLOSE_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: `DEC-040`: the owner and the approver record an issued invoice and download. MFA.
+require_invoice_closer = staff_gate(
+    RouteGate("require_invoice_closer", INVOICE_CLOSE_ROLES, "INVOICE_CLOSE_ROLE_OR_MFA_REQUIRED")
+)
 
 
 class InvoiceBuyerResponse(BaseModel):
@@ -10001,14 +9993,12 @@ def get_late_delivery_service() -> LateDeliveryService:
         ) from error
 
 
-def require_late_delivery_staff(
-    principal: Annotated[StaffPrincipal, Depends(current_principal)],
-) -> StaffPrincipal:
-    """The counter roles that propose a remedy, with MFA (`DEC-004` rests the credit on them)."""
-    if not principal.roles & LATE_DELIVERY_ROLES or not principal.mfa_verified:
-        _record_authorization_denial("LATE_DELIVERY_ROLE_OR_MFA_REQUIRED")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
-    return principal
+#: The counter roles that propose a remedy, with MFA (`DEC-004` rests the credit on them).
+require_late_delivery_staff = staff_gate(
+    RouteGate(
+        "require_late_delivery_staff", LATE_DELIVERY_ROLES, "LATE_DELIVERY_ROLE_OR_MFA_REQUIRED"
+    )
+)
 
 
 class LateDeliveryItemResponse(BaseModel):

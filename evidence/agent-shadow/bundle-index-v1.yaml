@@ -13,10 +13,25 @@ rules:
   - This index is deliberately not hash-pinned by any bundle. A pointer inside the thing it points
     at cannot be updated without invalidating itself.
 current:
-  path: evidence/agent-shadow/local-synthetic-suite-v4.json
+  path: evidence/agent-shadow/local-synthetic-suite-v5.json
   derived_by: scripts/capture_local_agent_evidence.py
   release_effect: NONE
 superseded:
+  - path: evidence/agent-shadow/local-synthetic-suite-v4.json
+    sha256: sha256:1f0dbb9affbd28e4bd514ec85dcaa4f236fd8ce6102890c2e996335981b00ce4
+    superseded_on: '2026-09-28'
+    superseded_by: evidence/agent-shadow/local-synthetic-suite-v5.json
+    work_item: OPENCLAW-RETIRE-001
+    reason: >-
+      ADR-0009 retired the public OpenClaw runtime. Three files this bundle pinned no longer exist
+      (`runtime/openclaw/public-cell/openclaw.json5`, `scripts/verify_agent_runtime.py`,
+      `scripts/capture_openclaw_offline_evidence.py`; their bytes are recorded in
+      `evidence/openclaw-retirement/retired-artifacts-v1.yaml`), the runtime registry and the
+      provider-data evidence and schema moved to v2, and `agent_runner.py` lost the dead
+      `DisabledOpenClawProviderRuntime`. Each eval result's sixth pinned artifact is now the prompt
+      bundle instead of the OpenClaw cell config. Re-derived per this index's rules, not hand-edited;
+      every case status (32 SKIP), the manifest release-blocker list and the DETERMINISTIC_DEGRADED
+      runtime path are unchanged.
   - path: evidence/agent-shadow/local-synthetic-suite-v3.json
     sha256: sha256:ca51d935e4eb862e936e1cb562e1c54d17f0f91d1aea118e2def051249ef2670
     superseded_on: '2026-09-25'

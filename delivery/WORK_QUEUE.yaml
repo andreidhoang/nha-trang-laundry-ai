@@ -1160,22 +1160,22 @@ items:
 - id: OPENCLAW-RETIRE-001
   phase: AGENT_SHADOW
   title: Reversible retirement of OpenClaw from the public runtime path
-  status: PENDING
+  status: COMPLETE
   priority: 112
-  depends_on:
-  - RUNTIME-PARITY-001
+  depends_on: []
   context_domains:
   - platform
   - runtime_architecture
   - evaluation_release
   normative_sources:
+  - docs/adr/0009-retire-public-openclaw-runtime.md
   - BUILD_ENGINEERING_SPEC.md
   - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
   - specs/IMPLEMENTATION_ROADMAP_V1.md
   - specs/SECURITY_RELIABILITY_SPEC_V1.md
   contracts:
   - specs/contracts/release-gate-manifest-v1.schema.json
-  - specs/contracts/supply-chain-evidence-v1.schema.json
+  - specs/contracts/supply-chain-evidence-v2.schema.json
   - specs/contracts/openclaw-repackage-manifest-v2.schema.json
   task_packet: context/tasks/TASK-openclaw-retire-001.md
   acceptance_checks:
@@ -5680,12 +5680,63 @@ items:
   - walked_on_the_real_api_at_phone_size
   - rollback_assessment
   blocked_by_decisions: []
+- id: AUTHZ-LIFECYCLE-001
+  phase: PRODUCTION_HARDENING
+  title: Staff authority can be reduced, one sign-in mints one session, and every
+    route declares who may call it
+  status: COMPLETE
+  priority: 339
+  depends_on:
+  - SESSION-LIST-001
+  - HTTP-SECURITY-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/AUTHN_AUTHZ_ARCHITECTURE_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-authz-lifecycle-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_revoked_role_ends_the_holders_sessions_and_never_the_last_owner
+  - a_replayed_id_token_is_refused_by_the_database
+  - every_route_declares_its_access_in_the_contract
+  - every_staff_session_requires_mfa
+  - two_owners_racing_leave_one_owner
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: REALM-POLICY-001
+  phase: PRODUCTION_HARDENING
+  title: The running R1 realm carries the password policy the realm file declares
+  status: PENDING
+  priority: 340
+  depends_on:
+  - AUTHZ-LIFECYCLE-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/AUTHN_AUTHZ_ARCHITECTURE_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-authz-lifecycle-001.md
+  acceptance_checks:
+  - uv run pytest packages/evals/tests/test_r1_identity_contract.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - kcadm_read_back_matches_the_realm_file
+  - rollback_assessment
+  blocked_by_decisions: []
 - id: EINVOICE-REQUEST-001
   phase: PRODUCTION_HARDENING
   title: Invoice requests captured on an order or an account month with a buyer snapshot;
     the bookkeeper issues in the provider's portal and staff record the number
   status: COMPLETE
-  priority: 339
+  priority: 341
   depends_on:
   - CUSTOMER-001
   - PAYMENT-002
@@ -5718,7 +5769,7 @@ items:
   title: An exact NAPAS VietQR for the balance still owed, with a transfer code naming
     the order or the account month, after the owner publishes the account
   status: COMPLETE
-  priority: 340
+  priority: 342
   depends_on:
   - PAYMENT-001
   - PAYMENT-002
@@ -5751,7 +5802,7 @@ items:
   title: Late deliveries measured by the server against the first promise and decided
     in one tap through the existing remedy authority
   status: COMPLETE
-  priority: 341
+  priority: 343
   depends_on:
   - PROMISE-001
   - REMEDY-GARMENT-001
@@ -5784,7 +5835,7 @@ items:
   title: A pickup-reminder schedule on shop days with a fixed text behind the transactional
     egress guard and a two-tap send recorded as a contact attempt
   status: COMPLETE
-  priority: 342
+  priority: 344
   depends_on:
   - UNCLAIMED-001
   - CONSENT-TRANSACTIONAL-001
@@ -5816,7 +5867,7 @@ items:
   title: The evening summary opens with a computed 'Cần chú ý' block instead of model-written
     prose
   status: COMPLETE
-  priority: 343
+  priority: 345
   depends_on:
   - DAILY-SUMMARY-001
   - EINVOICE-REQUEST-001
@@ -5850,7 +5901,7 @@ items:
   title: Every round-8 flow filmed at desk size against the real API from an empty
     database, reviewed as the counter worker and the owner, every finding fixed
   status: COMPLETE
-  priority: 344
+  priority: 346
   depends_on:
   - EINVOICE-REQUEST-001
   - VIETQR-001

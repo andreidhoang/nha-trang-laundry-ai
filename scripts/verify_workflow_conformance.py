@@ -5825,11 +5825,6 @@ def _press_patch(console: Console, locator: Any, suffix: str) -> dict[str, Any]:
     return {"status": response.status, "body": body, "text": text[:600]}
 
 
-def _account_read(console: Console, customer_id: str) -> dict[str, Any]:
-    read = console.call("GET", f"/internal/v1/stores/{STORE}/customers/{customer_id}/account")
-    return read.get("body") or {}
-
-
 def _takings(console: Console) -> dict[str, Any]:
     return console.call("GET", f"/internal/v1/stores/{STORE}/settlements/today").get("body") or {}
 

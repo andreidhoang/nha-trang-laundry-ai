@@ -1,0 +1,50 @@
+schema_version: 2
+registry_version: 2.0.0-eval
+candidate_status: EVAL_ONLY
+runtime_image:
+  repository: nha-trang-laundry-worker
+  digest: null
+  verified: false
+  scan_evidence_path: null
+  scan_evidence_sha256: null
+  provenance_path: null
+  provenance_sha256: null
+model:
+  provider: openai
+  api_model_id: gpt-5.6-terra
+  immutable_release_id: null
+  immutable_release_verified: false
+  agent_runtime_id: nha-trang-responses-runtime
+  provider_transport: responses
+  reasoning_effort: low
+  required_response_store: false
+  fallback_model_refs: []
+provider_data_gate:
+  decision_id: DEC-006
+  documentation_review: VERIFIED
+  effective_request_storage_verification: NOT_VERIFIED
+  security_approval: NOT_APPROVED
+  privacy_approval: NOT_APPROVED
+  dedicated_service_credential_verified: NOT_VERIFIED
+  real_customer_data_allowed: false
+provider_data_evidence:
+  path: evidence/provider/openai-data-controls-review-v2.yaml
+  sha256: sha256:75e8d17ec29f94600c86174a152d14e37ac530385792b32bee8cb66324e72f83
+prompt:
+  bundle_path: runtime/prompts/manifest-v1.yaml
+  bundle_version: 1.0.0-eval
+  bundle_sha256: sha256:690118fd7be4f8cdd23c73fd309301aa68ea789c04bad42d72e2e580839525f8
+tool_contract_path: specs/contracts/agent-tools-v1.openapi.yaml
+tool_contract_sha256: sha256:17c13317d809c07ad29fb6c85bb0f3654435a073a8b8fd3a39a92d8803984af3
+limits:
+  max_model_calls: 3
+  max_tool_calls: 6
+  max_input_tokens: 8000
+  max_output_tokens: 1200
+  hard_deadline_seconds: 20
+  max_turn_cost_usd: '0.10'
+activation:
+  public_ingress_enabled: false
+  real_customer_model_calls_enabled: false
+  automatic_send_enabled: false
+  direct_provider_send_available: false

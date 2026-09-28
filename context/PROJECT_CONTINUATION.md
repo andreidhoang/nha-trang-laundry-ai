@@ -1,7 +1,7 @@
 # Production continuation brief
 
 **Last reconciled:** 2026-09-28 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **189 queue items.** Migrations run `0001`–`0064`.
+**Active work item:** none. **191 queue items.** Migrations run `0001`–`0065`.
 Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
 
 ## The remaining gaps: round 8, 2026-09-28
@@ -11,13 +11,13 @@ Live status is `uv run python scripts/report_delivery_status.py`; this brief is 
 all six are COMPLETE.
 
 **Built:**
-- **Invoice requests** (`EINVOICE-REQUEST-001`, migration 0062): the bookkeeper issues invoices in
+- **Invoice requests** (`EINVOICE-REQUEST-001`, migration 0063): the bookkeeper issues invoices in
   the provider's portal, and staff record the invoice number. The app computes no tax.
 - **Exact VietQR** (`VIETQR-001`, no migration): the amount is the ledger's remaining balance, with
   a transfer code that names the order.
-- **Late deliveries measured by the server** (`LATE-CREDIT-002`, migration 0063): one tap either
+- **Late deliveries measured by the server** (`LATE-CREDIT-002`, migration 0064): one tap either
   proposes the credit through the existing remedy authority or records a reason; `report-v4`.
-- **Pickup-reminder schedule** (`PICKUP-REMIND-001`, migration 0064): staff send in two taps,
+- **Pickup-reminder schedule** (`PICKUP-REMIND-001`, migration 0065): staff send in two taps,
   behind the consent guard.
 - **Cần chú ý** (`SUMMARY-ATTENTION-001`, `daily-summary-v3`): computed, not model-written.
 - **Filmed review** (`GAPS-FILMED-REVIEW-004`).
@@ -1257,7 +1257,6 @@ uv run mypy apps packages
 uv run python scripts/verify_contracts.py
 uv run python scripts/check_context_drift.py
 uv run python scripts/report_delivery_status.py
-npm --prefix runtime/openclaw/public-cell/plugin test
 ```
 
 For `OPENCLAW-REPACK-001`, also run the acceptance commands declared in `delivery/WORK_QUEUE.yaml`,

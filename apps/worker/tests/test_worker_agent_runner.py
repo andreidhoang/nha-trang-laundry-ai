@@ -9,7 +9,6 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from fastapi.testclient import TestClient
 from nha_trang_laundry_contracts import (
     AgentDataClassification,
     AgentDeploymentStage,
@@ -26,12 +25,10 @@ from nha_trang_laundry_worker.agent_runner import (
     AgentToolBridgeSession,
     AgentToolForwardRequest,
     AgentToolForwardResponse,
-    DisabledOpenClawProviderRuntime,
     ExecutionPins,
     ScriptedToolCall,
     SyntheticScriptedRuntime,
 )
-from nha_trang_laundry_worker.bridge_api import AgentBridgeSessionStore, create_agent_bridge_app
 
 
 class RecordingTransport:
@@ -463,7 +460,7 @@ def test_real_customer_and_provider_paths_are_fail_closed() -> None:
             transport=transport,
         )
     with pytest.raises(AgentRunRejected, match="provider runtime release gates are incomplete"):
-        runner.execute(job=job(), runtime=DisabledOpenClawProviderRuntime(), transport=transport)
+        runner.execute(job=job(), runtime=NeverCalledProviderRuntime(), transport=transport)
 
 
 def test_provider_runtime_also_requires_exact_signed_release_authorization() -> None:
@@ -535,79 +532,6 @@ def test_create_binds_new_order_request_for_subsequent_fixed_paths() -> None:
     assert bridge.expected_path_parameters(AgentToolOperation.QUOTE_ESTIMATE) == {
         "order_request_id": str(new_request)
     }
-
-
-def test_loopback_bridge_exposes_only_fixed_routes_and_forwards_etag() -> None:
-    current_job = job()
-    token_issuer, _ = issuer()
-    transport = RecordingTransport([catalog_response()])
-    bridge_token = "e" * 32
-    session = AgentToolBridgeSession(
-        job=current_job,
-        bridge_token=bridge_token,
-        issuer=token_issuer,
-        transport=transport,
-    )
-    store = AgentBridgeSessionStore()
-    store.install(session)
-    client = TestClient(create_agent_bridge_app(store))
-    headers = {
-        "Authorization": f"Bearer {bridge_token}",
-        "X-Agent-Run-Binding": str(current_job.binding_id),
-    }
-
-    response = client.post(
-        "/agent/v1/catalog:resolve",
-        headers=headers,
-        json={"query": "giặt chăn", "locale": "vi-VN"},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["ok"] is True
-    assert client.post("/agent/v1/tools:invoke", headers=headers, json={}).status_code == 404
-    assert client.post("/agent/v1/messages:send", headers=headers, json={}).status_code == 404
-
-
-def test_loopback_bridge_rejects_cross_bound_path_before_transport() -> None:
-    current_job = job(order_request_id=uuid4(), row_version=1)
-    token_issuer, _ = issuer()
-    transport = RecordingTransport()
-    bridge_token = "f" * 32
-    store = AgentBridgeSessionStore()
-    store.install(
-        AgentToolBridgeSession(
-            job=current_job,
-            bridge_token=bridge_token,
-            issuer=token_issuer,
-            transport=transport,
-        )
-    )
-    client = TestClient(create_agent_bridge_app(store))
-
-    response = client.post(
-        f"/agent/v1/order-requests/{uuid4()}/quotes:estimate",
-        headers={
-            "Authorization": f"Bearer {bridge_token}",
-            "X-Agent-Run-Binding": str(current_job.binding_id),
-            "Idempotency-Key": "tool-call-identity-0001",
-            "If-Match": '"1"',
-        },
-        json={
-            "lines": [
-                {
-                    "service_code": "STANDARD_WASH_DRY",
-                    "quantity_basis": "CUSTOMER_ESTIMATE",
-                    "quantity": "3.0",
-                    "unit": "KG",
-                }
-            ],
-            "fulfillment": {"mode": "SELF_DROP_SELF_COLLECT"},
-        },
-    )
-
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "POLICY_DENIED"
-    assert transport.requests == []
 
 
 def test_bridge_rejects_malformed_facade_output_as_unavailable() -> None:

@@ -29,8 +29,14 @@ SUPERSEDED_OUTPUTS = (
     # returning a constant). Re-derived per `context/tasks/TASK-evidence-repin-001.md`; every case
     # status, the release-blocker list and the DETERMINISTIC_DEGRADED runtime path are unchanged.
     "evidence/agent-shadow/local-synthetic-suite-v3.json",
+    # Superseded 2026-09-28 by OPENCLAW-RETIRE-001 (ADR-0009). The public OpenClaw runtime was
+    # retired: three pinned files no longer exist (the cell config and two OpenClaw verifiers) and
+    # the runtime registry moved to schema v2, its provider evidence to v2. Re-derived per
+    # `context/tasks/TASK-evidence-repin-001.md`; every case status, the release-blocker list the
+    # manifest reports and the DETERMINISTIC_DEGRADED runtime path are unchanged.
+    "evidence/agent-shadow/local-synthetic-suite-v4.json",
 )
-DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v4.json"
+DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v5.json"
 PINNED_ARTIFACTS = (
     "specs/evals/eval-manifest-v1.yaml",
     "specs/evals/fixture-registry-v1.json",
@@ -38,19 +44,16 @@ PINNED_ARTIFACTS = (
     "specs/contracts/agent-tools-v1.openapi.yaml",
     "specs/contracts/capability-status-v1.schema.json",
     "specs/contracts/container-scan-evidence-v1.schema.json",
-    "specs/contracts/provider-data-evidence-v1.schema.json",
+    "specs/contracts/provider-data-evidence-v2.schema.json",
     "specs/contracts/release-gate-manifest-v1.schema.json",
     "specs/contracts/trusted-release-signers-v1.schema.json",
-    "runtime/model-registry-v1.yaml",
-    "runtime/openclaw/public-cell/openclaw.json5",
-    "evidence/provider/openai-data-controls-review-v1.yaml",
+    "runtime/model-registry-v2.yaml",
+    "evidence/provider/openai-data-controls-review-v2.yaml",
     "packages/evals/src/nha_trang_laundry_evals/runner.py",
     "packages/evals/src/nha_trang_laundry_evals/graders.py",
     "packages/contracts/src/nha_trang_laundry_contracts/release_manifest.py",
     "apps/worker/src/nha_trang_laundry_worker/agent_runner.py",
     "scripts/capture_local_agent_evidence.py",
-    "scripts/capture_openclaw_offline_evidence.py",
-    "scripts/verify_agent_runtime.py",
     "scripts/verify_release_candidate.py",
     "evidence/agent-shadow/rollback-assessment-v1.yaml",
 )

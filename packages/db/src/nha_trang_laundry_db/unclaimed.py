@@ -8,7 +8,7 @@
   roles that call customers (`PHONE_VISIBLE_ROLES`); an auditor reads the last four digits.
 * **Contact attempts**: append-only rows, recorded by the operations roles, legal only while the
   order is waiting. They work before the storage policy is published. Since `PICKUP-REMIND-001`
-  (`DEC-043`, `0064`) an attempt may name the pickup reminder it answers (`reminder_step`), checked
+  (`DEC-043`, `0065`) an attempt may name the pickup reminder it answers (`reminder_step`), checked
   by `pickup_reminders.check_reminder_attempt` under the order's lock; `MESSAGE_SENT` needs one and
   the egress guard's allowance. Every attempt, reminder or not, counts toward disposal.
 * **The waiver** (*Miễn phí lưu kho*): an `OPS_APPROVER` or the owner, with a reason, while a fee is
@@ -608,7 +608,7 @@ class UnclaimedRepository:
             "note": note,
         }
         if step is not None:
-            # Only when named, so a plain attempt's request digest is what it was before `0064`.
+            # Only when named, so a plain attempt's request digest is what it was before `0065`.
             payload["reminder_step"] = step.value
 
         def record_once() -> dict[str, object]:

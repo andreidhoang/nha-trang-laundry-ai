@@ -16,12 +16,10 @@ The module is import-safe, idempotent, and has no effect beyond `sys.path` and `
 Linux and Windows the flag does not exist, so the detection helpers report nothing and CI behaviour
 is unchanged.
 
-Deliberately not bootstrapped: `capture_local_agent_evidence.py`,
-`capture_openclaw_offline_evidence.py`, `verify_agent_runtime.py`, `verify_release_candidate.py`,
-`build_openclaw_repackage.py`, `verify_openclaw_repackage.py` and
-`verify_openclaw_cross_platform.py`. Recorded evidence hash-pins those files, so editing one
-invalidates the evidence it produced — which is the pinning working as designed. They are deliberate
-evidence-capture tools rather than gate commands; run them with `PYTHONPATH` from
+Deliberately not bootstrapped: `capture_local_agent_evidence.py` and `verify_release_candidate.py`.
+Recorded evidence hash-pins those files, so editing one invalidates the evidence it produced — which
+is the pinning working as designed. They are deliberate evidence-capture tools rather than gate
+commands; run them with `PYTHONPATH` from
 `--print-pythonpath` if the interpreter is skipping `.pth` files.
 """
 

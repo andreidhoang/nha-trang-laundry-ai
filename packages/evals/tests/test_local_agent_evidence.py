@@ -12,10 +12,11 @@ from nha_trang_laundry_evals import validate_eval_manifest
 
 ROOT = Path(__file__).resolve().parents[3]
 BUNDLE_INDEX = ROOT / "evidence/agent-shadow/bundle-index-v1.yaml"
-EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v4.json"
-SUPERSEDED_EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v3.json"
+EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v5.json"
+SUPERSEDED_EVIDENCE = ROOT / "evidence/agent-shadow/local-synthetic-suite-v4.json"
 ROLLBACK = ROOT / "evidence/agent-shadow/rollback-assessment-v1.yaml"
 OPENCLAW_EVIDENCE = ROOT / "evidence/agent-shadow/openclaw-offline-verification-v1.json"
+RETIREMENT_RECORD = ROOT / "evidence/openclaw-retirement/retired-artifacts-v1.yaml"
 
 
 def _stale_pins(evidence: dict[str, object]) -> list[str]:
@@ -88,7 +89,7 @@ def test_hand_edited_bundle_is_rejected_rather_than_accepted_as_derived() -> Non
     assert _stale_pins(evidence) == []
 
     forged = deepcopy(evidence)
-    pinned_path = "runtime/model-registry-v1.yaml"
+    pinned_path = "runtime/model-registry-v2.yaml"
     forged["artifact_hashes"][pinned_path] = f"sha256:{'0' * 64}"
 
     assert _stale_pins(forged) == [pinned_path]
@@ -141,7 +142,15 @@ def test_rollback_assessment_is_fail_closed_and_forward_only() -> None:
     assert any("NOT_AUTHORIZED" in item for item in assessment["preconditions"])
 
 
-def test_openclaw_offline_evidence_is_current_and_non_release() -> None:
+def test_openclaw_offline_evidence_is_retained_non_release_and_still_verifiable() -> None:
+    """Frozen history (ADR-0004), outliving the runtime it describes (ADR-0009).
+
+    Until `OPENCLAW-RETIRE-001` this re-hashed the live OpenClaw files. They are retired, so every
+    hash the record carries must now be verifiable one of two ways: from a file still in the tree,
+    unchanged, or from the retirement record, which names the commit that holds the bytes. A hash
+    that neither can vouch for would be history nobody can check.
+    """
+
     evidence = json.loads(OPENCLAW_EVIDENCE.read_text(encoding="utf-8"))
     result = evidence["result"]
 
@@ -157,6 +166,18 @@ def test_openclaw_offline_evidence_is_current_and_non_release() -> None:
     assert len(result["release_blockers"]) == 10
     assert "OPENCLAW_DEPENDENCY_AUDIT_HIGH" not in result["release_blockers"]
     assert result["openclaw_build_revision"]
+
+    record = yaml.safe_load(RETIREMENT_RECORD.read_text(encoding="utf-8"))
+    retired = {entry["path"]: entry["sha256"] for entry in record["files"]}
+    prior = {entry["path"]: entry["sha256"] for entry in record["prior_versions"]}
+    unverifiable = []
     for relative, expected in evidence["artifact_hashes"].items():
-        actual = f"sha256:{sha256((ROOT / relative).read_bytes()).hexdigest()}"
-        assert actual == expected, f"OpenClaw evidence is stale for {relative}"
+        path = ROOT / relative
+        if relative in retired:
+            verifiable = retired[relative] == expected
+        else:
+            current = f"sha256:{sha256(path.read_bytes()).hexdigest()}" if path.is_file() else None
+            verifiable = expected in {current, prior.get(relative)}
+        if not verifiable:
+            unverifiable.append(relative)
+    assert unverifiable == []

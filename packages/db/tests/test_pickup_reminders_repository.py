@@ -1,11 +1,11 @@
-"""`PICKUP-REMIND-001` (`DEC-043`, `0064`) against real PostgreSQL.
+"""`PICKUP-REMIND-001` (`DEC-043`, `0065`) against real PostgreSQL.
 
 What only the database can prove: that the due list is `UNCLAIMED-001`'s waiting population with the
 newest undone step, oldest ready first; that the text is given only after the egress guard allows
 it -- refused before the owner publishes the messaging policy, for a customer who wrote STOP (on any
 channel), and for a ticket with nobody to message; that an attempt naming a step is legal only for
 the step due and `MESSAGE_SENT` only when the text would be given; that the column and the CHECKs
-of `0064` hold; that reminder attempts count toward disposal; and that no phone number reaches the
+of `0065` hold; that reminder attempts count toward disposal; and that no phone number reaches the
 text, an event, an audit or an outbox payload.
 
 Harness step (documented, as `test_unclaimed_laundry`): the laundry's ready time is moved back with
@@ -511,7 +511,7 @@ def test_reminder_attempts_count_toward_disposal(
     assert verdict.attempts_counted == 2
 
 
-def test_0064_holds_the_shape_in_the_database(
+def test_0065_holds_the_shape_in_the_database(
     connection: psycopg.Connection[Any], shop: Shop
 ) -> None:
     order_id = _ready(connection, shop)
@@ -537,7 +537,7 @@ def test_0064_holds_the_shape_in_the_database(
                 (uuid4(), order_id, shop.store_id, channel, outcome, staff, step),
             )
         connection.rollback()
-    # A row written as before `0064` -- no step -- is still a row.
+    # A row written as before `0065` -- no step -- is still a row.
     with connection.transaction(), connection.cursor() as cursor:
         cursor.execute(
             """

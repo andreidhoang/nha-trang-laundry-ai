@@ -71,13 +71,13 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0060", "unclaimed_laundry"),
         # Round 7 wave 2 integration: a storage fee fixed by the account charge the goods left on.
         ("0061", "account_storage_fee"),
-        # EINVOICE-REQUEST-001 (round 8): 0062 is the number reserved for this slice.
-        ("0062", "invoice_requests"),
-        # LATE-CREDIT-002 (round 8): 0063.
-        ("0063", "late_delivery_decisions"),
-        # PICKUP-REMIND-001: 0064 is the number reserved for this slice (0062 and 0063 are the
-        # e-invoice and late-delivery slices' of round 8).
-        ("0064", "reminder_steps"),
+        # AUTHZ-LIFECYCLE-001: an ID token is exchanged for at most one staff session.
+        ("0062", "identity_token_single_use"),
+        # Round 8, renumbered after 0062 above reached main first (numbers were reserved as
+        # 0062-0064 before it did): EINVOICE-REQUEST-001, LATE-CREDIT-002, PICKUP-REMIND-001.
+        ("0063", "invoice_requests"),
+        ("0064", "late_delivery_decisions"),
+        ("0065", "reminder_steps"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

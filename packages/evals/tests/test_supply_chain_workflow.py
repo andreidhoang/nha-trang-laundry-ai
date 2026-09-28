@@ -66,7 +66,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
         report_artifacts[name] = {"uri": uri, "sha256": _write_json(repository / uri, [])}
     scanner = {"scanner": "local-test-scanner", "scanner_version": "1.0", "status": "PASSED"}
     bundle: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "evidence_id": "SUPPLY:TEST:0001",
         "release_commit_sha": COMMIT,
         "generated_at": "2026-07-31T02:00:00Z",
@@ -81,7 +81,10 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
         "dependency_audit": {
             **scanner,
             "lockfiles": lockfiles,
-            "reports": [report_artifacts["pip-audit"], report_artifacts["npm-audit"]],
+            "reports": [
+                {**report_artifacts["pip-audit"], "ecosystem": "python"},
+                {**report_artifacts["npm-audit"], "ecosystem": "node"},
+            ],
             "vulnerabilities": {"critical": 0, "high": 0},
         },
         "license_audit": {
@@ -137,6 +140,74 @@ def test_valid_bundle_binds_commit_lockfiles_image_scan_and_sbom(tmp_path: Path)
         "artifacts/npm-audit.json",
         "artifacts/licenses.json",
     }
+
+
+def _rewrite(path: Path, bundle: dict[str, Any]) -> None:
+    _write_json(path, bundle)
+
+
+def test_a_lockfile_in_the_repository_that_no_audit_covers_is_rejected(tmp_path: Path) -> None:
+    """`OPENCLAW-RETIRE-001`: every dependency tree present is audited, whatever their number."""
+
+    repository, path, bundle = _fixture(tmp_path)
+    for audit in ("dependency_audit", "license_audit"):
+        bundle[audit]["lockfiles"] = [
+            item for item in bundle[audit]["lockfiles"] if item["uri"] == "uv.lock"
+        ]
+    _rewrite(path, bundle)
+
+    with pytest.raises(SupplyChainEvidenceError, match=r"missing=.*package-lock\.json"):
+        _verify(repository, path)
+
+
+def test_a_repository_with_one_dependency_tree_passes_with_one_lockfile(tmp_path: Path) -> None:
+    repository, path, bundle = _fixture(tmp_path)
+    (repository / "runtime/plugin/package-lock.json").unlink()
+    for audit in ("dependency_audit", "license_audit"):
+        bundle[audit]["lockfiles"] = [
+            item for item in bundle[audit]["lockfiles"] if item["uri"] == "uv.lock"
+        ]
+    bundle["dependency_audit"]["reports"] = bundle["dependency_audit"]["reports"][:1]
+    _rewrite(path, bundle)
+
+    _verify(repository, path)
+
+
+def test_a_lockfile_under_a_nested_artifacts_directory_must_still_be_audited(
+    tmp_path: Path,
+) -> None:
+    """Only the root `artifacts/` (workflow output) is skipped; a nested one is source."""
+
+    repository, path, _ = _fixture(tmp_path)
+    nested = repository / "apps/tool/artifacts/package-lock.json"
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b'{"lockfileVersion":3}\n')
+
+    with pytest.raises(SupplyChainEvidenceError, match=r"missing=.*apps/tool/artifacts"):
+        _verify(repository, path)
+
+
+def test_a_listed_lockfile_without_an_audit_for_its_ecosystem_is_rejected(tmp_path: Path) -> None:
+    """Listing `package-lock.json` is not auditing it: the node tree needs its own report."""
+
+    repository, path, bundle = _fixture(tmp_path)
+    bundle["dependency_audit"]["reports"] = [
+        report
+        for report in bundle["dependency_audit"]["reports"]
+        if report["ecosystem"] == "python"
+    ]
+    _rewrite(path, bundle)
+
+    with pytest.raises(SupplyChainEvidenceError, match=r"ecosystem\(s\) \['node'\]"):
+        _verify(repository, path)
+
+
+def test_version_one_evidence_is_refused(tmp_path: Path) -> None:
+    repository, path, bundle = _fixture(tmp_path)
+    _rewrite(path, {**bundle, "schema_version": 1})
+
+    with pytest.raises(SupplyChainEvidenceError):
+        _verify(repository, path)
 
 
 @pytest.mark.parametrize("missing", ["artifacts/api-scan.json", "artifacts/api.spdx.json"])

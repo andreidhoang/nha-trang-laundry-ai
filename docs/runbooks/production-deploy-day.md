@@ -261,11 +261,33 @@ carries no users and no client secret. Three things to do before anybody signs i
    the issuer, so a session with no granted role can do nothing — that separation is what makes
    this ceremony an actual control rather than advice.
 
+   **Converge the password policy on an existing realm (`REALM-POLICY-001`).** `--import-realm`
+   imports the realm only when it does not exist yet, so a realm created before `AUTHZ-LIFECYCLE-001`
+   still accepts a one-character password. After `config credentials` above, set it and read it back
+   — the read-back is the evidence, and it must print exactly the policy in the realm file:
+
+   ```bash
+   POLICY="$(python3 -c 'import json;print(json.load(open("deploy/production/keycloak/realm-nhatrang.json"))["passwordPolicy"])')"
+   docker compose -f compose.r1.yaml exec keycloak /opt/keycloak/bin/kcadm.sh \
+     update realms/nhatrang -s "passwordPolicy=$POLICY"
+   docker compose -f compose.r1.yaml exec keycloak /opt/keycloak/bin/kcadm.sh \
+     get realms/nhatrang --fields passwordPolicy
+   ```
+
+   Existing passwords keep working; the policy applies at the next change. Idempotent: running it on
+   a fresh realm sets the value it already has.
+
 2. **Note each staff member's OIDC subject.** It is the `id` of the Keycloak user, and it is what
    `bootstrap_owner.py` binds in step 4 and what the console binds for everyone else. Roles are
    never read from the token: `staff_role_assignments` in PostgreSQL is the only role source.
 
-3. **Delete the bootstrap admin** once the owner has their own admin account with a second factor.
+3. **Reducing or ending someone's access later.** Take one role away with
+   `DELETE /internal/v1/staff/{id}/roles/{role}` (owner only); their open sessions stop at the next
+   request. Someone who leaves: `POST /internal/v1/staff/{id}/disable` **and** disable the user in
+   Keycloak — the first ends every session now, the second stops the next sign-in at the issuer.
+   The last owner can be neither demoted nor disabled.
+
+4. **Delete the bootstrap admin** once the owner has their own admin account with a second factor.
    Nothing enforces this, and a bootstrap password that outlives its purpose is a password nobody
    is rotating.
 

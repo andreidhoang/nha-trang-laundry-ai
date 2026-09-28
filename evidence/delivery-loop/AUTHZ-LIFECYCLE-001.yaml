@@ -1,0 +1,80 @@
+schema_version: 1
+work_item: AUTHZ-LIFECYCLE-001
+recorded_at: '2026-09-28T15:30:00+07:00'
+requirement_contract: A role can be removed without disabling the person and their sessions stop at the next
+  request; the last owner can be neither demoted nor disabled, also when two owners act at once; one OIDC
+  ID token mints at most one session, whatever spelling of its signature is presented; every staff session
+  is MFA-proven whatever the role; every served route declares its access in the internal API contract and
+  generation fails for one that does not; the realm file carries a NIST-shaped password policy.
+rollback_impact: Revert the two commits. Migration 0062 is additive (a nullable column and a partial unique
+  index); a reverted API writes NULL digests, which the index ignores. Gate function names are unchanged,
+  so routes and console keep working. Sessions minted without MFA before this change are refused at their
+  next request and the holder signs in again (the realm already forced MFA at sign-in, so none exist in
+  practice). Data rollback, if ever needed, is docs/runbooks/restore-drill.md.
+unresolved_assumptions: The running R1 realm still has no password policy until REALM-POLICY-001 runs the
+  kcadm set and read-back on the host (--import-realm skips an existing realm). The demo-stack replay check
+  added to scripts/verify_demo_stack.py was not executed here (it needs the docker demo stack). Keycloak is
+  assumed to give every issued ID token a fresh jti and at_hash, so two sign-ins never share a signing
+  input; a token-identical re-issue would be refused (fail-closed). The sign-in throttle still keys on the
+  proxy address (open item O3, correct while R1 has no public ingress).
+evidence:
+  a_revoked_role_ends_the_holders_sessions_and_never_the_last_owner: packages/db/tests/test_identity_lifecycle.py
+    (mover section, real PostgreSQL) and apps/api/tests/test_identity_lifecycle_http.py
+    test_the_owner_revokes_a_role_over_http_and_the_holder_is_signed_out (204, then the old cookie answers
+    401 and a new session carries only OPERATOR) and test_revoking_a_role_needs_the_owner_and_never_removes_the_last_one
+    (approver 403 opaque, last owner 409, unknown role 422).
+  a_replayed_id_token_is_refused_by_the_database: packages/db/migrations/0062_identity_token_single_use.sql
+    (UNIQUE partial index); test_identity_lifecycle.py test_one_identity_token_mints_one_session (one session
+    row and one event, the replay unwinds whole); test_identity_lifecycle_http.py test_a_leaked_id_token_cannot_be_exchanged_a_second_time
+    (real RS256 token through POST /internal/v1/auth/session, second answer 401 with the generic body);
+    apps/api/tests/test_http_security.py test_every_spelling_of_one_signed_token_is_the_same_sign_in (16
+    signature spellings plus '==' padding all verify and share one digest).
+  every_route_declares_its_access_in_the_contract: apps/api/tests/test_route_authorization.py; specs/contracts/internal-api-v1.openapi.yaml
+    carries x-authorization on all 109 served operations; scripts/verify_contracts.py fails on drift; apps/api/tests/test_internal_api_contract.py
+    shows a route on a bare session fails generation.
+  every_staff_session_requires_mfa: packages/db/src/nha_trang_laundry_db/identity.py (create_session, authenticate_session,
+    list_live_sessions); test_identity_lifecycle.py test_no_staff_session_is_minted_without_mfa (operator,
+    driver, no role) and test_a_session_minted_without_mfa_before_the_rule_is_refused_and_not_listed.
+  two_owners_racing_leave_one_owner: test_identity_lifecycle.py test_two_owners_acting_on_each_other_at_once_leave_one_owner
+    (disable/disable, revoke/disable, revoke/revoke; a third connection holds the lock until both writers
+    queue on it). Mutation-checked twice (by the author and by the fresh-context auditor) -- with
+    _serialize_owner_changes a no-op all three cases fail, at the lock-queue assertion -- so the test proves
+    the lock is taken and the serialized outcome is one owner. The pre-fix zero-owner outcome
+    (disable/disable and revoke/disable both committed) was measured with an ad-hoc two-thread script on
+    PostgreSQL 16 that is not committed; treat it as asserted, the race itself follows from READ COMMITTED.
+  rollback_assessment: Revert the two commits. Migration 0062 is additive (a nullable column and a partial
+    unique index); a reverted API writes NULL digests, which the index ignores. Gate names are unchanged.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 727 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 385 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3376 passed, 5 skipped, 2 warnings in 494.53s (0:08:14)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 19 JSON and 3 YAML contracts. Validated 669 synthetic combinatorial cases against the
+    domain engines. Validated 109 served internal API operations against their contract. Validated 554
+    staff-console disclosures against their registry. Validated 16 pinned public-runtime artifacts; release
+    blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 162 source references, 39 decisions, 4 gates, 9 phases, 185 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: independent adversarial review (fresh-context subagent) of the first commit
+  status: PASSED
+  result: Found the raw-token digest malleability and the owner race; both fixed with regression tests
+    before this record.
+- command: evidence-auditor (fresh context) at 1b7948a, 12 test files re-run on PostgreSQL
+  status: PASSED
+  result: 189 passed, 0 skipped; six required entries PROVEN; no test weakening; nothing contradicted.
+- command: scripts/verify_demo_stack.py replay check
+  status: NOT_RUN
+  result: Requires the docker demo stack; not available in the development container.

@@ -174,7 +174,7 @@ def test_a_stale_authorization_version_is_not_live(connection: Any) -> None:
 
     owner, _ = _person(connection, StaffRole.OWNER_ADMIN)
     lan, subject = _person(connection, StaffRole.OPERATOR)
-    before = _sign_in(connection, subject, mfa=False)
+    before = _sign_in(connection, subject)
     IdentityRepository().assign_role(
         connection,
         staff_user_id=lan,
@@ -183,7 +183,7 @@ def test_a_stale_authorization_version_is_not_live(connection: Any) -> None:
         correlation_id=uuid4(),
         occurred_at=NOW,
     )
-    after = _sign_in(connection, subject, mfa=False)
+    after = _sign_in(connection, subject)
 
     assert _listed(connection, lan) == [after.session_id]
     with pytest.raises(IdentityStateError):

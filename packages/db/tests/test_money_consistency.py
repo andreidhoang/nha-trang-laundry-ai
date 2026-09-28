@@ -206,7 +206,7 @@ def test_the_final_functions_carry_every_slices_rule(connection: psycopg.Connect
     migrations = discover_migrations()
     versions = [m.version for m in migrations]
     assert versions[versions.index("0059") : versions.index("0061") + 1] == ["0059", "0060", "0061"]
-    # Round 8 (EINVOICE-REQUEST-001's `0062`, and whatever follows): a later migration may add
+    # Round 8 (`0063`-`0065`, and whatever follows): a later migration may add
     # tables, but if it replaced one of the functions below this test must be re-read against it.
     guarded = (
         "enforce_order_payment_ledger",

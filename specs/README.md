@@ -69,12 +69,16 @@
 17. [`../docs/adr/0007-production-deployment-topology.md`](../docs/adr/0007-production-deployment-topology.md)
     Ba vùng mạng, hai host tối thiểu, và hàm quyết định nhà cung cấp hosting.
 
-18. [`CUSTOMER_MEMORY_SPEC_V1.md`](./CUSTOMER_MEMORY_SPEC_V1.md) — **DRAFT, chưa được owner phê duyệt**
+18. [`../docs/adr/0009-retire-public-openclaw-runtime.md`](../docs/adr/0009-retire-public-openclaw-runtime.md)
+    Gỡ runtime OpenClaw công khai (không còn là fallback theo ADR-0004): registry v2, 8 release
+    blocker, supply-chain v2 phủ đúng mọi lockfile; lịch sử giữ nguyên và kiểm chứng được.
+
+19. [`CUSTOMER_MEMORY_SPEC_V1.md`](./CUSTOMER_MEMORY_SPEC_V1.md) — **DRAFT, chưa được owner phê duyệt**
     Bốn tầng memory cho customer-facing app: business DB, conversation state, context packet
     assembler (deterministic compiler) và public corpus release. Không cấp phép implementation hay
     capability nào cho tới khi được phê duyệt.
 
-19. [`CUSTOMER_SUPPORT_AND_ACQUISITION_SPEC_V1.md`](./CUSTOMER_SUPPORT_AND_ACQUISITION_SPEC_V1.md) —
+20. [`CUSTOMER_SUPPORT_AND_ACQUISITION_SPEC_V1.md`](./CUSTOMER_SUPPORT_AND_ACQUISITION_SPEC_V1.md) —
     **DRAFT, chưa được owner phê duyệt**
     Hỗ trợ khách hàng hằng ngày và thu hút khách, viết theo **seam** thay vì theo tầng: mười một
     đường ghép giữa channel, inbox, PDP, Tool Facade, domain, phê duyệt của người, egress và

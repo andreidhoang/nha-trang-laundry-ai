@@ -606,32 +606,6 @@ class SettlementRepository:
         return stored[0]
 
     @staticmethod
-    def for_order(cursor: Any, order_id: UUID) -> StoredSettlement | None:
-        cursor.execute(
-            """
-            SELECT s.id, s.expected_total_vnd, s.paid_amount_vnd, s.settlement_shape,
-                   o.balance_status, o.self_collection_recorded, o.row_version
-            FROM order_settlements s
-            JOIN orders o ON o.id = s.order_id
-            WHERE s.order_id = %s
-            """,
-            (order_id,),
-        )
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        return StoredSettlement(
-            settlement_id=_uuid(row[0]),
-            order_id=order_id,
-            expected_total_vnd=int(row[1]),
-            paid_amount_vnd=int(row[2]),
-            settlement_shape=str(row[3]),
-            balance_status=str(row[4]),
-            self_collection_recorded=bool(row[5]),
-            row_version=int(row[6]),
-        )
-
-    @staticmethod
     def collected_today(
         cursor: Any,
         *,

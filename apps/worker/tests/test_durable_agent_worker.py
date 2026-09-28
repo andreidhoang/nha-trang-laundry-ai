@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from pathlib import Path
+from typing import Any, NoReturn
 from uuid import uuid4
 
 import psycopg
@@ -24,10 +25,10 @@ from nha_trang_laundry_worker.agent_runner import (
     AgentRuntimeTimeout,
     AgentToolForwardRequest,
     AgentToolForwardResponse,
-    DisabledOpenClawProviderRuntime,
     ExecutionPins,
     ScriptedToolCall,
     SyntheticScriptedRuntime,
+    registry_execution_pins,
 )
 from nha_trang_laundry_worker.durable_agent_worker import DurableAgentRunWorker
 
@@ -116,6 +117,23 @@ QUEUED_PINS = ExecutionPins(
     prompt_bundle_hash=f"sha256:{'b' * 64}",
     tool_contract_hash=f"sha256:{'c' * 64}",
 )
+
+
+class ProviderBackedRuntime:
+    """A runtime that would call a model provider. The runner must refuse it before `invoke`.
+
+    Stood in for the retired `DisabledOpenClawProviderRuntime` (`OPENCLAW-RETIRE-001`): what these
+    tests prove is the runner's release gate, which reads only `provider_backed` and the registry,
+    so a double that fails loudly if ever invoked tests it exactly.
+    """
+
+    provider_backed = True
+    execution_pins = registry_execution_pins(
+        Path(__file__).resolve().parents[3] / "runtime/model-registry-v2.yaml"
+    )
+
+    def invoke(self, invocation: object, bridge: object) -> NoReturn:
+        raise AssertionError("a provider-backed runtime must be refused before it is invoked")
 
 
 def enqueue_command(*, created_at: datetime | None = None) -> AgentRunEnqueueCommand:
@@ -220,7 +238,7 @@ def test_durable_worker_records_fail_closed_provider_rejection(
 
     result = worker.run_once(
         postgres_connection,
-        runtime=DisabledOpenClawProviderRuntime(),
+        runtime=ProviderBackedRuntime(),
         transport=CatalogTransport(),
         correlation_id=command.correlation_id,
         now=now,

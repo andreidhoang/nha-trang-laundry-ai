@@ -77,7 +77,7 @@ class ContactOutcome(StrEnum):
     NO_ANSWER = "NO_ANSWER"
     WRONG_NUMBER = "WRONG_NUMBER"
     PROMISED_TO_COME = "PROMISED_TO_COME"
-    #: `PICKUP-REMIND-001` (`DEC-043`, migration `0064`): a reminder's message went out on Zalo or
+    #: `PICKUP-REMIND-001` (`DEC-043`, migration `0065`): a reminder's message went out on Zalo or
     #: SMS. Legal only with the reminder step it sent, and only when the egress guard allows it.
     MESSAGE_SENT = "MESSAGE_SENT"
 

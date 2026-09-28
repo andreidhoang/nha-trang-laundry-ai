@@ -14,8 +14,10 @@
   - lists are bounded, store-scoped and disclose truncation;
   - a feature that rests on an owner decision refuses by a named code until the owner publishes it;
   - no phone value appears in any log, event, audit, outbox, error or export.
-- Migration numbers are reserved: `0062` e-invoice requests, `0063` late-delivery decisions,
-  `0064` reminder steps. `VIETQR-001` and `SUMMARY-ATTENTION-001` add none.
+- Migration numbers: `0063` e-invoice requests, `0064` late-delivery decisions, `0065` reminder
+  steps. They were reserved as `0062`–`0064` and renumbered at integration, because
+  `AUTHZ-LIFECYCLE-001`'s `0062` reached main first. `VIETQR-001` and `SUMMARY-ATTENTION-001` add
+  none.
 - Every new route goes into the contract artefacts `scripts/verify_contracts.py` checks, and into the
   console's served-route list. Every new control goes into the disclosure registry and
   `DECLARED_CONTROLS`.
@@ -28,7 +30,7 @@
 
 ---
 
-## 1. `EINVOICE-REQUEST-001` — invoice requests (`DEC-040`, migration `0062`)
+## 1. `EINVOICE-REQUEST-001` — invoice requests (`DEC-040`, migration `0063`)
 
 **Server.**
 
@@ -174,7 +176,7 @@
     most the balance;
   - one-tap confirmation that writes an ordinary `TAKE_PAYMENT CHUYEN_KHOAN`, never automatically.
 
-## 3. `LATE-CREDIT-002` — measured late deliveries (`DEC-042`, migration `0063`)
+## 3. `LATE-CREDIT-002` — measured late deliveries (`DEC-042`, migration `0064`)
 
 **Server.**
 
@@ -226,7 +228,7 @@
   After a credit above the staff limit, the row shows *Chờ chủ tiệm duyệt*, linking to the approval.
 - Guide: the *Giảm trừ do giao trễ* row says the server measures the lateness.
 
-## 4. `PICKUP-REMIND-001` — the reminder schedule and the two-tap send (`DEC-043`, migration `0064`)
+## 4. `PICKUP-REMIND-001` — the reminder schedule and the two-tap send (`DEC-043`, migration `0065`)
 
 **Server.**
 
@@ -240,7 +242,7 @@
     pickup (the same "ready" fact `UNCLAIMED-001` counts from);
   - a step is due from its day until an attempt is recorded for it, and a later step supersedes an
     earlier one that was never done, so only the newest due step shows.
-- Migration `0064`:
+- Migration `0065`:
   - `order_contact_attempts` gains `reminder_step` (nullable, the five values);
   - the `outcome` check gains `MESSAGE_SENT`;
   - existing rows are untouched.

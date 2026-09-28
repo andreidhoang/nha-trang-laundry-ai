@@ -273,7 +273,7 @@ def test_postgres_identity_enforces_owner_authority_versions_and_disable(
     session = repository.create_session(
         postgres_connection,
         oidc_subject=_subject_for_staff(postgres_connection, staff_id),
-        mfa_verified=False,
+        mfa_verified=True,
         correlation_id=uuid4(),
         now=start,
         idle_ttl=timedelta(hours=1),

@@ -27,6 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
+from uuid import uuid4
 
 import jwt
 
@@ -169,6 +170,9 @@ class DemoIdentityProvider:
             "sub": subject,
             "iat": int(now.timestamp()),
             "exp": int((now + TOKEN_LIFETIME).timestamp()),
+            # As Keycloak does: every issued token is unique, so two sign-ins in the same second
+            # are two tokens. The API binds one session to one token (`AUTHZ-LIFECYCLE-001`).
+            "jti": str(uuid4()),
         }
         if with_mfa:
             claims[self._mfa_claim] = self._mfa_value

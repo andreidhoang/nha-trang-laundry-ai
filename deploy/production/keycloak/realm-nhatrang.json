@@ -11,6 +11,7 @@
   "loginWithEmailAllowed": false,
   "duplicateEmailsAllowed": false,
   "editUsernameAllowed": false,
+  "passwordPolicy": "length(12) and maxLength(128) and notUsername(undefined) and notEmail(undefined) and passwordHistory(3)",
   "bruteForceProtected": true,
   "permanentLockout": false,
   "failureFactor": 5,

@@ -648,6 +648,9 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/staff/{staff_user_id}/roles"): RouteScope(
         "NOT_STORE_DATA", None, "staff administration, OWNER_ADMIN only"
     ),
+    ("DELETE", "/internal/v1/staff/{staff_user_id}/roles/{role}"): RouteScope(
+        "NOT_STORE_DATA", None, "staff administration, OWNER_ADMIN only (AUTHZ-LIFECYCLE-001)"
+    ),
     ("POST", "/internal/v1/staff/{staff_user_id}/disable"): RouteScope(
         "NOT_STORE_DATA", None, "staff administration, OWNER_ADMIN only"
     ),

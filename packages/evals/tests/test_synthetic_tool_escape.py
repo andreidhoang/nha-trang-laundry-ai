@@ -80,8 +80,8 @@ def test_tool_escape_result_is_schema_valid_but_skipped_without_semantic_primary
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
 

@@ -36,10 +36,12 @@ JSON_CONTRACTS = (
     "specs/contracts/openclaw-cross-platform-result-v1.schema.json",
     "specs/contracts/pricebook-import-manifest-v1.json",
     "specs/contracts/provider-data-evidence-v1.schema.json",
+    "specs/contracts/provider-data-evidence-v2.schema.json",
     "specs/contracts/public-policy-bundle-v1.schema.json",
     "specs/contracts/release-gate-manifest-v1.schema.json",
     "specs/contracts/release-gate-manifest-v2.schema.json",
     "specs/contracts/supply-chain-evidence-v1.schema.json",
+    "specs/contracts/supply-chain-evidence-v2.schema.json",
     "specs/contracts/trusted-release-signers-v1.schema.json",
     "specs/evals/assertion-registry-v1.json",
     "specs/evals/eval-case-v1.schema.json",
@@ -307,7 +309,7 @@ def main() -> None:
     served_operations = validate_internal_api_surface()
     disclosures = validate_console_disclosures()
     load_agent_tool_registry(ROOT / "specs/contracts/agent-tools-v1.openapi.yaml")
-    runtime_registry = load_public_runtime_registry(ROOT / "runtime/model-registry-v1.yaml")
+    runtime_registry = load_public_runtime_registry(ROOT / "runtime/model-registry-v2.yaml")
     runtime_artifacts = verify_public_runtime_artifacts(ROOT, runtime_registry)
     print(f"Validated {len(JSON_CONTRACTS)} JSON and {len(YAML_CONTRACTS)} YAML contracts.")
     print(f"Validated {corpus_cases} synthetic combinatorial cases against the domain engines.")

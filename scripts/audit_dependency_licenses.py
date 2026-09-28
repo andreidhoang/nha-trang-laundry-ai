@@ -29,7 +29,10 @@ FIRST_PARTY_PREFIX = "nha-trang-laundry-"
 
 def parser() -> argparse.ArgumentParser:
     candidate = argparse.ArgumentParser(description=__doc__)
-    candidate.add_argument("--package-lock", type=Path, required=True)
+    # Repeatable and optional: one per Node dependency tree. The repository has none since
+    # OPENCLAW-RETIRE-001; the supply-chain verifier independently requires every lockfile present
+    # in the repository to be listed in the evidence, so omitting one here cannot pass the gate.
+    candidate.add_argument("--package-lock", type=Path, action="append", default=[])
     candidate.add_argument("--output", type=Path, required=True)
     return candidate
 
@@ -70,23 +73,14 @@ def _permitted(expression: str) -> bool:
     return False
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
-    rejected: list[dict[str, str]] = []
-    reviewed = 0
-    for distribution in importlib.metadata.distributions():
-        name = (distribution.metadata.get("Name") or "UNKNOWN").lower()
-        if name.startswith(FIRST_PARTY_PREFIX):
-            continue
-        license_value = _python_license(distribution)
-        reviewed += 1
-        if not _permitted(license_value):
-            rejected.append({"ecosystem": "python", "name": name, "license": license_value})
+def _review_package_lock(path: Path, rejected: list[dict[str, str]]) -> int:
+    """Check every package in one npm lockfile; return how many were reviewed."""
 
-    lock = json.loads(args.package_lock.read_text(encoding="utf-8"))
+    lock = json.loads(path.read_text(encoding="utf-8"))
     packages = lock.get("packages")
     if not isinstance(packages, dict):
         raise ValueError("package-lock packages must be an object")
+    reviewed = 0
     for package_path, package in packages.items():
         if not package_path or not isinstance(package, dict):
             continue
@@ -101,6 +95,24 @@ def main(argv: list[str] | None = None) -> int:
                     "license": str(node_license or "UNKNOWN"),
                 }
             )
+    return reviewed
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    rejected: list[dict[str, str]] = []
+    reviewed = 0
+    for distribution in importlib.metadata.distributions():
+        name = (distribution.metadata.get("Name") or "UNKNOWN").lower()
+        if name.startswith(FIRST_PARTY_PREFIX):
+            continue
+        license_value = _python_license(distribution)
+        reviewed += 1
+        if not _permitted(license_value):
+            rejected.append({"ecosystem": "python", "name": name, "license": license_value})
+
+    for package_lock in args.package_lock:
+        reviewed += _review_package_lock(package_lock, rejected)
     result = {
         "schema_version": 1,
         "status": "PASSED" if not rejected else "FAILED",

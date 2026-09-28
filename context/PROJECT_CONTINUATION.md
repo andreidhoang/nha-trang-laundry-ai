@@ -1,8 +1,43 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-09-26 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **183 queue items.** Migrations run `0001`–`0061`.
+**Last reconciled:** 2026-09-28 (Asia/Ho_Chi_Minh)
+**Active work item:** none. **189 queue items.** Migrations run `0001`–`0064`.
 Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
+
+## The remaining gaps: round 8, 2026-09-28
+
+`context/tasks/TASK-remaining-gaps-001.md` covers six items. The contract is
+`docs/REMAINING_GAPS_SPEC_V1.md`, the decisions are `DEC-040`–`DEC-044` (delegated, not signed), and
+all six are COMPLETE.
+
+**Built:**
+- **Invoice requests** (`EINVOICE-REQUEST-001`, migration 0062): the bookkeeper issues invoices in
+  the provider's portal, and staff record the invoice number. The app computes no tax.
+- **Exact VietQR** (`VIETQR-001`, no migration): the amount is the ledger's remaining balance, with
+  a transfer code that names the order.
+- **Late deliveries measured by the server** (`LATE-CREDIT-002`, migration 0063): one tap either
+  proposes the credit through the existing remedy authority or records a reason; `report-v4`.
+- **Pickup-reminder schedule** (`PICKUP-REMIND-001`, migration 0064): staff send in two taps,
+  behind the consent guard.
+- **Cần chú ý** (`SUMMARY-ATTENTION-001`, `daily-summary-v3`): computed, not model-written.
+- **Filmed review** (`GAPS-FILMED-REVIEW-004`).
+
+**New owner switch:** `scripts/publish_bank_account.py`. Run `--preview` first, pay the 1.000 ₫ test
+QR, then publish with `--test-transfer-confirmed`.
+
+**Still the owner's:**
+- an e-invoice provider, plus the accountant's invoice type and rate;
+- a bank or notification feed for automatic transfer confirmation;
+- a Zalo Official Account and approved ZNS templates;
+- `DEC-006`.
+
+**Lessons:**
+- Real-API runs need the stack's demo hash key in the runner's environment for the STOP harness
+  step.
+- Scenarios that prove "unpublished" refusals need a stack that does not pre-publish those
+  policies (the round-8 stack publishes neither the remedy nor the messaging policy).
+- A count reused from a list statement can carry personal columns into a summary; give each count
+  its own statement.
 
 ## Shop operations built: round 7, 2026-09-27
 

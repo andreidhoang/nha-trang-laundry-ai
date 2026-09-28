@@ -1,4 +1,4 @@
-# Staging readiness — measured 2026-09-24, updated 2026-09-25 (three times), 2026-09-26 and 2026-09-27
+# Staging readiness — measured 2026-09-24, updated 2026-09-25 (three times), 2026-09-26, 2026-09-27 and 2026-09-28
 
 **Question:** can real counter staff use this application for staging and feature testing in daily
 operation?
@@ -39,15 +39,15 @@ the reads the screens lacked), the consent checks (`DEC-033`) and the last two A
 workflow was then filmed **at phone size** against the real API and reviewed as a user and as an
 engineer; every finding was fixed and filmed again.
 
-| Gate | `9287596` (before) | 2026-09-24 | 2026-09-25 | 2026-09-25 evening | 2026-09-25 night | 2026-09-26 (round 6) | 2026-09-27 (round 7) |
-|---|---|---|---|---|---|---|---|
-| `pytest --require-postgres-integration` | 1574 passed | 1749 passed, 0 failed | 2105 passed, 0 failed | 2274 passed, 0 failed | 2472 passed, 0 failed | 2679 passed, 0 failed | **3337 passed, 0 failed** |
-| `mypy apps packages` | 249 files | 257 files | 290 files, clean | 304 files, clean | 316 files, clean | 325 files, clean | 381 files, clean |
-| `verify_contracts.py` | 57 ops, 348 disclosures | 58 ops, 381 | 61 ops, 396 | 66 ops, 419 | 71 ops, 457 | 77 ops, 475 | 108 ops, 554 |
-| Real API, shop day (`verify_daily_operations.py`) | 70 / 0 | 71 / 0 | 71 / 0 | 72 / 0, filmed | 78 / 0 at desk and at phone size, filmed | 78 / 0 at desk and at phone size | **80 / 0 at desk and at phone size, filmed at desk** |
-| Real API, every other workflow | 86 / 1 | 86 / 1 | 86 / 1 (coverage line only) | 159 / 0, all 49 controls | 187 / 0 at desk and at phone size, all 66 controls | 317 / 0 at desk and at phone size, all 96 controls; new flows filmed | **534 / 0 at desk and at phone size, all 162 controls; new flows filmed at desk** |
-| Real API, consent walk (`verify_consent_walk.py`) | — | — | — | — | 38 / 0, filmed | — (unchanged code) | — (unchanged code) |
-| Stubbed API, console interaction | 170 / 0 | 170 / 0 | 171 / 0 | 251 / 0 | 358 / 0 | 433 / 0 | **521 / 0** |
+| Gate | `9287596` (before) | 2026-09-24 | 2026-09-25 | 2026-09-25 evening | 2026-09-25 night | 2026-09-26 (round 6) | 2026-09-27 (round 7) | 2026-09-28 (round 8) |
+|---|---|---|---|---|---|---|---|---|
+| `pytest --require-postgres-integration` | 1574 passed | 1749 passed, 0 failed | 2105 passed, 0 failed | 2274 passed, 0 failed | 2472 passed, 0 failed | 2679 passed, 0 failed | 3337 passed, 0 failed | **3605 passed, 0 failed** |
+| `mypy apps packages` | 249 files | 257 files | 290 files, clean | 304 files, clean | 316 files, clean | 325 files, clean | 381 files, clean | 406 files, clean |
+| `verify_contracts.py` | 57 ops, 348 disclosures | 58 ops, 381 | 61 ops, 396 | 66 ops, 419 | 71 ops, 457 | 77 ops, 475 | 108 ops, 554 | 123 ops, 589 |
+| Real API, shop day (`verify_daily_operations.py`) | 70 / 0 | 71 / 0 | 71 / 0 | 72 / 0, filmed | 78 / 0 at desk and at phone size, filmed | 78 / 0 at desk and at phone size | 80 / 0 at desk and at phone size, filmed at desk | **80 / 0 at desk and at phone size** |
+| Real API, every other workflow | 86 / 1 | 86 / 1 | 86 / 1 (coverage line only) | 159 / 0, all 49 controls | 187 / 0 at desk and at phone size, all 66 controls | 317 / 0 at desk and at phone size, all 96 controls; new flows filmed | 534 / 0 at desk and at phone size, all 162 controls; new flows filmed at desk | **632 / 0 at desk and at phone size, all 194 controls; new flows filmed at desk** |
+| Real API, consent walk (`verify_consent_walk.py`) | — | — | — | — | 38 / 0, filmed | — (unchanged code) | — (unchanged code) | — (unchanged code) |
+| Stubbed API, console interaction | 170 / 0 | 170 / 0 | 171 / 0 | 251 / 0 | 358 / 0 | 433 / 0 | 521 / 0 | **566 / 0** |
 
 Every real-API run starts from a database created empty and migrated to the latest migration
 (`0052` in the evening), with the remedy and promotion policies published. The "every other
@@ -73,6 +73,45 @@ green. On both days the real-API browser run on the merged tree caught problems 
 passing tests and the stubbed browser suite did not.
 
 ## What changed for the person at the counter
+
+### Round 8, 2026-09-28: the five remaining gaps (`DEC-040`–`DEC-044`)
+
+The owner asked for the best decision on each gap round 7 left, and for everything buildable now.
+The part that needs only the owner (a provider, a credential, a feed, a Zalo Official Account,
+`DEC-006`) is reduced to one switch. Contract: `docs/REMAINING_GAPS_SPEC_V1.md`.
+
+- **Hóa đơn** (`EINVOICE-REQUEST-001`):
+  - *Khách cần hóa đơn* on an order or a hotel's month records the buyer's details.
+  - *Hóa đơn cần xuất* lists what the bookkeeper must issue in the provider's portal, and the
+    download carries the amounts as charged.
+  - The owner or approver records the issued number.
+  - The app issues nothing and names no tax.
+- **Mã QR chuyển khoản** (`VIETQR-001`):
+  - A VietQR for exactly what is still owed, with a code that names the order (`NTL2809012`).
+  - It appears on the payment sheet, the customer slip and the statement.
+  - Searching that code finds the order. The owner publishes the account once, after a 1.000 ₫
+    test transfer.
+- **Giao trễ** (`LATE-CREDIT-002`):
+  - The server measures lateness against the first promise, and only a customer-requested
+    *hẹn lại* moves it.
+  - One tap either proposes the 10% credit through the existing approval rules or records why it
+    was not the shop's fault.
+- **Nhắc khách lấy đồ** (`PICKUP-REMIND-001`):
+  - Day 0, 3, 7 and 14, and the last free day before the storage fee.
+  - *Mở Zalo*, *Chép tin nhắn* (a fixed text behind the consent guard), *Gọi*, *Đã nhắc*.
+  - Each reminder counts toward the disposal rule.
+- **Cần chú ý** (`SUMMARY-ATTENTION-001`): the evening summary opens with what needs doing,
+  computed rather than model-written, and compares the day with the same weekday of the past four
+  weeks.
+
+**What the merged-tree runs caught**, each fixed with a guard:
+
+- The Nhận đồ sheet told the customer the promise read when it opened, while the press stored
+  the next minute's (15:55 said, 15:56 printed). The sheet now re-reads it each minute.
+- The summary's late count selected customers' names; it now has its own statement, and the
+  privacy test checks it.
+- The reminder heading counted unreachable orders among the ones to remind.
+
 
 **2026-09-27, round 7 — the shop's own decisions, built (the desktop is the primary device):**
 
@@ -206,8 +245,9 @@ owner's approval rather than out by rule.
 | `SHOP-ALERT-DELIVERY-001` | Blocked on the owner's phone test (condition 2). |
 | Publishing the messaging policy | The owner's legal confirmation (condition 4); nothing sends until then. |
 | A real customer channel | No channel adapter or inbound webhook route exists; the consent walk's customer messages are recorded through the same ingress code, by the harness, and the film says so. |
-| Switching on customers, promised times, storage fees and tabs | Built; each refuses by name until the owner runs its script once: `publish_privacy_notice.py`, `publish_turnaround_policy.py` (with this year's Tết dates), `publish_storage_policy.py`, `publish_account_terms.py`. |
-| E-invoices, automatic bank-transfer confirmation, the 10 % late-delivery credit, automatic pickup reminders, a model-written summary | No tax confirmation; no bank feed; no delivery promise time; no channel; `DEC-006`. Each on `#/gaps`. |
+| Switching on customers, promised times, storage fees, tabs and the transfer QR | Built; each refuses by name until the owner runs its script once: `publish_privacy_notice.py`, `publish_turnaround_policy.py` (with this year's Tết dates), `publish_storage_policy.py`, `publish_account_terms.py`, `publish_bank_account.py` (after the 1.000 ₫ test transfer). The late-delivery credit uses the published remedy policy; reminder texts use the messaging policy. |
+| Issuing e-invoices through a provider, confirming transfers automatically, sending reminders automatically on Zalo, a model-written summary | Round 8 built the requests, the exact QR, the schedule and the computed *Cần chú ý*; what remains needs the owner's provider and accountant, a bank or notification feed, a Zalo Official Account with approved templates, and `DEC-006`. Each on `#/gaps`. |
+| A credit for a self-collect order not ready on time | Not in the ratified rule (`DEC-004` covers deliveries); reported by the on-time figure. |
 | apk `-rN` pins | Assessed, left, with a recovery step in §8. |
 | Remote branch cleanup | Deleting remote refs is refused in this environment; `archive/…` and `codex/…` hold the only copy of the original lineage (ADR-0004). |
 

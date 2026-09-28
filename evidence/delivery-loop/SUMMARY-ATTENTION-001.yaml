@@ -1,0 +1,69 @@
+schema_version: 1
+work_item: SUMMARY-ATTENTION-001
+recorded_at: '2026-09-28T19:02:39+07:00'
+requirement_contract: 'DEC-044: daily-summary-v3 opens with Can chu y, at most five lines each only when
+  it fires, computed by versioned reads and printed by the template: late deliveries undecided (count_undecided,
+  LATE_COUNT_SQL), orders late against their promise (the SLA board), pickup reminders the shop can send
+  and laundry whose free days end within three days, invoice requests open more than three shop days,
+  and the day against the same weekday of the previous four weeks (report figures, half-up whole mean,
+  integer 70-130% band, from closing time with three weeks of trade) with last month''s missing core cost
+  categories after the 10th; ''Khong co viec can chu y'' only when every source answered; no model.'
+rollback_impact: A read change; no migration. Revert and the summary is daily-summary-v2 again. Rolling
+  data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before
+  every upgrade.
+unresolved_assumptions: Model-written wording stays behind DEC-006 (the security and privacy owner's)
+  with the number-grounding contract in the spec; overdue account money stays in the body, not the attention
+  block.
+evidence:
+  every_attention_line_is_a_versioned_count_or_comparison: packages/domain/tests/test_daily_summary_template.py
+    (each line alone, all in order, integer band, half-up mean) and packages/db/tests/test_daily_summary_attention.py
+    (comparison, too little history, closing time, missing costs, fee soon); count tests beside each list;
+    the version pin hashes every statement.
+  no_personal_column_is_read: packages/evals/tests/test_daily_summary_no_model.py now checks the late
+    and invoice count statements; integration found the late count selecting the customer's name and ticket
+    and gave it its own statement (test_late_deliveries.py holds its predicates equal to the list's).
+  an_all_clear_only_when_every_source_answered: test_daily_summary_template.py::test_one_source_that_could_not_answer_means_no_all_clear
+    and test_every_source_answered_and_none_fired_says_so_once.
+  walked_on_the_real_api_at_desk_and_phone_size: 'filmed at desk size (daily_summary): 32 ok, 0 failed;
+    whole runs: desk 632 ok, 0 failed, phone 632 ok, 0 failed'
+  rollback_assessment: A read change; no migration. Revert and the summary is daily-summary-v2 again.
+    Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section
+    8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 750 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 406 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3605 passed, 5 skipped, 2 warnings in 801.69s (0:13:21)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 123 served
+    internal API operations against their contract. Validated 589 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 173 source references, 44 decisions, 4 gates, 9 phases, 189 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 566 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 632 ok, 0 failed, 194/194 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 632 ok, 0 failed, 194/194 declared controls

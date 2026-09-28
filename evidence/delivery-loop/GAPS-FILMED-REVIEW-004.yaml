@@ -1,0 +1,64 @@
+schema_version: 1
+work_item: GAPS-FILMED-REVIEW-004
+recorded_at: '2026-09-28T19:02:39+07:00'
+requirement_contract: Every round-8 flow filmed on the real API from an empty database at desk size (1366x900),
+  refusal first, then the owner's switch, then the flow; reviewed as the counter worker and the owner;
+  findings fixed with guards; the phone layout verified as secondary.
+rollback_impact: Review fixes only. Revert the commits. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: Provider-backed issuing, a bank feed and a Zalo Official Account remain the owner's;
+  no capability authorisation changes.
+evidence:
+  every_new_flow_filmed_at_desk_size: 'filmed at desk size (invoice_requests): 22 ok, 0 failed; filmed
+    at desk size (vietqr): 29 ok, 0 failed; filmed at desk size (late_delivery): 31 ok, 0 failed; filmed
+    at desk size (pickup_reminders): 40 ok, 0 failed; filmed at desk size (daily_summary): 32 ok, 0 failed'
+  each_review_finding_is_fixed_with_a_guard: 'Found and fixed: the Nhan do sheet showed a promise read
+    at opening while the press stored the answer for its own minute (15:55 told, 15:56 printed) -- the
+    sheet re-reads on each new minute, keeping the choice (stub check; conformance waits out the minute
+    edge); the evening summary''s late count selected a customer''s name and ticket (own statement, privacy
+    test extended); the reminder heading counted unreachable orders among those to remind (now ''n don
+    can nhac'', stub check); the STOP harness step needs the stack''s demo hash key in the runner''s environment.'
+  gaps_register_lists_exactly_what_is_missing: 'gaps.js rewritten by each slice: e-invoice issuing through
+    a provider, automatic transfer confirmation, the self-collect not-ready credit, automatic Zalo reminders;
+    the summary entry keeps model wording behind DEC-006.'
+  no_capability_authorisation_changed: 'report_delivery_status.py: 13 capabilities, all NOT_AUTHORIZED.'
+  rollback_assessment: Review fixes only. Revert the commits. Rolling data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 750 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 406 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3605 passed, 5 skipped, 2 warnings in 801.69s (0:13:21)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 123 served
+    internal API operations against their contract. Validated 589 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 173 source references, 44 decisions, 4 gates, 9 phases, 189 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 566 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 632 ok, 0 failed, 194/194 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 632 ok, 0 failed, 194/194 declared controls

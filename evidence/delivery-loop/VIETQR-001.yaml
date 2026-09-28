@@ -1,0 +1,66 @@
+schema_version: 1
+work_item: VIETQR-001
+recorded_at: '2026-09-28T19:02:39+07:00'
+requirement_contract: 'DEC-041: a NAPAS VietQR (EMVCo, CRC-16/CCITT-FALSE) built on the server for the
+  payment ledger''s remaining balance read in the same request, with a transfer code NTL+ddmm+ticket (or
+  NTL+8 id hex; NTLCN+account+mmyy for an account month), drawn by the console from a 0/1 matrix; on the
+  payment sheet, the customer slip and the account statement; order search by transfer code; refused BANK_ACCOUNT_UNPUBLISHED
+  until scripts/publish_bank_account.py after a 1.000 VND test transfer.'
+rollback_impact: No migration. publish_bank_account.py --withdraw hides every QR; the counter works as
+  before. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section
+  8 takes before every upgrade.
+unresolved_assumptions: Automatic confirmation needs a transaction feed (notification service or bank
+  API) with a credential and a network path, all the owner's; specified, not built. A ticket above 999
+  falls back to the id form.
+evidence:
+  golden_vietqr_vectors_reproduce_byte_for_byte: 'packages/domain/tests/test_vietqr.py: three real VietQR
+    strings (static, dynamic 10000 and 1000 with purpose) reproduce with their CRC; CRC(''123456789'')
+    = 29B1; hypothesis round trips.'
+  the_amount_is_the_ledgers_remaining_balance: packages/db/tests/test_vietqr_repository.py (balance after
+    a part payment, then NOTHING_OWED; an accrued storage fee included); the vietqr scenario decodes the
+    drawn symbol with zxing-cpp to the server's payload.
+  refused_until_the_owner_publishes_the_account: BANK_ACCOUNT_UNPUBLISHED before publish; publishing without
+    --test-transfer-confirmed refused; non-owner refused (test_vietqr_repository.py, vietqr scenario 25a).
+  walked_on_the_real_api_at_desk_and_phone_size: 'filmed at desk size (vietqr): 29 ok, 0 failed; whole
+    runs: desk 632 ok, 0 failed, phone 632 ok, 0 failed'
+  rollback_assessment: No migration. publish_bank_account.py --withdraw hides every QR; the counter works
+    as before. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
+    section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 750 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 406 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 3605 passed, 5 skipped, 2 warnings in 801.69s (0:13:21)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 123 served
+    internal API operations against their contract. Validated 589 staff-console disclosures against their
+    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 173 source references, 44 decisions, 4 gates, 9 phases, 189 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 566 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 632 ok, 0 failed, 194/194 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 80 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 632 ok, 0 failed, 194/194 declared controls

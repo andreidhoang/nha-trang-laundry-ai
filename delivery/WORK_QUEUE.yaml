@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-27'
+last_updated: '2026-09-28'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -5682,9 +5682,9 @@ items:
   blocked_by_decisions: []
 - id: EINVOICE-REQUEST-001
   phase: PRODUCTION_HARDENING
-  title: Invoice requests captured on an order or an account month with a buyer
-    snapshot; the bookkeeper issues in the provider's portal and staff record the number
-  status: READY
+  title: Invoice requests captured on an order or an account month with a buyer snapshot;
+    the bookkeeper issues in the provider's portal and staff record the number
+  status: COMPLETE
   priority: 339
   depends_on:
   - CUSTOMER-001
@@ -5717,7 +5717,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: An exact NAPAS VietQR for the balance still owed, with a transfer code naming
     the order or the account month, after the owner publishes the account
-  status: READY
+  status: COMPLETE
   priority: 340
   depends_on:
   - PAYMENT-001
@@ -5748,9 +5748,9 @@ items:
   blocked_by_decisions: []
 - id: LATE-CREDIT-002
   phase: PRODUCTION_HARDENING
-  title: Late deliveries measured by the server against the first promise and decided in
-    one tap through the existing remedy authority
-  status: READY
+  title: Late deliveries measured by the server against the first promise and decided
+    in one tap through the existing remedy authority
+  status: COMPLETE
   priority: 341
   depends_on:
   - PROMISE-001
@@ -5781,9 +5781,9 @@ items:
   blocked_by_decisions: []
 - id: PICKUP-REMIND-001
   phase: PRODUCTION_HARDENING
-  title: A pickup-reminder schedule on shop days with a fixed text behind the
-    transactional egress guard and a two-tap send recorded as a contact attempt
-  status: READY
+  title: A pickup-reminder schedule on shop days with a fixed text behind the transactional
+    egress guard and a two-tap send recorded as a contact attempt
+  status: COMPLETE
   priority: 342
   depends_on:
   - UNCLAIMED-001
@@ -5813,9 +5813,9 @@ items:
   blocked_by_decisions: []
 - id: SUMMARY-ATTENTION-001
   phase: PRODUCTION_HARDENING
-  title: The evening summary opens with a computed 'Cần chú ý' block instead of
-    model-written prose
-  status: READY
+  title: The evening summary opens with a computed 'Cần chú ý' block instead of model-written
+    prose
+  status: COMPLETE
   priority: 343
   depends_on:
   - DAILY-SUMMARY-001
@@ -5849,7 +5849,7 @@ items:
   phase: PRODUCTION_HARDENING
   title: Every round-8 flow filmed at desk size against the real API from an empty
     database, reviewed as the counter worker and the owner, every finding fixed
-  status: READY
+  status: COMPLETE
   priority: 344
   depends_on:
   - EINVOICE-REQUEST-001

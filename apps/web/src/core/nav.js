@@ -147,6 +147,15 @@ export const NAV_ITEMS = [
     group: "Quản trị",
     hint: "Chi phí của tiệm theo tháng",
   },
+  // EINVOICE-REQUEST-001 (DEC-040).
+  {
+    path: "/invoices",
+    label: NAV.invoices,
+    capability: "INVOICES_READ",
+    icon: "quote",
+    group: "Quản trị",
+    hint: "Khách cần hóa đơn: tải cho kế toán, ghi số",
+  },
   {
     path: "/machines",
     label: NAV.machines,

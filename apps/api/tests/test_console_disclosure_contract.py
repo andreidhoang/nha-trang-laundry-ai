@@ -223,7 +223,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 14 since UNCLAIMED-001: `PICKUP_READ`, `PICKUP_CONTACT`, `STORAGE_FEE_WAIVE` and
     # `UNCLAIMED_DISPOSE` bind to the exact sets `UnclaimedRepository` re-checks. 10 + 4 = 14.
     # 16 with both merged (round 7 wave 2 integration): 10 + 2 + 4 = 16.
-    assert counts.get("REPOSITORY_ROLES") == 16
+    # 19 after EINVOICE-REQUEST-001 (round 8, DEC-040): `INVOICES_READ`, `INVOICES_WRITE` and
+    # `INVOICES_CLOSE` bind to the exact sets `InvoiceRequestRepository` re-checks. 16 + 3 = 19.
+    assert counts.get("REPOSITORY_ROLES") == 19
     assert counts.get("ALL_AUTHENTICATED") == 1
     # 4 since REMEDY-001's console half. The entry that went said there was no `remedies`,
     # `credit_grants` or `credit_ledger_entries` table and, in the same sentence, that every
@@ -954,7 +956,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # DAILY-SUMMARY-001 (round 7 wave 2, DEC-039): 524 + 0. Re-keyed, none added or retired: the
     #   "Kênh và AI" lede and the FR-RPT-007 gap's `missing` now say the template summary exists.
     # DAILY-SUMMARY-001 merged onto both (round 7 wave 2 integration): 554 + 0 = 554.
-    assert sum(counts.values()) == _registry()["total"] == 554
+    # EINVOICE-REQUEST-001 (round 8, DEC-040) on its own branch: 554 + 21 = 575, none retired.
+    #   Eleven REASON_NOTE sentences (PRIVACY_NOTICE_UNPUBLISHED and the ten INVOICE_* refusals);
+    #   three REPOSITORY_ROLES `why` (INVOICES_READ/_WRITE/_CLOSE); the new "Hóa đơn điện tử" gaps
+    #   entry's missing/blockedBy/today (the payment entry's missing/blockedBy re-keyed, the
+    #   e-invoice moved out of them); two screens/invoices.js hints and two ui/invoice.js hints.
+    assert sum(counts.values()) == _registry()["total"] == 575
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate
@@ -971,11 +978,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # 30 after UNCLAIMED-001: + `PICKUP_READ`, `PICKUP_CONTACT`, `STORAGE_FEE_WAIVE`,
     #   `UNCLAIMED_DISPOSE`, each on the exact role set `UnclaimedRepository` enforces.
     # 32 with both merged (round 7 wave 2 integration): 26 + 2 + 4.
+    # 35 after EINVOICE-REQUEST-001: + `INVOICES_READ`, `INVOICES_WRITE`, `INVOICES_CLOSE`.
     assert (
         counts.get("SERVER_GATE", 0)
         + counts.get("REPOSITORY_ROLES", 0)
         + counts.get("ALL_AUTHENTICATED", 0)
-        == 32
+        == 35
     )
 
 

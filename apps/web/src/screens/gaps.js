@@ -122,17 +122,36 @@ const GROUPS = [
         // entry named by its tables until they existed: customer_accounts with the owner's limit,
         // the monthly statement (customer_account_statements, frozen at month close) and the
         // oldest-first allocation of an account payment (customer_account_allocations). What is
-        // still absent is what no decision or data source allows: an e-invoice and a bank feed.
+        // still absent is what no data source allows: a bank feed. EINVOICE-REQUEST-001 (DEC-040)
+        // moved the e-invoice to its own entry below, since requests are now recorded.
         missing:
           "Thu tiền tại quầy (đặt cọc, nhiều lần, tiền mặt hay chuyển khoản) và khách công nợ " +
-          "(hạn mức, sao kê tháng, tiền trả trừ vào đơn nợ cũ nhất) đã có. Còn thiếu hoá đơn điện " +
-          "tử, và xác nhận chuyển khoản tự động — không có nguồn dữ liệu ngân hàng.",
-        // SHOP_OPERATIONS_SPEC_V1.md §9: e-invoices wait on the tax treatment of the price, which
-        // is unconfirmed; no bank feed exists to confirm a transfer.
-        blockedBy:
-          "Chưa xác nhận giá đã gồm thuế hay chưa, nên chưa xuất hoá đơn; chưa có kết nối ngân hàng",
+          "(hạn mức, sao kê tháng, tiền trả trừ vào đơn nợ cũ nhất) đã có. Còn thiếu xác nhận " +
+          "chuyển khoản tự động — không có nguồn dữ liệu ngân hàng.",
+        // No bank feed exists to confirm a transfer.
+        blockedBy: "Chưa có kết nối ngân hàng",
         today:
           "Chuyển khoản ghi khi đã thấy tiền vào tài khoản. Sao kê công nợ in từ trang của khách.",
+      },
+      // EINVOICE-REQUEST-001 (DEC-040, 28/09) records every request -- the buyer, the state, and the
+      // symbol, number and date the bookkeeper read back -- and downloads the open list for the
+      // provider's portal. What is absent is issuing through a provider's API: the owner has to
+      // choose the provider, the accountant has to confirm the invoice type and the rate, and the
+      // account and its credential are the owner's to supply.
+      {
+        ref: "DEC-040",
+        title: "Hóa đơn điện tử",
+        what: "Xuất hóa đơn điện tử cho khách cần hóa đơn, ngay từ bảng này.",
+        missing:
+          "Yêu cầu hóa đơn đã ghi được (thông tin người mua, trạng thái, ký hiệu và số hóa đơn kế " +
+          "toán đã xuất). Chưa tự xuất qua nhà cung cấp hóa đơn điện tử.",
+        blockedBy:
+          "Tự xuất qua nhà cung cấp — chờ chủ tiệm chọn nhà cung cấp và kế toán xác nhận loại hóa " +
+          "đơn, thuế suất",
+        today:
+          "Bấm “Khách cần hóa đơn” trên trang đơn hoặc khách công nợ. Kế toán tải danh sách ở Hóa " +
+          "đơn cần xuất, xuất trên cổng nhà cung cấp, rồi ghi số hóa đơn.",
+        link: { href: "#/invoices", label: "Hóa đơn cần xuất" },
       },
       // UNCLAIMED-001 (DEC-036) built the waiting list, contact attempts, the storage fee, the
       // waiver and thanh lý. The question it left open -- whether an order paid in full before

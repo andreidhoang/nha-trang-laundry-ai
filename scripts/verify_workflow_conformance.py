@@ -287,6 +287,26 @@ DECLARED_CONTROLS = (
     "today.summary-info",
     "today.summary-copy",
     "today.summary-share",
+    # EINVOICE-REQUEST-001 (DEC-040): Khách cần hóa đơn on an order and on an account month (the
+    # buyer saved for next time), Hóa đơn cần xuất with its tabs, the bookkeeper's download,
+    # Ghi số hóa đơn, and a request cancelled with a reason.
+    "invoice.request-open",
+    "invoice.request-unit",
+    "invoice.request-tax",
+    "invoice.request-address",
+    "invoice.request-save",
+    "invoice.month-open",
+    "invoice.save-profile",
+    "shell.nav.invoices",
+    "invoices.download",
+    "invoices.record-issued",
+    "invoice.issued-symbol",
+    "invoice.issued-number",
+    "invoice.issued-save",
+    "invoices.tabs",
+    "invoices.cancel",
+    "invoice.cancel-reason",
+    "invoice.cancel-confirm",
 )
 
 PASS: list[str] = []
@@ -4932,6 +4952,14 @@ def _customer_refusal_then_publish(console: Console, digits: str, spaced: str) -
         refused["text"][:200],
     )
     console.page.keyboard.press("Escape")
+    # EINVOICE-REQUEST-001 (DEC-040): in a full run this is the one moment the notice is still
+    # unpublished, so the invoice capture's refusal is proven here too, on the newest open order.
+    open_order = sql(
+        f"SELECT id FROM orders WHERE store_id = '{STORE}' AND commercial_status <> 'CANCELLED' "
+        "ORDER BY created_at DESC LIMIT 1"
+    )
+    if open_order:
+        _invoice_privacy_refusal(console, open_order)
 
     head("16a", "CÔNG BỐ — the owner publishes the notice with the script")
     owner = sql("SELECT id FROM staff_users WHERE oidc_subject = 'demo-owner'")
@@ -7357,6 +7385,333 @@ def scenario_daily_summary(console: Console) -> None:
     console.sign_in("demo-owner")
 
 
+# --- EINVOICE-REQUEST-001 (DEC-040): invoice requests --------------------------------------------
+
+
+def _invoice_subject(console: Console, path: str) -> dict[str, Any]:
+    return console.call("GET", path).get("body") or {}
+
+
+def _publish_script(script: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            _script(script),
+            "--actor-id",
+            _owner_id(),
+            "--database-url",
+            arguments.database_url,
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+
+def _invoice_privacy_refusal(console: Console, order_id: str) -> None:
+    """Before the notice: the order page's row is off with its reason, and the server refuses."""
+
+    console.open_order(order_id, settle=2400)
+    section = console.page.locator("#invoice-section")
+    press = console.page.locator("#invoice-request-open")
+    ok(
+        "the order page's Hóa đơn row says in tier 1 what the owner must do, and "
+        "'Khách cần hóa đơn' is off",
+        section.count() == 1
+        and "Chủ tiệm cần công bố thông báo bảo mật trước khi ghi yêu cầu hóa đơn"
+        in section.inner_text()
+        and press.count() == 1
+        and press.is_disabled(),
+        section.inner_text()[:200].replace("\n", " | ") if section.count() else "absent",
+    )
+    refused = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/orders/{order_id}/invoice-requests",
+        {"buyer_unit_name": "Công ty TNHH Biển Xanh", "buyer_email": "ketoan@bienxanh.vn"},
+    )
+    ok(
+        "the server itself refuses capture: 422 PRIVACY_NOTICE_UNPUBLISHED (DEC-040), no buyer "
+        "detail in the answer, nothing written",
+        refused["status"] == 422
+        and (refused.get("body") or {}).get("detail", {}).get("reason_code")
+        == "PRIVACY_NOTICE_UNPUBLISHED"
+        and "bienxanh" not in refused["text"]
+        and sql("SELECT count(*) FROM invoice_requests") == "0",
+        refused["text"][:200],
+    )
+
+
+def scenario_invoice_requests(console: Console) -> None:
+    """`EINVOICE-REQUEST-001` (`DEC-040`): refused until the owner publishes the privacy notice;
+    then *Khách cần hóa đơn* on an order and on an account month, *Hóa đơn cần xuất* with its tabs,
+    the bookkeeper's download, *Ghi số hóa đơn*, and another request cancelled. The software issues
+    nothing: every figure is read back from the server."""
+
+    head("30", "HÓA ĐƠN — refused until the owner publishes the privacy notice (DEC-040)")
+    if not arguments.database_url:
+        ok("publishing the notice uses the owner's script, which needs --database-url", False)
+        return
+    console.sign_in("demo-owner")
+    walk_in = console.build_order(stop="ready")
+    order_id = str(walk_in["order_id"])
+    notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
+    if (notice.get("body") or {}).get("published") is not True:
+        _invoice_privacy_refusal(console, order_id)
+        head("30a", "CÔNG BỐ — the owner publishes the notice with the script")
+        published = _publish_script("publish_privacy_notice.py")
+        ok(
+            "scripts/publish_privacy_notice.py publishes it (the owner's act, not the console's)",
+            published.returncode == 0 and "published" in published.stdout,
+            (published.stdout or published.stderr).strip()[:160],
+        )
+    else:
+        note(
+            "the privacy notice was published before this scenario began (a full run: the "
+            "customers scenario proves the invoice refusal before it publishes)"
+        )
+
+    head("30b", "KHÁCH CẦN HÓA ĐƠN — on the order page, the buyer's details in one sheet")
+    console.sign_in("demo-operations")
+    console.open_order(order_id, settle=2400)
+    console.page.locator("#invoice-request-open").click()
+    touched("invoice.request-open")
+    console.page.wait_for_selector("#invoice-request-sheet[open]", timeout=8000)
+    console.type_into("#invoice-unit", "Công ty TNHH Biển Xanh", "invoice.request-unit")
+    console.type_into("#invoice-tax", "4201234567", "invoice.request-tax")
+    console.type_into("#invoice-email", "ketoan@bienxanh.vn")
+    (refused,) = console.press_capturing(
+        console.page.locator("#invoice-request-save"), "/invoice-requests"
+    )
+    touched("invoice.request-save")
+    console.page.wait_for_timeout(700)
+    sheet_text = console.page.locator("#invoice-request-sheet").inner_text()
+    ok(
+        "a tax code without an address is refused in the sheet, beside the field, nothing written",
+        refused["status"] == 422
+        and (refused.get("body") or {}).get("detail", {}).get("reason_code")
+        == "INVOICE_ADDRESS_REQUIRED"
+        and "Có mã số thuế thì cần ghi địa chỉ đơn vị" in sheet_text
+        and console.page.locator("#invoice-address[aria-invalid='true']").count() == 1,
+        sheet_text[:200].replace("\n", " | "),
+    )
+    console.type_into("#invoice-address", "12 Trần Phú, Nha Trang", "invoice.request-address")
+    (created,) = console.press_capturing(
+        console.page.locator("#invoice-request-save"), "/invoice-requests"
+    )
+    console.page.wait_for_timeout(1800)
+    order_request = created.get("body") or {}
+    row = console.page.locator("#invoice-section")
+    ok(
+        "the request is recorded (REQUESTED, YC-…, the order's charges read now) and the row says "
+        "'Chờ kế toán xuất' with its code",
+        created["status"] == 201
+        and order_request.get("status") == "REQUESTED"
+        and str(order_request.get("request_code", "")).startswith("YC-")
+        and order_request.get("amount", {}).get("source") == "ORDER_CHARGES"
+        and "Chờ kế toán xuất" in row.inner_text()
+        and str(order_request.get("request_code")) in row.inner_text(),
+        f"{created['status']} {row.inner_text()[:160]}".replace("\n", " | "),
+    )
+    subject = _invoice_subject(console, f"/internal/v1/stores/{STORE}/orders/{order_id}/invoice")
+    ok(
+        "the order now refuses a second request by name (INVOICE_REQUEST_EXISTS), and the row "
+        "offers no second 'Khách cần hóa đơn'",
+        subject.get("refusal") == "INVOICE_REQUEST_EXISTS"
+        and console.page.locator("#invoice-request-open").count() == 0,
+        subject.get("refusal"),
+    )
+
+    head("30c", "HÓA ĐƠN THÁNG — an account customer's month, the buyer saved for next time")
+    console.sign_in("demo-owner")
+    if (
+        sql("SELECT count(*) FROM configuration_versions WHERE config_type = 'ACCOUNT_TERMS'")
+        == "0"
+    ):
+        terms = _publish_script("publish_account_terms.py")
+        note(
+            "the account terms were unpublished (only with --only); the owner published them: "
+            + terms.stdout.strip()[:80]
+        )
+    customer_id, last4 = _account_customer(console, "Homestay Hải Âu")
+    opened = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/customers/{customer_id}/account",
+        {"credit_limit_vnd": 5_000_000},
+    )
+    account_order = _account_order(console, customer_id, last4, "7")
+    charged = console.call(
+        "POST",
+        f"/internal/v1/orders/{account_order['order_id']}/account-charge",
+        {"collected_by_customer": True},
+        if_match=account_order["row_version"],
+    )
+    month = time.strftime("%Y-%m", time.gmtime(time.time() + 7 * 3600))
+    ok(
+        "a homestay on công nợ has one order charged this month (set up over the API)",
+        opened["status"] == 201 and charged["status"] < 300,
+        f"{opened['status']} {charged['status']} {charged['text'][:120]}",
+    )
+    console.sign_in("demo-operations")
+    console.open(f"#/customers/{customer_id}/statement/{month}", settle=2600)
+    unit = console.page.locator("#invoice-unit")
+    console.page.locator("#invoice-request-open").click()
+    touched("invoice.month-open")
+    console.page.wait_for_selector("#invoice-request-sheet[open]", timeout=8000)
+    ok(
+        "the month's sheet pre-fills the unit name with the customer's name and offers "
+        "'Lưu cho lần sau'",
+        unit.input_value() == "Homestay Hải Âu"
+        and console.page.locator("#invoice-save-profile").count() == 1,
+        unit.input_value(),
+    )
+    console.type_into("#invoice-email", "letan@haiau.vn")
+    console.page.locator("#invoice-save-profile").check()
+    touched("invoice.save-profile")
+    (month_created,) = console.press_capturing(
+        console.page.locator("#invoice-request-save"), "/invoice-requests"
+    )
+    console.page.wait_for_timeout(1800)
+    month_request = month_created.get("body") or {}
+    ok(
+        "the month's request reads the statement's charges (ACCOUNT_STATEMENT); the row shows it",
+        month_created["status"] == 201
+        and month_request.get("period_month") == month
+        and month_request.get("amount", {}).get("source") == "ACCOUNT_STATEMENT"
+        and (month_request.get("amount", {}).get("total_vnd") or 0) > 0
+        and "Chờ kế toán xuất" in console.page.locator("#invoice-section").inner_text(),
+        f"{month_created['status']} {month_created['text'][:160]}",
+    )
+    covered = _invoice_subject(
+        console, f"/internal/v1/stores/{STORE}/orders/{account_order['order_id']}/invoice"
+    )
+    ok(
+        "the month's order is covered by the month (INVOICE_REQUEST_EXISTS), and the saved buyer "
+        "pre-fills it",
+        covered.get("refusal") == "INVOICE_REQUEST_EXISTS"
+        and covered.get("prefill_from_profile") is True
+        and (covered.get("prefill") or {}).get("email") == "letan@haiau.vn",
+        {key: covered.get(key) for key in ("refusal", "prefill_from_profile")},
+    )
+    console.open(f"#/customers/{customer_id}", settle=2600)
+    card = console.page.locator("#customer-account-section #invoice-section")
+    ok(
+        "the account card shows this month's Hóa đơn with its request",
+        card.count() == 1 and str(month_request.get("request_code")) in card.inner_text(),
+        card.inner_text()[:160].replace("\n", " | ") if card.count() else "absent",
+    )
+
+    head("30d", "HÓA ĐƠN CẦN XUẤT — the list, the bookkeeper's download, Ghi số hóa đơn")
+    console.sign_in("demo-owner")
+    _nav_to(console, "Hóa đơn cần xuất", "/invoices")
+    touched("shell.nav.invoices")
+    console.page.wait_for_timeout(1500)
+    table_text = console.page.locator("main").inner_text()
+    ok(
+        "Cần xuất lists both requests, oldest first, with the amount the shop charged",
+        console.page.locator(
+            f"tr[data-invoice='{order_request.get('invoice_request_id')}']"
+        ).count()
+        == 1
+        and console.page.locator(
+            f"tr[data-invoice='{month_request.get('invoice_request_id')}']"
+        ).count()
+        == 1
+        and "Cần xuất" in table_text,
+        table_text[:200].replace("\n", " | "),
+    )
+    (exported,) = console.press_capturing(
+        console.page.locator("#invoices-download"), "/invoice-requests/export"
+    )
+    touched("invoices.download")
+    console.page.wait_for_timeout(900)
+    produced = exported.get("body") or {}
+    content = str(produced.get("content_csv") or "")
+    ok(
+        "Tải danh sách cho kế toán: a UTF-8 CSV with a BOM, the query version, the money header "
+        "'Số tiền theo giá tiệm đã thu (chưa tách thuế)', both requests",
+        exported["status"] == 200
+        and content.startswith("﻿")
+        and str(produced.get("query_version", "")).startswith("invoice-requests-export-v1:")
+        and "Số tiền theo giá tiệm đã thu (chưa tách thuế)" in content
+        and str(order_request.get("request_code")) in content
+        and str(month_request.get("request_code")) in content,
+        f"{exported['status']} {content[:120]!r}",
+    )
+    ok(
+        "the download is audited (one invoice_request_exports row and its audit event) and carries "
+        "no phone number",
+        sql("SELECT count(*) FROM invoice_request_exports") not in ("", "0")
+        and sql("SELECT count(*) FROM audit_events WHERE action = 'INVOICE_REQUEST_EXPORT'")
+        not in ("", "0")
+        and not re.search(r"0\d{9}", content.replace("4201234567", "")),
+        sql("SELECT count(*) FROM invoice_request_exports"),
+    )
+    console.page.locator(
+        f"[data-record-issued='{order_request.get('invoice_request_id')}']"
+    ).click()
+    touched("invoices.record-issued")
+    console.page.wait_for_selector("#invoice-issued-sheet[open]", timeout=8000)
+    console.type_into("#invoice-symbol", "1c26tyy", "invoice.issued-symbol")
+    console.type_into("#invoice-number", "0000123", "invoice.issued-number")
+    (issued,) = console.press_capturing(console.page.locator("#invoice-issued-save"), "/issued")
+    touched("invoice.issued-save")
+    console.page.wait_for_timeout(1500)
+    console.page.locator("#invoices-tabs [data-value='ISSUED']").click()
+    touched("invoices.tabs")
+    console.page.wait_for_timeout(1500)
+    issued_text = console.page.locator("main").inner_text()
+    ok(
+        "Ghi số hóa đơn closes it as ISSUED under If-Match; Đã xuất shows 'Ký hiệu 1C26TYY · Số "
+        "0000123'",
+        issued["status"] == 200
+        and (issued.get("body") or {}).get("status") == "ISSUED"
+        and "Ký hiệu 1C26TYY · Số 0000123" in issued_text,
+        f"{issued['status']} {issued_text[:200]}".replace("\n", " | "),
+    )
+
+    head("30e", "HUỶ — another request cancelled with a reason; the counter cannot download")
+    console.sign_in("demo-operations")
+    console.open("#/invoices", settle=1800)
+    ok(
+        "for the counter, 'Tải danh sách cho kế toán' is off with who may press it",
+        console.page.locator("#invoices-download").is_disabled()
+        and "Chủ tiệm hoặc người duyệt tải danh sách cho kế toán"
+        in console.page.locator("main").inner_text(),
+        "",
+    )
+    console.page.locator(
+        f"[data-cancel-invoice='{month_request.get('invoice_request_id')}']"
+    ).click()
+    touched("invoices.cancel")
+    console.page.wait_for_selector("#invoice-cancel-sheet[open]", timeout=8000)
+    console.page.locator("#invoice-cancel-sheet .choice-chip[title=DUPLICATE]").click()
+    touched("invoice.cancel-reason")
+    confirm = console.page.locator("#invoice-cancel-confirm")
+    confirm.click()
+    (cancelled,) = console.press_capturing(confirm, "/cancellation")
+    touched("invoice.cancel-confirm")
+    console.page.wait_for_timeout(1500)
+    console.page.locator("#invoices-tabs [data-value='CANCELLED']").click()
+    console.page.wait_for_timeout(1500)
+    cancelled_text = console.page.locator("main").inner_text()
+    ok(
+        "the cancel is two presses, lands CANCELLED with its reason, and Đã huỷ shows it",
+        cancelled["status"] == 200
+        and (cancelled.get("body") or {}).get("cancel_reason") == "DUPLICATE"
+        and "Trùng yêu cầu khác" in cancelled_text,
+        f"{cancelled['status']} {cancelled_text[:160]}".replace("\n", " | "),
+    )
+    leaked = sql(
+        "SELECT (SELECT count(*) FROM domain_events WHERE payload::text LIKE '%bienxanh%' "
+        "OR payload::text LIKE '%Biển Xanh%' OR payload::text LIKE '%4201234567%') + "
+        "(SELECT count(*) FROM audit_events WHERE details::text LIKE '%bienxanh%' "
+        "OR details::text LIKE '%4201234567%') + "
+        "(SELECT count(*) FROM outbox_events WHERE payload::text LIKE '%bienxanh%') + "
+        "(SELECT count(*) FROM command_idempotency_records WHERE response::text LIKE '%bienxanh%')"
+    )
+    ok("no buyer detail in any event, audit, outbox or idempotency row", leaked == "0", leaked)
+    console.sign_in("demo-owner")
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -7401,6 +7756,10 @@ SCENARIOS = {
     # DAILY-SUMMARY-001 (DEC-039). After promise, so the late-against-promise line has promises to
     # count; on a shop without a turnaround policy it proves the omission instead.
     "daily_summary": scenario_daily_summary,
+    # EINVOICE-REQUEST-001 (DEC-040). Last: in a full run the customers scenario proves the
+    # invoice refusal while the notice is unpublished; this one proves the feature, and publishes
+    # the notice itself only with --only on a fresh stack (after proving the refusal).
+    "invoice_requests": scenario_invoice_requests,
 }
 
 

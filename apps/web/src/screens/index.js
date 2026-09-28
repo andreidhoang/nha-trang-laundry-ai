@@ -22,6 +22,7 @@ import { screen as expenses } from "./expenses.js";
 import { screen as exports_ } from "./exports.js";
 import { screen as gaps } from "./gaps.js";
 import { detailScreen as incidentDetail, screen as incidents } from "./incidents.js";
+import { screen as invoices } from "./invoices.js";
 import { screen as machines } from "./machines.js";
 import { screen as more } from "./more.js";
 import { screen as newOrder } from "./newOrder.js";
@@ -64,6 +65,8 @@ export const ROUTES = [
   exports_,
   reports,
   expenses,
+  // EINVOICE-REQUEST-001 (DEC-040): Hóa đơn cần xuất.
+  invoices,
   machines,
   system,
   staff,

@@ -133,6 +133,12 @@ CAPABILITY_REPOSITORY_ROLES: dict[str, tuple[str, str]] = {
     "PICKUP_CONTACT": ("nha_trang_laundry_db.unclaimed", "CONTACT_ROLES"),
     "STORAGE_FEE_WAIVE": ("nha_trang_laundry_db.unclaimed", "WAIVER_ROLES"),
     "UNCLAIMED_DISPOSE": ("nha_trang_laundry_db.unclaimed", "DISPOSAL_ROLES"),
+    # EINVOICE-REQUEST-001 (`DEC-040`). The routes gate on `require_invoice_reader`,
+    # `require_invoice_writer` and `require_invoice_closer`; `InvoiceRequestRepository` re-checks
+    # the exact sets below with MFA and store membership.
+    "INVOICES_READ": ("nha_trang_laundry_db.invoice_requests", "INVOICE_READ_ROLES"),
+    "INVOICES_WRITE": ("nha_trang_laundry_db.invoice_requests", "INVOICE_WRITE_ROLES"),
+    "INVOICES_CLOSE": ("nha_trang_laundry_db.invoice_requests", "INVOICE_CLOSE_ROLES"),
 }
 
 #: Authored bindings, keyed by slot id. A slot absent from this table is registered `DESCRIPTIVE`.

@@ -165,6 +165,27 @@ liệt kê mọi đơn đã giặt xong mà khách chưa lấy, đơn chờ lâu
   được ghi luôn vào công nợ (dòng dưới ô tiền ghi *Gồm phí lưu kho …*) và không tính thêm sau đó.
   Hạn mức được so với cả tiền giặt lẫn phí.
 
+### Khách cần hóa đơn (DEC-040)
+
+Tiệm **chỉ ghi lại yêu cầu** của khách. Kế toán xuất hóa đơn điện tử trên cổng của nhà cung cấp hóa
+đơn, rồi ghi số hóa đơn vào máy. Phiếu in cho khách vẫn là **Phiếu cho khách**, không phải hóa đơn.
+Chủ tiệm phải công bố thông báo bảo mật trước; chưa công bố thì ô **Hóa đơn** ghi *“Chủ tiệm cần công
+bố thông báo bảo mật trước khi ghi yêu cầu hóa đơn”*.
+
+| | Làm gì | Ở màn hình |
+|---|---|---|
+| H1 | Khách nói cần hóa đơn: mở đơn, ô **Hóa đơn** → **Khách cần hóa đơn**. Ghi **tên đơn vị**, **mã số thuế** (10 hoặc 12 số), **địa chỉ** (bắt buộc khi có mã số thuế), email nhận hóa đơn, người mua. Bấm **Lưu yêu cầu** | Chi tiết đơn |
+| H2 | Khách công nợ cần hóa đơn cả tháng: trang của khách → ô **Hóa đơn tháng …**, hoặc **Xem sao kê** của tháng đó → **Khách cần hóa đơn**. Tên đơn vị đã điền sẵn; đánh dấu **Lưu cho lần sau** để lần sau điền sẵn cả mã số thuế, địa chỉ | Khách hàng, Sao kê |
+| H3 | (Chủ tiệm / người duyệt) Cuối ngày hoặc cuối tháng: **Hóa đơn cần xuất** (trong **Thêm**) → **Tải danh sách cho kế toán**. Gửi tệp cho kế toán | Hóa đơn cần xuất |
+| H4 | (Chủ tiệm / người duyệt) Kế toán báo đã xuất: bấm **Ghi số hóa đơn** ở dòng đó, chép **ký hiệu**, **số**, **ngày** trên hóa đơn, bấm **Lưu số hóa đơn**. Ghi rồi không sửa được | Hóa đơn cần xuất |
+| H5 | Khách không cần nữa, hoặc ghi sai: **Huỷ yêu cầu**, chọn lý do, bấm hai lần. Ghi sai thì huỷ rồi ghi lại | Chi tiết đơn, Hóa đơn cần xuất |
+
+- Một đơn (hoặc một tháng công nợ) chỉ có **một yêu cầu đang mở**. Đơn đã nằm trong yêu cầu hóa đơn
+  tháng của khách thì không ghi riêng được nữa.
+- Số tiền trong danh sách là **số tiệm đã tính cho khách** (gồm phí lưu kho nếu có), **chưa tách
+  thuế**. Loại hóa đơn và thuế suất do chủ tiệm và kế toán quyết; máy không tính thuế.
+- **Không ghi số điện thoại khách** vào bất kỳ ô nào — máy sẽ từ chối.
+
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
 
 Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **khoảng giá**, vì phải nhìn món đồ mới

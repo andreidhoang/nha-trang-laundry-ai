@@ -37,6 +37,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from nha_trang_laundry_domain import daily_summary as template
+from nha_trang_laundry_domain import pickup_reminders as reminder_rules
 from nha_trang_laundry_domain.daily_summary import (
     COMPARE_MIN_WEEKS,
     COMPARE_WEEKS,
@@ -69,6 +70,10 @@ from nha_trang_laundry_db.accounts import (
     AccountRepository,
 )
 from nha_trang_laundry_db.identity import StaffPrincipal
+from nha_trang_laundry_db.pickup_reminders import (
+    REMINDER_READ_ROLES,
+    PickupReminderRepository,
+)
 from nha_trang_laundry_db.promise_policy import read_published_turnaround_policy
 from nha_trang_laundry_db.query_version import QueryVersion, query_version, rule_source
 from nha_trang_laundry_db.reports import (
@@ -159,6 +164,8 @@ def daily_summary_template_version() -> QueryVersion:
         str(COMPARE_MIN_WEEKS),
         str(FEE_SOON_DAYS),
         str(MISSING_COSTS_AFTER_DAY),
+        # The reminder schedule the count applies (`PICKUP-REMIND-001`).
+        rule_source(reminder_rules),
     )
 
 
@@ -395,7 +402,9 @@ def attention_facts(
     not_built = Unavailable(OmissionReason.SOURCE_NOT_BUILT, "ROUND-8")
     return AttentionFacts(
         late_deliveries_undecided=not_built,
-        reminders_due=not_built,
+        reminders_due=reminders_due(
+            cursor, store_id=store_id, principal=principal, live=live, as_of=as_of
+        ),
         fee_soon=fee_soon_figures(
             cursor, store_id=store_id, principal=principal, live=live, as_of=as_of
         ),
@@ -412,6 +421,25 @@ def attention_facts(
         ),
         missing_costs=missing_costs(cursor, store_id=store_id, day=day),
     )
+
+
+def reminders_due(
+    cursor: Any, *, store_id: UUID, principal: StaffPrincipal, live: bool, as_of: datetime
+) -> int | Unavailable:
+    """`PICKUP-REMIND-001`: reminders due now that the shop can send, under the list's own gate.
+
+    Orders with no phone and no chat are left out: nobody can do those, so naming them as work
+    due would be a line the owner cannot act on (the list counts them separately)."""
+    if not live:
+        return Unavailable(OmissionReason.LIVE_ONLY_TODAY, "PICKUP-REMIND-001")
+    if not principal.roles & REMINDER_READ_ROLES:
+        return Unavailable(OmissionReason.ROLE_NOT_PERMITTED, "PICKUP-REMIND-001")
+    count, truncated = PickupReminderRepository.count_due(
+        cursor, store_id=store_id, principal=principal, as_of=as_of
+    )
+    if truncated:
+        return Unavailable(OmissionReason.SOURCE_TRUNCATED, "PICKUP-REMIND-001")
+    return count
 
 
 def fee_soon_figures(
@@ -612,5 +640,6 @@ __all__ = [
     "day_figures",
     "fee_soon_figures",
     "missing_costs",
+    "reminders_due",
     "waiting_pickup_figures",
 ]

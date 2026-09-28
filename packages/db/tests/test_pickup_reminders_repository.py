@@ -272,6 +272,47 @@ def test_the_list_gives_the_number_and_zalo_link_to_the_counter_only(
         _due(connection, shop, stranger.operator)
 
 
+def test_the_summary_counts_the_reminders_it_can_send_and_matches_the_list(
+    connection: psycopg.Connection[Any], shop: Shop
+) -> None:
+    """`SUMMARY-ATTENTION-001`: `count_due` is the list's population, minus the unreachable."""
+
+    customer_id, _ = _customer(connection, shop)
+    reachable = _ready(connection, shop, customer_id=customer_id)
+    _ready(connection, shop)  # a ticket only: due, but nobody can be reminded
+    listed = _due(connection, shop)
+    with connection.cursor() as cursor:
+        count, truncated = PickupReminderRepository.count_due(
+            cursor, store_id=shop.store_id, principal=shop.owner, as_of=datetime.now(UTC)
+        )
+    connection.rollback()
+    assert (
+        (count, truncated) == (listed.total_count - listed.unreachable_count, False) == (1, False)
+    )
+    # A call is a reminder too, and needs no messaging policy.
+    _remind(
+        connection,
+        reachable,
+        shop.operator,
+        ReminderStep.READY,
+        channel=ContactChannel.CALL,
+        outcome=ContactOutcome.REACHED,
+    )
+    with connection.cursor() as cursor:
+        assert PickupReminderRepository.count_due(
+            cursor, store_id=shop.store_id, principal=shop.owner, as_of=datetime.now(UTC)
+        ) == (0, False)
+        stranger = Shop(connection)
+        with pytest.raises(UnclaimedAuthorizationError):
+            PickupReminderRepository.count_due(
+                cursor,
+                store_id=shop.store_id,
+                principal=stranger.operator,
+                as_of=datetime.now(UTC),
+            )
+    connection.rollback()
+
+
 def test_a_chat_order_is_reachable_by_chat(connection: psycopg.Connection[Any], shop: Shop) -> None:
     order_id = _ready(connection, shop)
     # Fixture: the order's reference is a chat binding, as an order that came in on a channel is.

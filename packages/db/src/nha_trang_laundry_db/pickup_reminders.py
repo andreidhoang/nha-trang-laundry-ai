@@ -423,7 +423,67 @@ def check_reminder_attempt(
 # --- the repository -------------------------------------------------------------------------------
 
 
+def _scan_due(
+    cursor: Any, *, store_id: UUID, as_of: datetime
+) -> tuple[Any, Any, list[tuple[UUID, ReminderStep, Reachability]], bool]:
+    """Every waiting order's newest due reminder, oldest ready first: the list's population, read
+    once for the list and for `count_due` alike. Returns the storage and messaging policies read,
+    the due rows and whether the scan stopped at `SCAN_LIMIT`."""
+
+    published = read_published_storage_policy(cursor)
+    policy = None if published is None else published.policy
+    messaging = read_published_messaging_policy(cursor)
+    cursor.execute(
+        f"""
+        SELECT o.id, o.production_ready_at,
+               coalesce(
+                   (SELECT array_agg(DISTINCT a.reminder_step) FROM order_contact_attempts a
+                     WHERE a.order_id = o.id AND a.reminder_step IS NOT NULL
+                       AND a.attempted_at >= o.production_ready_at),
+                   '{{}}'::text[]),
+               (cu.phone_ciphertext IS NOT NULL AND cu.erased_at IS NULL),
+               EXISTS (SELECT 1 FROM contact_channel_bindings b
+                       WHERE b.contact_binding_id = o.bound_contact_id)
+        FROM orders o
+        LEFT JOIN customers cu ON cu.id = o.customer_id AND cu.store_id = o.store_id
+        WHERE o.store_id = %s AND {AWAITING_PICKUP_SQL} AND o.production_ready_at IS NOT NULL
+        ORDER BY o.production_ready_at ASC, o.id
+        LIMIT %s
+        """,
+        (store_id, SCAN_LIMIT + 1),
+    )
+    scanned = cursor.fetchall()
+    scan_truncated = len(scanned) > SCAN_LIMIT
+    today = shop_date(as_of)
+    due: list[tuple[UUID, ReminderStep, Reachability]] = []
+    for row in scanned[:SCAN_LIMIT]:
+        step = current_reminder(shop_date(row[1]), today, policy, _steps(row[2] or []))
+        if step is not None:
+            reach = reachability(has_phone=bool(row[3]), has_chat=bool(row[4]))
+            due.append((_uuid(row[0]), step, reach))
+    return published, messaging, due, scan_truncated
+
+
 class PickupReminderRepository:
+    @staticmethod
+    def count_due(
+        cursor: Any, *, store_id: UUID, principal: StaffPrincipal, as_of: datetime
+    ) -> tuple[int, bool]:
+        """How many reminders are due now that the shop can send (a phone or a chat to reach), and
+        whether the count is a floor. Counts only: no row is decrypted or detailed. The evening
+        summary's *Cần chú ý* reads this under the list's own gate (`SUMMARY-ATTENTION-001`)."""
+
+        _require(principal, REMINDER_READ_ROLES, "counting the pickup reminders")
+        require_store_membership(
+            cursor,
+            staff_user_id=principal.staff_user_id,
+            store_id=store_id,
+            error=UnclaimedAuthorizationError,
+        )
+        _, _, due, scan_truncated = _scan_due(cursor, store_id=store_id, as_of=as_of)
+        reachable = sum(1 for _, _, reach in due if reach is not Reachability.NONE)
+        return reachable, scan_truncated
+
     @staticmethod
     def list_due(
         cursor: Any,
@@ -444,37 +504,10 @@ class PickupReminderRepository:
         )
         if not 1 <= limit <= LIST_MAX_LIMIT:
             raise ValueError(f"the reminder list limit is between 1 and {LIST_MAX_LIMIT}")
-        published = read_published_storage_policy(cursor)
-        policy = None if published is None else published.policy
-        messaging = read_published_messaging_policy(cursor)
-        cursor.execute(
-            f"""
-            SELECT o.id, o.production_ready_at,
-                   coalesce(
-                       (SELECT array_agg(DISTINCT a.reminder_step) FROM order_contact_attempts a
-                         WHERE a.order_id = o.id AND a.reminder_step IS NOT NULL
-                           AND a.attempted_at >= o.production_ready_at),
-                       '{{}}'::text[]),
-                   (cu.phone_ciphertext IS NOT NULL AND cu.erased_at IS NULL),
-                   EXISTS (SELECT 1 FROM contact_channel_bindings b
-                           WHERE b.contact_binding_id = o.bound_contact_id)
-            FROM orders o
-            LEFT JOIN customers cu ON cu.id = o.customer_id AND cu.store_id = o.store_id
-            WHERE o.store_id = %s AND {AWAITING_PICKUP_SQL} AND o.production_ready_at IS NOT NULL
-            ORDER BY o.production_ready_at ASC, o.id
-            LIMIT %s
-            """,
-            (store_id, SCAN_LIMIT + 1),
+        published, messaging, due, scan_truncated = _scan_due(
+            cursor, store_id=store_id, as_of=as_of
         )
-        scanned = cursor.fetchall()
-        scan_truncated = len(scanned) > SCAN_LIMIT
-        today = shop_date(as_of)
-        due: list[tuple[UUID, ReminderStep, Reachability]] = []
-        for row in scanned[:SCAN_LIMIT]:
-            step = current_reminder(shop_date(row[1]), today, policy, _steps(row[2] or []))
-            if step is not None:
-                reach = reachability(has_phone=bool(row[3]), has_chat=bool(row[4]))
-                due.append((_uuid(row[0]), step, reach))
+        policy = None if published is None else published.policy
         chosen = due[:limit]
         details = _details(cursor, [order_id for order_id, _, _ in chosen])
         visible = bool(principal.roles & PHONE_VISIBLE_ROLES)

@@ -1285,3 +1285,126 @@ decisions:
       retention provider receiving aggregate figures only.
     reversal: >-
       Hide the card.
+  - id: DEC-040
+    title: E-invoices - capture every request now, issuing stays with the owner's provider
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+    opened_at: '2026-09-28'
+    question: >-
+      Hotels on an account and walk-in companies ask for a hoa don; the request is said aloud and
+      lost, and the invoice type, rate and issuing provider depend on the shop's own tax
+      registration.
+    resolved_at: '2026-09-28'
+    decision_record: docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+    decided_under: >-
+      The business owner wrote on 2026-09-28: "ultrathink on what you can solve right now and best
+      decision for these and spec engineering and execute implementation". Delegated, not signed.
+      Boundaries kept: no tax or legal basis asserted, no provider called, no credential created.
+    resolution: >-
+      Record invoice requests on an order or an account month with a buyer snapshot (unit, tax
+      code, address, email, buyer); states REQUESTED, ISSUED (symbol, number, date recorded by
+      staff after the bookkeeper issues it in the provider's portal), CANCELLED; a download for
+      the bookkeeper with amounts as charged and no tax split. Capture refuses until the privacy
+      notice is published. Automatic issuing waits for the owner's provider and the accountant's
+      invoice type and rate.
+    reversal: >-
+      Hide the screen; requests stay on record.
+  - id: DEC-041
+    title: Bank transfers - an exact VietQR on every bill, automatic confirmation waits for a feed
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+    opened_at: '2026-09-28'
+    question: >-
+      Customers type the amount and memo themselves, so transfers arrive with no order reference;
+      automatic confirmation needs a transaction feed whose account, credential and network path
+      are the owner's.
+    resolved_at: '2026-09-28'
+    decision_record: docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+    decided_under: >-
+      Same delegation as DEC-040. Boundaries kept: no provider called, no credential, no public
+      ingress; the account is the owner's to publish after a 1.000 VND test transfer.
+    resolution: >-
+      A NAPAS VietQR (EMVCo) built on the server for the balance still owed with a transfer code
+      naming the order (NTL + ticket day + number) or the account month (NTLCN ...), on the payment
+      sheet, the customer slip and the account statement; order search by transfer code; staff
+      confirm in the bank app against the shown code and amount. Refuses BANK_ACCOUNT_UNPUBLISHED
+      until scripts/publish_bank_account.py. Automatic matching is specified, not built.
+    reversal: >-
+      Withdraw the published account; no QR is shown.
+  - id: DEC-042
+    title: The 10% late-delivery credit - measured by the server, decided with one tap
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+    opened_at: '2026-09-28'
+    question: >-
+      The ratified credit (DEC-004) needed a person to notice the lateness and type the minutes;
+      delivery orders now carry a promise and a recorded arrival.
+    resolved_at: '2026-09-28'
+    decision_record: docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+    decided_under: >-
+      Same delegation as DEC-040. Boundaries kept: only the ratified 2 hours / 10% / 100.000 VND
+      staff limit are used; the shop's fault is still a person's attestation.
+    resolution: >-
+      Deadline = first promise, moved only by a customer-requested re-promise; lateness = earliest
+      successful return leg minus deadline; deliveries late beyond the published threshold are
+      listed with failed attempts as a hint; one tap opens the incident and the credit proposal
+      with the server's minutes (existing authority path), or records not-the-shop's-fault with a
+      reason. Reported. Self-collect lateness stays report-only.
+    reversal: >-
+      Hide the list; the manual remedy path is unchanged.
+  - id: DEC-043
+    title: Pickup reminders - the server decides who, when and what; staff send in two taps
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+    opened_at: '2026-09-28'
+    question: >-
+      Automatic Zalo sending needs an Official Account, approved templates, a token and a cost;
+      meanwhile nobody remembers to remind customers and day 21 arrives with no attempts recorded.
+    resolved_at: '2026-09-28'
+    decision_record: docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+    decided_under: >-
+      Same delegation as DEC-040. Boundaries kept: the software sends nothing; the transactional
+      egress guard (DEC-033) runs before any message text is offered.
+    resolution: >-
+      Steps on shop days from ready: day 0, 3, 7, 14, and the last day before the published storage
+      fee starts; a due list on Hom nay with Mo Zalo, Chep tin nhan (fixed pickup-reminder-v1 text,
+      no name or phone), Goi and Da nhac recording a contact attempt against the step. Refuses
+      MESSAGING_POLICY_UNPUBLISHED and SUPPRESSED. Automatic Zalo OA/ZNS sending waits for the
+      owner.
+    reversal: >-
+      Hide the list; contact attempts stay on record.
+  - id: DEC-044
+    title: The evening summary gets a computed 'Can chu y' block, not model prose
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: NOT_SUPPORTED
+    source: docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+    opened_at: '2026-09-28'
+    question: >-
+      The owner wants an AI summary; what it would add is what is unusual and what needs doing,
+      and DEC-006 (the security and privacy owner's) stays open.
+    resolved_at: '2026-09-28'
+    decision_record: docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+    decided_under: >-
+      Same delegation as DEC-040. DEC-006 is not decided here.
+    resolution: >-
+      At most five attention lines computed by versioned read models (undecided late deliveries,
+      overdue not ready, reminders due and fees starting within 3 days, invoice requests older than
+      3 days, takings or orders outside 70-130% of the same weekday over 4 weeks with both figures,
+      margin cost categories missing after the 10th). Model wording remains behind DEC-006 with a
+      number-grounding verifier and template fallback.
+    reversal: >-
+      Omit the block.

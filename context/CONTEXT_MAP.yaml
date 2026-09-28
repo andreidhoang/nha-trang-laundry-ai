@@ -29,6 +29,8 @@ domains:
     sources:
     - docs/SHOP_OPERATIONS_SPEC_V1.md
     - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    - docs/REMAINING_GAPS_SPEC_V1.md
+    - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
     - specs/IMPLEMENTATION_ROADMAP_V1.md
     - docs/adr/0001-python-control-plane.md
     - docs/adr/0007-production-deployment-topology.md
@@ -91,6 +93,8 @@ domains:
     sources:
     - docs/SHOP_OPERATIONS_SPEC_V1.md
     - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    - docs/REMAINING_GAPS_SPEC_V1.md
+    - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
     - specs/DOMAIN_DATA_API_SPEC_V1.md
     - specs/ENGINEERING_SPEC_V1.md
     - PRICEBOOK_V1.md
@@ -112,6 +116,8 @@ domains:
     sources:
     - docs/SHOP_OPERATIONS_SPEC_V1.md
     - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    - docs/REMAINING_GAPS_SPEC_V1.md
+    - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
     - specs/DOMAIN_DATA_API_SPEC_V1.md
     - specs/ENGINEERING_SPEC_V1.md
     - PROMOTION_2026_08.md
@@ -127,6 +133,8 @@ domains:
     sources:
     - docs/SHOP_OPERATIONS_SPEC_V1.md
     - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    - docs/REMAINING_GAPS_SPEC_V1.md
+    - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
     - specs/DOMAIN_DATA_API_SPEC_V1.md
     - specs/SECURITY_RELIABILITY_SPEC_V1.md
     - docs/DECISION_REQUEST_ORDER_EXIT_2026-08.md
@@ -161,6 +169,8 @@ domains:
     sources:
     - docs/SHOP_OPERATIONS_SPEC_V1.md
     - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    - docs/REMAINING_GAPS_SPEC_V1.md
+    - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
     - specs/ENGINEERING_SPEC_V1.md
     - specs/SECURITY_RELIABILITY_SPEC_V1.md
     - CUSTOMER_SERVICE_POLICY_DRAFT.md
@@ -209,6 +219,8 @@ domains:
     sources:
     - docs/SHOP_OPERATIONS_SPEC_V1.md
     - docs/DECISION_RECORD_SHOP_OPERATIONS_2026-09-25.md
+    - docs/REMAINING_GAPS_SPEC_V1.md
+    - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
     - BUSINESS_TRUTH_INTAKE.md
     - MACHINE_INVENTORY.md
     - PRICEBOOK_V1.md

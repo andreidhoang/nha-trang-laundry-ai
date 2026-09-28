@@ -259,10 +259,10 @@ def test_refusals_say_the_field_and_never_the_words(
     _as(shop.counter)
     refused = _send(client, "POST", path, {**BUYER, "buyer_address": None})
     assert refused.status_code == 422
+    # A typing slip names its field and no owner decision.
     assert refused.json()["detail"] == {
         "reason_code": "INVOICE_ADDRESS_REQUIRED",
         "field": "buyer_address",
-        "decision": "DEC-040",
     }
     phone = _send(client, "POST", path, {"buyer_unit_name": "Chị Lan 0905 123 456"})
     assert phone.status_code == 422 and _code(phone) == "INVOICE_FIELD_LOOKS_LIKE_PHONE"

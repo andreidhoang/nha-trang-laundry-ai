@@ -9308,8 +9308,9 @@ _INVOICE_ERRORS = (
 
 def _raise_invoice_error(error: Exception) -> NoReturn:
     """403 opaque; 404 for a request, order or account outside the caller's store; 409 for a stale
-    version or a reused key; 422 `{reason_code, field, decision}` for every refusal the rules make
-    -- by name, with the field it is about and never its value, nothing written."""
+    version or a reused key; 422 `{reason_code, field}` for every refusal the rules make -- by name,
+    with the field it is about and never its value, nothing written -- and `decision: DEC-040` on
+    the ones that are the owner's rule rather than a typing slip."""
     if isinstance(error, (InvoiceAuthorizationError, StoreAccessError)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
     if isinstance(error, InvoiceNotFoundError):
@@ -9321,22 +9322,16 @@ def _raise_invoice_error(error: Exception) -> NoReturn:
     if isinstance(error, InvoiceStateError):
         raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
     if isinstance(error, InvoiceRuleError):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={
-                "reason_code": error.code.value,
-                "field": error.field,
-                "decision": INVOICE_DECISION,
-            },
-        ) from error
+        # A typing slip names its field and no decision: `decision` tells the console "this is the
+        # owner's rule, the counter cannot change it", which is untrue of a missing address.
+        detail: dict[str, object] = {"reason_code": error.code.value, "field": error.field}
+        if error.field is None:
+            detail["decision"] = INVOICE_DECISION
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail) from error
     if isinstance(error, AccountRuleError):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={
-                "reason_code": error.code.value,
-                "field": "month",
-                "decision": INVOICE_DECISION,
-            },
+            detail={"reason_code": error.code.value, "field": "month"},
         ) from error
     raise error
 

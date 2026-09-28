@@ -286,7 +286,9 @@
   - the same figures for the same weekday in each of the previous 4 weeks;
   - `weeks_with_data`;
   - the mean as an integer, rounded half up in the read model, never in the template;
-  - cost categories recorded this month.
+  - last month's core cost categories with no Sổ thu chi line (asked after the 10th, only when the
+    shop took an order last month; `missing_core_categories`, the rule the month margin refuses on);
+  - the comparison waits for closing time (20:00) on the day itself.
 - Attention inputs: late deliveries undecided (§3), overdue-not-ready count (SLA board), reminders
   due, orders reaching the storage fee within 3 days (§4 and `UNCLAIMED-001`), and invoice requests
   older than 3 days (§1).

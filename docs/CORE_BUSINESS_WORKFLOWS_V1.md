@@ -273,8 +273,18 @@ cancel step never offers it.
 - **Tóm tắt cuối ngày** (`DAILY-SUMMARY-001`, `DEC-039`) is the owner's evening card on Hôm nay,
   for the report's four readers. After 18:00 shop-local it reads by itself; before, **Xem tóm tắt**
   reads it on demand ("tính đến" the time in its first line). `GET …/reports/daily-summary?date=`
-  returns short Vietnamese sentences a versioned Python template (`daily-summary-v2:<digest>`)
-  writes from the report's one-day figures and the live lists: orders taken in, completed and
+  returns short Vietnamese sentences a versioned Python template (`daily-summary-v3:<digest>`)
+  writes from the report's one-day figures and the live lists. It opens with **Cần chú ý**
+  (`SUMMARY-ATTENTION-001`, `DEC-044`): at most five computed lines, each only when it fires:
+  - deliveries late and undecided;
+  - orders late against their promise;
+  - pickup reminders due and laundry whose free-storage days end within 3 days;
+  - invoice requests waiting over 3 days;
+  - the day's money or orders outside 70–130% of the same weekday over the previous four weeks,
+    with both figures, from closing time and with at least 3 weeks of trade; after the 10th, last
+    month's missing cost categories.
+
+  It says "Không có việc cần chú ý" only when every source answered. Then the day's figures: orders taken in, completed and
   cancelled; money in split cash / transfer (and refunds when any); finished on time against the
   first promise and how many had none; orders not yet handed back that are late against their
   promise, and those with no promise past the stated mark (the SLA board, today only); new and open

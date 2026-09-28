@@ -178,8 +178,10 @@ deterministic rules deliver the value now, at zero cost and zero risk.
   4. invoice requests older than 3 days (`DEC-040`);
   5. today's collected money or orders received outside 70–130% of the average for the same weekday
      over the previous four weeks, stated with both figures and only when at least 3 of those weeks
-     have data. After the 10th of a month, it also names the margin cost categories not yet recorded
-     that month.
+     have data, and on the day itself only from closing time (20:00). After the 10th of a month, it
+     also names the margin cost categories *last* month still has no line for, when the shop traded
+     last month. Bills for a month arrive early in the next, so a nudge about the current month
+     on the 11th would be noise.
 - Every figure is computed by a versioned read model and only printed by the template. A source that
   cannot answer is left out with its reason, never shown as zero. The text still carries no
   personal data.

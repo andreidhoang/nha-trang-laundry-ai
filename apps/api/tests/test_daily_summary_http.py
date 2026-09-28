@@ -118,6 +118,8 @@ def test_the_summary_of_a_closed_day_on_the_wire(
         "WAITING_PICKUP": "LIVE_ONLY_TODAY",
         "COMPLAINTS_OPEN": "LIVE_ONLY_TODAY",
         "ACCOUNTS_DUE": "NO_ACCOUNTS",
+        # Round 8: no trade in the four weeks before this day, so no usual to compare with.
+        "ATTN_NUMBERS": "TOO_LITTLE_HISTORY",
     }
     for item in body["omitted"]:
         assert set(item) == {"key", "reason", "source", "note"} and item["note"]

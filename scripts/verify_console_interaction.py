@@ -1114,6 +1114,14 @@ DAY_SUMMARY = {
 #: server text and the checks compare against them verbatim.
 DAILY_SUMMARY_LINES = [
     ("HEADER", "Tóm tắt thứ Sáu 25/09/2026, tính đến 19:30.", {"date": "2026-09-25"}),
+    # Round 8 (`SUMMARY-ATTENTION-001`, `daily-summary-v3`): the *Cần chú ý* block heads it.
+    ("ATTENTION", "Cần chú ý:", {"attention": 2}),
+    ("ATTN_OVERDUE", "- 3 đơn chưa trả khách đã trễ giờ hẹn.", {"promised_late": 3}),
+    (
+        "ATTN_PICKUP",
+        "- 4 lần nhắc khách lấy đồ đến hạn chưa làm.",
+        {"reminders_due": 4},
+    ),
     ("ORDERS", "Nhận 12 đơn mới. Hoàn tất 9 đơn. Huỷ 1 đơn.", {"orders_created": 12}),
     (
         "MONEY",
@@ -1149,7 +1157,7 @@ DAILY_SUMMARY_LINES = [
 DAILY_SUMMARY = {
     "store_id": STORE,
     "date": "2026-09-25",
-    "template_version": "daily-summary-v2:0123456789abcdef",
+    "template_version": "daily-summary-v3:0123456789abcdef",
     "evaluated_at": "2026-09-25T12:30:00+00:00",
     "so_far": True,
     "lines": [
@@ -8658,6 +8666,17 @@ with sync_playwright() as playwright:
         len(state["summary_reads"]) == 1
         and shown == [(key, text) for key, text, _ in DAILY_SUMMARY_LINES],
         repr(shown[:2]),
+    )
+    tones = page.evaluate(
+        """() => [...document.querySelectorAll('#daily-summary [data-summary-line]')].map(
+            (node) => [node.dataset.summaryLine, getComputedStyle(node).backgroundColor])"""
+    )
+    plain = dict(tones).get("ORDERS")
+    check(
+        "the Cần chú ý block comes first after the header, in the warning tone, the day plain",
+        [key for key, _ in tones[:4]] == ["HEADER", "ATTENTION", "ATTN_OVERDUE", "ATTN_PICKUP"]
+        and all(tone != plain for key, tone in tones if key.startswith("ATT")),
+        repr(tones[:5]),
     )
     omitted = page.locator("#daily-summary [data-summary-omitted]")
     check(

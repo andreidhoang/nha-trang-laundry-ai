@@ -15,15 +15,22 @@ import pytest
 from nha_trang_laundry_domain import daily_summary as template
 from nha_trang_laundry_domain.daily_summary import (
     AccountsDueFigures,
+    AttentionFacts,
     BoardFigures,
+    DayComparison,
     DayFigures,
+    Direction,
+    FeeSoon,
     LineKey,
+    MissingCosts,
     OmissionReason,
     OpenComplaints,
     SpendingFigures,
     SummaryInputs,
     Unavailable,
+    UsualFigure,
     WaitingFigures,
+    compare_to_usual,
     format_count,
     format_day,
     format_vnd,
@@ -287,6 +294,8 @@ def test_the_whole_summary_in_order_and_what_copy_hands_over() -> None:
     summary = render_summary(_inputs())
     assert [line.key for line in summary.lines] == [
         LineKey.HEADER,
+        LineKey.ATTENTION,
+        LineKey.ATTN_OVERDUE,
         LineKey.ORDERS,
         LineKey.MONEY,
         LineKey.FINISHED_ON_TIME,
@@ -299,6 +308,10 @@ def test_the_whole_summary_in_order_and_what_copy_hands_over() -> None:
     assert summary.text == "\n".join(
         [
             "Tóm tắt thứ Sáu 25/09/2026, tính đến 19:05.",
+            # v3: the board's late count heads the summary; the other attention sources are not
+            # built in these inputs, so no "nothing needs attention" line is claimed.
+            "Cần chú ý:",
+            "- 3 đơn chưa trả khách đã trễ giờ hẹn.",
             "Nhận 12 đơn mới. Hoàn tất 9 đơn. Huỷ 1 đơn.",
             "Đã thu 1.250.000đ (5 khoản). Tiền mặt 800.000đ. Chuyển khoản 450.000đ.",
             "Giặt xong 6 đơn. 5 trên 6 đơn xong đúng hẹn. "
@@ -464,3 +477,166 @@ def test_a_shop_with_no_account_omits_the_accounts_line_in_its_own_words() -> No
         "Công nợ đến hạn: cửa hàng chưa mở công nợ cho khách nào."
     )
     assert "công nợ" not in summary.text
+
+
+# --- v3: Cần chú ý (`SUMMARY-ATTENTION-001`, `DEC-044`) -------------------------------------------
+
+USUAL = UsualFigure(today=10, usual=10, direction=Direction.USUAL)
+
+CALM = AttentionFacts(
+    late_deliveries_undecided=0,
+    reminders_due=0,
+    fee_soon=FeeSoon(count=0, free_days=20),
+    invoices_waiting=0,
+    comparison=DayComparison(weeks_with_data=4, collected=USUAL, orders=USUAL),
+    missing_costs=None,
+)
+
+CALM_BOARD = dataclasses.replace(BOARD, promised_late=0)
+
+
+def _attention_lines(**changes: object) -> list[str]:
+    facts = dataclasses.replace(CALM, **changes)  # type: ignore[arg-type]
+    summary = render_summary(_inputs(board=CALM_BOARD, attention=facts))
+    return [line.text for line in summary.lines if line.key.value.startswith("ATT")]
+
+
+def test_every_source_answered_and_none_fired_says_so_once() -> None:
+    assert _attention_lines() == ["Không có việc cần chú ý."]
+
+
+def test_one_source_that_could_not_answer_means_no_all_clear() -> None:
+    truncated = Unavailable(OmissionReason.SOURCE_TRUNCATED, "X")
+    assert _attention_lines(reminders_due=truncated) == []
+    summary = render_summary(
+        _inputs(board=CALM_BOARD, attention=dataclasses.replace(CALM, reminders_due=truncated))
+    )
+    notes = [item.note for item in summary.omitted if item.key is LineKey.ATTN_PICKUP]
+    assert notes == ["Nhắc khách lấy đồ: danh sách quá dài để đếm đủ."]
+    # A past day's live list is not the block's to answer, and is not listed to the owner either.
+    live_only = Unavailable(OmissionReason.LIVE_ONLY_TODAY, "X")
+    assert _attention_lines(reminders_due=live_only) == []
+    summary = render_summary(
+        _inputs(board=CALM_BOARD, attention=dataclasses.replace(CALM, reminders_due=live_only))
+    )
+    assert not [item for item in summary.omitted if item.key is LineKey.ATTN_PICKUP]
+
+
+def test_a_source_not_built_is_not_listed_to_the_owner() -> None:
+    summary = render_summary(_inputs(board=CALM_BOARD))
+    assert not [item for item in summary.omitted if item.key.value.startswith("ATTN")]
+    assert not [line for line in summary.lines if line.key.value.startswith("ATT")]
+
+
+def test_each_attention_line_alone() -> None:
+    assert _attention_lines(late_deliveries_undecided=2) == [
+        "Cần chú ý:",
+        "- 2 đơn giao trễ quá 2 giờ chưa xử lý giảm trừ.",
+    ]
+    assert _attention_lines(reminders_due=4) == [
+        "Cần chú ý:",
+        "- 4 lần nhắc khách lấy đồ đến hạn chưa làm.",
+    ]
+    assert _attention_lines(fee_soon=FeeSoon(count=1, free_days=20)) == [
+        "Cần chú ý:",
+        "- 1 đơn chờ lấy sắp hết 20 ngày giữ miễn phí.",
+    ]
+    assert _attention_lines(invoices_waiting=3) == [
+        "Cần chú ý:",
+        "- 3 yêu cầu hóa đơn đã chờ quá 3 ngày chưa xuất.",
+    ]
+    low = UsualFigure(today=1_200_000, usual=1_850_000, direction=Direction.LOW)
+    assert _attention_lines(
+        comparison=DayComparison(weeks_with_data=3, collected=low, orders=USUAL)
+    ) == [
+        "Cần chú ý:",
+        "- Tiền thu 1.200.000đ, thấp hơn thường lệ (trung bình 3 tuần trước cùng thứ 1.850.000đ).",
+    ]
+    high = UsualFigure(today=20, usual=12, direction=Direction.HIGH)
+    assert _attention_lines(
+        comparison=DayComparison(weeks_with_data=4, collected=USUAL, orders=high)
+    ) == [
+        "Cần chú ý:",
+        "- Nhận 20 đơn, cao hơn thường lệ (trung bình 4 tuần trước cùng thứ 12 đơn).",
+    ]
+    assert _attention_lines(
+        missing_costs=MissingCosts(month=date(2026, 8, 1), categories=("DIEN", "LUONG"))
+    ) == [
+        "Cần chú ý:",
+        "- Tháng 08/2026 chưa ghi chi Điện, Lương: chưa tính được lãi tháng đó.",
+    ]
+
+
+def test_all_lines_in_the_decisions_order_and_never_more_than_five() -> None:
+    low = UsualFigure(today=1, usual=10, direction=Direction.LOW)
+    facts = AttentionFacts(
+        late_deliveries_undecided=1,
+        reminders_due=2,
+        fee_soon=FeeSoon(count=1, free_days=20),
+        invoices_waiting=1,
+        comparison=DayComparison(weeks_with_data=4, collected=low, orders=low),
+        missing_costs=MissingCosts(month=date(2026, 8, 1), categories=("NUOC",)),
+    )
+    summary = render_summary(_inputs(attention=facts))
+    keys = [line.key for line in summary.lines if line.key.value.startswith("ATT")]
+    assert keys == [
+        LineKey.ATTENTION,
+        LineKey.ATTN_LATE_DELIVERIES,
+        LineKey.ATTN_OVERDUE,
+        LineKey.ATTN_PICKUP,
+        LineKey.ATTN_INVOICES,
+        LineKey.ATTN_NUMBERS,
+    ]
+    assert len(keys) - 1 <= template.ATTENTION_MAX_LINES
+    # The block comes straight after the header, and copy hands it over.
+    assert summary.lines[1].key is LineKey.ATTENTION
+    assert summary.text.splitlines()[1] == "Cần chú ý:"
+
+
+def test_an_unpublished_storage_policy_is_no_gap_in_the_block() -> None:
+    lines = _attention_lines(
+        fee_soon=Unavailable(OmissionReason.STORAGE_POLICY_UNPUBLISHED, "UNCLAIMED-001")
+    )
+    assert lines == ["Không có việc cần chú ý."]
+
+
+@pytest.mark.parametrize(
+    ("today", "previous", "usual", "direction"),
+    [
+        (100, (100, 100, 100, 100), 100, Direction.USUAL),
+        (70, (100, 100, 100), 100, Direction.USUAL),  # exactly 70% is usual
+        (69, (100, 100, 100), 100, Direction.LOW),
+        (130, (100, 100, 100), 100, Direction.USUAL),  # exactly 130% is usual
+        (131, (100, 100, 100), 100, Direction.HIGH),
+        (5, (1, 2), 2, Direction.HIGH),  # 1.5 rounds half up to 2
+        (0, (0, 0, 0), 0, Direction.USUAL),
+        (1, (0, 0, 0), 0, Direction.HIGH),
+    ],
+)
+def test_the_usual_is_a_half_up_whole_mean_and_the_band_is_integer_arithmetic(
+    today: int, previous: tuple[int, ...], usual: int, direction: Direction
+) -> None:
+    figure = compare_to_usual(today, previous)
+    assert (figure.usual, figure.direction) == (usual, direction)
+
+
+def test_compare_refuses_what_is_not_a_count() -> None:
+    for bad in ((-1, (1,)), (1, ()), (True, (1,)), (1, (1.5,))):
+        with pytest.raises(ValueError):
+            compare_to_usual(*bad)
+
+
+def test_attention_inputs_carry_no_free_text() -> None:
+    for cls in (AttentionFacts, DayComparison, UsualFigure, MissingCosts, FeeSoon):
+        hints = typing.get_type_hints(cls)
+        for field in dataclasses.fields(cls):
+            hint = hints[field.name]
+            assert "str" not in str(hint) or (cls, field.name) == (MissingCosts, "categories"), (
+                cls.__name__,
+                field.name,
+            )
+    # A missing-cost category prints only through the fixed vocabulary; anything else is refused.
+    with pytest.raises(ValueError):
+        _attention_lines(
+            missing_costs=MissingCosts(month=date(2026, 8, 1), categories=("Nguyễn Văn A",))
+        )

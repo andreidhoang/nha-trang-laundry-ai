@@ -80,7 +80,9 @@ from test_reports import AS_OF, DAY, _Order, _person, _seeded_shop, _store
 #: moves the digest; the suite then fails here until the change is read and the identifier moved.
 #: v2 (round 7 wave 2 integration): the waiting-list and accounts hooks wired, `NO_ACCOUNTS` added,
 #: and the two hooks' statements hashed in. v1 was `daily-summary-v1:935e9e90a50bd6a8`.
-PINNED_TEMPLATE_VERSION = "daily-summary-v2:13441b651e00127d"
+#: v3 (round 8, `SUMMARY-ATTENTION-001`): the *Cần chú ý* block and its statements. v2 was
+#: `daily-summary-v2:13441b651e00127d`.
+PINNED_TEMPLATE_VERSION = "daily-summary-v3:20f632bf93f1a9e1"
 
 
 def _database_url() -> str:
@@ -161,7 +163,7 @@ def _as_json(summary: DailySummary) -> str:
 
 def test_the_template_version_is_pinned() -> None:
     version = daily_summary_template_version()
-    assert version.identifier == "daily-summary-v2"
+    assert version.identifier == "daily-summary-v3"
     assert version.label == PINNED_TEMPLATE_VERSION
 
 
@@ -201,6 +203,8 @@ def test_a_closed_day_restates_the_report_word_for_word(
         "WAITING_PICKUP": ("LIVE_ONLY_TODAY", "UNCLAIMED-001"),
         "COMPLAINTS_OPEN": ("LIVE_ONLY_TODAY", "INCIDENTS"),
         "ACCOUNTS_DUE": ("NO_ACCOUNTS", "PAYMENT-002"),
+        # v3: the seeded shop has no trade in the four weeks before, so there is no usual.
+        "ATTN_NUMBERS": ("TOO_LITTLE_HISTORY", "REPORT"),
     }
     assert summary.rendered.text == "\n".join(text for text, _ in _lines(summary).values())
 
@@ -400,7 +404,20 @@ def test_today_every_source_answers_and_no_name_or_phone_reaches_the_text(
         "0 đơn giặt xong chờ khách lấy quá 20 ngày.",
         {"over_20_days": 0, "over_60_days": 0},
     )
-    assert _omitted(after) == {"ACCOUNTS_DUE": ("NO_ACCOUNTS", "PAYMENT-002")}
+    omitted = _omitted(after)
+    # v3: the comparison waits for closing time today, or for three weeks of trade; which of the
+    # two depends on the wall clock this test runs at, and both are said in words.
+    assert omitted.pop("ATTN_NUMBERS") in (
+        ("DAY_NOT_OVER", "REPORT"),
+        ("TOO_LITTLE_HISTORY", "REPORT"),
+    )
+    assert omitted == {"ACCOUNTS_DUE": ("NO_ACCOUNTS", "PAYMENT-002")}
+    # The promised order past its promise heads the summary under *Cần chú ý*.
+    assert lines["ATTENTION"][0] == "Cần chú ý:"
+    assert lines["ATTN_OVERDUE"] == (
+        "- 1 đơn chưa trả khách đã trễ giờ hẹn.",
+        {"promised_late": 1},
+    )
     assert [key for key, _ in after.sources] == ["report", "sla_board", "awaiting_pickup"]
 
     # No personal data: every written form of every number, every name, the address and the

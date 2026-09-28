@@ -3971,6 +3971,27 @@ a.row-link {
   font-weight: var(--weight-bold);
 }
 
+/* SUMMARY-ATTENTION-001: the *Cần chú ý* block heads the summary in the warning tone, so the owner
+   reads what needs doing before the day's figures. */
+.daily-summary__line[data-summary-line^="ATTN_"],
+.daily-summary__line[data-summary-line="ATTENTION"] {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  padding-inline: var(--space-2);
+}
+
+.daily-summary__line[data-summary-line="ATTENTION"] {
+  border-top: 1px solid var(--warn-border);
+  font-weight: var(--weight-bold);
+  padding-top: var(--space-1);
+}
+
+.daily-summary__line[data-summary-line="ATTN_NONE"] {
+  background: none;
+  color: var(--text-secondary);
+  padding-inline: 0;
+}
+
 .daily-summary__omitted {
   color: var(--text-secondary);
   font-size: var(--text-sm);

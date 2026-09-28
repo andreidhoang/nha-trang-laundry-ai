@@ -38,10 +38,18 @@ from zoneinfo import ZoneInfo
 
 from nha_trang_laundry_domain import daily_summary as template
 from nha_trang_laundry_domain.daily_summary import (
+    COMPARE_MIN_WEEKS,
+    COMPARE_WEEKS,
     DAILY_SUMMARY_TEMPLATE_IDENTIFIER,
+    FEE_SOON_DAYS,
+    MISSING_COSTS_AFTER_DAY,
     AccountsDueFigures,
+    AttentionFacts,
     BoardFigures,
+    DayComparison,
     DayFigures,
+    FeeSoon,
+    MissingCosts,
     OmissionReason,
     OpenComplaints,
     RenderedSummary,
@@ -49,8 +57,10 @@ from nha_trang_laundry_domain.daily_summary import (
     SummaryInputs,
     Unavailable,
     WaitingFigures,
+    compare_to_usual,
     render_summary,
 )
+from nha_trang_laundry_domain.shop_capture import ExpenseCategory, missing_core_categories
 from nha_trang_laundry_domain.sla import ProductionSlaPolicy
 
 from nha_trang_laundry_db.accounts import (
@@ -78,6 +88,7 @@ from nha_trang_laundry_db.shadow_console import (
     sla_board_query_version,
 )
 from nha_trang_laundry_db.shop_capture import _EXPENSE_TOTALS_SQL, expense_totals
+from nha_trang_laundry_db.storage_fees import read_published_storage_policy
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.unclaimed import (
     UNCLAIMED_READ_ROLES,
@@ -98,6 +109,20 @@ _LATE_OUTCOME: Final = "BREACHED"
 
 #: Complaints still being handled now. `customer_incidents.status` is `OPEN -> UNDER_REVIEW ->
 #: CLOSED` (`0014`); the store predicate keeps it inside the shop the report already admitted.
+#: The day's comparison with the same weekday waits for closing time on the day itself: a half day
+#: against whole ones would always read "lower than usual". 20:00 is the shop's closing time
+#: (`templates/business-calendar-rules.csv`, the opening hours `PROMISE-001` counts in).
+COMPARE_FROM_LOCAL: Final = time(20, 0)
+
+#: Whether the shop took any order in a month: last month's missing costs are asked for only when
+#: the shop was trading then (a shop that started this month has no last month to complete).
+_MONTH_TRADED_SQL: Final = """
+    SELECT EXISTS (
+        SELECT 1 FROM orders
+        WHERE store_id = %(store)s AND created_at >= %(start)s AND created_at < %(end)s
+    )
+"""
+
 _OPEN_COMPLAINTS_SQL: Final = """
     SELECT count(*)
     FROM customer_incidents
@@ -127,6 +152,13 @@ def daily_summary_template_version() -> QueryVersion:
         # v2: the two wired hooks' statements, so a changed count moves the summary's version.
         WAITING_COUNT_QUERY.label,
         ACCOUNTS_DUE_QUERY.label,
+        # v3: the attention block's own rules.
+        _MONTH_TRADED_SQL,
+        COMPARE_FROM_LOCAL.isoformat(),
+        str(COMPARE_WEEKS),
+        str(COMPARE_MIN_WEEKS),
+        str(FEE_SOON_DAYS),
+        str(MISSING_COSTS_AFTER_DAY),
     )
 
 
@@ -235,6 +267,16 @@ class DailySummaryRepository:
             )
             if isinstance(accounts, AccountsDueFigures):
                 sources.append(("accounts", ACCOUNTS_DUE_QUERY.label))
+            attention = attention_facts(
+                cursor,
+                store_id=store_id,
+                principal=principal,
+                policy=policy,
+                day=day,
+                live=live,
+                as_of=as_of,
+                today=report,
+            )
 
         rendered = render_summary(
             SummaryInputs(
@@ -252,6 +294,7 @@ class DailySummaryRepository:
                 spending=spending,
                 waiting=waiting,
                 accounts_due=accounts,
+                attention=attention,
             )
         )
         return DailySummary(
@@ -328,6 +371,154 @@ def accounts_due_figures(
         overdue_accounts=due.overdue_accounts,
         overdue_vnd=due.overdue_vnd,
     )
+
+
+# --- Cần chú ý (`SUMMARY-ATTENTION-001`, `DEC-044`) -----------------------------------------------
+
+
+def attention_facts(
+    cursor: Any,
+    *,
+    store_id: UUID,
+    principal: StaffPrincipal,
+    policy: ProductionSlaPolicy,
+    day: date,
+    live: bool,
+    as_of: datetime,
+    today: StoreReport,
+) -> AttentionFacts:
+    """The attention block's sources. Each read is another module's; this only counts and compares.
+
+    The three round-8 lists (late deliveries, reminders, invoices) are wired at their integration;
+    until then they answer `SOURCE_NOT_BUILT`, which the template never lists to the owner.
+    """
+    not_built = Unavailable(OmissionReason.SOURCE_NOT_BUILT, "ROUND-8")
+    return AttentionFacts(
+        late_deliveries_undecided=not_built,
+        reminders_due=not_built,
+        fee_soon=fee_soon_figures(
+            cursor, store_id=store_id, principal=principal, live=live, as_of=as_of
+        ),
+        invoices_waiting=not_built,
+        comparison=day_comparison(
+            cursor,
+            store_id=store_id,
+            principal=principal,
+            policy=policy,
+            day=day,
+            live=live,
+            as_of=as_of,
+            today=today,
+        ),
+        missing_costs=missing_costs(cursor, store_id=store_id, day=day),
+    )
+
+
+def fee_soon_figures(
+    cursor: Any, *, store_id: UUID, principal: StaffPrincipal, live: bool, as_of: datetime
+) -> FeeSoon | Unavailable:
+    """Laundry whose free-storage days end within `FEE_SOON_DAYS`, by the waiting list's own count.
+
+    "Within three days" of a fee starting on day `free_days + 1` is waiting more than
+    `free_days - 3` days and not more than `free_days`: two thresholds of the same count, subtracted
+    as counts.
+    """
+    if not live:
+        return Unavailable(OmissionReason.LIVE_ONLY_TODAY, "UNCLAIMED-001")
+    if not principal.roles & UNCLAIMED_READ_ROLES:
+        return Unavailable(OmissionReason.ROLE_NOT_PERMITTED, "UNCLAIMED-001")
+    published = read_published_storage_policy(cursor)
+    if published is None:
+        return Unavailable(OmissionReason.STORAGE_POLICY_UNPUBLISHED, "UNCLAIMED-001")
+    free_days = published.policy.free_days
+    low = max(0, free_days - FEE_SOON_DAYS)
+    counts = UnclaimedRepository.count_waiting(
+        cursor, store_id=store_id, principal=principal, as_of=as_of, thresholds=(low, free_days)
+    )
+    if counts.truncated:
+        return Unavailable(OmissionReason.SOURCE_TRUNCATED, "UNCLAIMED-001")
+    over = dict(counts.over)
+    return FeeSoon(count=over[low] - over[free_days], free_days=free_days)
+
+
+def day_comparison(
+    cursor: Any,
+    *,
+    store_id: UUID,
+    principal: StaffPrincipal,
+    policy: ProductionSlaPolicy,
+    day: date,
+    live: bool,
+    as_of: datetime,
+    today: StoreReport,
+) -> DayComparison | Unavailable:
+    """The day against the same weekday of the previous `COMPARE_WEEKS` weeks that had trade.
+
+    Every figure is the report's own (`MONEY_COLLECTED`, `ORDERS_CREATED`) for a one-day window --
+    the same definition the owner reads on *Báo cáo* -- so "usual" can never mean something the
+    report does not. A week "had trade" when it took an order or money; a closed day is not a zero.
+    """
+    local = as_of.astimezone(ZoneInfo(BUSINESS_TIMEZONE))
+    if live and local.time() < COMPARE_FROM_LOCAL:
+        return Unavailable(OmissionReason.DAY_NOT_OVER, "REPORT")
+    collected: list[int] = []
+    orders: list[int] = []
+    for weeks in range(1, COMPARE_WEEKS + 1):
+        past = day - timedelta(days=7 * weeks)
+        figures = day_figures(
+            ReportRepository.store_report(
+                cursor,
+                store_id=store_id,
+                principal=principal,
+                policy=policy,
+                from_date=past,
+                to_date=past,
+                as_of=as_of,
+            )
+        )
+        if figures.orders_created or figures.collected_entries:
+            collected.append(figures.collected_vnd)
+            orders.append(figures.orders_created)
+    if len(collected) < COMPARE_MIN_WEEKS:
+        return Unavailable(OmissionReason.TOO_LITTLE_HISTORY, "REPORT")
+    now = day_figures(today)
+    return DayComparison(
+        weeks_with_data=len(collected),
+        collected=compare_to_usual(now.collected_vnd, tuple(collected)),
+        orders=compare_to_usual(now.orders_created, tuple(orders)),
+    )
+
+
+def missing_costs(cursor: Any, *, store_id: UUID, day: date) -> MissingCosts | None:
+    """Last month's core margin categories with no Sổ thu chi line, asked after the 10th.
+
+    `None` before `MISSING_COSTS_AFTER_DAY`, when the shop took no order last month, or when every
+    category has a line. The categories are `missing_core_categories`' -- the rule the month margin
+    uses to refuse -- so the nudge and the margin can never disagree about what is missing.
+    """
+    if day.day <= MISSING_COSTS_AFTER_DAY:
+        return None
+    this_month = day.replace(day=1)
+    last_end = this_month - timedelta(days=1)
+    last_start = last_end.replace(day=1)
+    zone = ZoneInfo(BUSINESS_TIMEZONE)
+    cursor.execute(
+        _MONTH_TRADED_SQL,
+        {
+            "store": store_id,
+            "start": datetime.combine(last_start, time(0, 0), zone),
+            "end": datetime.combine(this_month, time(0, 0), zone),
+        },
+    )
+    row = cursor.fetchone()
+    if row is None or not row[0]:
+        return None
+    totals, _, _ = expense_totals(cursor, store_id=store_id, from_date=last_start, to_date=last_end)
+    recorded = frozenset(ExpenseCategory(t.category) for t in totals if t.entries)
+    missing = missing_core_categories(recorded)
+    if not missing:
+        return None
+    return MissingCosts(month=last_start, categories=tuple(c.value for c in missing))
 
 
 # --- the report and the board, copied into the template's inputs ----------------------------------
@@ -415,7 +606,11 @@ __all__ = [
     "DailySummary",
     "DailySummaryRepository",
     "accounts_due_figures",
+    "attention_facts",
     "daily_summary_template_version",
+    "day_comparison",
     "day_figures",
+    "fee_soon_figures",
+    "missing_costs",
     "waiting_pickup_figures",
 ]

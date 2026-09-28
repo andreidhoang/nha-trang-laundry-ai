@@ -498,13 +498,20 @@ class UnclaimedRepository:
 
     @staticmethod
     def count_waiting(
-        cursor: Any, *, store_id: UUID, principal: StaffPrincipal, as_of: datetime
+        cursor: Any,
+        *,
+        store_id: UUID,
+        principal: StaffPrincipal,
+        as_of: datetime,
+        thresholds: tuple[int, ...] = WAITING_SUMMARY_THRESHOLDS,
     ) -> WaitingCounts:
         """The waiting list's population, counted past the summary's thresholds at `as_of`.
 
         The list's own conditions (`AWAITING_PICKUP_SQL`) and the list's own day rule
         (`unclaimed.days_waiting`): an order is "over 20 days" exactly when the list would print
         more than 20 beside it. Counts only -- no customer, no phone -- under the list's own gate.
+        `thresholds` defaults to the summary's two; `SUMMARY-ATTENTION-001` also asks for the days
+        just before the published storage fee starts.
         """
 
         _require(principal, UNCLAIMED_READ_ROLES, "counting laundry waiting for pickup")
@@ -527,7 +534,7 @@ class UnclaimedRepository:
             waiting=min(len(rows), WAITING_COUNT_READ_LIMIT),
             over=tuple(
                 (threshold, sum(1 for days in waited if days > threshold))
-                for threshold in WAITING_SUMMARY_THRESHOLDS
+                for threshold in thresholds
             ),
             truncated=truncated,
         )

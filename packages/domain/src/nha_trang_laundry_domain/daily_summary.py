@@ -39,7 +39,13 @@ from typing import Final
 #: `UNCLAIMED-001`'s waiting list and "Công nợ đến hạn" from `PAYMENT-002`'s ledgers -- so a summary
 #: that left both out as not built now prints them, and a shop that has opened no account omits the
 #: accounts line with its own reason (`NO_ACCOUNTS`).
-DAILY_SUMMARY_TEMPLATE_IDENTIFIER: Final = "daily-summary-v2"
+#:
+#: v3 (round 8, `SUMMARY-ATTENTION-001`, `DEC-044`): a *Cần chú ý* block heads the summary --
+#: at most five computed lines (late deliveries undecided, orders late against their promise,
+#: pickup reminders and the free-storage days running out, invoices waiting to be issued, and the
+#: day against the same weekday of the previous four weeks with last month's missing cost
+#: categories), or one "nothing needs attention" line when every source answered and none fired.
+DAILY_SUMMARY_TEMPLATE_IDENTIFIER: Final = "daily-summary-v3"
 
 #: `Asia/Ho_Chi_Minh` weekday names, Monday first, as the counter says them.
 _WEEKDAY_VI: Final = ("thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy", "Chủ nhật")
@@ -64,6 +70,14 @@ class LineKey(StrEnum):
     """Every line the template can write, in the order it writes them."""
 
     HEADER = "HEADER"
+    #: The *Cần chú ý* block (`DEC-044`), in the decision's order, between the header and the day.
+    ATTENTION = "ATTENTION"
+    ATTN_LATE_DELIVERIES = "ATTN_LATE_DELIVERIES"
+    ATTN_OVERDUE = "ATTN_OVERDUE"
+    ATTN_PICKUP = "ATTN_PICKUP"
+    ATTN_INVOICES = "ATTN_INVOICES"
+    ATTN_NUMBERS = "ATTN_NUMBERS"
+    ATTN_NONE = "ATTN_NONE"
     ORDERS = "ORDERS"
     MONEY = "MONEY"
     FINISHED_ON_TIME = "FINISHED_ON_TIME"
@@ -95,6 +109,13 @@ class OmissionReason(StrEnum):
     #: The shop has opened no customer account (`PAYMENT-002`, `DEC-035`): "0 khách công nợ đến hạn"
     #: would be a figure about a feature the shop does not use (spec §7: "feature empty").
     NO_ACCOUNTS = "NO_ACCOUNTS"
+    #: The day is still being traded before closing time: a half day against four whole ones
+    #: would always read "lower than usual".
+    DAY_NOT_OVER = "DAY_NOT_OVER"
+    #: Fewer than three of the previous four same weekdays had any trade: no usual to compare to.
+    TOO_LITTLE_HISTORY = "TOO_LITTLE_HISTORY"
+    #: No storage policy is published: there is no free-storage period to run out.
+    STORAGE_POLICY_UNPUBLISHED = "STORAGE_POLICY_UNPUBLISHED"
 
 
 #: The reason in the owner's words, shown with the omitted line. Fixed text, part of the template.
@@ -107,6 +128,9 @@ _OMISSION_NOTE_VI: Final = {
     ),
     OmissionReason.SOURCE_TRUNCATED: "danh sách quá dài để đếm đủ",
     OmissionReason.NO_ACCOUNTS: "cửa hàng chưa mở công nợ cho khách nào",
+    OmissionReason.DAY_NOT_OVER: "chỉ so sánh sau giờ đóng cửa",
+    OmissionReason.TOO_LITTLE_HISTORY: "chưa đủ 3 tuần có số liệu để so sánh",
+    OmissionReason.STORAGE_POLICY_UNPUBLISHED: "chủ tiệm chưa công bố quy định lưu kho",
 }
 
 #: What each omissible line is about, in the owner's words.
@@ -117,7 +141,32 @@ _LINE_TOPIC_VI: Final = {
     LineKey.COMPLAINTS_OPEN: "Khiếu nại đang mở",
     LineKey.ACCOUNTS_DUE: "Công nợ đến hạn",
     LineKey.SPENDING: "Khoản chi trong ngày",
+    LineKey.ATTN_LATE_DELIVERIES: "Đơn giao trễ chưa xử lý",
+    LineKey.ATTN_PICKUP: "Nhắc khách lấy đồ",
+    LineKey.ATTN_INVOICES: "Hóa đơn cần xuất",
+    LineKey.ATTN_NUMBERS: "So với các tuần trước",
 }
+
+#: How many lines the *Cần chú ý* block may hold (`DEC-044`): a list the owner reads at a glance.
+ATTENTION_MAX_LINES: Final = 5
+
+#: Invoice asks older than this many days are named (`DEC-044` line 4).
+INVOICE_STALE_DAYS: Final = 3
+
+#: The free-storage days are "running out" within this many days of the fee's first day.
+FEE_SOON_DAYS: Final = 3
+
+#: How many previous same weekdays the day is compared with, and how many must have had trade.
+COMPARE_WEEKS: Final = 4
+COMPARE_MIN_WEEKS: Final = 3
+
+#: The band, in percent of the usual, outside which a figure is named (`DEC-044`).
+COMPARE_LOW_PERCENT: Final = 70
+COMPARE_HIGH_PERCENT: Final = 130
+
+#: Last month's cost categories are asked for only after this day of the month: bills for a month
+#: arrive in the first days of the next, and a nudge on the 2nd would be noise.
+MISSING_COSTS_AFTER_DAY: Final = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,6 +257,105 @@ class AccountsDueFigures:
     overdue_vnd: int
 
 
+class Direction(StrEnum):
+    """Where a figure sits against the usual. Decided by `compare_to_usual`, printed as words."""
+
+    LOW = "LOW"
+    USUAL = "USUAL"
+    HIGH = "HIGH"
+
+
+@dataclass(frozen=True, slots=True)
+class UsualFigure:
+    """One figure of the day beside its usual: the mean of the same weekday over the weeks that
+    had trade, rounded half up to a whole number by `compare_to_usual`, never by the template."""
+
+    today: int
+    usual: int
+    direction: Direction
+
+
+@dataclass(frozen=True, slots=True)
+class DayComparison:
+    """The day against the same weekday of the previous weeks that had any trade."""
+
+    weeks_with_data: int
+    collected: UsualFigure
+    orders: UsualFigure
+
+
+@dataclass(frozen=True, slots=True)
+class MissingCosts:
+    """Last month's core margin categories with no line in Sổ thu chi (`CORE_MARGIN_CATEGORIES`
+    order), and the month they are missing from (its first day)."""
+
+    month: date
+    categories: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FeeSoon:
+    """Laundry whose free-storage days end within `FEE_SOON_DAYS`, under the published policy."""
+
+    count: int
+    free_days: int
+
+
+@dataclass(frozen=True, slots=True)
+class AttentionFacts:
+    """The *Cần chú ý* sources (`DEC-044`). Counts and money only; each may be `Unavailable`."""
+
+    #: `LATE-CREDIT-002`: deliveries past the threshold with no decision yet.
+    late_deliveries_undecided: int | Unavailable
+    #: `PICKUP-REMIND-001`: reminders due and not done.
+    reminders_due: int | Unavailable
+    #: `UNCLAIMED-001` under the published storage policy.
+    fee_soon: FeeSoon | Unavailable
+    #: `EINVOICE-REQUEST-001`: invoice asks still open after `INVOICE_STALE_DAYS`.
+    invoices_waiting: int | Unavailable
+    comparison: DayComparison | Unavailable
+    #: `None` before `MISSING_COSTS_AFTER_DAY`, or when last month has every category.
+    missing_costs: MissingCosts | Unavailable | None
+
+
+def _unavailable_attention(source: str) -> AttentionFacts:
+    missing = Unavailable(OmissionReason.SOURCE_NOT_BUILT, source)
+    return AttentionFacts(
+        late_deliveries_undecided=missing,
+        reminders_due=missing,
+        fee_soon=missing,
+        invoices_waiting=missing,
+        comparison=missing,
+        missing_costs=missing,
+    )
+
+
+#: What a caller that reads no attention source passes: every source "not built".
+NO_ATTENTION: Final = _unavailable_attention("SUMMARY-ATTENTION-001")
+
+
+def compare_to_usual(today: int, previous: tuple[int, ...]) -> UsualFigure:
+    """`today` against the mean of `previous` (the weeks with trade), in whole numbers only.
+
+    The mean is rounded half up (`(2*sum + n) // (2*n)`); the band test multiplies rather than
+    divides, `100*today < 70*usual` or `100*today > 130*usual`, so no fraction is ever formed.
+    """
+    for value in (today, *previous):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("a compared figure is a non-negative whole number")
+    if not previous:
+        raise ValueError("a usual needs at least one previous week")
+    count = len(previous)
+    usual = (2 * sum(previous) + count) // (2 * count)
+    if 100 * today < COMPARE_LOW_PERCENT * usual:
+        direction = Direction.LOW
+    elif 100 * today > COMPARE_HIGH_PERCENT * usual:
+        direction = Direction.HIGH
+    else:
+        direction = Direction.USUAL
+    return UsualFigure(today=today, usual=usual, direction=direction)
+
+
 @dataclass(frozen=True, slots=True)
 class SummaryInputs:
     """Everything the template reads. `as_of_local` is set only when the day is still being traded
@@ -221,6 +369,7 @@ class SummaryInputs:
     spending: SpendingFigures | Unavailable
     waiting: WaitingFigures | Unavailable
     accounts_due: AccountsDueFigures | Unavailable
+    attention: AttentionFacts = NO_ATTENTION
 
 
 #: A figure attached to a line: an integer, or a short token/string (a date, a direction).
@@ -284,8 +433,10 @@ def format_day(day: date) -> str:
 def render_summary(inputs: SummaryInputs) -> RenderedSummary:
     """Write the summary. Deterministic: the same inputs give the same lines, byte for byte."""
 
-    lines: list[SummaryLine] = [_header(inputs), _orders(inputs.figures), _money(inputs.figures)]
+    lines: list[SummaryLine] = [_header(inputs)]
     omitted: list[Omission] = []
+    lines.extend(_attention(inputs, omitted))
+    lines.extend((_orders(inputs.figures), _money(inputs.figures)))
     lines.append(_finished(inputs.figures))
 
     board = inputs.board
@@ -519,6 +670,161 @@ def _spending(figures: SpendingFigures) -> SummaryLine:
     )
 
 
+# --- Cần chú ý (`DEC-044`) ------------------------------------------------------------------------
+
+
+def _attention(inputs: SummaryInputs, omitted: list[Omission]) -> list[SummaryLine]:
+    """The block: a title line and at most `ATTENTION_MAX_LINES` lines, each only when it fires.
+
+    "Nothing needs attention" is said only when every source answered: a source that could not
+    answer is not a quiet one, so with one missing and none firing the block is left out.
+    """
+    facts = inputs.attention
+    found: list[SummaryLine] = []
+    complete = True
+
+    def missing(key: LineKey, source: Unavailable) -> None:
+        nonlocal complete
+        complete = False
+        # Only reasons the owner can act on or should know are listed: a source not built yet is
+        # the build's business, and a past day's live list is simply not the block's to answer.
+        if source.reason not in _SILENT_IN_ATTENTION:
+            omitted.append(_omission(key, source))
+
+    late = facts.late_deliveries_undecided
+    if isinstance(late, Unavailable):
+        missing(LineKey.ATTN_LATE_DELIVERIES, late)
+    elif late:
+        found.append(
+            SummaryLine(
+                LineKey.ATTN_LATE_DELIVERIES,
+                f"{format_count(late, 'đơn')} giao trễ quá 2 giờ chưa xử lý giảm trừ.",
+                (("late_deliveries_undecided", late),),
+            )
+        )
+
+    board = inputs.board
+    if isinstance(board, Unavailable):
+        complete = False
+    elif board.promised_late:
+        found.append(
+            SummaryLine(
+                LineKey.ATTN_OVERDUE,
+                f"{format_count(board.promised_late, 'đơn')} chưa trả khách đã trễ giờ hẹn.",
+                (("promised_late", board.promised_late),),
+            )
+        )
+
+    pickup = _pickup_sentences(facts, missing)
+    if pickup:
+        sentences, figures = pickup
+        found.append(SummaryLine(LineKey.ATTN_PICKUP, " ".join(sentences), tuple(figures)))
+
+    stale = facts.invoices_waiting
+    if isinstance(stale, Unavailable):
+        missing(LineKey.ATTN_INVOICES, stale)
+    elif stale:
+        found.append(
+            SummaryLine(
+                LineKey.ATTN_INVOICES,
+                f"{format_count(stale, 'yêu cầu hóa đơn')} đã chờ quá "
+                f"{INVOICE_STALE_DAYS} ngày chưa xuất.",
+                (("invoices_waiting", stale),),
+            )
+        )
+
+    numbers = _numbers_sentences(facts, missing)
+    if numbers:
+        sentences, figures = numbers
+        found.append(SummaryLine(LineKey.ATTN_NUMBERS, " ".join(sentences), tuple(figures)))
+
+    if found:
+        title = SummaryLine(LineKey.ATTENTION, "Cần chú ý:", (("attention", len(found)),))
+        return [title, *(_bulleted(line) for line in found[:ATTENTION_MAX_LINES])]
+    if complete:
+        return [SummaryLine(LineKey.ATTN_NONE, "Không có việc cần chú ý.", (("attention", 0),))]
+    return []
+
+
+_SILENT_IN_ATTENTION: Final = frozenset(
+    {
+        OmissionReason.SOURCE_NOT_BUILT,
+        OmissionReason.LIVE_ONLY_TODAY,
+        OmissionReason.STORAGE_POLICY_UNPUBLISHED,
+    }
+)
+
+
+def _bulleted(line: SummaryLine) -> SummaryLine:
+    return SummaryLine(line.key, f"- {line.text}", line.figures)
+
+
+def _pickup_sentences(
+    facts: AttentionFacts, missing: Callable[[LineKey, Unavailable], None]
+) -> tuple[list[str], list[tuple[str, Figure]]] | None:
+    sentences: list[str] = []
+    figures: list[tuple[str, Figure]] = []
+    due = facts.reminders_due
+    if isinstance(due, Unavailable):
+        missing(LineKey.ATTN_PICKUP, due)
+    elif due:
+        sentences.append(f"{format_count(due, 'lần nhắc khách lấy đồ')} đến hạn chưa làm.")
+        figures.append(("reminders_due", due))
+    soon = facts.fee_soon
+    if isinstance(soon, Unavailable):
+        # No published storage policy means no free period to run out: not a gap in the block.
+        if soon.reason is not OmissionReason.STORAGE_POLICY_UNPUBLISHED:
+            missing(LineKey.ATTN_PICKUP, soon)
+    elif soon.count:
+        sentences.append(
+            f"{format_count(soon.count, 'đơn')} chờ lấy sắp hết {soon.free_days} ngày giữ miễn phí."
+        )
+        figures.append(("fee_soon", soon.count))
+    return (sentences, figures) if sentences else None
+
+
+def _numbers_sentences(
+    facts: AttentionFacts, missing: Callable[[LineKey, Unavailable], None]
+) -> tuple[list[str], list[tuple[str, Figure]]] | None:
+    sentences: list[str] = []
+    figures: list[tuple[str, Figure]] = []
+    comparison = facts.comparison
+    if isinstance(comparison, Unavailable):
+        missing(LineKey.ATTN_NUMBERS, comparison)
+    else:
+        weeks = comparison.weeks_with_data
+        collected, orders = comparison.collected, comparison.orders
+        if collected.direction is not Direction.USUAL:
+            sentences.append(
+                f"Tiền thu {format_vnd(collected.today)}, {_direction_vi(collected.direction)} "
+                f"(trung bình {weeks} tuần trước cùng thứ {format_vnd(collected.usual)})."
+            )
+            figures.extend((("collected_vnd", collected.today), ("usual_vnd", collected.usual)))
+        if orders.direction is not Direction.USUAL:
+            sentences.append(
+                f"Nhận {format_count(orders.today, 'đơn')}, {_direction_vi(orders.direction)} "
+                f"(trung bình {weeks} tuần trước cùng thứ {format_count(orders.usual, 'đơn')})."
+            )
+            figures.extend((("orders_created", orders.today), ("usual_orders", orders.usual)))
+    costs = facts.missing_costs
+    if isinstance(costs, Unavailable):
+        missing(LineKey.ATTN_NUMBERS, costs)
+    elif costs is not None and costs.categories:
+        unknown = [c for c in costs.categories if c not in EXPENSE_CATEGORY_VI]
+        if unknown:
+            raise ValueError("a missing cost category is a Sổ thu chi code")
+        names = ", ".join(EXPENSE_CATEGORY_VI[c] for c in costs.categories)
+        sentences.append(
+            f"Tháng {costs.month:%m/%Y} chưa ghi chi {names}: chưa tính được lãi tháng đó."
+        )
+        figures.append(("missing_costs_month", costs.month.isoformat()))
+    return (sentences, figures) if sentences else None
+
+
+def _direction_vi(direction: Direction) -> str:
+    return "thấp hơn thường lệ" if direction is Direction.LOW else "cao hơn thường lệ"
+
+
 # --- omission ------------------------------------------------------------------------------------
 
 
@@ -545,12 +851,26 @@ def _optional[T](
 
 
 __all__ = [
+    "ATTENTION_MAX_LINES",
+    "COMPARE_HIGH_PERCENT",
+    "COMPARE_LOW_PERCENT",
+    "COMPARE_MIN_WEEKS",
+    "COMPARE_WEEKS",
     "DAILY_SUMMARY_TEMPLATE_IDENTIFIER",
     "EXPENSE_CATEGORY_VI",
+    "FEE_SOON_DAYS",
+    "INVOICE_STALE_DAYS",
+    "MISSING_COSTS_AFTER_DAY",
+    "NO_ATTENTION",
     "AccountsDueFigures",
+    "AttentionFacts",
     "BoardFigures",
+    "DayComparison",
     "DayFigures",
+    "Direction",
+    "FeeSoon",
     "LineKey",
+    "MissingCosts",
     "Omission",
     "OmissionReason",
     "OpenComplaints",
@@ -559,7 +879,9 @@ __all__ = [
     "SummaryInputs",
     "SummaryLine",
     "Unavailable",
+    "UsualFigure",
     "WaitingFigures",
+    "compare_to_usual",
     "format_count",
     "format_day",
     "format_vnd",

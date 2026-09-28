@@ -5680,3 +5680,202 @@ items:
   - walked_on_the_real_api_at_phone_size
   - rollback_assessment
   blocked_by_decisions: []
+- id: EINVOICE-REQUEST-001
+  phase: PRODUCTION_HARDENING
+  title: Invoice requests captured on an order or an account month with a buyer
+    snapshot; the bookkeeper issues in the provider's portal and staff record the number
+  status: READY
+  priority: 339
+  depends_on:
+  - CUSTOMER-001
+  - PAYMENT-002
+  context_domains:
+  - platform
+  - privacy_consent
+  - orders_audit
+  normative_sources:
+  - docs/REMAINING_GAPS_SPEC_V1.md
+  - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-remaining-gaps-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - no_tax_is_computed_or_named
+  - capture_refused_until_the_privacy_notice
+  - issued_rows_are_immutable
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: VIETQR-001
+  phase: PRODUCTION_HARDENING
+  title: An exact NAPAS VietQR for the balance still owed, with a transfer code naming
+    the order or the account month, after the owner publishes the account
+  status: READY
+  priority: 340
+  depends_on:
+  - PAYMENT-001
+  - PAYMENT-002
+  - RECEIPT-PRINT-001
+  context_domains:
+  - platform
+  - pricing
+  normative_sources:
+  - docs/REMAINING_GAPS_SPEC_V1.md
+  - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-remaining-gaps-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - golden_vietqr_vectors_reproduce_byte_for_byte
+  - the_amount_is_the_ledgers_remaining_balance
+  - refused_until_the_owner_publishes_the_account
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: LATE-CREDIT-002
+  phase: PRODUCTION_HARDENING
+  title: Late deliveries measured by the server against the first promise and decided in
+    one tap through the existing remedy authority
+  status: READY
+  priority: 341
+  depends_on:
+  - PROMISE-001
+  - REMEDY-GARMENT-001
+  context_domains:
+  - platform
+  - orders_audit
+  - promotion_delivery_sla
+  normative_sources:
+  - docs/REMAINING_GAPS_SPEC_V1.md
+  - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-remaining-gaps-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_server_measures_the_minutes
+  - only_a_customer_requested_hen_lai_moves_the_deadline
+  - the_credit_goes_through_the_existing_remedy_authority
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: PICKUP-REMIND-001
+  phase: PRODUCTION_HARDENING
+  title: A pickup-reminder schedule on shop days with a fixed text behind the
+    transactional egress guard and a two-tap send recorded as a contact attempt
+  status: READY
+  priority: 342
+  depends_on:
+  - UNCLAIMED-001
+  - CONSENT-TRANSACTIONAL-001
+  context_domains:
+  - platform
+  - privacy_consent
+  normative_sources:
+  - docs/REMAINING_GAPS_SPEC_V1.md
+  - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-remaining-gaps-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - the_schedule_is_the_domains
+  - the_text_carries_no_name_or_phone
+  - refused_until_the_messaging_policy_and_on_stop
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: SUMMARY-ATTENTION-001
+  phase: PRODUCTION_HARDENING
+  title: The evening summary opens with a computed 'Cần chú ý' block instead of
+    model-written prose
+  status: READY
+  priority: 343
+  depends_on:
+  - DAILY-SUMMARY-001
+  - EINVOICE-REQUEST-001
+  - LATE-CREDIT-002
+  - PICKUP-REMIND-001
+  context_domains:
+  - platform
+  - business_truth
+  normative_sources:
+  - docs/REMAINING_GAPS_SPEC_V1.md
+  - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-remaining-gaps-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_attention_line_is_a_versioned_count_or_comparison
+  - no_personal_column_is_read
+  - an_all_clear_only_when_every_source_answered
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: GAPS-FILMED-REVIEW-004
+  phase: PRODUCTION_HARDENING
+  title: Every round-8 flow filmed at desk size against the real API from an empty
+    database, reviewed as the counter worker and the owner, every finding fixed
+  status: READY
+  priority: 344
+  depends_on:
+  - EINVOICE-REQUEST-001
+  - VIETQR-001
+  - LATE-CREDIT-002
+  - PICKUP-REMIND-001
+  - SUMMARY-ATTENTION-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/REMAINING_GAPS_SPEC_V1.md
+  - docs/DECISION_RECORD_REMAINING_GAPS_2026-09-28.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-remaining-gaps-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - every_new_flow_filmed_at_desk_size
+  - each_review_finding_is_fixed_with_a_guard
+  - gaps_register_lists_exactly_what_is_missing
+  - no_capability_authorisation_changed
+  - rollback_assessment
+  blocked_by_decisions: []

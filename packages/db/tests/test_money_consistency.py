@@ -203,7 +203,10 @@ def test_the_final_functions_carry_every_slices_rule(connection: psycopg.Connect
     """`0059` and `0060` replaced different `0056` functions; `0061` replaced three more. Whatever
     ran last defines each, so each must still say what every slice needs it to say."""
 
-    assert [m.version for m in discover_migrations()][-3:] == ["0059", "0060", "0061"]
+    # Round 8 (`LATE-CREDIT-002`, `0063`) adds migrations after these three that replace none of
+    # the functions below; the bodies read next are what proves the final definitions.
+    versions = [m.version for m in discover_migrations()]
+    assert versions[versions.index("0059") :][:3] == ["0059", "0060", "0061"]
 
     def body(name: str) -> str:
         [(text,)] = _rows(

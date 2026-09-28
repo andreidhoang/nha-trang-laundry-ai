@@ -1318,6 +1318,45 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/late-deliveries:
+    get:
+      operationId: list_late_deliveries
+      summary: 'Giao trễ cần xử lý: delivered orders late by more than the published threshold, undecided.'
+      x-authorization-dependencies:
+      - require_late_delivery_staff
+      - get_late_delivery_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/late-deliveries/{order_id}/decision:
+    post:
+      operationId: decide_late_delivery
+      summary: Lỗi của tiệm / Không phải lỗi tiệm for one measured late delivery (`DEC-042`).
+      x-authorization-dependencies:
+      - require_late_delivery_staff
+      - get_late_delivery_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/machines:
     get:
       operationId: list_machines

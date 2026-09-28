@@ -412,6 +412,17 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "checks membership once more, and the open-complaint count and Sổ thu chi totals are "
         "selected WHERE store_id = the named store.",
     ),
+    # --- LATE-CREDIT-002 (DEC-042) ------------------------------------------------------------
+    ("GET", "/internal/v1/stores/{store_id}/late-deliveries"): store_scoped(
+        "late_deliveries", "LateDeliveryRepository.list_late"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/late-deliveries/{order_id}/decision"): RouteScope(
+        "STORE_SCOPED",
+        ("late_deliveries", "LateDeliveryRepository.decide"),
+        "role and MFA, then membership of the named store before the idempotency claim; the order "
+        "is locked WHERE id = %s AND store_id = the named store, so another store's order is the "
+        "same 404 as a missing one; the incident and the remedy proposal re-check membership.",
+    ),
     # --- SHOP-CAPTURE-001 (DEC-038) --------------------------------------------------------------
     ("GET", "/internal/v1/stores/{store_id}/machines"): RouteScope(
         "STORE_SCOPED",

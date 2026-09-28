@@ -71,6 +71,8 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0060", "unclaimed_laundry"),
         # Round 7 wave 2 integration: a storage fee fixed by the account charge the goods left on.
         ("0061", "account_storage_fee"),
+        # 0062 is reserved for EINVOICE-REQUEST-001 (round 8); LATE-CREDIT-002 holds 0063.
+        ("0063", "late_delivery_decisions"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

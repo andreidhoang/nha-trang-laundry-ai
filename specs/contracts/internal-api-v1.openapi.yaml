@@ -469,6 +469,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}/vietqr:
+    get:
+      operationId: read_order_vietqr
+      summary: 'The order''s VietQR: the exact amount still owed, the order''s transfer code, the account.'
+      x-authorization-dependencies:
+      - current_principal
+      - get_vietqr_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/pricebook/services:
     get:
       operationId: list_pricebook_services
@@ -1097,6 +1114,33 @@ paths:
       x-documented-by-fastapi: true
       responses:
         '201':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: month
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}/vietqr:
+    get:
+      operationId: read_account_month_vietqr
+      summary: 'An account customer''s month: what of that statement is still unpaid, as a VietQR.'
+      x-authorization-dependencies:
+      - require_customer_reader
+      - get_vietqr_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
           description: Success response.
       parameters:
       - name: customer_id

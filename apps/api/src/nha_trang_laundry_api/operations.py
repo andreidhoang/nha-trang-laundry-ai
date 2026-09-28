@@ -187,6 +187,7 @@ from nha_trang_laundry_domain.range_prices import (
 )
 from nha_trang_laundry_domain.remedies import RemedyKind
 from nha_trang_laundry_domain.shop_capture import TripCost
+from nha_trang_laundry_domain.vietqr import OrderIdTransferCode, TicketTransferCode
 
 from nha_trang_laundry_api.auth import AuthSettings
 
@@ -794,6 +795,7 @@ class OperationsService:
         open_only: bool = False,
         ticket_number: int | None = None,
         ticket_date: date | None = None,
+        transfer: TicketTransferCode | OrderIdTransferCode | None = None,
     ) -> tuple[OrderView, ...]:
         """The board, optionally narrowed to open orders or to one walk-in ticket.
 
@@ -820,6 +822,7 @@ class OperationsService:
                 limit=limit,
                 open_only=open_only,
                 ticket=ticket,
+                transfer=transfer,
             )
 
     def read_order(self, *, order_id: UUID, principal: StaffPrincipal) -> OrderView:

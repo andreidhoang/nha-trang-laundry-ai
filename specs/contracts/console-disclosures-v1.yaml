@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 537
+  DESCRIPTIVE: 542
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 19
   SERVER_GATE: 15
-total: 578
+total: 583
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -3031,6 +3031,34 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:c0d39ac4d763
+  module: screens/gaps.js
+  key: missing
+  text: Mã QR đúng số tiền còn lại và nội dung chuyển khoản của đơn đã có (sau khi chủ tiệm công bố tài
+    khoản), và tìm đơn theo nội dung chuyển khoản đã có. Chưa có nguồn giao dịch ngân hàng để máy tự đối
+    chiếu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#blockedBy:67c472e129a0
+  module: screens/gaps.js
+  key: blockedBy
+  text: Chủ tiệm chọn dịch vụ báo biến động số dư hoặc API ngân hàng, cấp tài khoản và khoá, và chọn đường
+    kết nối mạng
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:3f6d0233f448
+  module: screens/gaps.js
+  key: today
+  text: Khách quét mã QR ở Thu tiền hoặc trên phiếu; nhân viên xem app ngân hàng đúng nội dung và số tiền
+    rồi bấm Ghi nhận đã thu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: screens/gaps.js#missing:aa96c4dd15f8
   module: screens/gaps.js
   key: missing
@@ -4018,6 +4046,15 @@ disclosures:
     có giờ hẹn (nhận trước khi chủ tiệm công bố quy tắc hẹn trả) thì phiếu ghi “Tiệm sẽ báo khi đồ sẵn
     sàng” khi tiệm có số điện thoại hoặc kênh chat của khách, và “Giữ phiếu này để nhận đồ” khi khách
     chỉ có số phiếu.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/receipt.js#hint:6bc3e5bd75a3
+  module: screens/receipt.js
+  key: hint
+  text: Khi đơn còn tiền phải trả, phiếu in mã QR chuyển khoản đúng số còn lại và nội dung chuyển khoản
+    của đơn — chỉ khi chủ tiệm đã công bố tài khoản ngân hàng của tiệm.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -5178,6 +5215,15 @@ disclosures:
   module: ui/unclaimed.js
   key: hint
   text: Miễn rồi thì đơn này không tính phí lưu kho nữa. Lý do được ghi lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/vietqr.js#hint:f5a555177fb6
+  module: ui/vietqr.js
+  key: hint
+  text: 'Trong lúc chờ, quầy vẫn nhận chuyển khoản như trước: xem tiền vào trong app ngân hàng rồi ghi
+    nhận.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

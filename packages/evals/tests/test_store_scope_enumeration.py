@@ -354,6 +354,22 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/orders/{order_id}/account-charge"): store_scoped(
         "accounts", "AccountRepository.charge"
     ),
+    # --- VIETQR-001 (DEC-041) -------------------------------------------------------------------
+    # The order's QR is keyed by order_id: the store is read off the order row by the order read
+    # itself. The account month's QR names its store and requires membership before any SQL.
+    ("GET", "/internal/v1/orders/{order_id}/vietqr"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "keyed by order_id. BankTransferRepository.order_qr reads the order through "
+        "OrderRepository.read_for_principal, which reads the store off the order row and answers "
+        "OrderNotVisibleError (404) unless the caller is a member of it -- the order read's rule; "
+        "asserted in packages/db/tests/test_vietqr_repository.py and "
+        "apps/api/tests/test_vietqr_http.py",
+    ),
+    (
+        "GET",
+        "/internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}/vietqr",
+    ): store_scoped("bank_transfer", "BankTransferRepository.account_month_qr"),
     # --- CUSTOMER-001 (DEC-034) -----------------------------------------------------------------
     # Role and MFA, then membership of the named store, before anything is read or written; every
     # row is then selected WHERE store_id = the path's store, so another store's customer is

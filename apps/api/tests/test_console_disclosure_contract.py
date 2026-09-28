@@ -963,7 +963,11 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   (INVOICES_READ/_WRITE/_CLOSE); the new "Hóa đơn điện tử" gaps entry's missing/blockedBy/
     #   today (the payment entry's missing/blockedBy re-keyed, the e-invoice moved out of them); two
     #   screens/invoices.js hints and two ui/invoice.js hints. 554 + 3 + 21 = 578.
-    assert sum(counts.values()) == _registry()["total"] == 578
+    # VIETQR-001 (round 8, DEC-041): 554 + 5 = 559, none retired. The new "Tự xác nhận chuyển
+    #   khoản" gaps entry's missing/blockedBy/today, the receipt ⓘ's QR hint, and ui/vietqr.js's
+    #   "Trong lúc chờ…" hint under the unpublished-account note.
+    # All three round-8 console slices merged: 554 + 3 + 21 + 5 = 583.
+    assert sum(counts.values()) == _registry()["total"] == 583
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

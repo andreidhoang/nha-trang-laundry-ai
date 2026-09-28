@@ -1183,6 +1183,58 @@ def reminder_list(*rows: dict[str, object], published: bool = True) -> dict[str,
     }
 
 
+#: VIETQR-001: the stub's published QR -- a payload the domain would build, drawn by segno as
+#: the API draws it (level M, quiet zone 4), so the console's squares can be compared cell by cell.
+VIETQR_STUB_PAYLOAD = (
+    "00020101021238530010A0000007270123000697041601092576788590208QRIBFTTA5303704"
+    "540560000"
+    "5802VN62140810NTL2709017"
+)
+
+
+def vietqr_read(amount_vnd: int | None) -> dict[str, object]:
+    """`OrderVietQrResponse`: unpublished when `amount_vnd` is None, else a QR for that amount."""
+
+    base: dict[str, object] = {
+        "order_id": PICKUP_ORDER_ID,
+        "transfer_code": "NTL2709017",
+        "amount_source": "BALANCE_DUE",
+        "evaluated_at": "2026-09-27T03:00:00+00:00",
+        "refusal": "BANK_ACCOUNT_UNPUBLISHED",
+        "payload": None,
+        "modules": None,
+        "amount_vnd": None,
+        "account_name": None,
+        "bank_display_name": None,
+        "bank_account_version": None,
+        "bank_account_hash": None,
+    }
+    if amount_vnd is None:
+        return base
+    import segno  # the API's own dependency; only needed once a section publishes a QR
+
+    body = VIETQR_STUB_PAYLOAD + "6304"
+    crc = 0xFFFF
+    for byte in body.encode("ascii"):
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    payload = f"{body}{crc:04X}"
+    symbol = segno.make_qr(payload, error="M", boost_error=False)
+    modules = [[1 if cell else 0 for cell in row] for row in symbol.matrix_iter(border=4)]
+    return {
+        **base,
+        "refusal": None,
+        "payload": payload,
+        "modules": modules,
+        "amount_vnd": amount_vnd,
+        "account_name": "TIEM GIAT DEMO",
+        "bank_display_name": "ACB",
+        "bank_account_version": 1,
+        "bank_account_hash": "0" * 64,
+    }
+
+
 def storage_read(
     *,
     awaiting: bool,
@@ -2532,6 +2584,10 @@ with sync_playwright() as playwright:
             body = state.get("pickup_list") or pickup_list(published=False)
         elif route.request.method == "GET" and url.split("?")[0].endswith("/storage"):
             body = state.get("storage") or storage_read(awaiting=False)
+        elif route.request.method == "GET" and url.split("?")[0].endswith("/vietqr"):
+            # VIETQR-001: unpublished unless a section publishes one.
+            state.setdefault("vietqr_reads", []).append(url)
+            body = state.get("vietqr") or vietqr_read(None)
         elif route.request.method == "POST" and url.split("?")[0].endswith(
             ("/contact-attempts", "/storage-fee-waiver", "/disposal")
         ):
@@ -5811,6 +5867,24 @@ with sync_playwright() as playwright:
         and page.locator("#payment-bank-ref").count() == 1
         and "Đã thấy tiền vào tài khoản" in open_dialog_text(),
     )
+    # VIETQR-001: before the owner publishes the account there is no QR, one short line and the
+    # owner's switch behind ⓘ; the rest of the sheet is exactly as before.
+    page.wait_for_selector("#payment-qr [data-vietqr]", timeout=5000)
+    check(
+        "with no account published, Chuyển khoản shows no QR, one line and the ⓘ",
+        page.locator("#payment-qr svg.vietqr__symbol").count() == 0
+        and "Chưa có mã QR chuyển khoản." in open_dialog_text()
+        and page.locator("#payment-qr .info-btn").count() == 1
+        and any(u.endswith(f"/orders/{PICKUP_ORDER_ID}/vietqr") for u in state["vietqr_reads"]),
+        repr(
+            (
+                page.locator("#payment-qr svg.vietqr__symbol").count(),
+                page.locator("#payment-qr").inner_text(),
+                page.locator("#payment-qr .info-btn").count(),
+                state["vietqr_reads"][-1:],
+            )
+        ),
+    )
     page.locator("#payment-transfer-seen").check()
     page.locator("#payment-bank-ref").type("ft26", delay=15)
     state["order_writes"] = []
@@ -5862,6 +5936,43 @@ with sync_playwright() as playwright:
         card[:200],
     )
     check("and it offers no pickup press while money is owed", pickup_button() == 0)
+
+    # VIETQR-001: once published, Chuyển khoản draws the server's QR -- exactly its modules -- with
+    # the amount and the code in large type and the bank-app line; the amount stays editable.
+    state["vietqr"] = vietqr_read(60_000)
+    page.locator("button[data-step=TAKE_PAYMENT]").first.click()
+    page.wait_for_timeout(400)
+    page.locator("#payment-method button[data-value=CHUYEN_KHOAN]").click()
+    page.wait_for_timeout(500)
+    drawn: set[tuple[int, int]] = set()
+    path_d = page.locator("#payment-qr svg.vietqr__symbol path").first.get_attribute("d") or ""
+    for x, y, run in re.findall(r"M(\d+) (\d+)h(\d+)", path_d):
+        drawn.update((int(x) + k, int(y)) for k in range(int(run)))
+    served = state["vietqr"]["modules"]
+    expected = {(x, y) for y, row in enumerate(served) for x, v in enumerate(row) if v == 1}
+    check(
+        "published: the sheet draws exactly the server's modules, no more and no fewer",
+        drawn == expected and bool(expected),
+        f"{len(drawn)} drawn / {len(expected)} served",
+    )
+    check(
+        "the amount and the transfer code are in large type beside it, with the bank-app line",
+        "60.000" in page.locator("#payment-qr [data-field=qr-amount]").inner_text()
+        and page.locator("#payment-qr [data-field=qr-code]").inner_text() == "NTL2709017"
+        and "Kiểm tra app ngân hàng: đúng nội dung và số tiền rồi mới bấm Ghi nhận đã thu."
+        in open_dialog_text(),
+        open_dialog_text()[:200],
+    )
+    page.locator("#payment-edit").click()
+    page.wait_for_timeout(200)
+    check(
+        "the amount stays editable beside the QR (a customer may pay part)",
+        page.locator("#payment-amount").is_enabled()
+        and page.locator("#payment-qr svg.vietqr__symbol").count() == 1,
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    state["vietqr"] = None
 
     open_order(
         order_view(

@@ -30,6 +30,9 @@
  *     một phần" opens a field for a deposit, parsed with `parseDong`; the method (Tiền mặt /
  *     Chuyển khoản) is one tap, and a transfer asks for "Đã thấy tiền vào tài khoản". The server
  *     refuses more than remains (`OVERPAYMENT_REFUSED`) and pickup while money is owed.
+ *     `VIETQR-001` (`DEC-041`): choosing Chuyển khoản shows the server's QR for exactly what
+ *     remains, with the amount and the transfer code (*Nội dung*) in large type, once the owner
+ *     has published the shop's account; the amount field stays editable for a part payment.
  *   - **Every write ends in one of two ways**: a toast and the order re-read and re-drawn; or the
  *     refusal inline at the button, in Vietnamese, with the way out. A stale version is never
  *     retried -- the offer is "Đơn vừa đổi — tải lại".
@@ -129,6 +132,8 @@ import {
   machinePicker,
   tripFields,
 } from "../ui/shopCapture.js";
+// VIETQR-001 (DEC-041): the exact QR for what is owed, inside Thu tiền when the method is a transfer.
+import { paymentQr } from "../ui/vietqr.js";
 
 /**
  * The server's fixed audit page size. `ShadowConsoleRepository.audit_timeline` defaults to 100 and
@@ -1331,6 +1336,8 @@ export function render_(context) {
     let seen = false;
     let reference = "";
     let handOver = order.payment_may_hand_over === true;
+    // VIETQR-001: read once, the first time Chuyển khoản is chosen; the amount field stays editable.
+    const transferQr = paymentQr(orderId);
 
     const field = moneyInput({
       id: "payment-amount",
@@ -1434,8 +1441,10 @@ export function render_(context) {
           reference = /** @type {HTMLInputElement} */ (event.target).value;
         },
       });
+      transferQr.show();
       render(
         transferHost,
+        transferQr.node,
         h(
           "label",
           { class: "check-line", for: "payment-transfer-seen" },

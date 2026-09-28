@@ -13,6 +13,12 @@
  *   - **Bounded.** Each list is at most 200 lines, and says so when it stopped; the totals are over
  *     every row.
  *
+ *   - **An exact VietQR for the month still unpaid** (`VIETQR-001`, `DEC-041`): the server's QR for
+ *     what of this statement no payment has covered yet, with the amount and the transfer code
+ *     (`NTLCN…`) beside it, on the screen and on the paper. It includes an earlier month still
+ *     unpaid (account payments settle the oldest money first), and says so with the server's
+ *     figure. No QR until the owner publishes the shop's account, and none once the month is paid.
+ *
  * Read-only: nothing is written from here.
  *
  * @module screens/accountStatement
@@ -30,6 +36,8 @@ import { errorNotice } from "../ui/components.js";
 // EINVOICE-REQUEST-001 (DEC-040): the month's Hóa đơn tháng row (not printed: only the paper is).
 import { invoiceSection } from "../ui/invoice.js";
 import { actionBar, button, infoButton, page, skeletonRows, techDetails } from "../ui/kit.js";
+// VIETQR-001 (DEC-041): the QR for what of the month is still unpaid.
+import { accountMonthQrPath, qrAbsent, qrCard, readQr } from "../ui/vietqr.js";
 
 /**
  * @param {string|null|undefined} day `YYYY-MM-DD`
@@ -99,8 +107,31 @@ export function render_(context) {
     onClick: () => window.print(),
   });
 
-  /** @param {any} read */
-  function paper(read) {
+  const qrHost = h("div", { class: "statement-screen__qr" });
+
+  /**
+   * The QR block on the paper, or null when the server built none.
+   *
+   * @param {any|null} qr an `AccountMonthVietQrResponse`
+   */
+  function qrSection(qr) {
+    if (!qr || qr.refusal || !Array.isArray(qr.modules)) return null;
+    return h(
+      "section",
+      { class: "statement-paper__qr", dataField: "vietqr", "aria-label": "Chuyển khoản" },
+      h("p", { class: "statement-paper__section" }, "Chuyển khoản — quét mã"),
+      qrCard(qr, {
+        size: "paper",
+        amountLabel: "Số còn nợ",
+        note: qr.unpaid_before_month_vnd
+          ? `Gồm cả ${money(qr.unpaid_before_month_vnd)} còn nợ từ các tháng trước.`
+          : null,
+      }),
+    );
+  }
+
+  /** @param {any} read @param {any|null} [qr] */
+  function paper(read, qr = null) {
     const figures = read.statement;
     // The statement read names no store; the page reads it for the selected one.
     const storeName = snapshot().storeNames?.[String(store)] || null;
@@ -128,6 +159,7 @@ export function render_(context) {
         row("Cuối kỳ (còn nợ)", money(figures.closing_vnd), "closing", true),
         row("Hạn thanh toán", dayText(figures.due_on), "due"),
       ),
+      qrSection(qr),
       h(
         "section",
         { class: "statement-paper__lines", "aria-label": "Đơn ghi công nợ" },
@@ -197,9 +229,12 @@ export function render_(context) {
 
   async function start() {
     try {
-      const read = await request(
-        `/internal/v1/stores/${encodeURIComponent(store)}/customers/${encodeURIComponent(customerId)}/account/statements/${encodeURIComponent(month)}`,
-      );
+      const [read, qr] = await Promise.all([
+        request(
+          `/internal/v1/stores/${encodeURIComponent(store)}/customers/${encodeURIComponent(customerId)}/account/statements/${encodeURIComponent(month)}`,
+        ),
+        readQr(accountMonthQrPath(store, customerId, month)),
+      ]);
       render(
         headHost,
         page({
@@ -209,7 +244,9 @@ export function render_(context) {
           info,
         }),
       );
-      render(paperNode, ...paper(read));
+      render(paperNode, ...paper(read, qr));
+      // Unpublished: one line and the owner's switch, on the screen only (never on the paper).
+      render(qrHost, qr?.refusal === "BANK_ACCOUNT_UNPUBLISHED" ? qrAbsent(qr) : null);
       printButton.disabled = false;
       // EINVOICE-REQUEST-001: this month's invoice request, beside the statement it is for.
       if (can(principal(), "INVOICES_READ").allowed) {
@@ -255,6 +292,7 @@ export function render_(context) {
       paperNode,
       h(
         "div",
+    qrHost,
         { class: "notice", dataState: "danger" },
         h("p", { class: "notice__title" }, "Địa chỉ này không chứa mã khách và tháng hợp lệ"),
         h("p", null, "Không có yêu cầu nào được gửi đi."),

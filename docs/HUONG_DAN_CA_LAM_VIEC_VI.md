@@ -102,6 +102,8 @@ phần còn lại), mỗi lần bằng **Tiền mặt** hoặc **Chuyển khoả
 |---|---|---|
 | 7a | Sau bước 7 (đã nhận đồ): bấm **Thu tiền** trong ô tiền của đơn. Trả đủ: để nguyên số **Còn lại**. Đặt cọc: bấm **Khách trả một phần (đặt cọc)** rồi gõ số khách trả. Chọn **Tiền mặt** hoặc **Chuyển khoản**, bấm **Ghi nhận đã thu** | Chi tiết đơn |
 | 7b | Khách chuyển khoản: mở app ngân hàng của tiệm, **thấy tiền vào rồi** mới tích **Đã thấy tiền vào tài khoản**. Ô mã giao dịch (vài số cuối) không bắt buộc | Chi tiết đơn |
+| 7c | Khi chủ tiệm đã công bố tài khoản ngân hàng (DEC-041): chọn **Chuyển khoản** là hiện **mã QR** đúng số còn lại, với **Số tiền** và **Nội dung** (ví dụ `NTL2809012`). Cho khách quét. *Kiểm tra app ngân hàng: đúng nội dung và số tiền rồi mới bấm Ghi nhận đã thu.* Khách trả một phần thì vẫn bấm **Khách trả một phần (đặt cọc)** và gõ số khách chuyển | Chi tiết đơn |
+| 7d | Tiền chuyển tới sau, không biết của đơn nào: ở **Đơn hàng** gõ nội dung chuyển khoản (`NTL…`) vào ô tìm (điện thoại: bấm **Mã chuyển khoản** trước), bấm **Tìm**, mở đơn và thu như 7a | Đơn hàng |
 | 10a | Khách tới lấy: tìm phiếu, mở đơn. Còn nợ thì nút lớn là **Thu tiền** — thu **Còn lại** như bước 11. Đã trả đủ từ trước thì đưa đồ rồi bấm **Khách đã nhận đồ** (tên bạn được ghi), rồi **Giao đồ & đóng đơn** | Chi tiết đơn |
 
 - **Khách đưa dư thì trả lại tiền thừa.** Máy không nhận số lớn hơn số **Còn lại** — ghi đúng số
@@ -109,6 +111,8 @@ phần còn lại), mỗi lần bằng **Tiền mặt** hoặc **Chuyển khoả
 - Mỗi lần thu tính vào **Đã thu tại quầy** của **ngày khách trả**, tách **Tiền mặt** và
   **Chuyển khoản** — đối chiếu tiền mặt với ngăn kéo, chuyển khoản với app ngân hàng.
 - Phiếu in cho khách ghi **Đã trả** và **Còn lại** khi đơn đã có một lần thu.
+- Còn tiền phải trả thì phiếu in thêm **mã QR chuyển khoản** đúng số còn lại và nội dung của đơn
+  (khi chủ tiệm đã công bố tài khoản). Sao kê công nợ tháng cũng in mã QR số còn nợ (`NTLCN…`).
 - Đồ chưa giặt xong thì chưa có nút **Khách đã nhận đồ**, và dấu tích **Khách lấy đồ luôn** chỉ
   hiện khi đồ đã sẵn sàng và khách tự lấy.
 - **Đơn tiệm tới lấy đồ** (giao nhận *chỉ lấy*): khách chỉ trả **tại quầy** — lúc tới lấy (bước 11),

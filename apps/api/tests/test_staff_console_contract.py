@@ -232,6 +232,11 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/orders/{}/contact-attempts",
         "/internal/v1/orders/{}/storage-fee-waiver",
         "/internal/v1/orders/{}/disposal",
+        # VIETQR-001 (DEC-041). Thu tiền and the receipt read the order's QR; the statement reads
+        # the account month's. A screen that stops calling them puts the customer back to typing
+        # the amount and the memo by hand, which is how a transfer loses its order.
+        "/internal/v1/orders/{}/vietqr",
+        "/internal/v1/stores/{}/customers/{}/account/statements/{}/vietqr",
         # PICKUP-REMIND-001 (DEC-043). Nhắc khách lấy đồ and Hôm nay's count read the due list;
         # Chép tin nhắn reads the fixed text behind the egress guard. A screen that stops calling
         # them puts the day-3/7/14 reminders back in nobody's memory.

@@ -203,7 +203,23 @@ def test_the_final_functions_carry_every_slices_rule(connection: psycopg.Connect
     """`0059` and `0060` replaced different `0056` functions; `0061` replaced three more. Whatever
     ran last defines each, so each must still say what every slice needs it to say."""
 
-    assert [m.version for m in discover_migrations()][-3:] == ["0059", "0060", "0061"]
+    migrations = discover_migrations()
+    versions = [m.version for m in migrations]
+    assert versions[versions.index("0059") : versions.index("0061") + 1] == ["0059", "0060", "0061"]
+    # Round 8 (EINVOICE-REQUEST-001's `0062`, and whatever follows): a later migration may add
+    # tables, but if it replaced one of the functions below this test must be re-read against it.
+    guarded = (
+        "enforce_order_payment_ledger",
+        "enforce_order_refund_consistency",
+        "enforce_storage_fee_settlement",
+        "enforce_account_charge",
+        "enforce_account_charge_owes_total_and_fee",
+        "enforce_waiver_before_settlement",
+    )
+    for later in migrations[versions.index("0061") + 1 :]:
+        text = later.path.read_text(encoding="utf-8")
+        for name in guarded:
+            assert f"FUNCTION {name}(" not in text, (later.version, name)
 
     def body(name: str) -> str:
         [(text,)] = _rows(

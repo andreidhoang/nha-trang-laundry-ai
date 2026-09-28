@@ -119,8 +119,11 @@ def _parameters(route: APIRoute) -> list[dict[str, Any]]:
 
 def build_document(app: Any) -> dict[str, Any]:
     """Render the contract for every operation the application serves."""
+    from nha_trang_laundry_api.authorization import classify, require_allowlists_served
+
     paths: dict[str, dict[str, Any]] = {}
     mounts: dict[str, str] = {}
+    served: set[tuple[str, str]] = set()
     for route in app.routes:
         if not isinstance(route, APIRoute):
             path = getattr(route, "path", None)
@@ -138,6 +141,9 @@ def build_document(app: Any) -> dict[str, Any]:
                 "operationId": route.name,
                 "summary": _summary(route),
                 "x-authorization-dependencies": _dependencies(route),
+                "x-authorization": classify(
+                    method, route.path, [d.call for d in route.dependant.dependencies if d.call]
+                ),
                 "x-documented-by-fastapi": bool(route.include_in_schema),
                 "responses": {str(route.status_code or 200): {"description": "Success response."}},
             }
@@ -145,7 +151,9 @@ def build_document(app: Any) -> dict[str, Any]:
             if parameters:
                 operation["parameters"] = parameters
             paths.setdefault(route.path, {})[method.lower()] = operation
+            served.add((method, route.path))
 
+    require_allowlists_served(served)
     return {
         "openapi": "3.1.0",
         "info": {

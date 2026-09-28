@@ -1855,20 +1855,20 @@ disclosures:
     gate: require_approval_staff
     why: The console declares which roles and MFA state this capability needs. The test probes the named
       server gate and requires the console to be no more permissive than it is.
-- slot_id: core/rbac.js#why:3d864b158f0c
+- slot_id: core/rbac.js#why:2fd83e7c0351
   module: core/rbac.js
   key: why
-  text: Quản lý nhân sự chỉ dành cho chủ.
+  text: Quản lý nhân sự chỉ dành cho chủ đã xác thực hai bước.
   binding:
     kind: SERVER_GATE
     capability: STAFF_ADMIN
     gate: require_owner
     why: The console declares which roles and MFA state this capability needs. The test probes the named
       server gate and requires the console to be no more permissive than it is.
-- slot_id: core/rbac.js#why:5b58168feb1b
+- slot_id: core/rbac.js#why:f87d4e9b8f3d
   module: core/rbac.js
   key: why
-  text: Chỉ chủ đăng xuất được thiết bị của người khác.
+  text: Chỉ chủ đã xác thực hai bước đăng xuất được thiết bị của người khác.
   binding:
     kind: SERVER_GATE
     capability: SESSIONS_REVOKE_OTHER

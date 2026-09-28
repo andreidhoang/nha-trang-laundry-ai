@@ -877,8 +877,8 @@ class ShadowConsoleRepository:
         column -- so any Shadow reader of any shop listed every shop's receipts, without MFA. It
         is now the store's, like the draft queue beside it: a Shadow read role, membership of this
         store, and MFA. MFA because this is the input to a decision a person makes on the shop's
-        behalf, exactly as the approval queue is; `AUDITOR` holds MFA by construction
-        (`SENSITIVE_MFA_ROLES`), so the one reader this drops is an unverified `OPERATOR`.
+        behalf, exactly as the approval queue is. Since `AUTHZ-LIFECYCLE-001` every session is
+        MFA-proven (`SENSITIVE_MFA_ROLES` is every role), so this check is now defence in depth.
 
         A receipt written before `0049` whose store could not be derived has a NULL store and so is
         in no store's queue: unattributed means unshown, never shown to everyone.

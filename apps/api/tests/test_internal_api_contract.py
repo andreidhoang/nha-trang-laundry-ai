@@ -22,13 +22,15 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
 import yaml
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.routing import APIRoute
-from nha_trang_laundry_api.main import app
+from nha_trang_laundry_api.authorization import UnclassifiedRouteError
+from nha_trang_laundry_api.main import app, current_principal, require_owner
+from nha_trang_laundry_db.identity import StaffPrincipal
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT = ROOT / "specs/contracts/internal-api-v1.openapi.yaml"
@@ -148,8 +150,12 @@ def test_a_route_added_without_regenerating_fails_the_check() -> None:
     for route in app.routes:
         extended.router.routes.append(route)
 
+    # `AUTHZ-MATRIX-001`: the route carries a gate, because one without a declared access no
+    # longer reaches the comparison at all -- see the assertion below.
     @extended.get("/internal/v1/an-ungoverned-route")
-    def an_ungoverned_route() -> dict[str, str]:
+    def an_ungoverned_route(
+        _: Annotated[StaffPrincipal, Depends(require_owner)],
+    ) -> dict[str, str]:
         """A route nobody contracted."""
         return {}
 
@@ -157,6 +163,16 @@ def test_a_route_added_without_regenerating_fails_the_check() -> None:
     assert "/internal/v1/an-ungoverned-route" not in before["paths"]
     assert "/internal/v1/an-ungoverned-route" in after["paths"]
     assert generator.render(before) != generator.render(after)
+
+    @extended.get("/internal/v1/a-route-on-a-bare-session")
+    def a_route_on_a_bare_session(
+        _: Annotated[StaffPrincipal, Depends(current_principal)],
+    ) -> dict[str, str]:
+        """Signed in, and nothing else said about who may call it."""
+        return {}
+
+    with pytest.raises(UnclassifiedRouteError, match="a-route-on-a-bare-session"):
+        generator.build_document(extended)
 
 
 def test_generation_is_deterministic() -> None:
@@ -184,7 +200,9 @@ def test_the_check_itself_rejects_a_diverged_surface(monkeypatch: pytest.MonkeyP
         extended.router.routes.append(route)
 
     @extended.get("/internal/v1/a-route-nobody-contracted")
-    def a_route_nobody_contracted() -> dict[str, str]:
+    def a_route_nobody_contracted(
+        _: Annotated[StaffPrincipal, Depends(require_owner)],
+    ) -> dict[str, str]:
         """Added after the contract was written."""
         return {}
 

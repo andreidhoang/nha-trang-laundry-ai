@@ -15,6 +15,9 @@ paths:
       operationId: healthz
       summary: Return only process health; /readyz is the one that asks the database.
       x-authorization-dependencies: []
+      x-authorization:
+        access: PUBLIC
+        bounded_by: Liveness probe; returns no data.
       x-documented-by-fastapi: false
       responses:
         '200':
@@ -26,6 +29,13 @@ paths:
       x-authorization-dependencies:
       - require_approval_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_approval_staff
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -36,6 +46,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -47,6 +65,13 @@ paths:
       x-authorization-dependencies:
       - require_approval_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_approval_staff
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -65,6 +90,13 @@ paths:
       x-authorization-dependencies:
       - require_approval_staff
       - get_ops_board_service
+      x-authorization:
+        access: GATED
+        gate: require_approval_staff
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -82,6 +114,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -99,6 +139,13 @@ paths:
       x-authorization-dependencies:
       - require_approval_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_approval_staff
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -116,6 +163,9 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_identity_service
+      x-authorization:
+        access: SESSION
+        bounded_by: 'Self-service: ends the caller''s own session.'
       x-documented-by-fastapi: false
       responses:
         '200':
@@ -126,6 +176,10 @@ paths:
       summary: exchange_identity_token
       x-authorization-dependencies:
       - get_identity_service
+      x-authorization:
+        access: PUBLIC
+        bounded_by: 'The sign-in exchange itself: authenticated by the OIDC ID token it carries, rate-limited
+          per source, one session per token.'
       x-documented-by-fastapi: false
       responses:
         '200':
@@ -137,6 +191,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -154,6 +216,9 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_operations_service
+      x-authorization:
+        access: SESSION
+        bounded_by: OrderRepository._require_order_read and membership of the order's store.
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -171,6 +236,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_account_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -188,6 +261,15 @@ paths:
       x-authorization-dependencies:
       - require_customer_reader
       - get_account_service
+      x-authorization:
+        access: GATED
+        gate: require_customer_reader
+        roles:
+        - AUDITOR
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -205,6 +287,15 @@ paths:
       x-authorization-dependencies:
       - require_machine_reader
       - get_shop_capture_service
+      x-authorization:
+        access: GATED
+        gate: require_machine_reader
+        roles:
+        - AUDITOR
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -222,6 +313,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -239,6 +338,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_unclaimed_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -256,6 +363,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -273,6 +388,12 @@ paths:
       x-authorization-dependencies:
       - require_disposal_owner
       - get_unclaimed_service
+      x-authorization:
+        access: GATED
+        gate: require_disposal_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -290,6 +411,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -307,6 +436,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -324,6 +461,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -341,6 +486,9 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_promise_service
+      x-authorization:
+        access: SESSION
+        bounded_by: The promise repository applies the order-read roles and store membership.
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -357,6 +505,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_promise_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -374,6 +530,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -391,6 +555,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -408,6 +580,15 @@ paths:
       x-authorization-dependencies:
       - require_unclaimed_reader
       - get_unclaimed_service
+      x-authorization:
+        access: GATED
+        gate: require_unclaimed_reader
+        roles:
+        - AUDITOR
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -425,6 +606,13 @@ paths:
       x-authorization-dependencies:
       - require_storage_waiver
       - get_unclaimed_service
+      x-authorization:
+        access: GATED
+        gate: require_storage_waiver
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -442,6 +630,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -459,6 +655,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -470,6 +674,13 @@ paths:
       x-authorization-dependencies:
       - require_approval_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_approval_staff
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -481,6 +692,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -497,6 +716,9 @@ paths:
       summary: get_session
       x-authorization-dependencies:
       - current_principal
+      x-authorization:
+        access: SESSION
+        bounded_by: 'Self-service: the caller''s own session and roles.'
       x-documented-by-fastapi: false
       responses:
         '200':
@@ -508,6 +730,9 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_identity_service
+      x-authorization:
+        access: SESSION
+        bounded_by: 'Self-service: the caller''s own live sessions.'
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -519,6 +744,10 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_identity_service
+      x-authorization:
+        access: SESSION
+        bounded_by: Self-service for the caller's own session; another person's needs OWNER_ADMIN, re-read
+          from the database by IdentityRepository.revoke_session.
       x-documented-by-fastapi: true
       responses:
         '204':
@@ -536,6 +765,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -553,6 +790,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '204':
@@ -570,6 +815,12 @@ paths:
       x-authorization-dependencies:
       - require_owner
       - get_identity_service
+      x-authorization:
+        access: GATED
+        gate: require_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -581,6 +832,12 @@ paths:
       x-authorization-dependencies:
       - require_owner
       - get_identity_service
+      x-authorization:
+        access: GATED
+        gate: require_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '204':
@@ -598,11 +855,45 @@ paths:
       x-authorization-dependencies:
       - require_owner
       - get_identity_service
+      x-authorization:
+        access: GATED
+        gate: require_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '204':
           description: Success response.
       parameters:
+      - name: staff_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/staff/{staff_user_id}/roles/{role}:
+    delete:
+      operationId: revoke_staff_role
+      summary: Take one role away; the person's live sessions stop at their next request.
+      x-authorization-dependencies:
+      - require_owner
+      - get_identity_service
+      x-authorization:
+        access: GATED
+        gate: require_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
+      x-documented-by-fastapi: true
+      responses:
+        '204':
+          description: Success response.
+      parameters:
+      - name: role
+        in: path
+        required: true
+        schema:
+          type: string
       - name: staff_user_id
         in: path
         required: true
@@ -615,6 +906,12 @@ paths:
       x-authorization-dependencies:
       - require_owner
       - get_identity_service
+      x-authorization:
+        access: GATED
+        gate: require_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -632,6 +929,12 @@ paths:
       x-authorization-dependencies:
       - require_owner
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '204':
@@ -653,6 +956,12 @@ paths:
       x-authorization-dependencies:
       - require_owner
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '204':
@@ -675,6 +984,10 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_operations_service
+      x-authorization:
+        access: SESSION
+        bounded_by: The caller's own store assignments; StoreRepository lists memberships of the caller
+          only.
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -686,6 +999,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_assistant_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -702,6 +1023,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_assistant_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -719,6 +1048,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_assistant_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -741,6 +1078,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -758,6 +1103,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -780,6 +1133,13 @@ paths:
       x-authorization-dependencies:
       - require_approval_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_approval_staff
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -802,6 +1162,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -820,6 +1188,15 @@ paths:
       x-authorization-dependencies:
       - require_customer_reader
       - get_customer_service
+      x-authorization:
+        access: GATED
+        gate: require_customer_reader
+        roles:
+        - AUDITOR
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -837,6 +1214,15 @@ paths:
       x-authorization-dependencies:
       - require_customer_reader
       - get_customer_service
+      x-authorization:
+        access: GATED
+        gate: require_customer_reader
+        roles:
+        - AUDITOR
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -854,6 +1240,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_customer_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -871,6 +1265,15 @@ paths:
       x-authorization-dependencies:
       - require_customer_reader
       - get_customer_service
+      x-authorization:
+        access: GATED
+        gate: require_customer_reader
+        roles:
+        - AUDITOR
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -892,6 +1295,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_customer_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -914,6 +1325,15 @@ paths:
       x-authorization-dependencies:
       - require_customer_reader
       - get_account_service
+      x-authorization:
+        access: GATED
+        gate: require_customer_reader
+        roles:
+        - AUDITOR
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -935,6 +1355,12 @@ paths:
       x-authorization-dependencies:
       - require_account_owner
       - get_account_service
+      x-authorization:
+        access: GATED
+        gate: require_account_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -956,6 +1382,12 @@ paths:
       x-authorization-dependencies:
       - require_account_owner
       - get_account_service
+      x-authorization:
+        access: GATED
+        gate: require_account_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -978,6 +1410,12 @@ paths:
       x-authorization-dependencies:
       - require_account_owner
       - get_account_service
+      x-authorization:
+        access: GATED
+        gate: require_account_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1000,6 +1438,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_account_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1023,6 +1469,15 @@ paths:
       x-authorization-dependencies:
       - require_customer_reader
       - get_account_service
+      x-authorization:
+        access: GATED
+        gate: require_customer_reader
+        roles:
+        - AUDITOR
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1050,6 +1505,13 @@ paths:
       x-authorization-dependencies:
       - require_approval_staff
       - get_customer_service
+      x-authorization:
+        access: GATED
+        gate: require_approval_staff
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1072,6 +1534,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_customer_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1094,6 +1564,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_ops_board_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1111,6 +1589,14 @@ paths:
       x-authorization-dependencies:
       - require_expense_reader
       - get_shop_capture_service
+      x-authorization:
+        access: GATED
+        gate: require_expense_reader
+        roles:
+        - ACCOUNTANT
+        - AUDITOR
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1127,6 +1613,13 @@ paths:
       x-authorization-dependencies:
       - require_expense_writer
       - get_shop_capture_service
+      x-authorization:
+        access: GATED
+        gate: require_expense_writer
+        roles:
+        - ACCOUNTANT
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1144,6 +1637,13 @@ paths:
       x-authorization-dependencies:
       - require_expense_writer
       - get_shop_capture_service
+      x-authorization:
+        access: GATED
+        gate: require_expense_writer
+        roles:
+        - ACCOUNTANT
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1166,6 +1666,13 @@ paths:
       x-authorization-dependencies:
       - require_approval_staff
       - get_ops_board_service
+      x-authorization:
+        access: GATED
+        gate: require_approval_staff
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1183,6 +1690,13 @@ paths:
       x-authorization-dependencies:
       - require_approval_staff
       - get_ops_board_service
+      x-authorization:
+        access: GATED
+        gate: require_approval_staff
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1205,6 +1719,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1221,6 +1743,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1238,6 +1768,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1260,6 +1798,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1282,6 +1828,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1303,6 +1857,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1326,6 +1888,15 @@ paths:
       x-authorization-dependencies:
       - require_machine_reader
       - get_shop_capture_service
+      x-authorization:
+        access: GATED
+        gate: require_machine_reader
+        roles:
+        - AUDITOR
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1342,6 +1913,12 @@ paths:
       x-authorization-dependencies:
       - require_machine_owner
       - get_shop_capture_service
+      x-authorization:
+        access: GATED
+        gate: require_machine_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1359,6 +1936,12 @@ paths:
       x-authorization-dependencies:
       - require_machine_owner
       - get_shop_capture_service
+      x-authorization:
+        access: GATED
+        gate: require_machine_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1381,6 +1964,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1403,6 +1994,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1419,6 +2018,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1436,6 +2043,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1458,6 +2073,10 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_operations_service
+      x-authorization:
+        access: SESSION
+        bounded_by: OrderRepository._require_order_read (OWNER_ADMIN, OPS_APPROVER, OPERATOR, AUDITOR)
+          and store membership.
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1474,6 +2093,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1491,6 +2118,15 @@ paths:
       x-authorization-dependencies:
       - require_unclaimed_reader
       - get_unclaimed_service
+      x-authorization:
+        access: GATED
+        gate: require_unclaimed_reader
+        roles:
+        - AUDITOR
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1508,6 +2144,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1530,6 +2174,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1552,6 +2204,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1568,6 +2228,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1586,6 +2254,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1608,6 +2284,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1630,6 +2314,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1652,6 +2344,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1679,6 +2379,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '201':
@@ -1701,6 +2409,13 @@ paths:
       x-authorization-dependencies:
       - require_approval_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_approval_staff
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1718,6 +2433,9 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_operations_service
+      x-authorization:
+        access: SESSION
+        bounded_by: remedy_reads.STORE_CREDIT_READ_ROLES, MFA and store membership.
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1735,6 +2453,13 @@ paths:
       x-authorization-dependencies:
       - require_approval_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_approval_staff
+        roles:
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1757,6 +2482,15 @@ paths:
       x-authorization-dependencies:
       - require_report_reader
       - get_ops_board_service
+      x-authorization:
+        access: GATED
+        gate: require_report_reader
+        roles:
+        - ACCOUNTANT
+        - AUDITOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1774,6 +2508,15 @@ paths:
       x-authorization-dependencies:
       - require_report_reader
       - get_daily_summary_service
+      x-authorization:
+        access: GATED
+        gate: require_report_reader
+        roles:
+        - ACCOUNTANT
+        - AUDITOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1791,6 +2534,15 @@ paths:
       x-authorization-dependencies:
       - require_report_reader
       - get_ops_board_service
+      x-authorization:
+        access: GATED
+        gate: require_report_reader
+        roles:
+        - ACCOUNTANT
+        - AUDITOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1808,6 +2560,14 @@ paths:
       x-authorization-dependencies:
       - require_operations_staff
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1825,6 +2585,9 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_operations_service
+      x-authorization:
+        access: SESSION
+        bounded_by: shadow_console.SHADOW_READ_ROLES and store membership.
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1847,6 +2610,9 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_operations_service
+      x-authorization:
+        access: SESSION
+        bounded_by: shadow_console.SHADOW_READ_ROLES and store membership.
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1864,6 +2630,9 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_operations_service
+      x-authorization:
+        access: SESSION
+        bounded_by: shadow_console.SHADOW_READ_ROLES and store membership.
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1881,6 +2650,9 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_operations_service
+      x-authorization:
+        access: SESSION
+        bounded_by: shadow_console.SHADOW_READ_ROLES, MFA and store membership.
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1898,6 +2670,9 @@ paths:
       x-authorization-dependencies:
       - current_principal
       - get_ops_board_service
+      x-authorization:
+        access: SESSION
+        bounded_by: shadow_console.SHADOW_READ_ROLES and store membership, as the Shadow list routes.
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1915,6 +2690,12 @@ paths:
       x-authorization-dependencies:
       - require_owner
       - get_operations_service
+      x-authorization:
+        access: GATED
+        gate: require_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
       x-documented-by-fastapi: true
       responses:
         '200':
@@ -1930,6 +2711,9 @@ paths:
       operationId: readyz
       summary: Report whether this process can reach its database within two seconds.
       x-authorization-dependencies: []
+      x-authorization:
+        access: PUBLIC
+        bounded_by: Readiness probe; returns dependency status only, no business data.
       x-documented-by-fastapi: false
       responses:
         '200':

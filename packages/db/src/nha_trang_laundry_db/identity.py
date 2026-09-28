@@ -24,9 +24,16 @@ class StaffRole(StrEnum):
     AUDITOR = "AUDITOR"
 
 
-SENSITIVE_MFA_ROLES = frozenset(
-    {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.ACCOUNTANT, StaffRole.AUDITOR}
-)
+#: Roles whose sessions must carry MFA proof: all of them (`AUTHZ-LIFECYCLE-001`).
+#:
+#: This used to omit `OPERATOR` and `DRIVER`, which left six read routes (the order board, order
+#: detail, promise, Shadow reviews/drafts/audit, SLA board) open to an operator session with no
+#: second factor -- customer names and phone numbers among them. `SECURITY_RELIABILITY_SPEC_V1`
+#: §5.1 wants MFA for every role that sees PII before any public channel, and the realm already
+#: demands a second factor at every sign-in (`acr_values=mfa`), so no real session lacked it: this
+#: makes the server say what the deployment already does instead of depending on it. The rule is
+#: applied to the session itself, not per role, so a user with no role gets no exemption either.
+SENSITIVE_MFA_ROLES = frozenset(StaffRole)
 
 
 class StaffSubjectTakenError(ValueError):
@@ -44,6 +51,14 @@ class StaffSubjectTakenError(ValueError):
 
 class IdentityStateError(ValueError):
     """Raised when a database identity or session is inactive, stale, or invalid."""
+
+
+class IdentityTokenReplayedError(IdentityStateError):
+    """This provider sign-in was already exchanged for a session (`AUTHZ-LIFECYCLE-001`).
+
+    A subclass, so the exchange route answers it exactly like every other refused identity -- the
+    same opaque 401 -- while the structured log and tests can still tell a replay apart.
+    """
 
 
 class IdentityPermissionError(IdentityStateError):
@@ -197,6 +212,7 @@ class IdentityRepository:
     ) -> None:
         timestamp = occurred_at or datetime.now(UTC)
         with connection.transaction(), connection.cursor() as cursor:
+            _serialize_owner_changes(cursor)
             _require_owner(cursor, actor_id)
             aggregate_version = _lock_staff_version(cursor, staff_user_id) + 1
             commit_material_change(
@@ -216,6 +232,53 @@ class IdentityRepository:
                 ),
             )
 
+    def revoke_role(
+        self,
+        connection: Any,
+        *,
+        staff_user_id: UUID,
+        role: StaffRole,
+        actor_id: UUID,
+        correlation_id: UUID,
+        occurred_at: datetime | None = None,
+    ) -> None:
+        """Take one role away without disabling the person (`AUTHZ-LIFECYCLE-001`).
+
+        Before this the only way to reduce someone's authority was `disable_staff`, and a disabled
+        row keeps its OIDC subject, which is unique -- so the same person could never be re-added
+        with less. A demotion was impossible; least privilege could only be restored by giving the
+        person a new identity at the provider.
+
+        The authorization version moves in the same transaction, so every session the person holds
+        is refused at its next request (`authenticate_session` compares versions) and they sign in
+        again with exactly what remains. Revoking the last active `OWNER_ADMIN` is refused for the
+        reason `disable_staff` refuses it: nobody would be left who can grant it back.
+        """
+
+        timestamp = occurred_at or datetime.now(UTC)
+        with connection.transaction(), connection.cursor() as cursor:
+            _serialize_owner_changes(cursor)
+            _require_owner(cursor, actor_id)
+            aggregate_version = _lock_staff_version(cursor, staff_user_id) + 1
+            if role == StaffRole.OWNER_ADMIN:
+                _require_owner_survives_disable(cursor, staff_user_id)
+            commit_material_change(
+                connection,
+                _staff_change(
+                    staff_user_id,
+                    aggregate_version,
+                    "STAFF_ROLE_REVOKED",
+                    {"role": role},
+                    "STAFF_ROLE_REVOKE",
+                    actor_id,
+                    correlation_id,
+                    timestamp,
+                ),
+                lambda change_cursor: _revoke_role(
+                    change_cursor, staff_user_id, role, actor_id, timestamp
+                ),
+            )
+
     def disable_staff(
         self,
         connection: Any,
@@ -227,6 +290,7 @@ class IdentityRepository:
     ) -> None:
         timestamp = occurred_at or datetime.now(UTC)
         with connection.transaction(), connection.cursor() as cursor:
+            _serialize_owner_changes(cursor)
             _require_owner(cursor, actor_id)
             aggregate_version = _lock_staff_version(cursor, staff_user_id) + 1
             _require_owner_survives_disable(cursor, staff_user_id)
@@ -255,7 +319,17 @@ class IdentityRepository:
         now: datetime | None = None,
         idle_ttl: timedelta = timedelta(hours=8),
         absolute_ttl: timedelta = timedelta(hours=24),
+        identity_token_digest: str | None = None,
     ) -> SessionToken:
+        """Mint one opaque session for an active staff subject.
+
+        `identity_token_digest` binds the session to the provider sign-in it came from; the database
+        refuses a second session for the same digest, so one ID token is one session. The HTTP
+        exchange always passes it. `None` exists for sessions minted without a provider token
+        (repository tests and operator tooling), never for the exchange.
+        """
+        if identity_token_digest is not None and not _is_sha256_hex(identity_token_digest):
+            raise IdentityStateError("invalid identity token digest")
         if idle_ttl <= timedelta() or absolute_ttl <= timedelta() or idle_ttl > absolute_ttl:
             raise IdentityStateError("invalid session lifetime")
         idle_timeout_seconds = int(idle_ttl.total_seconds())
@@ -265,13 +339,44 @@ class IdentityRepository:
         subject = _required_text(oidc_subject, "OIDC subject", 255)
         with connection.cursor() as cursor:
             principal = self._principal_for_subject(cursor, subject, mfa_verified)
-        if SENSITIVE_MFA_ROLES & principal.roles and not mfa_verified:
-            raise IdentityStateError("MFA proof is required for this staff role")
+        if not mfa_verified:
+            raise IdentityStateError("MFA proof is required for every staff session")
 
         session_id = uuid4()
         secret = secrets.token_urlsafe(32)
         secret_hash = _secret_hash(secret)
         expires_at = timestamp + absolute_ttl
+
+        def insert_session(cursor: Any) -> None:
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO staff_sessions (
+                        id, staff_user_id, secret_hash, authorization_version, mfa_verified,
+                        issued_at, last_seen_at, idle_expires_at, absolute_expires_at,
+                        idle_timeout_seconds, identity_token_digest
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        session_id,
+                        principal.staff_user_id,
+                        secret_hash,
+                        _authorization_version(cursor, principal.staff_user_id),
+                        mfa_verified,
+                        timestamp,
+                        timestamp,
+                        timestamp + idle_ttl,
+                        expires_at,
+                        idle_timeout_seconds,
+                        identity_token_digest,
+                    ),
+                )
+            except UniqueViolation as error:
+                # The only unique columns are the fresh session id, the fresh secret's hash and the
+                # token digest; the first two are 128 and 256 random bits. The whole transaction
+                # unwinds, so the replay leaves no event, audit or outbox row behind.
+                raise IdentityTokenReplayedError("identity token was already exchanged") from error
+
         commit_material_change(
             connection,
             _session_change(
@@ -285,26 +390,7 @@ class IdentityRepository:
                 correlation_id,
                 timestamp,
             ),
-            lambda cursor: cursor.execute(
-                """
-                INSERT INTO staff_sessions (
-                    id, staff_user_id, secret_hash, authorization_version, mfa_verified, issued_at,
-                    last_seen_at, idle_expires_at, absolute_expires_at, idle_timeout_seconds
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    session_id,
-                    principal.staff_user_id,
-                    secret_hash,
-                    _authorization_version(cursor, principal.staff_user_id),
-                    mfa_verified,
-                    timestamp,
-                    timestamp,
-                    timestamp + idle_ttl,
-                    expires_at,
-                    idle_timeout_seconds,
-                ),
-            ),
+            insert_session,
         )
         return SessionToken(f"{session_id}.{secret}", session_id, expires_at)
 
@@ -350,8 +436,8 @@ class IdentityRepository:
             ):
                 raise IdentityStateError("session is inactive, expired, or stale")
             roles = _active_roles(cursor, _uuid(user_id))
-            if SENSITIVE_MFA_ROLES & roles and not bool(mfa):
-                raise IdentityStateError("MFA proof is required for this staff role")
+            if not bool(mfa):
+                raise IdentityStateError("MFA proof is required for every staff session")
             next_idle_expiry = min(
                 timestamp + timedelta(seconds=int(idle_timeout_seconds)), absolute
             )
@@ -427,7 +513,7 @@ class IdentityRepository:
 
         "Live" is exactly `authenticate_session`'s test, read without touching a row: not revoked,
         inside both lifetimes, minted at the user's current authorization version, the account
-        active, and MFA-proven when the user holds a role that needs it. A session that would be
+        active, and MFA-proven (every session must be). A session that would be
         refused at its next request is not listed, because offering to sign out a device that is
         already signed out is a control that does nothing.
 
@@ -460,14 +546,7 @@ class IdentityRepository:
                   AND s.absolute_expires_at > %s
                   AND u.status = 'ACTIVE'
                   AND s.authorization_version = u.authorization_version
-                  AND (
-                    s.mfa_verified
-                    OR NOT EXISTS (
-                        SELECT 1 FROM staff_role_assignments r
-                        WHERE r.staff_user_id = u.id AND r.revoked_at IS NULL
-                          AND r.role = ANY(%s)
-                    )
-                  )
+                  AND s.mfa_verified
                 ORDER BY s.last_seen_at DESC, s.id
                 LIMIT %s
                 """,
@@ -475,7 +554,6 @@ class IdentityRepository:
                     staff_user_id,
                     now,
                     now,
-                    sorted(role.value for role in SENSITIVE_MFA_ROLES),
                     limit + 1,
                 ),
             )
@@ -654,6 +732,29 @@ def _assign_role(
     )
 
 
+def _revoke_role(
+    cursor: Any, staff_id: UUID, role: StaffRole, actor_id: UUID, timestamp: datetime
+) -> None:
+    cursor.execute(
+        """
+        UPDATE staff_role_assignments SET revoked_at = %s, revoked_by = %s
+        WHERE staff_user_id = %s AND role = %s AND revoked_at IS NULL
+        """,
+        (timestamp, actor_id, staff_id, role),
+    )
+    if cursor.rowcount != 1:
+        raise IdentityStateError("role is not currently assigned")
+    cursor.execute(
+        """
+        UPDATE staff_users SET authorization_version = authorization_version + 1
+        WHERE id = %s AND status = 'ACTIVE'
+        """,
+        (staff_id,),
+    )
+    if cursor.rowcount != 1:
+        raise IdentityStateError("staff user is missing or disabled")
+
+
 def _disable_staff(cursor: Any, staff_id: UUID, timestamp: datetime) -> None:
     cursor.execute(
         """
@@ -713,6 +814,25 @@ def _require_owner(cursor: Any, actor_id: UUID) -> None:
         raise IdentityPermissionError("owner authorization is required")
 
 
+#: `pg_advisory_xact_lock` key for "the set of active owners may shrink in this transaction".
+OWNER_SET_LOCK_KEY = 0x4E54_4C41_4F57_4E52  # "NTLAOWNR"
+
+
+def _serialize_owner_changes(cursor: Any) -> None:
+    """One authority change at a time (`AUTHZ-LIFECYCLE-001`).
+
+    The last-owner guard reads *other* owners' rows but locks only the target's. Measured on
+    PostgreSQL 16 with two owners acting on each other at once, both past the guard before either
+    wrote: two disables both committed and left **no active owner** (a defect `disable_staff` had
+    before this item), as did a revoke racing a disable; two revokes deadlocked on the `revoked_by`
+    foreign key and one was aborted. With this lock every pairing leaves one owner and the loser is
+    refused as no longer an owner. Held until commit; each later statement is a fresh READ
+    COMMITTED snapshot, so the second transaction re-checks its actor against what the first wrote.
+    """
+
+    cursor.execute("SELECT pg_advisory_xact_lock(%s)", (OWNER_SET_LOCK_KEY,))
+
+
 def _require_owner_survives_disable(cursor: Any, staff_id: UUID) -> None:
     cursor.execute(
         """
@@ -747,6 +867,10 @@ def _required_text(value: str, label: str, maximum_length: int) -> str:
     if not normalized or len(normalized) > maximum_length:
         raise IdentityStateError(f"invalid {label}")
     return normalized
+
+
+def _is_sha256_hex(value: str) -> bool:
+    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
 def _secret_hash(secret: str) -> str:

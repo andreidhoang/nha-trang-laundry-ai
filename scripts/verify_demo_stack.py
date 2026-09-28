@@ -184,6 +184,15 @@ def run(base_url: str, ca_file: _Path) -> list[Result]:
         headers.get("Set-Cookie", "")[:120],
     )
 
+    # Negative: the same ID token a second time. One provider sign-in is one session.
+    status, _, _ = client.request(
+        "/internal/v1/auth/session",
+        method="POST",
+        headers={"Authorization": f"Bearer {token}", "Origin": base_url},
+        send_cookies=False,
+    )
+    check("replaying a spent ID token is refused", status == 401, f"http {status}")
+
     # Negative: no Origin header at all.
     status, _, _ = client.request(
         "/internal/v1/auth/session",

@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-27'
+last_updated: '2026-09-28'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -5678,5 +5678,56 @@ items:
   - a_partly_paid_order_exports_what_was_paid_by_method
   - an_envelope_approved_before_the_change_is_not_released_as_the_new_shape
   - walked_on_the_real_api_at_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: AUTHZ-LIFECYCLE-001
+  phase: PRODUCTION_HARDENING
+  title: Staff authority can be reduced, one sign-in mints one session, and every
+    route declares who may call it
+  status: COMPLETE
+  priority: 339
+  depends_on:
+  - SESSION-LIST-001
+  - HTTP-SECURITY-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/AUTHN_AUTHZ_ARCHITECTURE_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-authz-lifecycle-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_revoked_role_ends_the_holders_sessions_and_never_the_last_owner
+  - a_replayed_id_token_is_refused_by_the_database
+  - every_route_declares_its_access_in_the_contract
+  - every_staff_session_requires_mfa
+  - two_owners_racing_leave_one_owner
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: REALM-POLICY-001
+  phase: PRODUCTION_HARDENING
+  title: The running R1 realm carries the password policy the realm file declares
+  status: PENDING
+  priority: 340
+  depends_on:
+  - AUTHZ-LIFECYCLE-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/AUTHN_AUTHZ_ARCHITECTURE_V1.md
+  contracts: []
+  task_packet: context/tasks/TASK-authz-lifecycle-001.md
+  acceptance_checks:
+  - uv run pytest packages/evals/tests/test_r1_identity_contract.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - kcadm_read_back_matches_the_realm_file
   - rollback_assessment
   blocked_by_decisions: []

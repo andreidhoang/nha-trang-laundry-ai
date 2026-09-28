@@ -615,6 +615,20 @@ export const CONTACT_OUTCOME_VI = {
   NO_ANSWER: "Không nghe máy",
   WRONG_NUMBER: "Sai số",
   PROMISED_TO_COME: "Hẹn sẽ tới lấy",
+  // PICKUP-REMIND-001 (DEC-043): only with a reminder step, only on Zalo or SMS.
+  MESSAGE_SENT: "Đã gửi tin",
+};
+
+/**
+ * PICKUP-REMIND-001 (`DEC-043`): `ReminderStep` as *Nhắc khách lấy đồ* says it. Scoped: the words
+ * name the reminder, not the day's state.
+ */
+export const REMINDER_STEP_VI = {
+  READY: "Báo đồ đã xong",
+  DAY_3: "Nhắc lần 2 (ngày 3)",
+  DAY_7: "Nhắc lần 3 (ngày 7)",
+  DAY_14: "Nhắc lần 4 (ngày 14)",
+  BEFORE_FEE: "Nhắc trước khi tính phí",
 };
 
 /**
@@ -1051,4 +1065,6 @@ export const NAV = {
   customers: "Khách hàng",
   // UNCLAIMED-001 (DEC-036).
   pickup: "Đồ chờ lấy",
+  // PICKUP-REMIND-001 (DEC-043).
+  reminders: "Nhắc khách lấy đồ",
 };

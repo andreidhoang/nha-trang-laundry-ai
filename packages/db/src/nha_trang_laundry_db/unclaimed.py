@@ -7,7 +7,10 @@
   storage fee it owes now. A linked customer's name and phone ride along -- the phone only for the
   roles that call customers (`PHONE_VISIBLE_ROLES`); an auditor reads the last four digits.
 * **Contact attempts**: append-only rows, recorded by the operations roles, legal only while the
-  order is waiting. They work before the storage policy is published.
+  order is waiting. They work before the storage policy is published. Since `PICKUP-REMIND-001`
+  (`DEC-043`, `0064`) an attempt may name the pickup reminder it answers (`reminder_step`), checked
+  by `pickup_reminders.check_reminder_attempt` under the order's lock; `MESSAGE_SENT` needs one and
+  the egress guard's allowance. Every attempt, reminder or not, counts toward disposal.
 * **The waiver** (*Miễn phí lưu kho*): an `OPS_APPROVER` or the owner, with a reason, while a fee is
   accruing. Nothing accrues on the order afterwards. The order's row version advances, because what
   it owes changed: a payment sheet opened before the waiver is refused `STALE_VERSION`.
@@ -36,6 +39,11 @@ from nha_trang_laundry_domain.catalog import (
 )
 from nha_trang_laundry_domain.customers import national_from_e164
 from nha_trang_laundry_domain.payments import owed_charges, payment_position
+from nha_trang_laundry_domain.pickup_reminders import (
+    PICKUP_REMINDER_DECISION,
+    ReminderRefusal,
+    ReminderStep,
+)
 from nha_trang_laundry_domain.settlement import QuotedTotal
 from nha_trang_laundry_domain.unclaimed import (
     ContactChannel,
@@ -152,6 +160,13 @@ class UnclaimedRefused(ValueError):
         super().__init__(code)
 
 
+class ReminderRefused(UnclaimedRefused):
+    """A pickup-reminder request the rules refuse (`PICKUP-REMIND-001`), answered as the refusals
+    above are, naming `DEC-043`."""
+
+    decision = PICKUP_REMINDER_DECISION
+
+
 # --- read models ----------------------------------------------------------------------------------
 
 
@@ -241,6 +256,7 @@ class ContactAttemptView:
     attempted_by_staff_id: UUID
     attempted_by_name: str | None
     attempted_at: datetime
+    reminder_step: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,6 +315,8 @@ class ContactAttemptCommand:
     note: str | None = None
     #: Tests hold the clock still; the route passes nothing and the server's clock is read here.
     attempted_at: datetime | None = None
+    #: `PICKUP-REMIND-001`: the reminder this attempt answers, or None for a plain attempt.
+    reminder_step: ReminderStep | None = None
 
 
 @dataclass(frozen=True)
@@ -310,6 +328,7 @@ class StoredContactAttempt:
     outcome: str
     attempted_at: datetime
     replayed: bool
+    reminder_step: str | None = None
 
 
 @dataclass(frozen=True)
@@ -568,6 +587,11 @@ class UnclaimedRepository:
             note = clean_note(command.note)
         except ValueError as error:
             raise UnclaimedRefused(str(error)) from error
+        step = command.reminder_step
+        if command.outcome is ContactOutcome.MESSAGE_SENT and step is None:
+            # A reminder's message is what `MESSAGE_SENT` records; without the step there is no
+            # message the guard could have allowed.
+            raise ReminderRefused(ReminderRefusal.REMINDER_STEP_REQUIRED.value)
         attempted_at = command.attempted_at or datetime.now(UTC)
         _require_member_of_order(connection, command.order_id, command.principal)
         payload: dict[str, object] = {
@@ -576,6 +600,9 @@ class UnclaimedRepository:
             "outcome": command.outcome.value,
             "note": note,
         }
+        if step is not None:
+            # Only when named, so a plain attempt's request digest is what it was before `0064`.
+            payload["reminder_step"] = step.value
 
         def record_once() -> dict[str, object]:
             with connection.cursor() as cursor:
@@ -604,6 +631,20 @@ class UnclaimedRepository:
                     self_collection_recorded=bool(row[4]),
                 ):
                     raise UnclaimedRefused("NOT_AWAITING_PICKUP")
+                egress_record: dict[str, object] | None = None
+                if step is not None:
+                    # Imported here: `pickup_reminders` builds on this module's list and roles.
+                    from nha_trang_laundry_db.pickup_reminders import check_reminder_attempt
+
+                    egress = check_reminder_attempt(
+                        cursor,
+                        order_id=command.order_id,
+                        step=step,
+                        channel=command.channel,
+                        outcome=command.outcome,
+                        at=attempted_at,
+                    )
+                    egress_record = None if egress is None else egress.record()
                 # Under the order lock, so two attempts at once cannot take one ordinal.
                 cursor.execute(
                     "SELECT count(*) FROM order_contact_attempts WHERE order_id = %s",
@@ -618,8 +659,8 @@ class UnclaimedRepository:
                     """
                     INSERT INTO order_contact_attempts (
                         id, order_id, store_id, channel, outcome, note, attempted_by_staff_id,
-                        attempted_at, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        attempted_at, created_at, reminder_step
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         attempt_id,
@@ -631,8 +672,17 @@ class UnclaimedRepository:
                         command.principal.staff_user_id,
                         attempted_at,
                         attempted_at,
+                        None if step is None else step.value,
                     ),
                 )
+
+            reminder_facts: dict[str, object] = (
+                {} if step is None else {"reminder_step": step.value}
+            )
+            audit_reminder: dict[str, object] = dict(reminder_facts)
+            if egress_record is not None:
+                # Why the guard allowed the message: policy version and basis, never a number.
+                audit_reminder["egress"] = egress_record
 
             commit_material_change(
                 connection,
@@ -649,6 +699,7 @@ class UnclaimedRepository:
                         "channel": command.channel.value,
                         "outcome": command.outcome.value,
                         "ordinal": ordinal,
+                        **reminder_facts,
                     },
                     audit_action="ORDER_CONTACT_ATTEMPT_RECORD",
                     actor_type="STAFF",
@@ -658,6 +709,7 @@ class UnclaimedRepository:
                         "channel": command.channel.value,
                         "outcome": command.outcome.value,
                         "has_note": note is not None,
+                        **audit_reminder,
                     },
                     outbox_events=(
                         OutboxEvent(
@@ -666,6 +718,7 @@ class UnclaimedRepository:
                                 "order_id": str(command.order_id),
                                 "attempt_id": str(attempt_id),
                                 "outcome": command.outcome.value,
+                                **reminder_facts,
                             },
                             f"order:{command.order_id}:contact-attempt:{ordinal}",
                         ),
@@ -681,6 +734,7 @@ class UnclaimedRepository:
                 "channel": command.channel.value,
                 "outcome": command.outcome.value,
                 "attempted_at": attempted_at.isoformat(),
+                **reminder_facts,
             }
 
         result = self._idempotency.execute(
@@ -702,6 +756,9 @@ class UnclaimedRepository:
             outcome=str(stored["outcome"]),
             attempted_at=datetime.fromisoformat(str(stored["attempted_at"])),
             replayed=result.replayed,
+            reminder_step=(
+                None if stored.get("reminder_step") is None else str(stored["reminder_step"])
+            ),
         )
 
     # --- the waiver ----------------------------------------------------------------------------
@@ -1057,7 +1114,7 @@ def _storage_read(
     cursor.execute(
         """
         SELECT a.id, a.channel, a.outcome, a.note, a.attempted_by_staff_id, su.display_name,
-               a.attempted_at, count(*) OVER ()
+               a.attempted_at, count(*) OVER (), a.reminder_step
         FROM order_contact_attempts a
         LEFT JOIN staff_users su ON su.id = a.attempted_by_staff_id
         WHERE a.order_id = %s
@@ -1122,6 +1179,7 @@ def _storage_read(
                 attempted_by_staff_id=_uuid(item[4]),
                 attempted_by_name=None if item[5] is None else str(item[5]),
                 attempted_at=item[6],
+                reminder_step=None if item[8] is None else str(item[8]),
             )
             for item in reversed(attempt_rows)
         ),
@@ -1182,6 +1240,7 @@ __all__ = [
     "DisposalCommand",
     "DisposalView",
     "OrderStorageRead",
+    "ReminderRefused",
     "StoragePolicySummary",
     "StoredContactAttempt",
     "UnclaimedAuthorizationError",

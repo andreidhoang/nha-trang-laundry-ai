@@ -57,6 +57,15 @@ export const NAV_ITEMS = [
     group: "Vận hành",
     hint: "Đồ xong chưa lấy: gọi khách, phí lưu kho",
   },
+  // PICKUP-REMIND-001 (DEC-043).
+  {
+    path: "/reminders",
+    label: NAV.reminders,
+    capability: "PICKUP_READ",
+    icon: "message",
+    group: "Vận hành",
+    hint: "Ngày 0, 3, 7, 14: chép tin, gửi Zalo",
+  },
   {
     path: "/order-requests",
     label: NAV.orderRequests,

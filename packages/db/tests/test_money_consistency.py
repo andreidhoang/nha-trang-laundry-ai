@@ -203,7 +203,23 @@ def test_the_final_functions_carry_every_slices_rule(connection: psycopg.Connect
     """`0059` and `0060` replaced different `0056` functions; `0061` replaced three more. Whatever
     ran last defines each, so each must still say what every slice needs it to say."""
 
-    assert [m.version for m in discover_migrations()][-3:] == ["0059", "0060", "0061"]
+    migrations = discover_migrations()
+    versions = [m.version for m in migrations]
+    start = versions.index("0059")
+    assert versions[start : start + 3] == ["0059", "0060", "0061"]
+    # Round 8 added migrations after `0061`; none of them may redefine a function checked below,
+    # or "whatever ran last" would be that migration and not these three.
+    checked = (
+        "enforce_order_payment_ledger",
+        "enforce_order_refund_consistency",
+        "enforce_storage_fee_settlement",
+        "enforce_account_charge",
+        "enforce_account_charge_owes_total_and_fee",
+        "enforce_waiver_before_settlement",
+    )
+    for later in migrations[start + 3 :]:
+        text = later.path.read_text(encoding="utf-8")
+        assert not any(f"FUNCTION {name}(" in text for name in checked), later.version
 
     def body(name: str) -> str:
         [(text,)] = _rows(

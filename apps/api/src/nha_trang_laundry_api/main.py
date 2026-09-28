@@ -249,6 +249,13 @@ from nha_trang_laundry_api.operations import (
     UnresolvedQuoteResult,
 )
 from nha_trang_laundry_api.ops_board import OpsBoardService, OpsBoardUnavailable
+from nha_trang_laundry_api.pickup_reminders import (
+    REMINDER_LIST_MAX_LIMIT,
+    PickupReminderService,
+    PickupReminderServiceUnavailable,
+    Reachability,
+    ReminderStep,
+)
 from nha_trang_laundry_api.promises import PromiseService, PromiseServiceUnavailable
 from nha_trang_laundry_api.readiness import readyz
 from nha_trang_laundry_api.security import BrowserSecurityMiddleware, RequestSizeLimitMiddleware
@@ -8597,6 +8604,8 @@ class ContactAttemptViewResponse(BaseModel):
     attempted_by_staff_id: UUID
     attempted_by_name: str | None
     attempted_at: datetime
+    #: `PICKUP-REMIND-001`: the reminder this attempt answered, or null.
+    reminder_step: ReminderStep | None = None
 
 
 class StorageWaiverResponse(BaseModel):
@@ -8656,6 +8665,10 @@ class ContactAttemptRequest(StrictRequest):
     #: A few words about what happened; at most 120 characters and never a phone number
     #: (`NOTE_TOO_LONG` / `NOTE_LOOKS_LIKE_PHONE`, decided by the domain).
     note: str | None = Field(default=None, max_length=2000)
+    #: `PICKUP-REMIND-001` (`DEC-043`): the reminder this attempt answers -- *Đã nhắc* on *Nhắc
+    #: khách lấy đồ*. It must be the step due now (`REMINDER_STEP_NOT_DUE`); `MESSAGE_SENT` needs
+    #: one (`REMINDER_STEP_REQUIRED`), Zalo or SMS, and what the reminder text route would allow.
+    reminder_step: ReminderStep | None = None
 
 
 class ContactAttemptResponse(BaseModel):
@@ -8668,6 +8681,7 @@ class ContactAttemptResponse(BaseModel):
     outcome: ContactOutcome
     attempted_at: datetime
     replayed: bool
+    reminder_step: ReminderStep | None = None
 
 
 class StorageWaiverRequest(StrictRequest):
@@ -8725,7 +8739,8 @@ def _raise_unclaimed_error(error: Exception) -> NoReturn:
             detail={
                 "reason_code": error.code,
                 "reason_codes": list(error.reason_codes),
-                "decision": "DEC-036",
+                # `PICKUP-REMIND-001`'s refusals name `DEC-043`; the rest are `DEC-036`'s.
+                "decision": getattr(error, "decision", "DEC-036"),
             },
         ) from error
     _raise_operations_error(error)
@@ -8846,6 +8861,9 @@ def read_order_storage(
                 attempted_by_staff_id=item.attempted_by_staff_id,
                 attempted_by_name=item.attempted_by_name,
                 attempted_at=item.attempted_at,
+                reminder_step=None
+                if item.reminder_step is None
+                else ReminderStep(item.reminder_step),
             )
             for item in found.attempts
         ],
@@ -8886,7 +8904,8 @@ def record_contact_attempt(
     Append-only; legal while the order is waiting for pickup (422 `NOT_AWAITING_PICKUP`); works
     before the storage policy is published. The note stays in the attempt row: no event, audit or
     outbox payload carries it. `Idempotency-Key` replays the first answer; no `If-Match`, because
-    an attempt changes nothing on the order.
+    an attempt changes nothing on the order. With `reminder_step` (`PICKUP-REMIND-001`) it records
+    *Đã nhắc*: the step must be the one due, and `MESSAGE_SENT` passes the reminder text's guard.
     """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
@@ -8898,6 +8917,7 @@ def record_contact_attempt(
             channel=request.channel,
             outcome=request.outcome,
             note=request.note,
+            reminder_step=request.reminder_step,
         )
     except _UNCLAIMED_ERRORS as error:
         _raise_unclaimed_error(error)
@@ -8909,6 +8929,7 @@ def record_contact_attempt(
         outcome=ContactOutcome(stored.outcome),
         attempted_at=stored.attempted_at,
         replayed=stored.replayed,
+        reminder_step=None if stored.reminder_step is None else ReminderStep(stored.reminder_step),
     )
 
 
@@ -8973,6 +8994,180 @@ def dispose_unclaimed_order(
     except _UNCLAIMED_ERRORS as error:
         _raise_unclaimed_error(error)
     return _order_view_response(result.view, replayed=result.replayed)
+
+
+# --- PICKUP-REMIND-001: pickup reminders (DEC-043) -------------------------------------------
+#
+# *Nhắc khách lấy đồ*: which reminder is due for which waiting order, and the fixed
+# `pickup-reminder-v1` text behind the egress guard. Recording *Đã nhắc* is the contact-attempt
+# route above, with `reminder_step`. Every decision is the domain's (`pickup_reminders`).
+
+
+def get_pickup_reminder_service() -> PickupReminderService:
+    try:
+        return PickupReminderService(AuthSettings())
+    except PickupReminderServiceUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable"
+        ) from error
+
+
+class PickupReminderItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    row_version: int
+    balance: str
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    customer_id: UUID | None
+    customer_name: str | None
+    #: The newest reminder due and not yet done: `READY`, `DAY_3`, `DAY_7`, `DAY_14`, `BEFORE_FEE`.
+    step: ReminderStep
+    ready_at: datetime
+    #: Shop days since the laundry was ready, as *Đồ chờ lấy* counts them.
+    days_waiting: int
+    #: `PHONE` (a number on the customer's record), `CHAT` (the order came in on a chat channel) or
+    #: `NONE` (a ticket alone: counted, nobody to message).
+    reachable: Reachability
+    #: The national number for *Gọi* and the `https://zalo.me/<số>` link, for the roles that call
+    #: customers; null for an auditor, or with no number on record.
+    phone: str | None
+    zalo_url: str | None
+    phone_last4: str | None
+    remaining_vnd: int | None
+    #: What the text route would answer now, as advice: null when it would give the text, else its
+    #: refusal code (`NO_CONTACT`, `SUPPRESSED`, `MESSAGING_POLICY_UNPUBLISHED`, ...).
+    message_refusal: str | None
+
+
+class PickupReminderListResponse(BaseModel):
+    """Nhắc khách lấy đồ: the reminders due, oldest ready first, bounded."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    evaluated_at: datetime
+    #: Without the storage policy there is no *trước khi tính phí* reminder.
+    storage_policy_published: bool
+    #: Without the messaging policy no reminder text is given (`MESSAGING_POLICY_UNPUBLISHED`).
+    messaging_policy_published: bool
+    limit: int
+    #: Every order with a reminder due now; `orders` holds at most `limit` of them.
+    total_count: int
+    #: Of `total_count`, the orders with no phone and no chat channel.
+    unreachable_count: int
+    truncated: bool
+    phone_visible: bool
+    orders: list[PickupReminderItemResponse]
+
+
+class PickupReminderMessageResponse(BaseModel):
+    """The fixed text for one reminder, as the guard allowed it. No name, no phone number."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    step: ReminderStep
+    #: `pickup-reminder-v1`.
+    template: str
+    text: str
+    evaluated_at: datetime
+    #: The published messaging policy version and the basis the guard allowed it on.
+    policy_version: int | None
+    basis: str | None
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/pickup-reminders",
+    response_model=PickupReminderListResponse,
+)
+def list_pickup_reminders(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_unclaimed_reader)],
+    limit: Annotated[int, Query(ge=1, le=REMINDER_LIST_MAX_LIMIT)] = 100,
+    service: Annotated[PickupReminderService | None, Depends(get_pickup_reminder_service)] = None,
+) -> PickupReminderListResponse:
+    """Nhắc khách lấy đồ: waiting orders whose reminder is due (`PICKUP-REMIND-001`, `DEC-043`).
+
+    Self-collect orders waiting for pickup whose newest due reminder (day 0, 3, 7, 14, and the last
+    day before the published storage fee) nobody has done, oldest ready first, bounded by `limit`
+    (`truncated`, `total_count`). Unreachable orders are rows too and are counted. The number and
+    the Zalo link are returned to the roles that call customers, as *Đồ chờ lấy* returns its number.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        found = service.due(store_id=store_id, principal=principal, limit=limit)
+    except _UNCLAIMED_ERRORS as error:
+        _raise_unclaimed_error(error)
+    return PickupReminderListResponse(
+        store_id=found.store_id,
+        evaluated_at=found.evaluated_at,
+        storage_policy_published=found.storage_policy_published,
+        messaging_policy_published=found.messaging_policy_published,
+        limit=found.limit,
+        total_count=found.total_count,
+        unreachable_count=found.unreachable_count,
+        truncated=found.truncated,
+        phone_visible=found.phone_visible,
+        orders=[
+            PickupReminderItemResponse(
+                order_id=item.order_id,
+                row_version=item.row_version,
+                balance=item.balance,
+                ticket_number=item.ticket_number,
+                ticket_issued_on=item.ticket_issued_on,
+                customer_id=item.customer_id,
+                customer_name=item.customer_name,
+                step=item.step,
+                ready_at=item.ready_at,
+                days_waiting=item.days_waiting,
+                reachable=item.reachable,
+                phone=item.phone,
+                zalo_url=item.zalo_url,
+                phone_last4=item.phone_last4,
+                remaining_vnd=item.remaining_vnd,
+                message_refusal=item.message_refusal,
+            )
+            for item in found.orders
+        ],
+    )
+
+
+@app.get(
+    "/internal/v1/orders/{order_id}/pickup-reminder",
+    response_model=PickupReminderMessageResponse,
+)
+def read_pickup_reminder(
+    order_id: UUID,
+    step: ReminderStep,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[PickupReminderService | None, Depends(get_pickup_reminder_service)] = None,
+) -> PickupReminderMessageResponse:
+    """Chép tin nhắn: the fixed `pickup-reminder-v1` text for (order, step), behind the guard.
+
+    `step` must be the reminder due now (422 `REMINDER_STEP_NOT_DUE` / `NO_REMINDER_DUE`). Then
+    `NO_CONTACT` for a ticket with nobody to message, and the TRANSACTIONAL egress guard's refusals
+    -- `SUPPRESSED` for a customer who wrote STOP, `MESSAGING_POLICY_UNPUBLISHED` until the owner
+    publishes the messaging policy (`DEC-033`). Nothing is written and nothing is sent. 404 outside
+    the caller's stores, as the order read.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        found = service.message(order_id=order_id, step=step, principal=principal)
+    except _UNCLAIMED_ERRORS as error:
+        _raise_unclaimed_error(error)
+    return PickupReminderMessageResponse(
+        order_id=found.order_id,
+        step=found.step,
+        template=found.template,
+        text=found.text,
+        evaluated_at=found.evaluated_at,
+        policy_version=found.policy_version,
+        basis=found.basis,
+    )
 
 
 if WEB_DIRECTORY.is_dir():

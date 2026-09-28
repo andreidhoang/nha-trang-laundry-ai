@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 516
+  DESCRIPTIVE: 519
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 16
   SERVER_GATE: 15
-total: 554
+total: 557
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -2875,27 +2875,27 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:4190aa1ed65f
+- slot_id: screens/gaps.js#missing:aa96c4dd15f8
   module: screens/gaps.js
   key: missing
-  text: Chưa có tin tự động nhắc khách tới lấy. Đơn đã trả đủ trước ngày hết miễn phí không tính phí lưu
-    kho (chủ tiệm quyết ngày 27/09/2026), nhưng vẫn thanh lý được từ ngày 60.
+  text: 'Máy chọn ai cần nhắc và soạn sẵn tin, nhưng chưa tự gửi: nhân viên chép tin và gửi bằng Zalo
+    hoặc SMS của tiệm.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:d95103248175
+- slot_id: screens/gaps.js#blockedBy:beeaa9254ed7
   module: screens/gaps.js
   key: blockedBy
-  text: Tin nhắc tự động cần kênh Zalo đã kết nối (CHANNEL-ZALO-APPLY-001)
+  text: Gửi tự động cần Zalo Official Account, mẫu tin ZNS được duyệt, token và giá mỗi tin của chủ tiệm
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#today:2f49c9029c88
+- slot_id: screens/gaps.js#today:2545d096f403
   module: screens/gaps.js
   key: today
-  text: Gọi khách từ màn Đồ chờ lấy và ghi lại mỗi lần.
+  text: 'Màn Nhắc khách lấy đồ: bấm Chép tin nhắn, dán vào Zalo, gửi, rồi bấm Đã nhắc.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -4235,6 +4235,31 @@ disclosures:
   key: hint
   text: 'Bồi hoàn làm ngay trên trang của từng khiếu nại: mở khiếu nại, chọn loại, gửi đề nghị, rồi thực
     hiện trên dòng của nó. Danh sách này chỉ gom các khiếu nại đang mở đã có đề nghị.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/reminders.js#hint:4e6f10e8af7c
+  module: screens/reminders.js
+  key: hint
+  text: Đã chép. Dán vào Zalo, gửi, rồi bấm “Đã nhắc”.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/reminders.js#hint:42c1547c2abe
+  module: screens/reminders.js
+  key: hint
+  text: Chép không được — bôi đen đoạn dưới và tự chép.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/reminders.js#hint:0187f5b3225c
+  module: screens/reminders.js
+  key: hint
+  text: Chép tin chỉ được khi chủ tiệm đã công bố chính sách tin dịch vụ (DEC-033) — chủ tiệm bật bằng
+    lệnh công bố của mình — và khách chưa nhắn dừng nhận tin. Gọi điện luôn dùng được.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

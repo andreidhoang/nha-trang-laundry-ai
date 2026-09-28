@@ -136,6 +136,18 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("POST", "/internal/v1/orders/{order_id}/contact-attempts"): store_scoped(
         "unclaimed", "UnclaimedRepository.record_contact_attempt"
     ),
+    # PICKUP-REMIND-001 (`DEC-043`). The due list is store-scoped by URL; the text is keyed by
+    # `order_id` and answered 404-shaped outside the caller's stores, as the order read is.
+    ("GET", "/internal/v1/stores/{store_id}/pickup-reminders"): store_scoped(
+        "pickup_reminders", "PickupReminderRepository.list_due"
+    ),
+    ("GET", "/internal/v1/orders/{order_id}/pickup-reminder"): RouteScope(
+        "STORE_SCOPED",
+        None,
+        "keyed by order_id. PickupReminderRepository.read_message reads the store off the order "
+        "row and answers OrderNotVisibleError (404) unless the caller is a member of it -- the "
+        "order read's rule; asserted in apps/api/tests/test_pickup_reminders_http.py",
+    ),
     ("POST", "/internal/v1/orders/{order_id}/storage-fee-waiver"): RouteScope(
         "STORE_SCOPED",
         None,

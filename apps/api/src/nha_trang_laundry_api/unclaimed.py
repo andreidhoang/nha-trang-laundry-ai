@@ -31,6 +31,7 @@ from nha_trang_laundry_db.unclaimed import (
     WaiverCommand,
 )
 from nha_trang_laundry_db.unclaimed import LIST_MAX_LIMIT as UNCLAIMED_LIST_MAX_LIMIT
+from nha_trang_laundry_domain.pickup_reminders import ReminderStep
 from nha_trang_laundry_domain.unclaimed import (
     ContactChannel,
     ContactOutcome,
@@ -94,6 +95,7 @@ class UnclaimedService:
         channel: ContactChannel,
         outcome: ContactOutcome,
         note: str | None,
+        reminder_step: ReminderStep | None = None,
     ) -> StoredContactAttempt:
         with self._connection_factory(self._database_url) as connection:
             return self._repository.record_contact_attempt(
@@ -106,6 +108,7 @@ class UnclaimedService:
                     channel=channel,
                     outcome=outcome,
                     note=note,
+                    reminder_step=reminder_step,
                 ),
             )
 

@@ -165,6 +165,30 @@ liệt kê mọi đơn đã giặt xong mà khách chưa lấy, đơn chờ lâu
   được ghi luôn vào công nợ (dòng dưới ô tiền ghi *Gồm phí lưu kho …*) và không tính thêm sau đó.
   Hạn mức được so với cả tiền giặt lẫn phí.
 
+### Nhắc khách lấy đồ — ngày 0, 3, 7, 14 (DEC-043)
+
+Máy chọn **ai cần nhắc** và **nhắc gì**; người ở quầy gửi bằng Zalo hoặc SMS của tiệm, hai lần bấm.
+Lịch nhắc tính theo ngày lịch từ ngày đồ xong: **ngày 0** (báo đồ đã xong), **ngày 3**, **ngày 7**,
+**ngày 14**, và **ngày cuối trước khi tính phí lưu kho** (chỉ khi chủ tiệm đã công bố phí). Mỗi đơn
+chỉ hiện lần nhắc mới nhất; từ ngày tính phí, đơn nằm ở **Đồ chờ lấy**. Mở bằng dòng **Nhắc khách
+lấy đồ** ở **Hôm nay** (hoặc trong **Thêm**).
+
+| | Làm gì | Ở màn hình |
+|---|---|---|
+| N1 | Bấm **Chép tin nhắn** — máy chép sẵn tin nhắc (số phiếu, ngày xong, số tiền còn lại, giờ mở cửa; không có tên hay số điện thoại khách) | Nhắc khách lấy đồ |
+| N2 | Bấm **Mở Zalo** (mở cuộc trò chuyện với số của khách), dán tin, gửi. Khách nhắn qua kênh chat thì dán vào cuộc trò chuyện đó | Zalo của tiệm |
+| N3 | Bấm **Đã nhắc**, rồi **Đã gửi tin Zalo** (hoặc **Đã gửi SMS**). Đơn rời danh sách tới lần nhắc sau | Nhắc khách lấy đồ |
+| N4 | Muốn gọi: bấm **Gọi** — máy gọi số đó; gọi xong chọn kết quả (**Gọi: đã nói chuyện**, **Gọi: không nghe máy**, …) | Nhắc khách lấy đồ |
+
+- **Chủ tiệm chưa công bố chính sách tin dịch vụ thì chưa chép tin được** — màn hình nói một dòng.
+  **Gọi** vẫn dùng được. Chỉ chủ tiệm công bố (bằng lệnh của chủ tiệm).
+- **Khách đã nhắn dừng nhận tin (STOP)**: dòng của khách ghi rõ; không chép tin, không mở Zalo được.
+  Gọi nếu cần.
+- Đơn **chỉ có số phiếu** (không có số điện thoại, không qua kênh chat) được đếm ở cuối danh sách:
+  nhắc khi khách tới hoặc gọi tới.
+- Mỗi lần **Đã nhắc** là một lần liên hệ, và được tính cho quy định thanh lý ở **Đồ chờ lấy**.
+- Phần mềm **không tự gửi** tin nào.
+
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)
 
 Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **khoảng giá**, vì phải nhìn món đồ mới

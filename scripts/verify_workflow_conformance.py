@@ -287,6 +287,14 @@ DECLARED_CONTROLS = (
     "today.summary-info",
     "today.summary-copy",
     "today.summary-share",
+    # PICKUP-REMIND-001 (DEC-043): Hôm nay's Nhắc khách lấy đồ card, and on its list Mở Zalo,
+    # Chép tin nhắn, Gọi, Đã nhắc and the one-tap outcome.
+    "today.reminders-link",
+    "reminders.zalo",
+    "reminders.copy",
+    "reminders.call",
+    "reminders.done",
+    "reminders.outcome",
 )
 
 PASS: list[str] = []
@@ -7357,6 +7365,563 @@ def scenario_daily_summary(console: Console) -> None:
     console.sign_in("demo-owner")
 
 
+# --- PICKUP-REMIND-001 (DEC-043): the reminder schedule and the two-tap send ---------------------
+
+
+def _publish_messaging() -> subprocess.CompletedProcess[str]:
+    """Run the owner's messaging-policy script against the stack's database, as the owner would."""
+
+    return subprocess.run(
+        [
+            sys.executable,
+            _script("publish_messaging_policy.py"),
+            "--database-url",
+            arguments.database_url,
+            "--actor-id",
+            _owner_id(),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+
+def _record_stop(order_id: str) -> subprocess.CompletedProcess[str]:
+    """HARNESS STEP (documented, as `verify_consent_walk.py`): the customer writes STOP. No channel
+    adapter exists yet, so there is no inbound webhook route; the STOP is recorded through the
+    ingress path production will use (`InboxRepository.record`, via the repository tests'
+    `record_customer_message`) on the order's own contact reference. It needs the deployment hash
+    key the API runs with (`NTL_HASH_KEY` / `NTL_HASH_KEY_FILE`)."""
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    program = (
+        "import sys\n"
+        f"sys.path.insert(0, {os.path.join(root, 'packages', 'db', 'tests')!r})\n"
+        "from datetime import UTC, datetime, timedelta\n"
+        "from uuid import UUID\n"
+        "import psycopg\n"
+        "from message_draft_test_data import record_customer_message\n"
+        "from nha_trang_laundry_domain.consent import OptOutDisposition\n"
+        "with psycopg.connect(sys.argv[1]) as connection:\n"
+        "    contact = connection.execute(\n"
+        "        'SELECT bound_contact_id FROM orders WHERE id = %s', (sys.argv[2],)\n"
+        "    ).fetchone()[0]\n"
+        "    record_customer_message(\n"
+        "        connection, UUID(str(contact)),\n"
+        "        received_at=datetime.now(UTC) - timedelta(minutes=1),\n"
+        "        disposition=OptOutDisposition.WITHDRAW,\n"
+        "    )\n"
+        "print('STOP recorded')\n"
+    )
+    return subprocess.run(
+        [sys.executable, "-c", program, arguments.database_url, order_id],
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+
+
+def _reminders(console: Console) -> dict[str, Any]:
+    return console.call("GET", f"/internal/v1/stores/{STORE}/pickup-reminders?limit=200")
+
+
+def _reminder_row(listing: dict[str, Any], order_id: str) -> dict[str, Any]:
+    return next(
+        (
+            item
+            for item in (listing.get("body") or {}).get("orders", [])
+            if item.get("order_id") == order_id
+        ),
+        {},
+    )
+
+
+def _reminder_shot(console: Console, name: str) -> None:
+    """A full-page picture of the screen at this point, when `PICKUP_REMINDER_SHOTS` names a
+    directory -- so the refusal and the working flow can be looked at as the counter sees them."""
+
+    directory = os.environ.get("PICKUP_REMINDER_SHOTS", "")
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+        console.page.screenshot(path=os.path.join(directory, f"{name}.png"), full_page=True)
+
+
+def _open_reminders(console: Console) -> None:
+    """Nhắc khách lấy đồ, reached the way a person reaches it: its card on Hôm nay."""
+
+    console.open("#/", settle=1600)
+    card = console.page.locator("[data-queue=reminders]").first
+    if card.count():
+        card.click()
+        touched("today.reminders-link")
+        console.page.wait_for_timeout(1800)
+    else:
+        console.open("#/reminders", settle=1800)
+
+
+def _reminder_tr(console: Console, order_id: str) -> Any:
+    return console.page.locator(f"#reminder-list tr[data-reminder='{order_id}']")
+
+
+def _no_follow(locator: Any) -> None:
+    """A `tel:` or `zalo.me` link opens the phone's dialler or Zalo, outside this browser; the click
+    is kept on the page so what the console does next can be checked."""
+
+    locator.evaluate("(link) => link.addEventListener('click', (e) => e.preventDefault())")
+
+
+def _copy_reminder(console: Console, order_id: str) -> tuple[dict[str, Any], str]:
+    """Chép tin nhắn on the row: the server's answer, and what landed on the clipboard."""
+
+    button = _reminder_tr(console, order_id).locator(f"[data-reminder-copy='{order_id}']")
+    console.page.evaluate("() => navigator.clipboard.writeText('')")
+    answer: dict[str, Any] = {"status": 0, "body": None, "text": ""}
+    try:
+        with console.page.expect_response(
+            lambda r: "/pickup-reminder?" in r.url and order_id in r.url, timeout=15000
+        ) as waited:
+            button.click()
+        response = waited.value
+        text = response.text()
+        answer = {"status": response.status, "body": json.loads(text), "text": text[:600]}
+    except Exception as error:
+        answer["text"] = str(error)[:200]
+    touched("reminders.copy")
+    console.page.wait_for_timeout(700)
+    copied = str(console.page.evaluate("() => navigator.clipboard.readText()") or "")
+    return answer, copied
+
+
+def _mark_reminded(console: Console, order_id: str, outcome: str, *, via: Any = None) -> Any:
+    """Đã nhắc (or Gọi), then one tap on what happened. Returns the attempt route's answer."""
+
+    trigger = via or _reminder_tr(console, order_id).locator(f"[data-reminder-done='{order_id}']")
+    trigger.click()
+    touched("reminders.call" if via is not None else "reminders.done")
+    console.page.wait_for_selector("dialog[open]#reminder-done", state="visible", timeout=8000)
+    choice = console.page.locator(f"dialog[open]#reminder-done [data-reminder-outcome='{outcome}']")
+    (answer,) = console.press_capturing(choice, "/contact-attempts")
+    touched("reminders.outcome")
+    console.page.wait_for_timeout(1600)
+    return answer
+
+
+def scenario_pickup_reminders(console: Console) -> None:
+    """PICKUP-REMIND-001 (DEC-043): a ready order with a customer's phone is due on day 0; its text
+    is refused until the owner publishes the messaging policy, then copied in one tap and marked
+    "Đã nhắc" in a second, and it leaves the list. Aged orders show day 3, 7, 14 and the day before
+    the storage fee; a ticket alone is counted unreachable; a customer who wrote STOP gets no text
+    and a call is still recorded."""
+
+    head("18", "NHẮC KHÁCH LẤY ĐỒ — refused until the owner publishes the messaging policy")
+    if not arguments.database_url:
+        ok(
+            "the reminder scenario needs --database-url: the owner publishes the messaging policy "
+            "with a script, and the ready time is moved by a documented harness step",
+            False,
+        )
+        return
+    owner = _owner_id()
+    console.sign_in("demo-operations")
+    notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
+    if (notice.get("body") or {}).get("published") is not True:
+        # Only with --only: the customers scenario publishes the notice in a full run.
+        published = subprocess.run(
+            [
+                sys.executable,
+                _script("publish_privacy_notice.py"),
+                "--actor-id",
+                owner,
+                "--database-url",
+                arguments.database_url,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        note(
+            "the privacy notice was unpublished; the owner published it: "
+            + published.stdout.strip()[-80:]
+        )
+    digits = "09" + str(uuid.uuid4().int)[:8]
+    created = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/customers",
+        {"phone": digits, "display_name": "chị Mai Nhắc", "service_consent": True},
+    )
+    customer_id = str(((created.get("body") or {}).get("customer") or {}).get("customer_id") or "")
+    ok("a customer with a phone on record", created["status"] == 201, created["text"][:120])
+    theirs = console.build_order(kg="5", stop="ready", customer=(customer_id, digits))["order_id"]
+    ticket = console.build_order(kg="5", stop="ready")["order_id"]
+    unpublished = (
+        sql(
+            "select count(*) from configuration_versions "
+            "where config_type = 'TRANSACTIONAL_MESSAGING_POLICY'"
+        )
+        == "0"
+    )
+    listing = _reminders(console)
+    row = _reminder_row(listing, theirs)
+    walk_in = _reminder_row(listing, ticket)
+    ok(
+        "the due list has their order on day 0 (Báo đồ đã xong), reachable by phone, with the "
+        "zalo.me link the server built from their number",
+        listing["status"] == 200
+        and row.get("step") == "READY"
+        and row.get("days_waiting") == 0
+        and row.get("reachable") == "PHONE"
+        and row.get("zalo_url") == f"https://zalo.me/{digits}",
+        json.dumps(row)[:240],
+    )
+    ok(
+        "a ticket alone is due too, and counted unreachable: NONE, no link, NO_CONTACT",
+        walk_in.get("reachable") == "NONE"
+        and walk_in.get("zalo_url") is None
+        and walk_in.get("message_refusal") == "NO_CONTACT"
+        and int((listing.get("body") or {}).get("unreachable_count") or 0) >= 1,
+        json.dumps(walk_in)[:200],
+    )
+    _open_reminders(console)
+    entry = _reminder_tr(console, theirs)
+    ok(
+        "Hôm nay's Nhắc khách lấy đồ card opens the list; their row says Báo đồ đã xong, and the "
+        "page never prints their number",
+        console.page.url.endswith("#/reminders")
+        and entry.count() == 1
+        and "Báo đồ đã xong" in entry.first.inner_text()
+        and digits not in console.text(),
+        entry.first.inner_text()[:200].replace("\n", " | ")
+        if entry.count()
+        else console.text()[:200],
+    )
+    if unpublished:
+        copy = entry.locator(f"[data-reminder-copy='{theirs}']")
+        ok(
+            "before the owner publishes, Chép tin nhắn is off and the page says why in one line",
+            copy.count() == 1
+            and copy.first.get_attribute("data-denied") == "true"
+            and "chưa công bố chính sách tin dịch vụ" in console.text(),
+            console.notices()[:200],
+        )
+        _reminder_shot(console, "01-unpublished")
+        text = console.call("GET", f"/internal/v1/orders/{theirs}/pickup-reminder?step=READY")
+        sent = console.call(
+            "POST",
+            f"/internal/v1/orders/{theirs}/contact-attempts",
+            {"channel": "ZALO", "outcome": "MESSAGE_SENT", "reminder_step": "READY"},
+        )
+        ok(
+            "the server refuses the text and a 'message sent' by name: "
+            "MESSAGING_POLICY_UNPUBLISHED (DEC-043); nothing is written",
+            text["status"] == 422
+            and (text.get("body") or {}).get("detail", {}).get("reason_code")
+            == "MESSAGING_POLICY_UNPUBLISHED"
+            and (text.get("body") or {}).get("detail", {}).get("decision") == "DEC-043"
+            and sent["status"] == 422
+            and (sent.get("body") or {}).get("detail", {}).get("reason_code")
+            == "MESSAGING_POLICY_UNPUBLISHED"
+            and sql(f"select count(*) from order_contact_attempts where order_id = '{theirs}'")
+            == "0",
+            f"{text['text'][:120]} || {sent['text'][:120]}",
+        )
+        head("18a", "CÔNG BỐ — the owner publishes the messaging policy with the script")
+        published = _publish_messaging()
+        ok(
+            "scripts/publish_messaging_policy.py publishes DEC-033's grounds (the owner's act)",
+            published.returncode == 0 and "published" in published.stdout,
+            (published.stdout + published.stderr)[-200:],
+        )
+    else:
+        note(
+            "the messaging policy was published before this scenario began, so its refusal is not "
+            "provable here: run it on a stack that has not published it (stack_rem.sh)"
+        )
+
+    head("18b", "CHÉP TIN NHẮN, ĐÃ NHẮC — two taps, and the order leaves the list")
+    _open_reminders(console)
+    entry = _reminder_tr(console, theirs)
+    zalo = entry.locator(f"a[data-reminder-zalo='{theirs}']")
+    ok(
+        "Mở Zalo is a link to their Zalo, built by the server from the number it never prints",
+        zalo.count() == 1 and zalo.first.get_attribute("href") == f"https://zalo.me/{digits}",
+        zalo.first.get_attribute("href") if zalo.count() else "absent",
+    )
+    if zalo.count():
+        _no_follow(zalo.first)
+        zalo.first.click()
+        touched("reminders.zalo")
+    answer, copied = _copy_reminder(console, theirs)
+    _reminder_shot(console, "02-copied")
+    body = answer.get("body") or {}
+    ok(
+        "Chép tin nhắn puts the server's pickup-reminder-v1 text on the clipboard, exactly",
+        answer["status"] == 200
+        and body.get("template") == "pickup-reminder-v1"
+        and copied == body.get("text")
+        and "xin báo: đồ giặt phiếu số" in copied
+        and "Mời anh/chị qua tiệm lấy đồ." in copied,
+        (answer["text"] or "")[:240],
+    )
+    ok(
+        "the text carries neither their name nor their number",
+        digits not in copied and "Mai" not in copied and digits[-4:] not in copied,
+        copied[:200],
+    )
+    recorded = _mark_reminded(console, theirs, "zalo")
+    ok(
+        "Đã nhắc, then Đã gửi tin Zalo: one contact attempt for that reminder, MESSAGE_SENT",
+        recorded["status"] == 201
+        and (recorded.get("body") or {}).get("reminder_step") == "READY"
+        and (recorded.get("body") or {}).get("outcome") == "MESSAGE_SENT",
+        recorded["text"][:200],
+    )
+    ok(
+        "and the order leaves the list",
+        _reminder_tr(console, theirs).count() == 0
+        and not _reminder_row(_reminders(console), theirs),
+        "",
+    )
+    ok(
+        "the attempt is on record with its step; the audit keeps why the guard allowed it; no "
+        "event, audit or outbox payload carries the number",
+        sql(
+            "select channel || '|' || outcome || '|' || reminder_step from order_contact_attempts "
+            f"where order_id = '{theirs}'"
+        )
+        == "ZALO|MESSAGE_SENT|READY"
+        and sql(
+            "select details->'egress'->>'basis' from audit_events "
+            f"where aggregate_id = '{theirs}' and action = 'ORDER_CONTACT_ATTEMPT_RECORD'"
+        )
+        == "OPEN_ORDER"
+        and sql(
+            f"select (select count(*) from domain_events where payload::text like '%{digits}%') + "
+            f"(select count(*) from audit_events where details::text like '%{digits}%') + "
+            f"(select count(*) from outbox_events where payload::text like '%{digits}%')"
+        )
+        == "0",
+        "",
+    )
+    storage = console.call("GET", f"/internal/v1/orders/{theirs}/storage").get("body") or {}
+    ok(
+        "the reminder counts toward the disposal rule like any contact attempt",
+        (storage.get("disposal_verdict") or {}).get("attempts_counted") == 1,
+        json.dumps(storage.get("disposal_verdict"))[:160],
+    )
+
+    head("18c", "NGÀY 3, 7, 14, TRƯỚC KHI TÍNH PHÍ — aged orders, honest time travel")
+    if sql("select count(*) from configuration_versions where config_type='STORAGE_POLICY'") in (
+        "",
+        "0",
+    ):
+        stored = _publish_storage()
+        note("the storage policy was unpublished; the owner published it: " + stored.stdout[-80:])
+    aged: dict[str, str] = {}
+    for days, step in ((3, "DAY_3"), (8, "DAY_7"), (14, "DAY_14"), (20, "BEFORE_FEE")):
+        order_id = console.build_order(kg="5", stop="ready", customer=(customer_id, digits))[
+            "order_id"
+        ]
+        waited = _age_ready(order_id, days)
+        ok(f"harness: an order reads as ready {days} shop days ago", waited == str(days), waited)
+        aged[step] = order_id
+    listing = _reminders(console)
+    ok(
+        "the server names the newest step due for each: DAY_3, DAY_7 (on day 8), DAY_14, and "
+        "BEFORE_FEE on day 20 of the owner's 20 free days",
+        all(
+            _reminder_row(listing, order_id).get("step") == step for step, order_id in aged.items()
+        ),
+        {step: _reminder_row(listing, order_id).get("step") for step, order_id in aged.items()},
+    )
+    _open_reminders(console)
+    _reminder_shot(console, "03-aged")
+    words = {
+        "DAY_3": "Nhắc lần 2 (ngày 3)",
+        "DAY_7": "Nhắc lần 3 (ngày 7)",
+        "DAY_14": "Nhắc lần 4 (ngày 14)",
+        "BEFORE_FEE": "Nhắc trước khi tính phí",
+    }
+    ok(
+        "each row says its step in words, and the oldest-ready order comes first",
+        all(
+            _reminder_tr(console, order_id).count() == 1
+            and words[step] in _reminder_tr(console, order_id).first.inner_text()
+            for step, order_id in aged.items()
+        )
+        and console.page.locator("#reminder-list tbody tr").first.get_attribute("data-reminder")
+        in set(aged.values()),
+        console.page.locator("#reminder-list").inner_text()[:300].replace("\n", " | ")
+        if console.page.locator("#reminder-list").count()
+        else console.text()[:200],
+    )
+    answer, copied = _copy_reminder(console, aged["BEFORE_FEE"])
+    policy = (
+        console.call("GET", f"/internal/v1/orders/{aged['BEFORE_FEE']}/storage").get("body") or {}
+    ).get("policy") or {}
+    starts = sql(
+        "select to_char(((production_ready_at at time zone 'Asia/Ho_Chi_Minh')::date + "
+        f"{int(policy.get('free_days') or 0) + 1}), 'DD/MM/YYYY') from orders "
+        f"where id = '{aged['BEFORE_FEE']}'"
+    )
+    fee = f"{int(policy.get('fee_per_started_day_vnd') or 0):,}".replace(",", ".")
+    ok(
+        "the BEFORE_FEE text quotes the owner's published figures: the day the fee starts, the "
+        "fee per day and the cap",
+        answer["status"] == 200
+        and f"Từ ngày {starts} tiệm tính phí lưu kho {fee} ₫/ngày "
+        f"(tối đa {policy.get('fee_cap_percent')}% tiền giặt)."
+        in copied,
+        copied[:300],
+    )
+    call = _reminder_tr(console, aged["DAY_7"]).locator(f"a[data-reminder-call='{aged['DAY_7']}']")
+    ok(
+        "Gọi is a tel: link to their number",
+        call.count() == 1 and call.first.get_attribute("href") == f"tel:+84{digits[1:]}",
+        call.first.get_attribute("href") if call.count() else "absent",
+    )
+    if call.count():
+        _no_follow(call.first)
+        called = _mark_reminded(console, aged["DAY_7"], "no-answer", via=call.first)
+        ok(
+            "Gọi opens Đã nhắc with the call's outcomes; Không nghe máy records the reminder as a "
+            "call, and the order leaves the list",
+            called["status"] == 201
+            and (called.get("body") or {}).get("channel") == "CALL"
+            and (called.get("body") or {}).get("reminder_step") == "DAY_7"
+            and _reminder_tr(console, aged["DAY_7"]).count() == 0,
+            called["text"][:200],
+        )
+    done3 = console.call(
+        "POST",
+        f"/internal/v1/orders/{aged['DAY_3']}/contact-attempts",
+        {"channel": "CALL", "outcome": "REACHED", "reminder_step": "DAY_3"},
+    )
+    later = _age_ready(aged["DAY_3"], 4)
+    ok(
+        "a reminder done on day 3 stays done; on day 7 the next one comes due",
+        done3["status"] == 201
+        and later == "7"
+        and _reminder_row(_reminders(console), aged["DAY_3"]).get("step") == "DAY_7",
+        done3["text"][:120],
+    )
+    _age_ready(aged["BEFORE_FEE"], 1)
+    pickup = console.call("GET", f"/internal/v1/stores/{STORE}/orders/awaiting-pickup?limit=200")
+    waiting = next(
+        (
+            item
+            for item in (pickup.get("body") or {}).get("orders", [])
+            if item.get("order_id") == aged["BEFORE_FEE"]
+        ),
+        {},
+    )
+    ok(
+        "day 21: the fee has started; the order leaves the reminders and Đồ chờ lấy takes over",
+        not _reminder_row(_reminders(console), aged["BEFORE_FEE"])
+        and (waiting.get("storage_fee") or {}).get("status") == "ACCRUING",
+        json.dumps(waiting.get("storage_fee"))[:160],
+    )
+
+    head("18d", "KHÔNG LIÊN LẠC ĐƯỢC — a ticket alone is counted, not hidden")
+    _open_reminders(console)
+    block = console.page.locator("details[data-unreachable]")
+    if block.count():
+        block.first.locator("summary").click()
+        _reminder_shot(console, "04-unreachable")
+    ok(
+        "the ticket-only order is counted at the bottom, with nobody to message",
+        block.count() == 1
+        and int(block.first.get_attribute("data-unreachable") or 0) >= 1
+        and "không có số điện thoại hay kênh chat" in block.first.inner_text()
+        and console.page.locator(f"[data-reminder-unreachable='{ticket}']").count() == 1
+        and _reminder_tr(console, ticket).count() == 0,
+        block.first.inner_text()[:160] if block.count() else "absent",
+    )
+    refused = console.call("GET", f"/internal/v1/orders/{ticket}/pickup-reminder?step=READY")
+    ok(
+        "its text is refused NO_CONTACT",
+        refused["status"] == 422
+        and (refused.get("body") or {}).get("detail", {}).get("reason_code") == "NO_CONTACT",
+        refused["text"][:160],
+    )
+
+    head("18e", "KHÁCH NHẮN STOP — no text, and a call is still recorded")
+    stopped_digits = "09" + str(uuid.uuid4().int)[:8]
+    made = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/customers",
+        {"phone": stopped_digits, "display_name": "anh Dừng", "service_consent": True},
+    )
+    stopped_customer = str(
+        ((made.get("body") or {}).get("customer") or {}).get("customer_id") or ""
+    )
+    stopped = console.build_order(
+        kg="5", stop="ready", customer=(stopped_customer, stopped_digits)
+    )["order_id"]
+    wrote = _record_stop(stopped)
+    ok(
+        "harness: the customer's STOP is recorded through the ingress path production uses",
+        wrote.returncode == 0 and "STOP recorded" in wrote.stdout,
+        (wrote.stdout + wrote.stderr)[-240:],
+    )
+    _open_reminders(console)
+    entry = _reminder_tr(console, stopped)
+    copy = entry.locator(f"[data-reminder-copy='{stopped}']")
+    zalo = entry.locator(f"[data-reminder-zalo='{stopped}']")
+    _reminder_shot(console, "05-stop")
+    ok(
+        "their row says they asked the shop to stop, and Chép tin nhắn and Mở Zalo are off",
+        entry.count() == 1
+        and "Khách đã nhắn dừng nhận tin" in entry.first.inner_text()
+        and copy.first.get_attribute("data-denied") == "true"
+        and zalo.count() == 1
+        and zalo.first.get_attribute("data-denied") == "true"
+        and zalo.first.get_attribute("href") is None,
+        entry.first.inner_text()[:200].replace("\n", " | ") if entry.count() else "absent",
+    )
+    text = console.call("GET", f"/internal/v1/orders/{stopped}/pickup-reminder?step=READY")
+    ok(
+        "the server refuses the text SUPPRESSED",
+        text["status"] == 422
+        and (text.get("body") or {}).get("detail", {}).get("reason_code") == "SUPPRESSED",
+        text["text"][:160],
+    )
+    if entry.count():
+        entry.locator(f"[data-reminder-done='{stopped}']").click()
+        console.page.wait_for_selector("dialog[open]#reminder-done", state="visible", timeout=8000)
+        message_choice = console.page.locator(
+            "dialog[open]#reminder-done [data-reminder-outcome='zalo']"
+        )
+        _reminder_shot(console, "06-stop-done-sheet")
+        ok(
+            "Đã nhắc offers no 'message sent' for them",
+            message_choice.first.get_attribute("data-denied") == "true",
+            "",
+        )
+        (reached,) = console.press_capturing(
+            console.page.locator("dialog[open]#reminder-done [data-reminder-outcome='reached']"),
+            "/contact-attempts",
+        )
+        console.page.wait_for_timeout(1400)
+        ok(
+            "a call is recorded for the reminder, and the order leaves the list",
+            reached["status"] == 201
+            and (reached.get("body") or {}).get("channel") == "CALL"
+            and _reminder_tr(console, stopped).count() == 0,
+            reached["text"][:160],
+        )
+    console.sign_in("demo-auditor")
+    audited = _reminders(console)
+    ok(
+        "the auditor reads the list without the number or the Zalo link",
+        audited["status"] == 200
+        and all(
+            item.get("phone") is None and item.get("zalo_url") is None
+            for item in (audited.get("body") or {}).get("orders", [])
+        )
+        and digits not in audited["text"],
+        audited["text"][:160],
+    )
+    console.sign_in("demo-owner")
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -7395,6 +7960,11 @@ SCENARIOS = {
     # privacy notice customers publishes), before promise; it withdraws and publishes the storage
     # policy itself, and leaves it published: nothing after it ages an order.
     "unclaimed": scenario_unclaimed,
+    # PICKUP-REMIND-001 (DEC-043). After unclaimed (whose storage policy the day-before-the-fee
+    # reminder quotes) and before promise (the text's opening hours are the turnaround policy's
+    # while it is published). It proves MESSAGING_POLICY_UNPUBLISHED on a stack that has not
+    # published the messaging policy, then publishes it; nothing after it depends on it.
+    "pickup_reminders": scenario_pickup_reminders,
     # PROMISE-001. Last: it publishes the turnaround policy, and every scenario above proves its
     # own workflow on a shop that has not (the receipt's R4 line, the report's assumed rule).
     "promise": scenario_promise,

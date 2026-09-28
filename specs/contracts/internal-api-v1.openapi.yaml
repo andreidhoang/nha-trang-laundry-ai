@@ -317,6 +317,23 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/orders/{order_id}/pickup-reminder:
+    get:
+      operationId: read_pickup_reminder
+      summary: 'Chép tin nhắn: the fixed `pickup-reminder-v1` text for (order, step), behind the guard.'
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_pickup_reminder_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/orders/{order_id}/production-transition:
     post:
       operationId: transition_order_production
@@ -1540,6 +1557,23 @@ paths:
         required: true
         schema:
           type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/pickup-reminders:
+    get:
+      operationId: list_pickup_reminders
+      summary: 'Nhắc khách lấy đồ: waiting orders whose reminder is due (`PICKUP-REMIND-001`, `DEC-043`).'
+      x-authorization-dependencies:
+      - require_unclaimed_reader
+      - get_pickup_reminder_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
       - name: store_id
         in: path
         required: true

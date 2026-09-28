@@ -232,6 +232,11 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         "/internal/v1/orders/{}/contact-attempts",
         "/internal/v1/orders/{}/storage-fee-waiver",
         "/internal/v1/orders/{}/disposal",
+        # PICKUP-REMIND-001 (DEC-043). Nhắc khách lấy đồ and Hôm nay's count read the due list;
+        # Chép tin nhắn reads the fixed text behind the egress guard. A screen that stops calling
+        # them puts the day-3/7/14 reminders back in nobody's memory.
+        "/internal/v1/stores/{}/pickup-reminders",
+        "/internal/v1/orders/{}/pickup-reminder",
     }
     missing = sorted(required - referenced)
     assert not missing, f"no screen calls these routes any more: {missing}"

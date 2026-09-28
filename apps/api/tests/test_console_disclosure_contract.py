@@ -954,7 +954,9 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # DAILY-SUMMARY-001 (round 7 wave 2, DEC-039): 524 + 0. Re-keyed, none added or retired: the
     #   "Kênh và AI" lede and the FR-RPT-007 gap's `missing` now say the template summary exists.
     # DAILY-SUMMARY-001 merged onto both (round 7 wave 2 integration): 554 + 0 = 554.
-    assert sum(counts.values()) == _registry()["total"] == 554
+    # PICKUP-REMIND-001 (round 8, DEC-043): 554 + 3 = 557, all screens/reminders.js DESCRIPTIVE
+    #   (the "Đã chép" line, the manual-copy line, the ⓘ's owner-switch line); none retired.
+    assert sum(counts.values()) == _registry()["total"] == 557
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

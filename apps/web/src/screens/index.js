@@ -31,6 +31,7 @@ import { screen as orders } from "./orders.js";
 import { screen as pickup } from "./pickup.js";
 import { screen as quotes } from "./quotes.js";
 import { screen as receipt } from "./receipt.js";
+import { screen as reminders } from "./reminders.js";
 import { screen as remedies } from "./remedies.js";
 import { screen as reports } from "./reports.js";
 import { screen as shadow } from "./shadow.js";
@@ -49,6 +50,8 @@ export const ROUTES = [
   orderDetail,
   receipt,
   pickup,
+  // PICKUP-REMIND-001 (DEC-043): Nhắc khách lấy đồ.
+  reminders,
   customers,
   customerDetail,
   // PAYMENT-002: a business customer's monthly statement (four segments: no sibling to shadow).

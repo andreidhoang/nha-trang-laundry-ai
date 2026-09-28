@@ -790,3 +790,17 @@ def test_a_refunded_bill_shows_no_credit(connection: psycopg.Connection[Any], sh
     row = _list(connection, shop).orders[0]
     assert row.refunded is True and row.credit_vnd is None
     assert row.credit_refusal == "ORDER_REFUNDED"
+
+
+def test_the_summary_count_reads_the_lists_population_without_a_personal_column() -> None:
+    """`count_undecided` runs its own statement so the evening summary never selects a name or a
+    ticket; its predicates must stay the list's exactly, or the count and the list could differ."""
+
+    from nha_trang_laundry_db.late_deliveries import LATE_CANDIDATES_SQL, LATE_COUNT_SQL
+
+    def predicates(statement: str) -> str:
+        return statement[statement.index("WHERE") :]
+
+    assert predicates(LATE_COUNT_SQL) == predicates(LATE_CANDIDATES_SQL)
+    for personal in ("customers", "display_name", "counter_tickets", "ticket_number"):
+        assert personal not in LATE_COUNT_SQL

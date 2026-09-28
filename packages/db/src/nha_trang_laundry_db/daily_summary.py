@@ -77,7 +77,7 @@ from nha_trang_laundry_db.invoice_requests import (
     InvoiceRequestRepository,
 )
 from nha_trang_laundry_db.late_deliveries import (
-    LATE_CANDIDATES_SQL,
+    LATE_COUNT_SQL,
     LATE_DELIVERY_ROLES,
     LateDeliveryRepository,
 )
@@ -181,7 +181,7 @@ def daily_summary_template_version() -> QueryVersion:
         INVOICE_WAITING_OVER_SQL,
         str(INVOICE_STALE_DAYS),
         # The late-delivery list's statement (`LATE-CREDIT-002`).
-        LATE_CANDIDATES_SQL,
+        LATE_COUNT_SQL,
     )
 
 

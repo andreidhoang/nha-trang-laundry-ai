@@ -77,7 +77,13 @@ def test_the_card_says_it_is_a_fixed_template_not_ai_and_that_nothing_is_sent_by
 
 
 def test_the_summarys_statements_select_no_personal_column() -> None:
-    from nha_trang_laundry_db import accounts, daily_summary, unclaimed
+    from nha_trang_laundry_db import (
+        accounts,
+        daily_summary,
+        invoice_requests,
+        late_deliveries,
+        unclaimed,
+    )
 
     statements = [
         value
@@ -89,6 +95,10 @@ def test_the_summarys_statements_select_no_personal_column() -> None:
     # through `UnclaimedRepository.count_waiting` and `AccountRepository.accounts_due` -- counts and
     # sums over the waiting list and the account ledgers, never a customer's column.
     statements += [unclaimed._WAITING_COUNT_SQL, accounts._ACCOUNTS_DUE_SQL]
+    # Round 8 (`SUMMARY-ATTENTION-001`): the late-delivery and invoice-request counts' own
+    # statements. (The reminder count reads through the due list's scan, which asks only whether a
+    # phone is on record -- a presence test, never the number -- and is held by the reminder tests.)
+    statements += [late_deliveries.LATE_COUNT_SQL, invoice_requests.INVOICE_WAITING_OVER_SQL]
     for statement in statements:
         lowered = statement.lower()
         for column in (

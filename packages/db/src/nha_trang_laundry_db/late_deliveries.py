@@ -279,6 +279,30 @@ LATE_CANDIDATES_SQL: Final = """
     LIMIT %(scan)s
 """
 
+#: `count_undecided`'s statement: the list's population and predicates exactly, selecting only
+#: what the measurement needs -- no ticket, no customer -- because the evening summary counts it
+#: (`SUMMARY-ATTENTION-001`) and a summary statement never reads a personal column. A test holds
+#: the two statements' predicates equal.
+LATE_COUNT_SQL: Final = """
+    SELECT o.id, o.promised_ready_at
+    FROM delivery_legs r
+    JOIN orders o ON o.id = r.order_id AND o.store_id = r.store_id
+    WHERE r.store_id = %(store)s
+      AND r.leg_kind = 'RETURN' AND r.outcome = 'SUCCEEDED'
+      AND o.promised_ready_at IS NOT NULL
+      AND o.fulfillment_mode = ANY(%(modes)s)
+      AND NOT EXISTS (SELECT 1 FROM late_delivery_decisions d WHERE d.order_id = o.id)
+      AND (
+          r.recorded_at > o.promised_ready_at + make_interval(mins => %(threshold)s)
+          OR EXISTS (
+              SELECT 1 FROM order_promise_changes c
+              WHERE c.order_id = o.id AND c.reason_code = 'CUSTOMER_REQUEST'
+          )
+      )
+    ORDER BY r.recorded_at, o.id
+    LIMIT %(scan)s
+"""
+
 #: Credited decisions whose proposal has not been executed, with its owner envelope's state.
 _FOLLOW_UP_SQL: Final = """
     SELECT d.order_id, t.ticket_number, t.issued_on, d.late_by_minutes, d.incident_id,
@@ -425,7 +449,7 @@ class LateDeliveryRepository:
             return None
         threshold = published.policy.late_delivery_threshold_minutes
         cursor.execute(
-            LATE_CANDIDATES_SQL,
+            LATE_COUNT_SQL,
             {
                 "store": store_id,
                 "modes": list(_RETURN_MODES),
@@ -813,6 +837,7 @@ __all__ = [
     "ALREADY_DECIDED",
     "FOLLOW_UP_LIMIT",
     "LATE_CANDIDATES_SQL",
+    "LATE_COUNT_SQL",
     "LATE_DELIVERY_NOT_MEASURABLE",
     "LATE_DELIVERY_ROLES",
     "LATE_POPULATION_SQL",

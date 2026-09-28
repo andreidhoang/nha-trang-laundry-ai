@@ -1,15 +1,15 @@
 schema_version: 1
 work_item: PICKUP-REMIND-001
-recorded_at: '2026-09-28T19:02:39+07:00'
+recorded_at: '2026-09-29T01:57:25+07:00'
 requirement_contract: 'DEC-043: pure reminder_steps on shop days from ready (READY, DAY_3, DAY_7, DAY_14,
   BEFORE_FEE on the last free day only with a published storage policy; only the newest due step shows);
   Nhac khach lay do lists them with Mo Zalo (server-derived zalo.me link for the counter roles), Chep
   tin nhan (fixed pickup-reminder-v1 text after check_egress_allowed(TRANSACTIONAL); no name or phone),
-  Goi and Da nhac recording a contact attempt with its step (migration 0064, MESSAGE_SENT only on ZALO/SMS
+  Goi and Da nhac recording a contact attempt with its step (migration 0065, MESSAGE_SENT only on ZALO/SMS
   and only when the guard allows); the attempts count toward disposal.'
-rollback_impact: Migration 0064 is additive (a nullable column and a widened check); hide the list and
-  contact attempts stay on record. Rolling data back is docs/runbooks/restore-drill.md from the base backup
-  shop-till-mac.md section 8 takes before every upgrade.
+rollback_impact: Migration 0065 (reserved as 0064) is additive (a nullable column and a widened check);
+  hide the list and contact attempts stay on record. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
 unresolved_assumptions: The shop's own Zalo or SMS is not a modelled channel, so the guard judges every
   contact reference of the order's customer and a STOP on any refuses; sending automatically through a
   Zalo Official Account waits for the owner.
@@ -22,30 +22,30 @@ evidence:
     recorded through the ingress path) in the repository tests and the pickup_reminders scenario.
   walked_on_the_real_api_at_desk_and_phone_size: 'filmed at desk size (pickup_reminders): 40 ok, 0 failed;
     whole runs: desk 632 ok, 0 failed, phone 632 ok, 0 failed'
-  rollback_assessment: Migration 0064 is additive (a nullable column and a widened check); hide the list
-    and contact attempts stay on record. Rolling data back is docs/runbooks/restore-drill.md from the
-    base backup shop-till-mac.md section 8 takes before every upgrade.
+  rollback_assessment: Migration 0065 (reserved as 0064) is additive (a nullable column and a widened
+    check); hide the list and contact attempts stay on record. Rolling data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 takes before every upgrade.
 checks:
 - command: uv run ruff check .
   status: PASSED
   result: All checks passed!
 - command: uv run ruff format --check .
   status: PASSED
-  result: 750 files already formatted
+  result: 744 files already formatted
 - command: uv run mypy apps packages
   status: PASSED
-  result: 'Success: no issues found in 406 source files'
+  result: 'Success: no issues found in 407 source files'
 - command: uv run pytest --require-postgres-integration
   status: PASSED
-  result: 3605 passed, 5 skipped, 2 warnings in 801.69s (0:13:21)
+  result: 3620 passed, 5 skipped, 2 warnings in 790.23s (0:13:10)
 - command: uv run python scripts/verify_contracts.py
   status: PASSED
-  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 123 served
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 124 served
     internal API operations against their contract. Validated 589 staff-console disclosures against their
-    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+    registry. Validated 4 pinned public-runtime artifacts; release blockers=8.
 - command: uv run python scripts/check_context_drift.py
   status: PASSED
-  result: 'Context drift check passed: 173 source references, 44 decisions, 4 gates, 9 phases, 189 work
+  result: 'Context drift check passed: 179 source references, 44 decisions, 4 gates, 9 phases, 191 work
     items, 13 capabilities, 5 decision-gated items.'
 supplementary_checks:
 - command: verify_console_interaction.py (stubbed API)

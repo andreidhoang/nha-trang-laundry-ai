@@ -1,6 +1,6 @@
 schema_version: 1
 work_item: VIETQR-001
-recorded_at: '2026-09-28T19:02:39+07:00'
+recorded_at: '2026-09-29T01:57:25+07:00'
 requirement_contract: 'DEC-041: a NAPAS VietQR (EMVCo, CRC-16/CCITT-FALSE) built on the server for the
   payment ledger''s remaining balance read in the same request, with a transfer code NTL+ddmm+ticket (or
   NTL+8 id hex; NTLCN+account+mmyy for an account month), drawn by the console from a 0/1 matrix; on the
@@ -32,21 +32,21 @@ checks:
   result: All checks passed!
 - command: uv run ruff format --check .
   status: PASSED
-  result: 750 files already formatted
+  result: 744 files already formatted
 - command: uv run mypy apps packages
   status: PASSED
-  result: 'Success: no issues found in 406 source files'
+  result: 'Success: no issues found in 407 source files'
 - command: uv run pytest --require-postgres-integration
   status: PASSED
-  result: 3605 passed, 5 skipped, 2 warnings in 801.69s (0:13:21)
+  result: 3620 passed, 5 skipped, 2 warnings in 790.23s (0:13:10)
 - command: uv run python scripts/verify_contracts.py
   status: PASSED
-  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 123 served
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 124 served
     internal API operations against their contract. Validated 589 staff-console disclosures against their
-    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+    registry. Validated 4 pinned public-runtime artifacts; release blockers=8.
 - command: uv run python scripts/check_context_drift.py
   status: PASSED
-  result: 'Context drift check passed: 173 source references, 44 decisions, 4 gates, 9 phases, 189 work
+  result: 'Context drift check passed: 179 source references, 44 decisions, 4 gates, 9 phases, 191 work
     items, 13 capabilities, 5 decision-gated items.'
 supplementary_checks:
 - command: verify_console_interaction.py (stubbed API)

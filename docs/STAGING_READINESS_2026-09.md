@@ -41,9 +41,9 @@ engineer; every finding was fixed and filmed again.
 
 | Gate | `9287596` (before) | 2026-09-24 | 2026-09-25 | 2026-09-25 evening | 2026-09-25 night | 2026-09-26 (round 6) | 2026-09-27 (round 7) | 2026-09-28 (round 8) |
 |---|---|---|---|---|---|---|---|---|
-| `pytest --require-postgres-integration` | 1574 passed | 1749 passed, 0 failed | 2105 passed, 0 failed | 2274 passed, 0 failed | 2472 passed, 0 failed | 2679 passed, 0 failed | 3337 passed, 0 failed | **3605 passed, 0 failed** |
-| `mypy apps packages` | 249 files | 257 files | 290 files, clean | 304 files, clean | 316 files, clean | 325 files, clean | 381 files, clean | 406 files, clean |
-| `verify_contracts.py` | 57 ops, 348 disclosures | 58 ops, 381 | 61 ops, 396 | 66 ops, 419 | 71 ops, 457 | 77 ops, 475 | 108 ops, 554 | 123 ops, 589 |
+| `pytest --require-postgres-integration` | 1574 passed | 1749 passed, 0 failed | 2105 passed, 0 failed | 2274 passed, 0 failed | 2472 passed, 0 failed | 2679 passed, 0 failed | 3337 passed, 0 failed | **3620 passed, 0 failed** (after merging main's `AUTHZ-LIFECYCLE-001` and `OPENCLAW-RETIRE-001`) |
+| `mypy apps packages` | 249 files | 257 files | 290 files, clean | 304 files, clean | 316 files, clean | 325 files, clean | 381 files, clean | 407 files, clean |
+| `verify_contracts.py` | 57 ops, 348 disclosures | 58 ops, 381 | 61 ops, 396 | 66 ops, 419 | 71 ops, 457 | 77 ops, 475 | 108 ops, 554 | 124 ops, 589 |
 | Real API, shop day (`verify_daily_operations.py`) | 70 / 0 | 71 / 0 | 71 / 0 | 72 / 0, filmed | 78 / 0 at desk and at phone size, filmed | 78 / 0 at desk and at phone size | 80 / 0 at desk and at phone size, filmed at desk | **80 / 0 at desk and at phone size** |
 | Real API, every other workflow | 86 / 1 | 86 / 1 | 86 / 1 (coverage line only) | 159 / 0, all 49 controls | 187 / 0 at desk and at phone size, all 66 controls | 317 / 0 at desk and at phone size, all 96 controls; new flows filmed | 534 / 0 at desk and at phone size, all 162 controls; new flows filmed at desk | **632 / 0 at desk and at phone size, all 194 controls; new flows filmed at desk** |
 | Real API, consent walk (`verify_consent_walk.py`) | — | — | — | — | 38 / 0, filmed | — (unchanged code) | — (unchanged code) | — (unchanged code) |

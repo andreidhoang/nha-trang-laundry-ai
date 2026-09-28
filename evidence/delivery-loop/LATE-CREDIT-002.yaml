@@ -1,15 +1,15 @@
 schema_version: 1
 work_item: LATE-CREDIT-002
-recorded_at: '2026-09-28T19:02:39+07:00'
+recorded_at: '2026-09-29T01:57:25+07:00'
 requirement_contract: 'DEC-042: a pure late_delivery_clock (deadline = first promise, moved only by the
   newest CUSTOMER_REQUEST hen lai; arrival = earliest succeeded RETURN leg; minutes floored); Giao tre
   can xu ly lists deliveries late beyond the published remedy threshold with the would-be credit from
   the same probe RemedyOptions uses; one decision per order: STORE_FAULT opens the incident and the LATE_DELIVERY_CREDIT
   proposal with the server''s minutes in one transaction, then the existing authority path (staff to 100.000
   VND, owner above), or NOT_STORE_FAULT with a reason; report-v4 counts them.'
-rollback_impact: Migration 0063 is additive and append-only; hide the list and the manual remedy path
-  is unchanged. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
-  section 8 takes before every upgrade.
+rollback_impact: Migration 0064 (reserved as 0063) is additive and append-only; hide the list and the
+  manual remedy path is unchanged. Rolling data back is docs/runbooks/restore-drill.md from the base backup
+  shop-till-mac.md section 8 takes before every upgrade.
 unresolved_assumptions: The deadline for a delivery order is its promised-ready time (no separate delivery
   window exists); self-collect lateness stays report-only; a late order on a refunded bill needs 'Khong
   phai loi tiem' to leave the list.
@@ -23,30 +23,30 @@ evidence:
     owner; one credit per order even through the manual path; a refused proposal rolls the incident back.'
   walked_on_the_real_api_at_desk_and_phone_size: 'filmed at desk size (late_delivery): 31 ok, 0 failed;
     whole runs: desk 632 ok, 0 failed, phone 632 ok, 0 failed'
-  rollback_assessment: Migration 0063 is additive and append-only; hide the list and the manual remedy
-    path is unchanged. Rolling data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md
-    section 8 takes before every upgrade.
+  rollback_assessment: Migration 0064 (reserved as 0063) is additive and append-only; hide the list and
+    the manual remedy path is unchanged. Rolling data back is docs/runbooks/restore-drill.md from the
+    base backup shop-till-mac.md section 8 takes before every upgrade.
 checks:
 - command: uv run ruff check .
   status: PASSED
   result: All checks passed!
 - command: uv run ruff format --check .
   status: PASSED
-  result: 750 files already formatted
+  result: 744 files already formatted
 - command: uv run mypy apps packages
   status: PASSED
-  result: 'Success: no issues found in 406 source files'
+  result: 'Success: no issues found in 407 source files'
 - command: uv run pytest --require-postgres-integration
   status: PASSED
-  result: 3605 passed, 5 skipped, 2 warnings in 801.69s (0:13:21)
+  result: 3620 passed, 5 skipped, 2 warnings in 790.23s (0:13:10)
 - command: uv run python scripts/verify_contracts.py
   status: PASSED
-  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 123 served
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 124 served
     internal API operations against their contract. Validated 589 staff-console disclosures against their
-    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+    registry. Validated 4 pinned public-runtime artifacts; release blockers=8.
 - command: uv run python scripts/check_context_drift.py
   status: PASSED
-  result: 'Context drift check passed: 173 source references, 44 decisions, 4 gates, 9 phases, 189 work
+  result: 'Context drift check passed: 179 source references, 44 decisions, 4 gates, 9 phases, 191 work
     items, 13 capabilities, 5 decision-gated items.'
 supplementary_checks:
 - command: verify_console_interaction.py (stubbed API)

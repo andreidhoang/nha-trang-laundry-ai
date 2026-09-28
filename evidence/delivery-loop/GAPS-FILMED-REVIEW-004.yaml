@@ -1,6 +1,6 @@
 schema_version: 1
 work_item: GAPS-FILMED-REVIEW-004
-recorded_at: '2026-09-28T19:02:39+07:00'
+recorded_at: '2026-09-29T01:57:25+07:00'
 requirement_contract: Every round-8 flow filmed on the real API from an empty database at desk size (1366x900),
   refusal first, then the owner's switch, then the flow; reviewed as the counter worker and the owner;
   findings fixed with guards; the phone layout verified as secondary.
@@ -17,7 +17,11 @@ evidence:
     sheet re-reads on each new minute, keeping the choice (stub check; conformance waits out the minute
     edge); the evening summary''s late count selected a customer''s name and ticket (own statement, privacy
     test extended); the reminder heading counted unreachable orders among those to remind (now ''n don
-    can nhac'', stub check); the STOP harness step needs the stack''s demo hash key in the runner''s environment.'
+    can nhac'', stub check); the STOP harness step needs the stack''s demo hash key in the runner''s environment.
+    The films were recorded on 5fddcac; main then gained AUTHZ-LIFECYCLE-001, OPENCLAW-RETIRE-001 and
+    supply-chain fixes from another session, merged at 98a9c7f (round-8 migrations renumbered 0063-0065,
+    invoice and late-delivery checks made registered route gates, the order VietQR read allow-listed on
+    the order read''s rule), and every check below was re-run on the merged tree.'
   gaps_register_lists_exactly_what_is_missing: 'gaps.js rewritten by each slice: e-invoice issuing through
     a provider, automatic transfer confirmation, the self-collect not-ready credit, automatic Zalo reminders;
     the summary entry keeps model wording behind DEC-006.'
@@ -30,21 +34,21 @@ checks:
   result: All checks passed!
 - command: uv run ruff format --check .
   status: PASSED
-  result: 750 files already formatted
+  result: 744 files already formatted
 - command: uv run mypy apps packages
   status: PASSED
-  result: 'Success: no issues found in 406 source files'
+  result: 'Success: no issues found in 407 source files'
 - command: uv run pytest --require-postgres-integration
   status: PASSED
-  result: 3605 passed, 5 skipped, 2 warnings in 801.69s (0:13:21)
+  result: 3620 passed, 5 skipped, 2 warnings in 790.23s (0:13:10)
 - command: uv run python scripts/verify_contracts.py
   status: PASSED
-  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 123 served
+  result: Validated 669 synthetic combinatorial cases against the domain engines. Validated 124 served
     internal API operations against their contract. Validated 589 staff-console disclosures against their
-    registry. Validated 16 pinned public-runtime artifacts; release blockers=10.
+    registry. Validated 4 pinned public-runtime artifacts; release blockers=8.
 - command: uv run python scripts/check_context_drift.py
   status: PASSED
-  result: 'Context drift check passed: 173 source references, 44 decisions, 4 gates, 9 phases, 189 work
+  result: 'Context drift check passed: 179 source references, 44 decisions, 4 gates, 9 phases, 191 work
     items, 13 capabilities, 5 decision-gated items.'
 supplementary_checks:
 - command: verify_console_interaction.py (stubbed API)

@@ -268,7 +268,7 @@ def test_the_waiting_list_prints_no_phone_and_writes_nothing_to_the_device() -> 
     assert "Không ghi số điện thoại khách" in shared
 
 
-# --- PICKUP-REMIND-001 (DEC-043): reminding customers to collect -----------------------------------
+# --- PICKUP-REMIND-001 (DEC-043): reminding customers to collect --------------------------------
 
 
 def test_the_reminder_list_prints_no_phone_and_writes_nothing_to_the_device() -> None:

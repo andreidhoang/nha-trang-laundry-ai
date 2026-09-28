@@ -174,7 +174,11 @@ def test_the_text_waits_for_the_owner_and_da_nhac_records_the_message(
     assert row["reachable"] == "CHAT"
     assert row["message_refusal"] == "MESSAGING_POLICY_UNPUBLISHED"
     assert _refusal(_text(client, order_id, "READY"), "MESSAGING_POLICY_UNPUBLISHED")
-    sent = {"channel": "ZALO", "outcome": "MESSAGE_SENT", "reminder_step": "READY"}
+    sent: dict[str, object] = {
+        "channel": "ZALO",
+        "outcome": "MESSAGE_SENT",
+        "reminder_step": "READY",
+    }
     assert _refusal(_remind(client, order_id, sent), "MESSAGING_POLICY_UNPUBLISHED")
     assert _refusal(
         _remind(client, order_id, {"channel": "ZALO", "outcome": "MESSAGE_SENT"}),

@@ -558,7 +558,7 @@ def test_issued_is_recorded_by_the_owner_once_and_then_nothing_moves(shop: Shop)
     tomorrow = datetime.now(UTC).date() + timedelta(days=2)
     for bad in ({"symbol": "1C26-TYY"}, {"number": "123456789"}, {"on": tomorrow}):
         with pytest.raises(InvoiceRuleError) as caught:
-            _issue(shop, stored.request_id, 1, **bad)  # type: ignore[arg-type]
+            _issue(shop, stored.request_id, 1, **bad)
         assert caught.value.code is InvoiceRefusal.INVOICE_ISSUED_DETAILS_INVALID
     with pytest.raises(InvoiceStateError):
         _issue(shop, stored.request_id, 5)

@@ -39,7 +39,7 @@ def _buyer(**overrides: str | None) -> dict[str, str | None]:
 
 def _refusal(**overrides: str | None) -> tuple[InvoiceRefusal, str | None]:
     with pytest.raises(InvoiceRuleError) as caught:
-        clean_buyer(**_buyer(**overrides))  # type: ignore[arg-type]
+        clean_buyer(**_buyer(**overrides))
     return caught.value.code, caught.value.field
 
 
@@ -82,7 +82,7 @@ def test_the_unit_name_is_required_and_bounded() -> None:
         "buyer_unit_name",
     )
     assert _refusal(unit_name="x" * 201)[0] is InvoiceRefusal.INVOICE_BUYER_FIELD_INVALID
-    assert clean_buyer(**_buyer(unit_name="x" * 200)).unit_name == "x" * 200  # type: ignore[arg-type]
+    assert clean_buyer(**_buyer(unit_name="x" * 200)).unit_name == "x" * 200
 
 
 def test_a_tax_code_needs_an_address() -> None:

@@ -37,14 +37,6 @@ def load_mapping(path: Path) -> dict[str, Any]:
     return loaded
 
 
-def queue_items() -> list[dict[str, Any]]:
-    queue = load_mapping(QUEUE_PATH)
-    items = queue.get("items")
-    if queue.get("schema_version") != 1 or not isinstance(items, list):
-        raise ValueError("WORK_QUEUE.yaml must have schema_version 1 and an items list")
-    return items
-
-
 def decision_statuses() -> dict[str, str]:
     registry = load_mapping(DECISIONS_PATH)
     decisions = registry.get("decisions")

@@ -38,21 +38,6 @@ class AgentToolSideEffect(StrEnum):
     REVERSIBLE_WRITE = "REVERSIBLE_WRITE"
 
 
-OPENCLAW_TOOL_NAMES: dict[AgentToolOperation, str] = {
-    AgentToolOperation.CATALOG_RESOLVE: "laundry_catalog_resolve",
-    AgentToolOperation.ORDER_REQUEST_CREATE: "laundry_order_request_create",
-    AgentToolOperation.ORDER_REQUEST_RECORD_CUSTOMER_FACTS: (
-        "laundry_order_request_record_customer_facts"
-    ),
-    AgentToolOperation.QUOTE_ESTIMATE: "laundry_quote_estimate",
-    AgentToolOperation.DELIVERY_EVALUATE: "laundry_delivery_evaluate",
-    AgentToolOperation.CAPACITY_CHECK: "laundry_capacity_check",
-    AgentToolOperation.MESSAGE_DRAFT_CREATE: "laundry_message_draft_create",
-    AgentToolOperation.PUBLIC_ORDER_STATUS_GET: "laundry_public_order_status_get",
-    AgentToolOperation.INCIDENT_OPEN: "laundry_incident_open",
-    AgentToolOperation.APPROVAL_REQUEST_CREATE: "laundry_approval_request_create",
-}
-
 # None of these fields may be supplied by the model at any nesting level. Some
 # concepts have similarly named customer-provided text fields, so this list is
 # deliberately exact rather than substring based.
@@ -128,7 +113,6 @@ class ToolArgumentsInvalid(ValueError):
 @dataclass(frozen=True, slots=True)
 class OperationContract:
     operation: AgentToolOperation
-    tool_name: str
     method: str
     path: str
     description: str
@@ -204,10 +188,6 @@ class AgentToolRegistry:
     @property
     def operation_ids(self) -> tuple[str, ...]:
         return tuple(operation.value for operation in self.operations)
-
-    @property
-    def tool_names(self) -> tuple[str, ...]:
-        return tuple(contract.tool_name for contract in self.operations.values())
 
 
 def load_agent_tool_registry(path: Path) -> AgentToolRegistry:
@@ -285,7 +265,6 @@ def load_agent_tool_registry(path: Path) -> AgentToolRegistry:
                 )
             compiled[operation_id] = OperationContract(
                 operation=operation_id,
-                tool_name=OPENCLAW_TOOL_NAMES[operation_id],
                 method=method.upper(),
                 path=route,
                 description=str(
@@ -306,8 +285,6 @@ def load_agent_tool_registry(path: Path) -> AgentToolRegistry:
         missing = sorted(operation.value for operation in expected.difference(compiled))
         extra = sorted(operation.value for operation in set(compiled).difference(expected))
         raise ToolRegistryError(f"Agent operation drift; missing={missing}, extra={extra}")
-    if len(set(OPENCLAW_TOOL_NAMES.values())) != len(OPENCLAW_TOOL_NAMES):
-        raise ToolRegistryError("OpenClaw public tool names must be unique")
     return AgentToolRegistry(
         openapi_version=openapi_version,
         contract_version=info["version"],

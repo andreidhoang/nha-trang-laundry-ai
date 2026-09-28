@@ -1,0 +1,49 @@
+schema_version: 2
+evidence_id: OPENAI-DATA-CONTROLS-REVIEW-2026-07-28-V2
+recorded_at: "2026-07-28T00:00:00Z"
+scope:
+  provider: openai
+  api: Responses
+  model_candidate: gpt-5.6-terra
+  agent_runtime_id: nha-trang-responses-runtime
+status: DOCUMENTATION_REVIEWED_EFFECTIVE_REQUEST_NOT_VERIFIED
+official_sources:
+  - title: OpenAI API data controls
+    url: https://developers.openai.com/api/docs/guides/your-data
+  - title: OpenAI GPT-5.6 Terra model
+    url: https://developers.openai.com/api/docs/models/gpt-5.6-terra
+documented_observations:
+  - API data is not used to train OpenAI models by default unless the organization explicitly opts in.
+  - Default abuse-monitoring logs may retain customer content for up to 30 days.
+  - Responses application state and Zero Data Retention behavior depend on account approval and request features.
+  - The Responses runtime request type fixes store to false (ResponsesRequest.store is Literal[False]); whether the provider honours it is still captured_effective_request_store_false.
+required_product_policy:
+  response_store: false
+  dedicated_service_credential: true
+  minimum_data: true
+  hidden_chain_of_thought_storage: false
+verification:
+  documentation_review: VERIFIED
+  immutable_model_release: NOT_VERIFIED
+  captured_effective_request_store_false: NOT_VERIFIED
+  zero_data_retention_account_approval: NOT_VERIFIED
+  dedicated_service_credential: NOT_VERIFIED
+  security_approval: NOT_APPROVED
+  privacy_approval: NOT_APPROVED
+  provider_training_terms: DOCUMENTATION_REVIEWED
+  retention_and_abuse_log_exception: DOCUMENTATION_REVIEWED
+  region_and_subprocessors: NOT_APPROVED
+  deletion_path: NOT_APPROVED
+  incident_terms: NOT_APPROVED
+decision_binding:
+  decision_id: DEC-006
+  decision_status: OPEN
+release_effect:
+  synthetic_eval_allowed: true
+  real_customer_data_allowed: false
+  public_ingress_allowed: false
+  automatic_send_allowed: false
+next_verification:
+  - Obtain a dedicated non-production OpenAI API project credential.
+  - Capture and assert the effective Responses request in an integration test without recording PII or secrets.
+  - Obtain recorded Security and Privacy approval for training, retention, region, deletion, subprocessors and incident terms.

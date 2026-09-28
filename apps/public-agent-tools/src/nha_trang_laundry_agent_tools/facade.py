@@ -101,7 +101,7 @@ class AgentCallLedger(Protocol):
     ) -> None: ...
 
 
-#: The registry's ceiling on tool calls per run (`runtime/model-registry-v1.yaml` limits).
+#: The registry's ceiling on tool calls per run (`runtime/model-registry-v2.yaml` limits).
 MAX_TOOL_CALLS_PER_RUN = 6
 
 

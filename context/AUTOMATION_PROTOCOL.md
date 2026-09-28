@@ -208,7 +208,6 @@ uv run pytest --require-postgres-integration
 uv run python scripts/verify_contracts.py
 uv run python scripts/check_context_drift.py
 uv run python scripts/report_delivery_status.py
-npm --prefix runtime/openclaw/public-cell/plugin test
 ```
 
 Create the schema-valid evidence file before the task commit. The uncommitted

@@ -28,12 +28,14 @@ This is a deliberate deviation from ADR-0001, which reserves TypeScript for "the
 staff PWA". The deviation is recorded rather than assumed, and it is reversible. Four things in this
 repository make a second npm tree cost more than it looks:
 
-1. `scripts/audit_dependency_licenses.py` takes a single `--package-lock`. A second lockfile is not
-   scanned, and the fail-closed licence check passes anyway.
-2. `npm audit` in `release-supply-chain.yml` is pinned with `--prefix` to the OpenClaw plugin. A
-   second tree is never audited for advisories.
-3. The supply-chain evidence bundle lists lockfiles by hand and its schema requires `minItems: 2`
-   with no coverage constraint, so an omission validates cleanly.
+1. ~~`scripts/audit_dependency_licenses.py` takes a single `--package-lock`.~~ Closed by
+   `OPENCLAW-RETIRE-001`: the flag is repeatable, one per npm tree.
+2. `release-supply-chain.yml` has no `npm audit` step at all since the OpenClaw plugin was retired
+   (ADR-0009). A new npm tree needs one added.
+3. ~~The supply-chain bundle's lockfiles had no coverage constraint.~~ Closed by
+   `OPENCLAW-RETIRE-001`: schema v2 and the verifier require the audited lockfiles to be exactly the
+   lockfiles in the repository, so adding `package-lock.json` fails the gate until the release
+   workflow lists it — the point at which item 2's missing audit step is in front of whoever lists it.
 4. Trivy detects npm dependencies from manifests inside the image. A minified bundle carries none,
    so the per-image SBOM would certify an image whose entire frontend dependency tree is invisible.
 
@@ -47,9 +49,9 @@ its HMR socket violates `connect-src`. And the console's privacy gates are sourc
 over authored JavaScript; minified output weakens them even where the paths are fixed.
 
 **Adopting Vite later is legitimate.** The prerequisites are the four call sites above, plus a
-digest-pinned Node builder stage in `apps/api/Dockerfile` and a decision about whether the
-cross-platform byte-identical reproduction standard applied to the OpenClaw artifact extends to a
-new build stage. Doing that as its own queue item with its own evidence is defensible; doing it
+digest-pinned Node builder stage in `apps/api/Dockerfile` and a decision about whether a
+cross-platform byte-identical reproduction standard (as once applied to the retired OpenClaw
+artifact) applies to a new build stage. Doing that as its own queue item with its own evidence is defensible; doing it
 implicitly as a side effect of "add React" is not.
 
 ## Generated files

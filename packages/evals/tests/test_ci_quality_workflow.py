@@ -11,7 +11,6 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_PATH = ROOT / ".github/workflows/quality.yml"
-PLUGIN_DIRECTORY = "runtime/openclaw/public-cell/plugin"
 
 
 def _python_quality_job() -> dict[str, Any]:
@@ -118,15 +117,31 @@ def test_postgres_guard_rejects_the_repository_database_skip(tmp_path: Path) -> 
     assert "PostgreSQL integration coverage is required" in result.stdout
 
 
-def test_plugin_lockfile_install_build_and_tests_are_mandatory() -> None:
+def test_checkout_has_the_history_the_retirement_evidence_is_verified_against() -> None:
+    """Codex review on PR #7: a shallow checkout silently skipped the history re-verification."""
+
     steps = _run_steps(_python_quality_job())
-    plugin_commands = ("npm ci", "npm run build", "npm test")
-    indexes = []
-    for command in plugin_commands:
-        index = _command_index(steps, command)
-        indexes.append(index)
-        assert steps[index].get("working-directory") == PLUGIN_DIRECTORY
-    assert indexes == sorted(indexes)
+    checkout = next(
+        step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    assert checkout.get("with", {}).get("fetch-depth") == 0
+
+
+def test_node_is_installed_before_the_tests_that_need_it() -> None:
+    """The console behaviour and syntax tests skip without `node`; CI must never let them skip.
+
+    `OPENCLAW-RETIRE-001` removed the OpenClaw plugin's npm steps, which had been the visible reason
+    Node was installed. Node is still needed, by pytest, so its order is pinned here.
+    """
+
+    steps = _run_steps(_python_quality_job())
+    setup_node = next(
+        index
+        for index, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith("actions/setup-node@")
+    )
+    assert setup_node < _command_index(steps, "uv run pytest --require-postgres-integration")
+    assert not any("npm" in str(step.get("run", "")) for step in steps)
 
 
 def test_existing_quality_contract_and_least_privilege_gates_remain() -> None:

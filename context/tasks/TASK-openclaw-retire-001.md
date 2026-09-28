@@ -1,7 +1,7 @@
 # TASK-openclaw-retire-001 — reversible public-path retirement
 
-**Goal:** remove OpenClaw from the public production dependency and deployment path only after the
-runtime-selection, provider-data, security and rollback gates prove the custom adapter.
+**Goal:** remove OpenClaw from the public production dependency and deployment path, keeping its
+history complete and checkable.
 
 **Domains:** `runtime_architecture`, `evaluation_release`, `platform`
 
@@ -9,13 +9,20 @@ runtime-selection, provider-data, security and rollback gates prove the custom a
 
 **Stage:** M4C
 **Risk:** HIGH
-## Preconditions
 
-- `RUNTIME-PARITY-001` is complete with accepted hash-bound evidence;
-- custom runtime has no P0/critical regression and satisfies registered latency/cost/recovery budgets;
-- effective provider request and DEC-006 data controls are approved;
-- signed release and rollback artifacts identify the exact runtime/model/prompt/tool/context/config set;
-- rollback rehearsal restores the last verified comparator without weakening any gate.
+**Decision:** `docs/adr/0009-retire-public-openclaw-runtime.md` (owner, 2026-09-28).
+
+## Preconditions (amended by ADR-0009)
+
+The original preconditions — `RUNTIME-PARITY-001` complete, DEC-006 approved, a rehearsed restore of
+"the last verified comparator" — assumed OpenClaw was the rollback runtime. ADR-0004 ended that role
+and ADR-0009 removes the ordering. What remains required:
+
+- production does not select, construct or deploy OpenClaw (measured, not assumed);
+- a stale or implicit OpenClaw route fails closed at startup;
+- no release blocker is weakened: each removed blocker names what still covers its risk;
+- every retired byte stays verifiable from history, and the retained evidence still validates;
+- the rollback (a revert) is rehearsed and shown to restore the retired state.
 
 ## Ordered cleanup
 

@@ -1,4 +1,4 @@
-"""Fail-closed Agent Runner and in-memory bridge for the isolated public cell.
+"""Fail-closed Agent Runner and in-memory tool bridge for the bounded agent runtime.
 
 The model only supplies a registered operation and strict arguments.  This module owns
 the contact binding, path identifiers, version, short-lived facade JWT, budgets, and
@@ -60,7 +60,7 @@ class AgentRuntimeTimeout(AgentRunRejected):
 
 
 class AgentToolBridgeRejected(AgentRunnerError):
-    """A public-cell tool attempt failed closed before or at the facade boundary."""
+    """A tool attempt failed closed before or at the facade boundary."""
 
 
 class ProviderRuntimeBlocked(AgentRunnerError):
@@ -139,7 +139,7 @@ class ExecutionPins:
 
 
 def registry_execution_pins(
-    registry_path: Path = ROOT / "runtime/model-registry-v1.yaml",
+    registry_path: Path = ROOT / "runtime/model-registry-v2.yaml",
 ) -> ExecutionPins:
     """The pins the repository's runtime registry declares, with the registry's own content hash."""
 
@@ -309,7 +309,7 @@ class AgentRunnerTokenIssuer:
 
 
 class AgentToolBridgeSession:
-    """Ephemeral, contact-bound bridge state shared only with one public-cell executor."""
+    """Ephemeral, contact-bound bridge state shared only with one runtime executor."""
 
     def __init__(
         self,
@@ -733,31 +733,6 @@ class SyntheticScriptedRuntime:
         )
 
 
-class DisabledOpenClawProviderRuntime:
-    """Explicit provider path retained as a release-gated refusal, never an implicit fallback."""
-
-    provider_backed = True
-
-    def __init__(
-        self, runtime_registry_path: Path = ROOT / "runtime/model-registry-v1.yaml"
-    ) -> None:
-        self._registry = load_public_runtime_registry(runtime_registry_path)
-        self._execution_pins = registry_execution_pins(runtime_registry_path)
-
-    @property
-    def execution_pins(self) -> ExecutionPins:
-        return self._execution_pins
-
-    def invoke(
-        self, invocation: AgentRuntimeInvocation, bridge: AgentToolBridgeSession
-    ) -> AgentRuntimeOutput:
-        del invocation, bridge
-        blockers = self._registry.release_blockers()
-        if blockers:
-            raise ProviderRuntimeBlocked(";".join(blockers))
-        raise ProviderRuntimeBlocked("OPENCLAW_EXECUTOR_NOT_CONFIGURED")
-
-
 @dataclass(frozen=True, slots=True)
 class AgentRunResult:
     """What one run concluded. `status` is the runtime's disposition, never a constant."""
@@ -785,7 +760,7 @@ class AgentRunner:
                 "release authorization and deployed commit SHA must be configured together"
             )
         self._issuer = issuer
-        self._registry = load_public_runtime_registry(ROOT / "runtime/model-registry-v1.yaml")
+        self._registry = load_public_runtime_registry(ROOT / "runtime/model-registry-v2.yaml")
         self._release_authorization = release_authorization
         self._deployed_commit_sha = deployed_commit_sha
 
@@ -939,7 +914,6 @@ __all__ = [
     "AgentToolForwardResponse",
     "AgentToolTransport",
     "ConstrainedAgentRuntime",
-    "DisabledOpenClawProviderRuntime",
     "ExecutionPins",
     "ProviderRuntimeBlocked",
     "ScriptedToolCall",

@@ -49,7 +49,6 @@ from .runtime_registry import (
     ReleaseCapability,
     RuntimeArtifactError,
     load_public_runtime_registry,
-    verify_openclaw_cli_version,
     verify_public_runtime_artifacts,
 )
 from .supply_chain import (
@@ -58,7 +57,6 @@ from .supply_chain import (
     verify_supply_chain_evidence,
 )
 from .tool_registry import (
-    OPENCLAW_TOOL_NAMES,
     STRICT_FORMAT_CHECKER,
     AgentToolOperation,
     AgentToolRegistry,
@@ -71,7 +69,6 @@ from .tool_registry import (
 __all__ = [
     "AMBIGUOUS_OUTCOMES",
     "CAPABILITY_OPERATIONS",
-    "OPENCLAW_TOOL_NAMES",
     "RESOLVED_STATES",
     "STRICT_FORMAT_CHECKER",
     "AgentDataClassification",
@@ -120,7 +117,6 @@ __all__ = [
     "load_public_runtime_registry",
     "load_trusted_release_signers",
     "operation_is_authorized",
-    "verify_openclaw_cli_version",
     "verify_public_runtime_artifacts",
     "verify_release_manifest",
     "verify_supply_chain_evidence",

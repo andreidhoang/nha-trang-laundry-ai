@@ -18,7 +18,13 @@ def parser() -> argparse.ArgumentParser:
     candidate.add_argument("--license-scanner-version", required=True)
     candidate.add_argument("--lockfile", action="append", required=True)
     candidate.add_argument("--secret-report", required=True)
-    candidate.add_argument("--dependency-report", action="append", required=True)
+    candidate.add_argument(
+        "--dependency-report",
+        action="append",
+        required=True,
+        metavar="ECOSYSTEM=URI",
+        help="an advisory report and the ecosystem it audits, e.g. python=artifacts/pip-audit.json",
+    )
     candidate.add_argument("--license-report", required=True)
     candidate.add_argument("--image", action="append", required=True, metavar="IMAGE_REF=SCAN_URI")
     candidate.add_argument("--evidence-id", required=True)
@@ -33,6 +39,13 @@ def _artifact(root: Path, uri: str) -> dict[str, str]:
         raise ValueError(f"artifact escapes root: {uri}")
     content = path.read_bytes()
     return {"uri": uri.replace("\\", "/"), "sha256": f"sha256:{sha256(content).hexdigest()}"}
+
+
+def _ecosystem_report(root: Path, binding: str) -> dict[str, str]:
+    ecosystem, separator, uri = binding.partition("=")
+    if not separator or ecosystem not in {"python", "node"}:
+        raise ValueError("--dependency-report must be ECOSYSTEM=URI with ecosystem python or node")
+    return {**_artifact(root, uri), "ecosystem": ecosystem}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         images.append({"image_ref": image_ref, "scan_evidence": _artifact(root, scan_uri)})
     scanner = {"status": "PASSED"}
     evidence = {
-        "schema_version": 1,
+        "schema_version": 2,
         "evidence_id": args.evidence_id,
         "release_commit_sha": args.commit_sha,
         "generated_at": generated.isoformat().replace("+00:00", "Z"),
@@ -68,15 +81,15 @@ def main(argv: list[str] | None = None) -> int:
         },
         "dependency_audit": {
             **scanner,
-            "scanner": "pip-audit+npm-audit",
+            "scanner": "pip-audit",
             "scanner_version": args.dependency_scanner_version,
             "lockfiles": lockfiles,
-            "reports": [_artifact(root, uri) for uri in args.dependency_report],
+            "reports": [_ecosystem_report(root, binding) for binding in args.dependency_report],
             "vulnerabilities": {"critical": 0, "high": 0},
         },
         "license_audit": {
             **scanner,
-            "scanner": "pip-licenses+package-lock-policy",
+            "scanner": "pip-licenses",
             "scanner_version": args.license_scanner_version,
             "lockfiles": lockfiles,
             "forbidden_or_unknown_count": 0,

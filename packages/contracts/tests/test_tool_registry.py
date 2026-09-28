@@ -15,11 +15,9 @@ ROOT = Path(__file__).resolve().parents[3]
 REGISTRY = load_agent_tool_registry(ROOT / "specs/contracts/agent-tools-v1.openapi.yaml")
 
 
-def test_registry_compiles_exact_fixed_openclaw_tools() -> None:
+def test_registry_compiles_exact_fixed_tools() -> None:
     assert set(REGISTRY.operation_ids) == {operation.value for operation in AgentToolOperation}
-    assert len(REGISTRY.tool_names) == 10
-    assert len(set(REGISTRY.tool_names)) == 10
-    assert all(name.startswith("laundry_") for name in REGISTRY.tool_names)
+    assert len(REGISTRY.operation_ids) == 10
 
 
 def test_catalog_arguments_are_strict_and_decimal_is_a_string() -> None:

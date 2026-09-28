@@ -48,14 +48,8 @@ The guarded run fails when `DATABASE_URL` is absent, when PostgreSQL is unreacha
 database-backed test attempts to use the repository's missing-database skip. Plain `uv run pytest`
 remains available for database-independent local feedback and reports database skips visibly.
 
-The isolated OpenClaw plugin gate installs only from its lockfile, compiles TypeScript, and executes
-its Node tests:
-
-```text
-npm --prefix runtime/openclaw/public-cell/plugin ci
-npm --prefix runtime/openclaw/public-cell/plugin run build
-npm --prefix runtime/openclaw/public-cell/plugin test
-```
+Node is needed only for the staff-console behaviour and syntax tests, which pytest runs and which
+skip without it. There is no npm project to install: the OpenClaw plugin was retired (ADR-0009).
 
 ## Stop local database
 

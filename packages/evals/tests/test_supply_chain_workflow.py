@@ -81,7 +81,10 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
         "dependency_audit": {
             **scanner,
             "lockfiles": lockfiles,
-            "reports": [report_artifacts["pip-audit"], report_artifacts["npm-audit"]],
+            "reports": [
+                {**report_artifacts["pip-audit"], "ecosystem": "python"},
+                {**report_artifacts["npm-audit"], "ecosystem": "node"},
+            ],
             "vulnerabilities": {"critical": 0, "high": 0},
         },
         "license_audit": {
@@ -181,6 +184,21 @@ def test_a_lockfile_under_a_nested_artifacts_directory_must_still_be_audited(
     nested.write_bytes(b'{"lockfileVersion":3}\n')
 
     with pytest.raises(SupplyChainEvidenceError, match=r"missing=.*apps/tool/artifacts"):
+        _verify(repository, path)
+
+
+def test_a_listed_lockfile_without_an_audit_for_its_ecosystem_is_rejected(tmp_path: Path) -> None:
+    """Listing `package-lock.json` is not auditing it: the node tree needs its own report."""
+
+    repository, path, bundle = _fixture(tmp_path)
+    bundle["dependency_audit"]["reports"] = [
+        report
+        for report in bundle["dependency_audit"]["reports"]
+        if report["ecosystem"] == "python"
+    ]
+    _rewrite(path, bundle)
+
+    with pytest.raises(SupplyChainEvidenceError, match=r"ecosystem\(s\) \['node'\]"):
         _verify(repository, path)
 
 

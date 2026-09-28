@@ -40,6 +40,10 @@ jobs:
           --health-retries 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: test_openclaw_retirement re-verifies retired bytes against the commit
+          # the retirement record names, and must fail, not skip, when that commit is absent.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"

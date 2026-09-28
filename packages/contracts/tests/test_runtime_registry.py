@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -69,6 +70,8 @@ def test_a_version_one_openclaw_registry_is_refused() -> None:
         check=False,
     )
     if previous.returncode != 0:
+        if os.environ.get("CI"):
+            pytest.fail("retirement base commit is not in this CI checkout")
         pytest.skip("shallow checkout without the retirement base commit")
     with pytest.raises(ValidationError):
         PublicRuntimeRegistry.model_validate(yaml.safe_load(previous.stdout))

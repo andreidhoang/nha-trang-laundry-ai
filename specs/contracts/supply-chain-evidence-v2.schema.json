@@ -221,7 +221,7 @@
           "minItems": 1,
           "uniqueItems": true,
           "items": {
-            "$ref": "#/$defs/Artifact"
+            "$ref": "#/$defs/EcosystemReport"
           }
         },
         "vulnerabilities": {
@@ -285,7 +285,31 @@
       "items": {
         "$ref": "#/$defs/Artifact"
       }
+    },
+    "EcosystemReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uri",
+        "sha256",
+        "ecosystem"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "ecosystem": {
+          "enum": [
+            "python",
+            "node"
+          ]
+        }
+      }
     }
   },
-  "description": "Version 2 (OPENCLAW-RETIRE-001, ADR-0009). Version 1 required at least two lockfiles and two dependency reports because the repository then had two dependency trees (uv.lock and the OpenClaw plugin's package-lock.json). The count stood for 'every dependency tree is audited'; version 2 states that rule directly: at least one, and the verifier requires the audited lockfiles to be exactly the lockfiles present in the repository, so a tree added later without an audit fails, which a fixed count could not catch."
+  "description": "Version 2 (OPENCLAW-RETIRE-001, ADR-0009). Version 1 required at least two lockfiles and two dependency reports because the repository then had two dependency trees (uv.lock and the OpenClaw plugin's package-lock.json). The count stood for 'every dependency tree is audited'; version 2 states that rule directly: at least one, and the verifier requires the audited lockfiles to be exactly the lockfiles present in the repository, so a tree added later without an audit fails, which a fixed count could not catch. Each dependency report names its ecosystem, and the verifier requires a report for the ecosystem of every lockfile, so listing a lockfile without auditing its tree fails."
 }

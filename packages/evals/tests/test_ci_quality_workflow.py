@@ -117,6 +117,16 @@ def test_postgres_guard_rejects_the_repository_database_skip(tmp_path: Path) -> 
     assert "PostgreSQL integration coverage is required" in result.stdout
 
 
+def test_checkout_has_the_history_the_retirement_evidence_is_verified_against() -> None:
+    """Codex review on PR #7: a shallow checkout silently skipped the history re-verification."""
+
+    steps = _run_steps(_python_quality_job())
+    checkout = next(
+        step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    assert checkout.get("with", {}).get("fetch-depth") == 0
+
+
 def test_node_is_installed_before_the_tests_that_need_it() -> None:
     """The console behaviour and syntax tests skip without `node`; CI must never let them skip.
 

@@ -304,7 +304,10 @@ def _add_supply_chain_evidence(
         "dependency_audit": {
             **scanner,
             "lockfiles": lockfiles,
-            "reports": [report("pip-audit"), report("npm-audit")],
+            "reports": [
+                {**report("pip-audit"), "ecosystem": "python"},
+                {**report("npm-audit"), "ecosystem": "node"},
+            ],
             "vulnerabilities": {"critical": 0, "high": 0},
         },
         "license_audit": {

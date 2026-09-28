@@ -13,6 +13,7 @@ What is proved here, each by reading the tree rather than trusting the record:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from hashlib import sha256
 from pathlib import Path
@@ -87,6 +88,10 @@ def test_no_live_file_depends_on_a_retired_path() -> None:
 def test_every_recorded_hash_re_verifies_against_the_named_commit() -> None:
     probe = subprocess.run(["git", "cat-file", "-e", f"{BASE}^{{commit}}"], cwd=ROOT, check=False)
     if probe.returncode != 0:
+        # Locally a shallow clone may skip; the CI evidence gate fetches full history and must
+        # never skip this, or a corrupt record would pass unverified.
+        if os.environ.get("CI"):
+            pytest.fail(f"retirement base commit {BASE} is not in this checkout")
         pytest.skip("shallow checkout without the retirement base commit")
     for path, entry in _recorded().items():
         data = subprocess.run(

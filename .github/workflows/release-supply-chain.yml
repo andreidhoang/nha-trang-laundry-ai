@@ -102,7 +102,7 @@ jobs:
             --license-scanner-version policy-v1 \
             --lockfile uv.lock \
             --secret-report artifacts/supply-chain/gitleaks.json \
-            --dependency-report artifacts/supply-chain/pip-audit.json \
+            --dependency-report python=artifacts/supply-chain/pip-audit.json \
             --license-report artifacts/supply-chain/licenses.json \
             "${image_args[@]}" --evidence-id "SUPPLY:${GITHUB_RUN_ID}" \
             --output artifacts/supply-chain/evidence.json

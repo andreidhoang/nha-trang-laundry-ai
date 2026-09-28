@@ -111,10 +111,17 @@ def verify_supply_chain_evidence(
     )
 
 
-#: Every dependency lockfile format this repository could carry. A tree in any of them is audited.
-LOCKFILE_NAMES = frozenset(
-    {"uv.lock", "poetry.lock", "Pipfile.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
-)
+#: Every dependency lockfile format this repository could carry, and the ecosystem whose advisory
+#: audit must accompany it. A tree in any of them is audited by a report for that ecosystem.
+LOCKFILE_ECOSYSTEMS: dict[str, str] = {
+    "uv.lock": "python",
+    "poetry.lock": "python",
+    "Pipfile.lock": "python",
+    "package-lock.json": "node",
+    "pnpm-lock.yaml": "node",
+    "yarn.lock": "node",
+}
+LOCKFILE_NAMES = frozenset(LOCKFILE_ECOSYSTEMS)
 #: Skipped wherever they appear: version control, installed environments and caches, never sources.
 _UNSCANNED_DIRECTORIES = frozenset({".git", ".venv", "node_modules", "__pycache__"})
 #: Skipped only at the repository root: the release workflow's own generated output.
@@ -157,6 +164,14 @@ def _require_every_lockfile_audited(repository: Path, evidence: Mapping[str, Any
                 f"{audit_name} does not cover the repository's lockfiles; "
                 f"missing={missing}, not in repository={stale}"
             )
+    # Listing a lockfile is not auditing it: every ecosystem present needs its own advisory report.
+    needed = {LOCKFILE_ECOSYSTEMS[Path(uri).name] for uri in present}
+    dependency_audit = cast(dict[str, Any], evidence["dependency_audit"])
+    reported = {report["ecosystem"] for report in dependency_audit["reports"]}
+    if needed - reported:
+        raise SupplyChainEvidenceError(
+            f"dependency_audit has no advisory report for ecosystem(s) {sorted(needed - reported)}"
+        )
 
 
 def _validate(value: Mapping[str, object], schema_path: Path) -> None:

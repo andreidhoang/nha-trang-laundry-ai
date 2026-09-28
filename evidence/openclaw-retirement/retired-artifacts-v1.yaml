@@ -151,6 +151,12 @@ prior_versions:
 - path: README.md
   sha256: sha256:2e03192ff3837de5cca42dba39e438a47706f2b62aa4a11393f9a3a776055305
   git_blob: 2dabe61c726187d1f61e92225ab33f67837b294e
+- path: apps/api/Dockerfile
+  sha256: sha256:e7843f377def0499e031cb050e5d2d094384b6dc80ee00921819553913bf2ecb
+  git_blob: ba5ee25a3ce75aade29944f0a047c2d640087c50
+- path: apps/public-agent-tools/Dockerfile
+  sha256: sha256:036b69849759e1e536da642c646e88b0a5c42f3ffb50fa5b66e6db082f9fa5b4
+  git_blob: 70e3b09527174c1b6c579c0a20aaa02ea01eec49
 - path: apps/public-agent-tools/src/nha_trang_laundry_agent_tools/auth.py
   sha256: sha256:529fab2357f6ed7e48f5269007d94307bd8cdb18f9b6a02e9b1fed95d9afbb94
   git_blob: 268d035fb75c871593fb24062cb19e9b1aae6e3e
@@ -160,6 +166,9 @@ prior_versions:
 - path: apps/web/README.md
   sha256: sha256:4fc603078b7a4e60cae7cab06ef45b0e5a6775811729f86b840a1f436450b91a
   git_blob: d9166674a612d314427ba4c0895982aaad5e3993
+- path: apps/worker/Dockerfile
+  sha256: sha256:300cdb52bcf52c8c6b2e18bb1465c0d29e04f3d22186deff3a36facea75a31c5
+  git_blob: 7fbd3a093bc645ef0153efec7789d7c6982d6d52
 - path: apps/worker/src/nha_trang_laundry_worker/__init__.py
   sha256: sha256:5b1275f8142cfb191a16346e404e95ee405e9ae75d670aeb20e863ba412274b5
   git_blob: 4f67f5ae7f5c4a1acae3a8560a1b5d227a2cf7c0
@@ -196,6 +205,9 @@ prior_versions:
 - path: context/tasks/TASK-openclaw-retire-001.md
   sha256: sha256:fbd416e8505e2616c2677d93421e374267d56c87b8d62be9af92de21cb4b3b2f
   git_blob: 74f25b1591c7a9d7dd2ff31c7badeebeb31e0878
+- path: delivery/LOOP_STATE.yaml
+  sha256: sha256:4f2c8dfff72ab5d0d2e1759ba0fc194b3b5f924e45030a141466a055ab3bcb03
+  git_blob: 86d83e3d52ffa961c367cef53526209362943152
 - path: delivery/WORK_QUEUE.yaml
   sha256: sha256:e7188cef64f62962cde250912d480ee44e8207887732dc233e074cae21d658f7
   git_blob: 063488c31284448e9b2fe0cc1735a25c368b5f1d

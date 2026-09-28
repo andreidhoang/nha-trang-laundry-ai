@@ -129,17 +129,20 @@ export const CAPABILITIES = {
       "Gỡ chặn tin dịch vụ chỉ dành cho chủ tiệm hoặc người duyệt đã xác thực hai bước, và phải " +
       "dựa trên một tin nhắn mới của chính khách.",
   },
+  // AUTHZ-MATRIX-001: every server gate now requires MFA, `require_owner` included. An owner
+  // session always had it (the server refuses an OWNER_ADMIN session without MFA), so this changes
+  // what the console says, not who gets in.
   STAFF_ADMIN: {
     roles: [OWNER],
-    mfa: false,
-    why: "Quản lý nhân sự chỉ dành cho chủ.",
+    mfa: true,
+    why: "Quản lý nhân sự chỉ dành cho chủ đã xác thực hai bước.",
   },
   // SESSION-LIST-001. Anyone signs out their own devices (owner decision 2026-09-27); signing out
   // *another person's* device -- the list on a person's sheet in #/staff -- is the owner's press.
   SESSIONS_REVOKE_OTHER: {
     roles: [OWNER],
-    mfa: false,
-    why: "Chỉ chủ đăng xuất được thiết bị của người khác.",
+    mfa: true,
+    why: "Chỉ chủ đã xác thực hai bước đăng xuất được thiết bị của người khác.",
   },
   SLA_BOARD_READ: {
     roles: [OWNER, APPROVER, OPERATOR, AUDITOR],

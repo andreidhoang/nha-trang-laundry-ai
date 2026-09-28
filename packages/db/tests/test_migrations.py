@@ -71,6 +71,8 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0060", "unclaimed_laundry"),
         # Round 7 wave 2 integration: a storage fee fixed by the account charge the goods left on.
         ("0061", "account_storage_fee"),
+        # AUTHZ-LIFECYCLE-001: an ID token is exchanged for at most one staff session.
+        ("0062", "identity_token_single_use"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

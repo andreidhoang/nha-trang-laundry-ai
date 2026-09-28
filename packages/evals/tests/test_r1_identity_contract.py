@@ -107,6 +107,13 @@ def test_the_realm_refuses_plain_http_and_self_registration() -> None:
     assert REALM["registrationAllowed"] is False
     assert REALM["resetPasswordAllowed"] is False
     assert REALM["bruteForceProtected"] is True
+    # `AUTHZ-LIFECYCLE-001`: NIST SP 800-63B shape -- a length floor and no composition rules, no
+    # reuse of the last three, and not the username or email. The realm had no policy at all, so a
+    # one-character password was accepted as the first factor.
+    rules = {rule.split("(")[0]: rule for rule in REALM["passwordPolicy"].split(" and ")}
+    assert rules["length"] == "length(12)"
+    assert {"maxLength", "notUsername", "notEmail", "passwordHistory"} <= set(rules)
+    assert not {"upperCase", "lowerCase", "specialChars", "digits"} & set(rules)
     # Every account configures a second factor on first sign-in.
     totp = next(
         action for action in REALM["requiredActions"] if action["providerId"] == "CONFIGURE_TOTP"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -48,6 +49,11 @@ class AuthSettings(BaseSettings):
     oidc_jwks_url: str | None = None
     oidc_mfa_claim: str | None = None
     oidc_mfa_value: str | None = None
+    #: The oldest ID token the exchange accepts, measured from its `iat`, whatever `exp` says.
+    #: The realm issues five-minute tokens (`access.token.lifespan: 300`); this holds that bound
+    #: on our side too, so a realm edit that lengthened token life would not lengthen how long a
+    #: leaked sign-in stays usable here. `AUTHZ-LIFECYCLE-001`.
+    oidc_max_token_age_seconds: int = 300
     staff_session_cookie_name: str = "staff_session"
     staff_csrf_cookie_name: str = "staff_csrf"
     staff_session_idle_hours: int = 8
@@ -94,6 +100,8 @@ class AuthSettings(BaseSettings):
             raise AuthenticationUnavailable("staff identity is not configured")
         if not 0 < self.staff_session_idle_hours <= self.staff_session_absolute_hours:
             raise AuthenticationUnavailable("invalid staff session lifetime")
+        if not 0 < self.oidc_max_token_age_seconds <= 3600:
+            raise AuthenticationUnavailable("invalid identity token age bound")
 
     def allowed_origins(self) -> tuple[str, ...]:
         origins = _comma_separated(self.staff_allowed_origins)
@@ -112,6 +120,9 @@ class AuthSettings(BaseSettings):
 class VerifiedIdentity:
     subject: str
     mfa_verified: bool
+    #: SHA-256 of the exact token presented. The session is bound to it, and the database refuses
+    #: a second session for the same digest -- one provider sign-in, one session.
+    token_digest: str
 
 
 class SigningKey(Protocol):
@@ -171,8 +182,11 @@ class IdentityPlatformVerifier:
         self,
         settings: AuthSettings,
         jwks_client: SigningKeyProvider | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         settings.require_identity_configuration()
+        self._max_age = timedelta(seconds=settings.oidc_max_token_age_seconds)
+        self._clock = clock
         self._issuer = str(settings.oidc_issuer)
         self._audience = str(settings.oidc_audience)
         self._mfa_claim = str(settings.oidc_mfa_claim)
@@ -197,9 +211,25 @@ class IdentityPlatformVerifier:
         subject = claims.get("sub")
         if not isinstance(subject, str) or not subject.strip():
             raise AuthenticationError("identity token lacks a subject")
+        self._require_fresh(claims.get("iat"))
         return VerifiedIdentity(
-            subject.strip(), _claim_value(claims, self._mfa_claim) == self._mfa_value
+            subject.strip(),
+            _claim_value(claims, self._mfa_claim) == self._mfa_value,
+            identity_token_digest(token),
         )
+
+    def _require_fresh(self, issued_at: object) -> None:
+        """Refuse a token issued longer ago than our own bound.
+
+        `jwt.decode` checks `exp`, which the issuer chose, and already refuses an `iat` in the
+        future. This is the other side: an ID token is a sign-in that just happened, not a
+        credential to hold on to.
+        """
+
+        if isinstance(issued_at, bool) or not isinstance(issued_at, int | float):
+            raise AuthenticationError("invalid staff identity token")
+        if self._clock() - datetime.fromtimestamp(issued_at, UTC) > self._max_age:
+            raise AuthenticationError("invalid staff identity token")
 
 
 class StaffIdentityService:
@@ -224,6 +254,7 @@ class StaffIdentityService:
                 connection,
                 oidc_subject=identity.subject,
                 mfa_verified=identity.mfa_verified,
+                identity_token_digest=identity.token_digest,
                 correlation_id=uuid4(),
                 idle_ttl=timedelta(hours=self._settings.staff_session_idle_hours),
                 absolute_ttl=timedelta(hours=self._settings.staff_session_absolute_hours),
@@ -270,6 +301,16 @@ class StaffIdentityService:
                 correlation_id=uuid4(),
             )
 
+    def revoke_role(self, staff_user_id: UUID, role: StaffRole, actor_id: UUID) -> None:
+        with self._connection_factory(str(self._settings.database_url)) as connection:
+            self._repository.revoke_role(
+                connection,
+                staff_user_id=staff_user_id,
+                role=role,
+                actor_id=actor_id,
+                correlation_id=uuid4(),
+            )
+
     def disable_staff(self, staff_user_id: UUID, actor_id: UUID) -> None:
         with self._connection_factory(str(self._settings.database_url)) as connection:
             self._repository.disable_staff(
@@ -298,6 +339,27 @@ class StaffIdentityService:
                 actor_id=actor_id,
                 correlation_id=uuid4(),
             )
+
+
+def identity_token_digest(token: str) -> str:
+    """The digest a session is bound to: of the token's signed bytes, never its full text.
+
+    A JWS is malleable in its signature segment. An RS256 signature is 256 bytes, which base64url
+    spells in 342 characters carrying 4 bits that decode to nothing, and PyJWT also accepts it with
+    `==` appended -- measured: all sixteen spellings and the padded one verify. Hashing the token as
+    presented let one leaked token mint a session per spelling. `header.payload` is the JWS signing
+    input: change one byte of it and the signature no longer verifies, so it is the same text for
+    every token that passes `verify`. Two issuances are never equal in it: Keycloak gives each a
+    fresh `jti`, and the `at_hash` of a fresh access token. The raw token is never stored or logged.
+    """
+
+    signing_input, separator, _signature = token.rpartition(".")
+    if not separator or signing_input.count(".") != 1:
+        raise AuthenticationError("invalid staff identity token")
+    try:
+        return hashlib.sha256(signing_input.encode("ascii")).hexdigest()
+    except UnicodeEncodeError as error:
+        raise AuthenticationError("invalid staff identity token") from error
 
 
 def _claim_value(claims: Mapping[str, Any], claim_path: str) -> str | None:

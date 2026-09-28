@@ -45,6 +45,7 @@ domains:
     - docs/COUNTER_COMPLETENESS_SPEC_V1.md
     - apps/web/README.md
     - docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md
+    - docs/AUTHN_AUTHZ_ARCHITECTURE_V1.md
     contracts:
     - specs/contracts/internal-api-v1.openapi.yaml
     - specs/contracts/console-disclosures-v1.yaml

@@ -203,7 +203,12 @@ def test_the_final_functions_carry_every_slices_rule(connection: psycopg.Connect
     """`0059` and `0060` replaced different `0056` functions; `0061` replaced three more. Whatever
     ran last defines each, so each must still say what every slice needs it to say."""
 
-    assert [m.version for m in discover_migrations()][-3:] == ["0059", "0060", "0061"]
+    migrations = discover_migrations()
+    versions = [m.version for m in migrations]
+    assert versions[versions.index("0059") : versions.index("0061") + 1] == ["0059", "0060", "0061"]
+    # "Whatever ran last" is still 0061 while nothing after it replaces a function.
+    later = migrations[versions.index("0061") + 1 :]
+    assert not [m.version for m in later if "FUNCTION" in m.path.read_text(encoding="utf-8")]
 
     def body(name: str) -> str:
         [(text,)] = _rows(

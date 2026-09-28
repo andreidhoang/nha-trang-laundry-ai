@@ -5680,3 +5680,33 @@ items:
   - walked_on_the_real_api_at_phone_size
   - rollback_assessment
   blocked_by_decisions: []
+- id: AUTHZ-LIFECYCLE-001
+  phase: PRODUCTION_HARDENING
+  title: Staff authority can be reduced, one sign-in mints one session, and every route
+    declares who may call it
+  status: PENDING
+  priority: 339
+  depends_on:
+  - SESSION-LIST-001
+  - HTTP-SECURITY-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/AUTHN_AUTHZ_ARCHITECTURE_V1.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-authz-lifecycle-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_revoked_role_ends_the_holders_sessions_and_never_the_last_owner
+  - a_replayed_id_token_is_refused_by_the_database
+  - every_route_declares_its_access_in_the_contract
+  - realm_password_policy_applied_on_the_running_realm
+  - rollback_assessment
+  blocked_by_decisions: []

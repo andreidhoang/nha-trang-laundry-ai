@@ -16,9 +16,11 @@ from nha_trang_laundry_api import main as api_main
 from nha_trang_laundry_api.auth import (
     AuthenticationAttemptLimiter,
     AuthenticationError,
+    AuthenticationUnavailable,
     AuthSettings,
     IdentityPlatformVerifier,
     SigningKey,
+    identity_token_digest,
 )
 from nha_trang_laundry_api.main import app, current_principal, get_identity_service
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
@@ -310,6 +312,64 @@ def test_real_jwt_decoder_accepts_only_bound_rs256_oidc_claims() -> None:
         headers={"kid": "staff-key"},
     )
     assert verifier.verify(no_mfa).mfa_verified is False
+
+
+def test_an_id_token_is_a_sign_in_that_just_happened_not_a_credential_to_keep() -> None:
+    """`AUTHZ-LIFECYCLE-001`: our own age bound on `iat`, whatever `exp` the issuer chose."""
+
+    private_key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
+    now = datetime.now(UTC)
+    verifier = IdentityPlatformVerifier(
+        _settings(), StaticJwksClient(private_key.public_key()), clock=lambda: now
+    )
+
+    def signed(**overrides: object) -> str:
+        return jwt.encode(
+            _claims(**overrides), private_key, algorithm="RS256", headers={"kid": "staff-key"}
+        )
+
+    fresh = signed(iat=now - timedelta(seconds=299))
+    identity = verifier.verify(fresh)
+    assert identity.token_digest == identity_token_digest(fresh)
+    assert len(identity.token_digest) == 64 and fresh not in identity.token_digest
+
+    # Issued six minutes ago but told by the issuer it lives an hour: still refused here.
+    stale = signed(iat=now - timedelta(seconds=361), exp=now + timedelta(hours=1))
+    # Claims to be issued in the future (refused by `jwt.decode` itself).
+    future = signed(iat=datetime.now(UTC) + timedelta(minutes=2))
+    for token in (stale, future):
+        with pytest.raises(AuthenticationError, match="invalid staff identity token"):
+            verifier.verify(token)
+
+
+def test_every_spelling_of_one_signed_token_is_the_same_sign_in() -> None:
+    """A signature segment has spare bits; each spelling verifies, and all bind to one digest."""
+
+    private_key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
+    verifier = IdentityPlatformVerifier(_settings(), StaticJwksClient(private_key.public_key()))
+    token = jwt.encode(_claims(), private_key, algorithm="RS256", headers={"kid": "staff-key"})
+    head, payload, signature = token.split(".")
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    last = alphabet.index(signature[-1])
+    # 2048 signature bits over 342 characters: the last character's low 4 bits are spare.
+    spellings = {
+        f"{head}.{payload}.{signature[:-1]}{alphabet[(last & 0b110000) | spare]}"
+        for spare in range(16)
+    }
+    assert len(spellings) == 16
+    spellings.add(f"{token}==")
+
+    digests = {verifier.verify(spelling).token_digest for spelling in spellings}
+
+    assert digests == {identity_token_digest(token)}
+
+
+@pytest.mark.parametrize("seconds", [0, -1, 3601])
+def test_an_unbounded_token_age_is_a_configuration_error(seconds: int) -> None:
+    settings = _settings()
+    settings.oidc_max_token_age_seconds = seconds
+    with pytest.raises(AuthenticationUnavailable, match="token age"):
+        settings.require_identity_configuration()
 
 
 def test_oidc_boundary_fetches_jwks_and_rejects_unknown_signing_key() -> None:

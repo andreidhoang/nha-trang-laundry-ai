@@ -28,10 +28,16 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     FEATURE_PUBLIC_CHANNELS_ENABLED="false" \
     FEATURE_AUTOMATED_SENDS_ENABLED="false" \
     FEATURE_AGENT_RUNTIME_ENABLED="false"
+# Security floors, not exact pins: the pinned base ships OpenSSL 3.5.7-r0 (CVE-2026-14456) and
+# util-linux libuuid 2.41.4-r0 (CVE-2026-53612/53613/53614/76642/78408/78410), all HIGH with fixes
+# published. `>=` fetches at least the fixed release and fails the build if it is not available,
+# without breaking when Alpine ships a later revision. The release gate's Trivy scan
+# (`--severity CRITICAL,HIGH --exit-code 1`) is what found them and what proves them fixed.
 RUN apk add --no-cache --virtual .app-python-rundeps \
       gdbm=1.26-r0 libbz2=1.0.8-r6 libffi=3.5.2-r0 libncursesw=6.5_p20251123-r0 \
       libnsl=2.0.1-r1 libpanelw=6.5_p20251123-r0 libtirpc=1.3.5-r1 \
-      libuuid=2.41.4-r0 readline=8.3.1-r0 xz-libs=5.8.3-r0 \
+      'libuuid>=2.41.6-r1' 'libcrypto3>=3.5.8-r0' 'libssl3>=3.5.8-r0' \
+      readline=8.3.1-r0 xz-libs=5.8.3-r0 \
     && apk del --no-network .python-rundeps sqlite-libs \
     && rm -f /usr/local/lib/python3.12/lib-dynload/_sqlite3*.so \
     && addgroup -g 10001 -S app \

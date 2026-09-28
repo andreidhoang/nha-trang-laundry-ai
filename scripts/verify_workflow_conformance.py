@@ -3891,12 +3891,12 @@ def scenario_report(console: Console) -> None:
 
     ok("two orders more were created", delta("ORDERS_CREATED")[0] == 2, delta("ORDERS_CREATED"))
     ok(
-        "one more completed, a count with no denominator (report-v3)",
+        "one more completed, a count with no denominator (report-v4)",
         delta("ORDERS_COMPLETED") == (1, 0) and after["ORDERS_COMPLETED"]["denominator"] is None,
         delta("ORDERS_COMPLETED"),
     )
     ok(
-        "one more cancelled, a count with no denominator (report-v3)",
+        "one more cancelled, a count with no denominator (report-v4)",
         delta("ORDERS_CANCELLED") == (1, 0) and after["ORDERS_CANCELLED"]["denominator"] is None,
         delta("ORDERS_CANCELLED"),
     )
@@ -3934,7 +3934,7 @@ def scenario_report(console: Console) -> None:
     ok(
         "every figure carries the rule's version, and the on-time figure says what it assumed",
         len({kpi["query_version"] for kpi in after.values()}) == 1
-        and next(iter(after.values()))["query_version"].startswith("report-v3:")
+        and next(iter(after.values()))["query_version"].startswith("report-v4:")
         and isinstance(assumed, int)
         and on_time["data_quality"] == ("RULE_ASSUMED" if assumed else "COMPLETE")
         and all(

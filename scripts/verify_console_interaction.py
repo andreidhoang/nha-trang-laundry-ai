@@ -6243,6 +6243,33 @@ with sync_playwright() as playwright:
         "17:00 thứ Bảy 26/9" in line,
         line,
     )
+    # Round 8 review: a sheet left open into the next minute asks the server again, so the time
+    # the customer is told is the time the press will store -- and the choice made stays made.
+    reads_before = len(state.get("promise_reads") or [])
+    state["promise_read"] = promise_read(
+        published=True,
+        options=promise_options(
+            "RANGE_CHOICE",
+            "2026-09-27T10:01:00+00:00",
+            [
+                ("H24", "2026-09-26T10:01:00+00:00"),
+                ("H48", "2026-09-27T10:01:00+00:00"),
+                ("CUSTOM", None),
+            ],
+        ),
+    )
+    page.evaluate("() => { const real = Date.now; Date.now = () => real() + 61000; }")
+    page.wait_for_timeout(5600)
+    line = page.locator("#receive-promise-line").inner_text()
+    chosen = page.locator("dialog[open] input[name=receive-promise-choice]:checked")
+    check(
+        "the open sheet re-reads the promise when a new minute starts and keeps 24 giờ chosen",
+        len(state.get("promise_reads") or []) == reads_before + 1
+        and "17:01 thứ Bảy 26/9" in line
+        and chosen.count() == 1
+        and chosen.first.get_attribute("value") == "H24",
+        f"{line} reads={len(state.get('promise_reads') or []) - reads_before}",
+    )
     page.locator("#receive-slot").check()
     page.locator("#receive-submit").click()
     page.wait_for_timeout(900)

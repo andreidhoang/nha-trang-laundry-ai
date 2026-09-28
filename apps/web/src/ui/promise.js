@@ -116,6 +116,37 @@ export function receivePromise(spec) {
   );
   const line = h("p", { class: "promise-pick__line", id: "receive-promise-line" });
 
+  // Round 8 review: the time on screen is what the counter tells the customer, and pressing
+  // Nhận đồ stores the server's answer for the instant of the press. The sheet read the answer
+  // once, so a sheet left open across a minute showed 15:55 while the receipt then said 15:56.
+  // While the sheet is open it asks again whenever the clock enters a new minute, keeping the
+  // staff member's choice; it stops once the sheet is gone.
+  let readMinute = -1;
+  let ticker = 0;
+
+  function minuteNow() {
+    return Math.floor(Date.now() / 60000);
+  }
+
+  async function refresh() {
+    if (!node.isConnected) {
+      window.clearInterval(ticker);
+      ticker = 0;
+      return;
+    }
+    if (!options || minuteNow() === readMinute) return;
+    readMinute = minuteNow();
+    try {
+      const found = await request(`/internal/v1/orders/${id}/promise`);
+      if (!found?.policy_published || !found.options) return;
+      options = found.options;
+      drawLine();
+      spec.onChange();
+    } catch {
+      // A missed refresh leaves the last answer on screen; the press still stores the server's.
+    }
+  }
+
   function chosenTime() {
     if (!options) return "";
     if (choice === "CUSTOM") return shopInstantFromInput(picker.value);
@@ -153,6 +184,8 @@ export function receivePromise(spec) {
         return;
       }
       options = found.options;
+      readMinute = minuteNow();
+      if (!ticker) ticker = window.setInterval(() => void refresh(), 5000);
       const offered = (options.choices || []).map((item) => String(item.choice));
       const required = options.requirement === "CUSTOM";
       choice = required ? "CUSTOM" : options.default_choice ? String(options.default_choice) : "";

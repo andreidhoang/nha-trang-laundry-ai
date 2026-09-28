@@ -272,6 +272,18 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
    **Chia sẻ** để chọn Zalo. Đây là mẫu câu cố định máy chủ điền số — không phải AI — và không
    có tên hay số điện thoại khách. Dòng nào máy chưa có số thì ghi ở mục *Chưa có trong tóm tắt*
    kèm lý do. Ghi khoản chi (bước 5) **trước** khi chép thì tóm tắt mới có khoản chi của ngày.
+   Đầu tóm tắt là mục **Cần chú ý** (tối đa 5 dòng, tô màu cam). Mỗi dòng chỉ hiện khi thật sự có
+   việc:
+   - đơn giao trễ chưa xử lý giảm trừ;
+   - đơn chưa trả khách đã trễ giờ hẹn;
+   - lần nhắc khách lấy đồ đến hạn, và đồ sắp hết ngày giữ miễn phí;
+   - yêu cầu hóa đơn chờ quá 3 ngày;
+   - tiền thu hoặc số đơn khác hẳn các tuần trước cùng thứ (máy ghi cả hai con số; chỉ so sau
+     20:00 và khi đã có 3 tuần số liệu), và sau ngày 10, tháng trước còn thiếu khoản chi nào nên
+     chưa tính được lãi.
+
+   Không có gì thì máy ghi *Không có việc cần chú ý* — chỉ khi mọi nguồn đều đọc được. Máy đếm
+   và so sánh bằng quy tắc cố định, không phải AI.
 
 ---
 

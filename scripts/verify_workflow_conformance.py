@@ -4154,6 +4154,21 @@ def _publish_turnaround(*extra: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _clear_of_minute_edge() -> None:
+    """HARNESS STEP (documented, round 8): the promise shown in the Nhận đồ sheet is the server's
+    answer for the minute it was read, and the stored one is for the instant of the press. The
+    sheet re-reads the answer whenever a new minute starts (`ui/promise.js`), so a person sees the
+    time they will get; a script reads and presses within a second, and one read in the last
+    seconds of a minute and pressed in the next would compare two different minutes. It waits out
+    those last seconds first. It changes nothing the shop sees."""
+
+    import time as _time
+
+    second = _time.time() % 60
+    if second >= 54:
+        _time.sleep(61 - second)
+
+
 def _open_receive(console: Console, order_id: str) -> str:
     """Open the order and its Nhận đồ sheet; return what the sheet says before any press."""
 
@@ -4284,6 +4299,7 @@ def scenario_promise(console: Console) -> None:
     # receipt -- and it is exactly the domain's answer for the instant production accepted it.
     walk_in = console.build_order(kg="7", stop="created")
     order_id = walk_in["order_id"]
+    _clear_of_minute_edge()
     sheet = _open_receive(console, order_id)
     line = (
         console.page.locator("#receive-promise-line").inner_text()
@@ -4372,6 +4388,7 @@ def scenario_promise(console: Console) -> None:
             }
         ],
     )
+    _clear_of_minute_edge()
     _open_receive(console, blanket["order_id"])
     checked = console.page.locator("dialog[open] input[name=receive-promise-choice]:checked")
     before_line = console.page.locator("#receive-promise-line").inner_text()

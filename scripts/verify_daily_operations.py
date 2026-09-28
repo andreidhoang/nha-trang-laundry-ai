@@ -274,12 +274,6 @@ with sync_playwright() as pw:
         hits = [c for c in api_calls if c[0] == method and c[2].split("?")[0].endswith(suffix)]
         return hits[-1] if hits else None
 
-    def response_json(call) -> dict:
-        try:
-            return json.loads(call[3]) if call else {}
-        except (ValueError, TypeError):
-            return {}
-
     def press(locator, *suffixes: str) -> list[dict]:
         """Click, and return what the server answered to each write the press caused, in order.
 

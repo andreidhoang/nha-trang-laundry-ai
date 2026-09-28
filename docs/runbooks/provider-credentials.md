@@ -13,7 +13,7 @@ half and skip the second.
 1. **Where it lives:** the process environment, or `/run/secrets` in a container. Never a file in
    this repository.
 2. **What that permits:** nothing yet. A credential being present is not authorization to call a
-   provider. The gate is `DEC-006`, the `provider_data_gate` block in `runtime/model-registry-v1.yaml`,
+   provider. The gate is `DEC-006`, the `provider_data_gate` block in `runtime/model-registry-v2.yaml`,
    and a signed release gate — not the existence of a key.
 
 **Tiếng Việt, ngắn:** key nằm trong biến môi trường (hoặc `/run/secrets`), **không bao giờ** nằm trong
@@ -29,14 +29,14 @@ repo. Và **có key không có nghĩa là được phép gọi model** — cổn
 | **Canonical location** | the process environment of the service that calls the provider |
 | **Container location** | a file under `/run/secrets`, one secret per file — `WorkerSettings` reads that directory when it exists (`apps/worker/src/nha_trang_laundry_worker/host.py`) |
 | **Reserved variable name** | `AGENT_PROVIDER_API_KEY` — one variable for whichever provider the pinned registry selects |
-| **Never** | committed to the repository, written into `runtime/model-registry-v1.yaml`, written into any file under `evidence/`, pasted into a chat transcript, echoed into a log line, or passed as a command-line argument |
+| **Never** | committed to the repository, written into `runtime/model-registry-v2.yaml`, written into any file under `evidence/`, pasted into a chat transcript, echoed into a log line, or passed as a command-line argument |
 
 `WorkerSettings` sets `env_file=None` deliberately. The worker does not load a `.env` file; a
 developer `.env` is for local tooling only and is git-ignored. Do not add `env_file` to make a
 credential load more conveniently.
 
 **One variable, not one per vendor.** The provider is chosen by `model.provider` in
-`runtime/model-registry-v1.yaml`, which is hash-pinned. If the runtime instead inferred its provider
+`runtime/model-registry-v2.yaml`, which is hash-pinned. If the runtime instead inferred its provider
 from which vendor-shaped variable happened to be set, the environment would silently outrank the
 pinned registry and `MODEL-PIN-001` would be unenforceable — a deployment could change providers with
 no change to any pinned file. The registry names the provider; the environment supplies only the
@@ -46,14 +46,11 @@ secret for it.
 
 This is the part that surprises people, so it is stated with the evidence.
 
-Repository-wide there is exactly one provider-key reference in any executable path:
+Repository-wide there is no provider-key reference in any executable path. The one there used to be
+was a placeholder in `scripts/verify_agent_runtime.py`, passed to OpenClaw's offline `config validate`
+and `security audit`; that script was retired with the OpenClaw runtime (ADR-0009, `OPENCLAW-RETIRE-001`).
 
-```
-scripts/verify_agent_runtime.py:122   "OPENAI_API_KEY": "validation-only-not-a-real-provider-key"
-```
-
-That is a deliberate placeholder passed to `openclaw config validate` and `openclaw security audit`,
-both of which are offline checks. It is not a call. There is no other credential read: no
+There is no credential read at all: no
 `AGENT_PROVIDER_API_KEY` field on `WorkerSettings`, no provider client, no HTTP call to any inference
 endpoint.
 
@@ -61,10 +58,9 @@ Wiring the read is `PROVIDER-TRANSPORT-001`. Until that item lands, setting the 
 effect on any code path, and an agent that reports "the model is now configured" because a variable
 is exported has reported something untrue.
 
-`AGENT_PROVIDER_API_KEY` is therefore a **reserved** name, not yet an implemented one. The embedded
-OpenClaw cell documents its own `OPENAI_API_KEY` convention, which is why the offline validator passes
-that name. Reconciling the two — one variable read by the transport, whatever the vendor SDK beneath it
-expects — is `PROVIDER-TRANSPORT-001`'s call to confirm. Until it does, this runbook governs *handling*
+`AGENT_PROVIDER_API_KEY` is therefore a **reserved** name, not yet an implemented one. Whether the
+transport reads it under that name or under the vendor SDK's `OPENAI_API_KEY` convention is
+`PROVIDER-TRANSPORT-001`'s call to confirm. Until it does, this runbook governs *handling*
 and the transport packet governs *naming*.
 
 ## 3. Possession is not authorization
@@ -75,7 +71,7 @@ file you can read, not a judgement call:
 | Gate | Where | Current value |
 |---|---|---|
 | `DEC-006` resolved | `context/DECISION_REGISTRY.yaml` | `OPEN`, owner `SECURITY_PRIVACY_OWNER` |
-| Security and Privacy approval recorded | `provider_data_gate` in `runtime/model-registry-v1.yaml` | `NOT_APPROVED` / `NOT_APPROVED` |
+| Security and Privacy approval recorded | `provider_data_gate` in `runtime/model-registry-v2.yaml` | `NOT_APPROVED` / `NOT_APPROVED` |
 | Dedicated service credential verified | same block | `NOT_VERIFIED` |
 | Provider data-controls evidence for that provider | `evidence/provider/` | exists for OpenAI only |
 | Real customer model calls enabled | `activation` in the registry | `false` |

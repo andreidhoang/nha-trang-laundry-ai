@@ -213,7 +213,7 @@ quả kỹ thuật:
 3. **Chi phí và độ trễ tỉ lệ với token.** Mọi thứ bạn nhét vào context đều tốn tiền và
    thời gian — nên context engineering cũng là bài toán kinh tế.
 
-**Đọc code:** `runtime/model-registry-v1.yaml` — đọc toàn bộ, từng dòng. Đây là bản kê
+**Đọc code:** `runtime/model-registry-v2.yaml` — đọc toàn bộ, từng dòng. Đây là bản kê
 khai toàn bộ "quyền lực" của model trong hệ thống:
 
 - `candidate_status: EVAL_ONLY` — model này chưa được phép phục vụ ai cả.
@@ -253,7 +253,7 @@ ngoài model, trong code.
 3. `apps/worker/src/nha_trang_laundry_worker/agent_runner.py` — xem agent loop được bind
    với run record trong DB (migration `0010_agent_run_binding.sql`): mọi run đều là một
    dòng dữ liệu có trạng thái, không phải một tiến trình bay hơi.
-4. Quay lại `runtime/model-registry-v1.yaml`: giới hạn cứng — tối đa 3 model calls, 6 tool
+4. Quay lại `runtime/model-registry-v2.yaml`: giới hạn cứng — tối đa 3 model calls, 6 tool
    calls, 8k token vào / 1.2k token ra, deadline 20 giây, $0.10/lượt.
 
 **Tại sao thiết kế vậy?** Một Concierge trả lời khách về giặt ủi không cần 30 bước suy
@@ -366,7 +366,7 @@ quan trọng bậc nhất repo). Chú ý:
   trước hành vi khi model sống, khi model chết, và khi phải chạy hoàn toàn deterministic.
   Hệ quả của Nguyên lý 2: hệ thống phải *vận hành được thủ công* khi model chết — eval
   phải kiểm chứng cả đường degraded, không chỉ đường đẹp.
-- **Deterministic seed** và budget limits khớp với `runtime/model-registry-v1.yaml` —
+- **Deterministic seed** và budget limits khớp với `runtime/model-registry-v2.yaml` —
   eval chạy trong cùng ràng buộc với production, nếu không bạn đang đo một hệ thống khác.
 - **Graders**: exact match, trace assertion, OpenAPI schema, invariant/safety, và rubric
   tiếng Việt 0–2 với pass = 2.

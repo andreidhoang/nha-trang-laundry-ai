@@ -44,11 +44,10 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
+      # Node runs the staff-console behaviour and syntax tests inside pytest; without it they skip.
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: runtime/openclaw/public-cell/plugin/package-lock.json
       - run: uv sync --all-packages --all-groups
       - run: uv run ruff format --check .
       - run: uv run ruff check .
@@ -58,9 +57,3 @@ jobs:
       - run: uv run python scripts/verify_contracts.py
       - run: uv run python scripts/check_context_drift.py
       - run: uv run python scripts/report_delivery_status.py
-      - run: npm ci
-        working-directory: runtime/openclaw/public-cell/plugin
-      - run: npm run build
-        working-directory: runtime/openclaw/public-cell/plugin
-      - run: npm test
-        working-directory: runtime/openclaw/public-cell/plugin

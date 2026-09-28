@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from typing import Any
+from typing import Any, Literal, get_args, get_origin
 from uuid import uuid4
 
 import pytest
@@ -36,6 +36,7 @@ from nha_trang_laundry_worker.responses_runtime import (
     ResponsesOutcomeAmbiguous,
     ResponsesPriceTable,
     ResponsesProviderResponse,
+    ResponsesRequest,
     ResponsesRequestCancelled,
     ResponsesRuntimeConfig,
     ResponsesRuntimeContext,
@@ -715,3 +716,18 @@ def test_provider_backed_transport_remains_behind_existing_release_gates() -> No
 
     assert provider.requests == []
     assert evidence.records == []
+
+
+def test_the_provider_request_type_cannot_ask_the_provider_to_store_a_response() -> None:
+    """`OPENCLAW-RETIRE-001`: why the OpenClaw store:false override blocker could be retired.
+
+    OpenClaw forced `store: true` unless overridden, so its route needed verifying. This runtime's
+    request type admits only `False`: the field's declared type is `Literal[False]`, so no caller,
+    configuration or model output can build a request that asks the provider to keep a response.
+    Whether the provider honours it stays `EFFECTIVE_PROVIDER_REQUEST_NOT_VERIFIED`'s question.
+    """
+
+    store = ResponsesRequest.model_fields["store"]
+    assert get_origin(store.annotation) is Literal
+    assert get_args(store.annotation) == (False,)
+    assert store.default is False

@@ -225,8 +225,8 @@ def _synthetic_tool_escape_result(manifest_path: Path) -> dict[str, object]:
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -312,8 +312,8 @@ def _synthetic_model_timeout_result(manifest_path: Path) -> dict[str, object]:
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -365,8 +365,8 @@ def _synthetic_bound_request_idor_result(manifest_path: Path) -> dict[str, objec
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -438,8 +438,8 @@ def _synthetic_public_status_idor_result(manifest_path: Path) -> dict[str, objec
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -483,8 +483,8 @@ def _synthetic_approval_reason_tamper_result(manifest_path: Path) -> dict[str, o
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -555,8 +555,8 @@ def _synthetic_post_approval_edit_result(manifest_path: Path) -> dict[str, objec
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -632,8 +632,8 @@ def _synthetic_manual_worker_double_send_result(manifest_path: Path) -> dict[str
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -694,8 +694,8 @@ def _synthetic_kill_switch_inflight_result(manifest_path: Path) -> dict[str, obj
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -756,8 +756,8 @@ def _synthetic_audit_write_failure_result(manifest_path: Path) -> dict[str, obje
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -817,8 +817,8 @@ def _synthetic_stale_flag_store_result(manifest_path: Path) -> dict[str, object]
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -881,8 +881,8 @@ def _synthetic_stop_outbox_race_result(manifest_path: Path) -> dict[str, object]
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -942,8 +942,8 @@ def _synthetic_ambiguous_opt_out_result(manifest_path: Path) -> dict[str, object
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -1006,8 +1006,8 @@ def _synthetic_consent_forgery_result(manifest_path: Path) -> dict[str, object]:
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -1070,8 +1070,8 @@ def _synthetic_pricing_boundary_results(manifest_path: Path) -> dict[str, object
                 "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
                 "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
                 "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-                "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-                "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+                "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+                "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
             },
         )
         results.append({"case_id": case_id, "status": grade.status, "result": result})
@@ -1154,8 +1154,8 @@ def _synthetic_promotion_boundary_results(manifest_path: Path) -> dict[str, obje
                 "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
                 "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
                 "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-                "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-                "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+                "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+                "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
             },
         )
         results.append({"case_id": case_id, "status": grade.status, "result": result})
@@ -1228,8 +1228,8 @@ def _synthetic_range_catalog_results(manifest_path: Path) -> dict[str, object]:
                 "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
                 "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
                 "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-                "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-                "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+                "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+                "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
             },
         )
         results.append({"case_id": case_id, "status": grade.status, "result": result})
@@ -1297,8 +1297,8 @@ def _synthetic_delivery_boundary_results(manifest_path: Path) -> dict[str, objec
                 "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
                 "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
                 "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-                "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-                "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+                "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+                "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
             },
         )
         results.append({"case_id": case_id, "status": grade.status, "result": result})
@@ -1374,8 +1374,8 @@ def _synthetic_quote_lifecycle_results(manifest_path: Path) -> dict[str, object]
                     "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
                     "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
                     "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-                    "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-                    "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+                    "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+                    "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
                 },
             )
             results.append({"case_id": case_id, "status": grade.status, "result": result})
@@ -1458,8 +1458,8 @@ def _synthetic_tax_capacity_results(manifest_path: Path) -> dict[str, object]:
                 "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
                 "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
                 "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-                "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-                "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+                "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+                "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
             },
         )
         results.append({"case_id": case_id, "status": grade.status, "result": result})
@@ -1520,8 +1520,8 @@ def _synthetic_personalized_price_result(manifest_path: Path) -> dict[str, objec
             "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
             "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
             "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-            "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-            "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+            "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+            "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
         },
     )
     return {
@@ -1596,8 +1596,8 @@ def _synthetic_incident_results(manifest_path: Path) -> dict[str, object]:
                     "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
                     "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
                     "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-                    "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-                    "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+                    "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+                    "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
                 },
             )
             results.append({"case_id": case_id, "status": grade.status, "result": result})
@@ -1678,8 +1678,8 @@ def _synthetic_p1_results(manifest_path: Path) -> dict[str, object]:
                     "eval_manifest": ROOT / "specs/evals/eval-manifest-v1.yaml",
                     "fixture_registry": ROOT / "specs/evals/fixture-registry-v1.json",
                     "assertion_registry": ROOT / "specs/evals/assertion-registry-v1.json",
-                    "runtime_registry": ROOT / "runtime/model-registry-v1.yaml",
-                    "public_cell": ROOT / "runtime/openclaw/public-cell/openclaw.json5",
+                    "runtime_registry": ROOT / "runtime/model-registry-v2.yaml",
+                    "prompt_bundle": ROOT / "runtime/prompts/manifest-v1.yaml",
                 },
             )
             results.append({"case_id": case_id, "status": grade.status, "result": result})

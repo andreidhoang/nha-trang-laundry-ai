@@ -1222,7 +1222,6 @@ uv run mypy apps packages
 uv run python scripts/verify_contracts.py
 uv run python scripts/check_context_drift.py
 uv run python scripts/report_delivery_status.py
-npm --prefix runtime/openclaw/public-cell/plugin test
 ```
 
 For `OPENCLAW-REPACK-001`, also run the acceptance commands declared in `delivery/WORK_QUEUE.yaml`,

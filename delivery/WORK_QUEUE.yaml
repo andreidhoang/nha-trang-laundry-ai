@@ -1162,20 +1162,20 @@ items:
   title: Reversible retirement of OpenClaw from the public runtime path
   status: PENDING
   priority: 112
-  depends_on:
-  - RUNTIME-PARITY-001
+  depends_on: []
   context_domains:
   - platform
   - runtime_architecture
   - evaluation_release
   normative_sources:
+  - docs/adr/0009-retire-public-openclaw-runtime.md
   - BUILD_ENGINEERING_SPEC.md
   - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
   - specs/IMPLEMENTATION_ROADMAP_V1.md
   - specs/SECURITY_RELIABILITY_SPEC_V1.md
   contracts:
   - specs/contracts/release-gate-manifest-v1.schema.json
-  - specs/contracts/supply-chain-evidence-v1.schema.json
+  - specs/contracts/supply-chain-evidence-v2.schema.json
   - specs/contracts/openclaw-repackage-manifest-v2.schema.json
   task_packet: context/tasks/TASK-openclaw-retire-001.md
   acceptance_checks:

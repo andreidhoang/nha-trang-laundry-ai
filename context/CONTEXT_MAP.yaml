@@ -64,6 +64,7 @@ domains:
     - docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md
     - docs/adr/0004-runtime-consolidation-and-frozen-openclaw-evidence.md
     - docs/adr/0008-inference-topology-and-multimodal-scope.md
+    - docs/adr/0009-retire-public-openclaw-runtime.md
     - docs/runbooks/provider-credentials.md
     - docs/DECISION_REQUEST_TIERED_INFERENCE_2026-08.md
     - docs/DECISION_REQUEST_PROVIDER_DATA_2026-08.md
@@ -73,8 +74,10 @@ domains:
     - specs/contracts/release-gate-manifest-v1.schema.json
     - specs/contracts/capability-status-v1.schema.json
     - specs/contracts/provider-data-evidence-v1.schema.json
+    - specs/contracts/provider-data-evidence-v2.schema.json
     - specs/contracts/container-scan-evidence-v1.schema.json
     - specs/contracts/supply-chain-evidence-v1.schema.json
+    - specs/contracts/supply-chain-evidence-v2.schema.json
     - specs/contracts/openclaw-repackage-manifest-v1.schema.json
     - specs/contracts/openclaw-repackage-manifest-v2.schema.json
     - specs/contracts/openclaw-cross-platform-result-v1.schema.json
@@ -85,7 +88,7 @@ domains:
     - Real-customer model use is disabled until provider storage and retention behavior is verified.
     - A provider credential lives only in the environment or /run/secrets, never in a repository file;
       possessing one authorizes no model call. See docs/runbooks/provider-credentials.md.
-    - OpenClaw remains EVAL_ONLY until custom-runtime parity and retirement evidence pass.
+    - The public OpenClaw runtime is retired (ADR-0009); reinstating any agent framework as a runtime needs a new ADR. Its frozen evidence and the owner-side .openclaw/ automation are kept.
     - The custom adapter remains a bounded finite state machine; do not build a generic agent framework.
     - Runtime comparisons use identical model, prompt, context, tools, budgets, datasets and safety denominator.
   pricing:
@@ -245,8 +248,10 @@ domains:
     - specs/contracts/capability-status-v1.schema.json
     - specs/contracts/trusted-release-signers-v1.schema.json
     - specs/contracts/provider-data-evidence-v1.schema.json
+    - specs/contracts/provider-data-evidence-v2.schema.json
     - specs/contracts/container-scan-evidence-v1.schema.json
     - specs/contracts/supply-chain-evidence-v1.schema.json
+    - specs/contracts/supply-chain-evidence-v2.schema.json
     - specs/contracts/openclaw-repackage-manifest-v1.schema.json
     - specs/contracts/openclaw-repackage-manifest-v2.schema.json
     - specs/contracts/openclaw-cross-platform-result-v1.schema.json

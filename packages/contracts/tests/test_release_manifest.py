@@ -289,7 +289,7 @@ def _add_supply_chain_evidence(
     ]
     scanner = {"scanner": "test", "scanner_version": "1", "status": "PASSED"}
     bundle = {
-        "schema_version": 1,
+        "schema_version": 2,
         "evidence_id": "SUPPLY:RELEASE:01",
         "release_commit_sha": COMMIT_SHA,
         "generated_at": "2026-07-02T03:00:00Z",

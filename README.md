@@ -25,8 +25,8 @@ Approved next build scope:
 
 The final target uses an isolated, replaceable public agent-runtime cell behind
 `ConstrainedAgentRuntime`. A bounded custom OpenAI Responses adapter is the preferred production
-target; OpenClaw remains an `EVAL_ONLY` comparison/rollback implementation until parity and retirement
-gates pass. Python/PostgreSQL remain the business, security and side-effect authority; channel
+target, and the only agent runtime: the public OpenClaw cell was retired by
+[ADR-0009](./docs/adr/0009-retire-public-openclaw-runtime.md). Python/PostgreSQL remain the business, security and side-effect authority; channel
 adapters are independent and only the outbox worker may send.
 
 Public channels and autonomous sends remain gated.
@@ -36,9 +36,8 @@ Public channels and autonomous sends remain gated.
 **Docker alone is not sufficient.** A new machine needs Git, Docker Desktop (with Docker Compose),
 and `uv`. Git downloads the repository, Docker runs the application services, and `uv` installs the
 pinned Python workspace and generates machine-local synthetic credentials. Codex is a useful
-engineering assistant but is not a runtime dependency. Node.js 24 is required only to build and test
-the isolated, `EVAL_ONLY` OpenClaw comparison plugin; it is not required to operate the deterministic
-R1 staff console.
+engineering assistant but is not a runtime dependency. Node.js 24 is required only to run the
+staff-console behaviour tests; it is not required to operate the deterministic R1 staff console.
 
 VI: Ba phần tối thiểu có vai trò khác nhau: Git lấy mã nguồn, Docker chạy các dịch vụ, còn `uv` tạo
 môi trường Python và dữ liệu bí mật giả lập chỉ dùng trên máy đó. Có Docker nhưng thiếu `uv` thì chưa
@@ -52,7 +51,7 @@ thể khởi tạo bản demo theo đúng hợp đồng của dự án.
 | Docker Desktop or a compatible Docker Engine with Compose v2 | Build and run the service topology |
 | `uv` | Install the declared Python version and locked workspace dependencies |
 | A modern browser | Use the staff console |
-| Node.js 24 | Complete repository verification, including the optional OpenClaw comparison plugin |
+| Node.js 24 | Complete repository verification: the staff-console behaviour and syntax tests |
 | Codex | Optional; use it to inspect, verify or change the project safely |
 
 The reproducible application mode is supported on a local, non-cloud-synced checkout. The real-shop
@@ -133,7 +132,7 @@ uv run python scripts/report_delivery_status.py
 For local PostgreSQL, install Docker Desktop and run `docker compose up -d postgres`. See the
 [local development runbook](./docs/runbooks/local-development.md). The backend/evaluation stack is
 Python-first under [ADR-0001](./docs/adr/0001-python-control-plane.md); browser assets are served by
-the Staff PWA, while TypeScript is isolated to the non-authoritative OpenClaw comparison plugin.
+the Staff PWA as authored JavaScript with no build step and no npm dependency tree.
 
 ## Start here
 

@@ -36,7 +36,7 @@ class AgentAuthSettings(BaseSettings):
     agent_runner_jwt_issuer: str | None = None
     agent_runner_jwt_audience: str | None = None
     agent_runner_jwt_public_key: str | None = None
-    agent_runtime_registry_path: str = "runtime/model-registry-v1.yaml"
+    agent_runtime_registry_path: str = "runtime/model-registry-v2.yaml"
 
     def require(self) -> None:
         if not all(

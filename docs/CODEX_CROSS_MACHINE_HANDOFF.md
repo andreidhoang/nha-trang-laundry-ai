@@ -162,9 +162,6 @@ uv run python scripts/verify_contracts.py
 uv run python scripts/check_context_drift.py
 uv run python scripts/report_delivery_status.py
 uv run python scripts/generate_staff_console_manifest.py --check
-npm --prefix runtime/openclaw/public-cell/plugin ci
-npm --prefix runtime/openclaw/public-cell/plugin run build
-npm --prefix runtime/openclaw/public-cell/plugin test
 git diff --check
 ```
 
@@ -172,10 +169,8 @@ Do not report success if PostgreSQL-backed tests skipped. Use a fresh disposable
 for an isolated full-suite run; do not aim tests at the shop database. `docker compose down` stops
 this development database while preserving its named volume.
 
-The release supply-chain check
-`npm --prefix runtime/openclaw/public-cell/plugin audit --audit-level=high` is expected to fail on the
-recorded OpenClaw advisories above. Report its current result, but do not waive it or call the public
-runtime release-ready. The ordinary plugin build/test passing does not supersede that blocker.
+The public OpenClaw runtime and its npm plugin were retired by ADR-0009 (`OPENCLAW-RETIRE-001`); the
+repository has one dependency tree, `uv.lock`. Its history is in `evidence/openclaw-retirement/`.
 
 ## 6. How a Codex agent resumes safely
 

@@ -343,8 +343,8 @@ def test_registry_pins_are_the_registry_file_and_its_declared_bundle() -> None:
     pins = registry_execution_pins()
 
     assert pins == PINNED.pins
-    assert pins.runtime_registry_version == "1.0.0-eval"
-    assert pins.runtime_registry_hash == digest("runtime/model-registry-v1.yaml")
+    assert pins.runtime_registry_version == "2.0.0-eval"
+    assert pins.runtime_registry_hash == digest("runtime/model-registry-v2.yaml")
     assert pins.prompt_bundle_hash == digest("runtime/prompts/manifest-v1.yaml")
     assert pins.tool_contract_hash == digest("specs/contracts/agent-tools-v1.openapi.yaml")
     assert PINNED.instructions_hash == digest("runtime/prompts/public-concierge.vi-VN.md")

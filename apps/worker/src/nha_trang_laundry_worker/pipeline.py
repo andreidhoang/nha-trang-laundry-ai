@@ -282,7 +282,7 @@ class PinnedPrompt:
 
 
 def load_pinned_prompt(
-    registry_path: Path = REPOSITORY_ROOT / "runtime/model-registry-v1.yaml",
+    registry_path: Path = REPOSITORY_ROOT / "runtime/model-registry-v2.yaml",
 ) -> PinnedPrompt:
     """Follow the registry's pin chain to the exact instruction text, verifying every link.
 

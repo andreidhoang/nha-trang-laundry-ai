@@ -41,7 +41,8 @@ def verify_supply_chain_evidence(
     evidence_path = path.resolve()
     _require_contained_file(repository, evidence_path, "supply-chain evidence")
     evidence = _load_json(evidence_path, "supply-chain evidence")
-    _validate(evidence, schema_root / "specs/contracts/supply-chain-evidence-v1.schema.json")
+    _validate(evidence, schema_root / "specs/contracts/supply-chain-evidence-v2.schema.json")
+    _require_every_lockfile_audited(repository, evidence)
 
     current = _aware(now, "verification time")
     generated_at = _timestamp(evidence["generated_at"], "generated_at")
@@ -108,6 +109,49 @@ def verify_supply_chain_evidence(
         image_refs=tuple(image_refs),
         verified_uris=tuple(dict.fromkeys(verified_uris)),
     )
+
+
+#: Every dependency lockfile format this repository could carry. A tree in any of them is audited.
+LOCKFILE_NAMES = frozenset(
+    {"uv.lock", "poetry.lock", "Pipfile.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
+)
+_UNSCANNED_DIRECTORIES = frozenset({".git", ".venv", "node_modules", "__pycache__", "artifacts"})
+
+
+def repository_lockfiles(repository: Path) -> frozenset[str]:
+    """Every lockfile under `repository`, as repository-relative POSIX paths."""
+
+    found: set[str] = set()
+    for path in repository.rglob("*"):
+        relative = path.relative_to(repository)
+        if _UNSCANNED_DIRECTORIES.intersection(relative.parts):
+            continue
+        if path.name in LOCKFILE_NAMES and path.is_file():
+            found.add(relative.as_posix())
+    return frozenset(found)
+
+
+def _require_every_lockfile_audited(repository: Path, evidence: Mapping[str, Any]) -> None:
+    """The audited lockfiles are exactly the repository's: none missing, none stale.
+
+    `OPENCLAW-RETIRE-001`. Schema version 1 asked for "at least two", which was the number of
+    dependency trees the repository happened to have. That count could not notice a third tree
+    added without an audit, and could never be met once the second was retired.
+    """
+
+    present = repository_lockfiles(repository)
+    if not present:
+        raise SupplyChainEvidenceError("no dependency lockfile found in the repository")
+    for audit_name in ("dependency_audit", "license_audit"):
+        audit = cast(dict[str, Any], evidence[audit_name])
+        audited = {artifact["uri"] for artifact in cast(list[dict[str, str]], audit["lockfiles"])}
+        if audited != present:
+            missing = sorted(present - audited)
+            stale = sorted(audited - present)
+            raise SupplyChainEvidenceError(
+                f"{audit_name} does not cover the repository's lockfiles; "
+                f"missing={missing}, not in repository={stale}"
+            )
 
 
 def _validate(value: Mapping[str, object], schema_path: Path) -> None:

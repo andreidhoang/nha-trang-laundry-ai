@@ -1,15 +1,21 @@
-"""Fail-closed registry for the public OpenClaw/model release candidate."""
+"""Fail-closed registry for the public agent runtime and model release candidate.
+
+Schema version 2 (`OPENCLAW-RETIRE-001`, ADR-0009). Version 1 described an OpenClaw public cell:
+a repackaged npm distribution, a sandbox image, a plugin inventory, and an `agent_runtime_id` of
+`openclaw`. Production never ran it -- the worker is wired to `BoundedResponsesRuntime` -- and
+ADR-0009 retired it, so version 2 describes the runtime that does run: the custom Responses
+adapter inside the worker image. A version-1 file is refused, which is how a stale or implicit
+OpenClaw route fails closed at startup rather than half-loading.
+"""
 
 from __future__ import annotations
 
 import json
-import re
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Literal
 
-import json5
 import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -50,31 +56,12 @@ class ApprovalStatus(StrEnum):
     APPROVED = "APPROVED"
 
 
-class SandboxImagePin(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    repository: Literal["openclaw-sandbox"]
-    digest: Sha256 | None
-    verified: bool
-    scan_evidence_path: str | None
-    scan_evidence_sha256: Sha256 | None
-
-    @model_validator(mode="after")
-    def verification_fields_are_consistent(self) -> SandboxImagePin:
-        complete = (
-            self.digest is not None
-            and self.scan_evidence_path is not None
-            and self.scan_evidence_sha256 is not None
-        )
-        if self.verified != complete:
-            raise ValueError("sandbox image verification fields must be complete together")
-        return self
-
-
 class RuntimeImagePin(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    repository: Literal["nha-trang-laundry-openclaw"]
+    #: The image the Responses runtime runs in. Unverified until a scanned digest with provenance
+    #: is recorded; until then `AGENT_RUNTIME_IMAGE_NOT_VERIFIED` blocks release.
+    repository: Literal["nha-trang-laundry-worker"]
     digest: Sha256 | None
     verified: bool
     scan_evidence_path: str | None
@@ -99,40 +86,20 @@ class RuntimeImagePin(BaseModel):
         return self
 
 
-class OpenClawPin(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    version: Annotated[str, StringConstraints(pattern=r"^[0-9]{4}\.[0-9]+\.[0-9]+-[0-9]+$")]
-    distribution: Literal["DERIVED_REPACKAGED_EVAL_ONLY"]
-    upstream_npm_integrity: Sha512Integrity
-    npm_integrity: Sha512Integrity
-    repackage_manifest_path: str
-    repackage_manifest_sha256: Sha256
-    target_os: Literal["linux"]
-    runtime_type: Literal["embedded"]
-    config_path: str
-    config_sha256: Sha256
-    plugin_id: Literal["nha-trang-laundry-tools"]
-    plugin_version: str
-    plugin_inventory_sha256: Sha256
-    runtime_image: RuntimeImagePin
-    sandbox_image: SandboxImagePin
-
-
 class ModelRoute(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     provider: Literal["openai"]
-    openclaw_model_ref: Literal["openai/gpt-5.6-terra"]
     api_model_id: Literal["gpt-5.6-terra"]
     immutable_release_id: str | None
     immutable_release_verified: bool
-    agent_runtime_id: Literal["openclaw"]
+    #: `apps/worker/.../responses_runtime.py` (`BoundedResponsesRuntime`). Its request type fixes
+    #: `store` to `Literal[False]`, so no configuration can ask the provider to keep a response;
+    #: whether the provider honours that is `EFFECTIVE_PROVIDER_REQUEST_NOT_VERIFIED`'s question.
+    agent_runtime_id: Literal["nha-trang-responses-runtime"]
     provider_transport: Literal["responses"]
     reasoning_effort: Literal["low"]
     required_response_store: Literal[False]
-    openclaw_documented_default_store: Literal[True]
-    store_false_override_verified: bool
     fallback_model_refs: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -194,10 +161,10 @@ class ActivationState(BaseModel):
 class PublicRuntimeRegistry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     registry_version: str
     candidate_status: CandidateStatus
-    openclaw: OpenClawPin
+    runtime_image: RuntimeImagePin
     model: ModelRoute
     provider_data_gate: ProviderDataGate
     provider_data_evidence: ProviderDataEvidencePin
@@ -211,12 +178,8 @@ class PublicRuntimeRegistry(BaseModel):
         blockers: list[str] = []
         if not self.model.immutable_release_verified:
             blockers.append("IMMUTABLE_MODEL_RELEASE_NOT_VERIFIED")
-        if not self.model.store_false_override_verified:
-            blockers.append("OPENCLAW_STORE_FALSE_ROUTE_NOT_VERIFIED")
-        if not self.openclaw.sandbox_image.verified:
-            blockers.append("SANDBOX_IMAGE_NOT_VERIFIED")
-        if not self.openclaw.runtime_image.verified:
-            blockers.append("PUBLIC_CELL_RUNTIME_IMAGE_NOT_VERIFIED")
+        if not self.runtime_image.verified:
+            blockers.append("AGENT_RUNTIME_IMAGE_NOT_VERIFIED")
         gate = self.provider_data_gate
         if gate.effective_request_storage_verification is not VerificationStatus.VERIFIED:
             blockers.append("EFFECTIVE_PROVIDER_REQUEST_NOT_VERIFIED")
@@ -237,21 +200,6 @@ class RuntimeArtifactError(ValueError):
     """A pinned runtime artifact is missing, unsafe, or hash-mismatched."""
 
 
-def verify_openclaw_cli_version(output: str, expected_version: str) -> str:
-    """Bind an observed OpenClaw CLI build to the pinned release version."""
-
-    matched = re.fullmatch(
-        r"OpenClaw (?P<version>[0-9]{4}\.[0-9]+\.[0-9]+-[0-9]+) "
-        r"\((?P<revision>[0-9a-f]{7,40})\)",
-        output.strip(),
-    )
-    if matched is None:
-        raise RuntimeArtifactError("OpenClaw executable version output is malformed")
-    if matched.group("version") != expected_version:
-        raise RuntimeArtifactError("OpenClaw executable version drifted from runtime registry")
-    return matched.group("revision")
-
-
 def load_public_runtime_registry(path: Path) -> PublicRuntimeRegistry:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     return PublicRuntimeRegistry.model_validate(raw)
@@ -261,83 +209,7 @@ def verify_public_runtime_artifacts(root: Path, registry: PublicRuntimeRegistry)
     """Verify the complete local pin chain without making a provider call."""
 
     verified: list[str] = []
-    repackage_manifest = _verified_file(
-        root,
-        registry.openclaw.repackage_manifest_path,
-        registry.openclaw.repackage_manifest_sha256,
-    )
-    repackage = json.loads(repackage_manifest.read_text(encoding="utf-8"))
-    upstream = repackage.get("upstream", {})
-    base = repackage.get("base", {})
-    output = repackage.get("output", {})
-    activation = repackage.get("activation", {})
-    if (
-        repackage.get("schema_version") != 2
-        or repackage.get("artifact_origin") != "DERIVED"
-        or repackage.get("artifact_status") != "EVAL_ONLY"
-        or upstream.get("version") != registry.openclaw.version
-        or upstream.get("integrity") != registry.openclaw.upstream_npm_integrity
-        or output.get("integrity") != registry.openclaw.npm_integrity
-        or not isinstance(activation, dict)
-        or any(activation.values())
-    ):
-        raise RuntimeArtifactError("OpenClaw repackage manifest drifted from runtime registry")
-    filename = output.get("filename")
-    output_sha256 = output.get("sha256")
-    if not isinstance(filename, str) or not isinstance(output_sha256, str):
-        raise RuntimeArtifactError("OpenClaw repackage output pin is incomplete")
-    repackage_artifact = _verified_file(
-        root,
-        f"runtime/openclaw/repack/dist/{filename}",
-        output_sha256,
-    )
-    base_filename = base.get("filename")
-    base_sha256 = base.get("sha256")
-    base_manifest_path = base.get("manifest_path")
-    base_manifest_sha256 = base.get("manifest_sha256")
-    if not all(
-        isinstance(value, str)
-        for value in (
-            base_filename,
-            base_sha256,
-            base_manifest_path,
-            base_manifest_sha256,
-        )
-    ):
-        raise RuntimeArtifactError("OpenClaw rollback pin is incomplete")
-    base_manifest = _verified_file(root, base_manifest_path, base_manifest_sha256)
-    base_artifact = _verified_file(
-        root,
-        f"runtime/openclaw/repack/dist/{base_filename}",
-        base_sha256,
-    )
-    verified.extend(
-        (
-            repackage_manifest.relative_to(root).as_posix(),
-            repackage_artifact.relative_to(root).as_posix(),
-            base_manifest.relative_to(root).as_posix(),
-            base_artifact.relative_to(root).as_posix(),
-        )
-    )
-    config = _verified_file(root, registry.openclaw.config_path, registry.openclaw.config_sha256)
-    verified.append(config.relative_to(root).as_posix())
-    configured_image = _openclaw_sandbox_image(config)
-    image = registry.openclaw.sandbox_image
-    if image.verified:
-        assert image.digest is not None
-        assert image.scan_evidence_path is not None
-        assert image.scan_evidence_sha256 is not None
-        expected_image = f"{image.repository}@{image.digest}"
-        if configured_image != expected_image:
-            raise RuntimeArtifactError("OpenClaw sandbox image drifted from verified registry pin")
-        scan_evidence = _verified_file(root, image.scan_evidence_path, image.scan_evidence_sha256)
-        sbom = _verify_container_scan_evidence(root, scan_evidence, expected_image)
-        verified.extend(
-            (scan_evidence.relative_to(root).as_posix(), sbom.relative_to(root).as_posix())
-        )
-    elif configured_image != "openclaw-sandbox@sha256:REPLACE_WITH_SCANNED_IMAGE_DIGEST":
-        raise RuntimeArtifactError("Unverified OpenClaw sandbox image must retain the placeholder")
-    runtime_image = registry.openclaw.runtime_image
+    runtime_image = registry.runtime_image
     if runtime_image.verified:
         assert runtime_image.digest is not None
         assert runtime_image.scan_evidence_path is not None
@@ -357,7 +229,7 @@ def verify_public_runtime_artifacts(root: Path, registry: PublicRuntimeRegistry)
             provenance_data.get("image_digest") != runtime_image.digest
             or provenance_data.get("predicate_type") != "https://slsa.dev/provenance/v1"
         ):
-            raise RuntimeArtifactError("OpenClaw runtime provenance drifted from image pin")
+            raise RuntimeArtifactError("Agent runtime provenance drifted from image pin")
         verified.extend(
             (
                 scan.relative_to(root).as_posix(),
@@ -376,36 +248,6 @@ def verify_public_runtime_artifacts(root: Path, registry: PublicRuntimeRegistry)
     )
     _verify_provider_data_evidence(root, provider_evidence, registry)
     verified.append(provider_evidence.relative_to(root).as_posix())
-
-    inventory_path = _verified_file(
-        root,
-        "runtime/openclaw/public-cell/plugin-inventory-v1.json",
-        registry.openclaw.plugin_inventory_sha256,
-    )
-    verified.append(inventory_path.relative_to(root).as_posix())
-    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
-    if inventory.get("openclaw_version") != registry.openclaw.version:
-        raise RuntimeArtifactError("Plugin inventory OpenClaw version drifted")
-    if inventory.get("openclaw_upstream_npm_integrity") != (
-        registry.openclaw.upstream_npm_integrity
-    ):
-        raise RuntimeArtifactError("Plugin inventory upstream OpenClaw integrity drifted")
-    if inventory.get("openclaw_npm_integrity") != registry.openclaw.npm_integrity:
-        raise RuntimeArtifactError("Plugin inventory OpenClaw integrity drifted")
-    if inventory.get("openclaw_distribution") != "DERIVED_REPACKAGED_EVAL_ONLY":
-        raise RuntimeArtifactError("Plugin inventory OpenClaw distribution drifted")
-    artifacts = inventory.get("artifacts")
-    if not isinstance(artifacts, dict):
-        raise RuntimeArtifactError("Plugin inventory artifacts are missing")
-    for artifact_name, artifact in artifacts.items():
-        if not isinstance(artifact, dict):
-            raise RuntimeArtifactError(f"Invalid plugin inventory artifact: {artifact_name}")
-        path = artifact.get("path")
-        digest = artifact.get("sha256")
-        if not isinstance(path, str) or not isinstance(digest, str):
-            raise RuntimeArtifactError(f"Incomplete plugin inventory artifact: {artifact_name}")
-        verified_path = _verified_file(root, path, digest)
-        verified.append(verified_path.relative_to(root).as_posix())
 
     prompt = yaml.safe_load(prompt_manifest.read_text(encoding="utf-8"))
     if not isinstance(prompt, dict) or prompt.get("release_authorization") is not False:
@@ -437,7 +279,7 @@ def _verify_provider_data_evidence(root: Path, path: Path, registry: PublicRunti
     evidence = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(evidence, dict):
         raise RuntimeArtifactError("Provider data evidence must be an object")
-    schema_path = root / "specs/contracts/provider-data-evidence-v1.schema.json"
+    schema_path = root / "specs/contracts/provider-data-evidence-v2.schema.json"
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)
@@ -463,7 +305,7 @@ def _verify_provider_data_evidence(root: Path, path: Path, registry: PublicRunti
         scope["provider"] != registry.model.provider
         or scope["api"].lower() != registry.model.provider_transport
         or scope["model_candidate"] != registry.model.api_model_id
-        or scope["openclaw_version"] != registry.openclaw.version
+        or scope["agent_runtime_id"] != registry.model.agent_runtime_id
     ):
         raise RuntimeArtifactError("Provider data evidence scope drifted from runtime registry")
     if (
@@ -486,9 +328,6 @@ def _verify_provider_data_evidence(root: Path, path: Path, registry: PublicRunti
         "immutable_model_release": (
             "VERIFIED" if registry.model.immutable_release_verified else "NOT_VERIFIED"
         ),
-        "supported_openclaw_store_false_override": (
-            "VERIFIED" if registry.model.store_false_override_verified else "NOT_VERIFIED"
-        ),
     }
     if any(verification[key] != expected for key, expected in parity.items()):
         raise RuntimeArtifactError("Provider data evidence status drifted from runtime registry")
@@ -510,10 +349,7 @@ def _verify_provider_data_evidence(root: Path, path: Path, registry: PublicRunti
             "Provider data evidence release effect drifted or over-authorized"
         )
 
-    effective_verified = (
-        gate.effective_request_storage_verification is VerificationStatus.VERIFIED
-        and registry.model.store_false_override_verified
-    )
+    effective_verified = gate.effective_request_storage_verification is VerificationStatus.VERIFIED
     fully_approved = (
         effective_verified
         and registry.model.immutable_release_verified
@@ -532,20 +368,6 @@ def _verify_provider_data_evidence(root: Path, path: Path, registry: PublicRunti
     )
     if evidence["status"] != expected_status:
         raise RuntimeArtifactError("Provider data evidence lifecycle status is inconsistent")
-
-
-def _openclaw_sandbox_image(path: Path) -> str:
-    try:
-        config = json5.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise RuntimeArtifactError("OpenClaw config is not valid JSON5") from error
-    try:
-        image = config["agents"]["defaults"]["sandbox"]["docker"]["image"]
-    except (KeyError, TypeError) as error:
-        raise RuntimeArtifactError("OpenClaw sandbox image configuration is missing") from error
-    if not isinstance(image, str):
-        raise RuntimeArtifactError("OpenClaw sandbox image configuration must be a string")
-    return image
 
 
 def _verify_container_scan_evidence(root: Path, path: Path, image_ref: str) -> Path:

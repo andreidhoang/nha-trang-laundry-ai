@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-27'
+last_updated: '2026-09-28'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -5682,9 +5682,9 @@ items:
   blocked_by_decisions: []
 - id: AUTHZ-LIFECYCLE-001
   phase: PRODUCTION_HARDENING
-  title: Staff authority can be reduced, one sign-in mints one session, and every route
-    declares who may call it
-  status: PENDING
+  title: Staff authority can be reduced, one sign-in mints one session, and every
+    route declares who may call it
+  status: COMPLETE
   priority: 339
   depends_on:
   - SESSION-LIST-001

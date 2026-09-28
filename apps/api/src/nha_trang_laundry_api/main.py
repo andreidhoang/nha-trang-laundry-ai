@@ -70,6 +70,16 @@ from nha_trang_laundry_db.identity import (
     StaffSubjectTakenError,
 )
 from nha_trang_laundry_db.intake import OrderRequestSummary
+from nha_trang_laundry_db.invoice_requests import BuyerInput as InvoiceBuyerInput
+from nha_trang_laundry_db.invoice_requests import BuyerView as InvoiceBuyerView
+from nha_trang_laundry_db.invoice_requests import (
+    InvoiceAmount,
+    InvoiceAuthorizationError,
+    InvoiceNotFoundError,
+    InvoiceRequestView,
+    InvoiceStateError,
+    InvoiceSubjectRead,
+)
 from nha_trang_laundry_db.keyed_digest import HashKeyUnavailable
 from nha_trang_laundry_db.manual_sends import (
     ManualSendAuthorizationError,
@@ -170,6 +180,13 @@ from nha_trang_laundry_domain.customers import (
     LinkKind,
     QueryMode,
 )
+from nha_trang_laundry_domain.invoice_requests import (
+    INVOICE_DECISION,
+    InvoiceCancelReason,
+    InvoiceRequestStatus,
+    InvoiceRuleError,
+    InvoiceSubjectKind,
+)
 from nha_trang_laundry_domain.order_steps import COMPOSITE_STEPS, OrderStep
 from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.promise import (
@@ -237,6 +254,17 @@ from nha_trang_laundry_api.daily_summary import (
     DailySummaryUnavailable,
     daily_summary_response,
 )
+
+# EINVOICE-REQUEST-001 (DEC-040).
+from nha_trang_laundry_api.invoice_requests import (
+    INVOICE_CLOSE_ROLES,
+    INVOICE_PATH_MARKER,
+    INVOICE_READ_ROLES,
+    INVOICE_WRITE_ROLES,
+    InvoiceRequestService,
+    InvoiceRequestsUnavailable,
+)
+from nha_trang_laundry_api.invoice_requests import LIST_MAX_LIMIT as INVOICE_LIST_MAX_LIMIT
 from nha_trang_laundry_api.operations import (
     OperationsService,
     OperationsUnavailable,
@@ -4107,8 +4135,11 @@ async def _customer_validation_failed(request: Request, error: Exception) -> Res
         raise error
     # UNCLAIMED-001: a contact note or a waiver reason is free text a person typed, and is refused
     # when it looks like a phone number -- so it is answered the same way, without its value.
-    if CUSTOMER_PATH_MARKER not in request.url.path and not request.url.path.endswith(
-        UNCLAIMED_FREE_TEXT_PATH_SUFFIXES
+    # EINVOICE-REQUEST-001: a buyer's name, address or email on an invoice-request path too.
+    if (
+        CUSTOMER_PATH_MARKER not in request.url.path
+        and INVOICE_PATH_MARKER not in request.url.path
+        and not request.url.path.endswith(UNCLAIMED_FREE_TEXT_PATH_SUFFIXES)
     ):
         return await request_validation_exception_handler(request, error)
     return JSONResponse(
@@ -8973,6 +9004,628 @@ def dispose_unclaimed_order(
     except _UNCLAIMED_ERRORS as error:
         _raise_unclaimed_error(error)
     return _order_view_response(result.view, replayed=result.replayed)
+
+
+# --- EINVOICE-REQUEST-001: invoice requests (DEC-040) --------------------------------------------
+#
+# *Khách cần hóa đơn* on an order or an account month; *Hóa đơn cần xuất* (the list by status);
+# *Ghi số hóa đơn* (the owner or approver records the symbol, number and date the bookkeeper read
+# back from the provider's portal); *Huỷ yêu cầu*; *Tải danh sách cho kế toán* (the open list as
+# CSV, owner or approver, audited). The software never issues an invoice, never names a tax, never
+# prints anything it calls a *hóa đơn*. Capture is refused `PRIVACY_NOTICE_UNPUBLISHED` until the
+# owner publishes the privacy notice (`scripts/publish_privacy_notice.py`). No buyer detail appears
+# in any error: every refusal is a code with the field it is about, and a malformed body on these
+# paths is answered without the values it held (`_customer_validation_failed`).
+
+
+def get_invoice_request_service() -> InvoiceRequestService:
+    try:
+        return InvoiceRequestService(AuthSettings())
+    except InvoiceRequestsUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="invoice requests unavailable"
+        ) from error
+
+
+def require_invoice_reader(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """`DEC-040`: whoever reads the customer reads the requests. MFA."""
+    if not principal.roles & INVOICE_READ_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("INVOICE_READ_ROLE_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+def require_invoice_writer(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """`DEC-040`: the operations roles create and cancel their own store's requests. MFA."""
+    if not principal.roles & INVOICE_WRITE_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("INVOICE_WRITE_ROLE_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+def require_invoice_closer(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """`DEC-040`: the owner and the approver record an issued invoice and download. MFA."""
+    if not principal.roles & INVOICE_CLOSE_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("INVOICE_CLOSE_ROLE_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+class InvoiceBuyerResponse(BaseModel):
+    """The buyer as told at the counter; every field null once the customer was erased."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    unit_name: str | None
+    tax_code: str | None
+    address: str | None
+    email: str | None
+    name: str | None
+    erased: bool
+
+
+class InvoiceAmountResponse(BaseModel):
+    """What the request is for, read now from the ledgers -- never stored with the request.
+
+    `source` is `ORDER_CHARGES` (the order's quoted total, and its storage fee when there is one)
+    or `ACCOUNT_STATEMENT` (the month's account charges, as the statement reads them). Amounts as
+    the shop charged them; no tax is split out.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    total_vnd: int | None
+    storage_fee_vnd: int | None
+    charge_count: int | None
+    month_ended: bool | None
+
+
+class InvoiceRequestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    invoice_request_id: UUID
+    store_id: UUID
+    request_number: int
+    #: What the counter and the bookkeeper quote: `YC-0007`.
+    request_code: str
+    subject_kind: InvoiceSubjectKind
+    order_id: UUID | None
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    account_id: UUID | None
+    #: `YYYY-MM` for an account month.
+    period_month: str | None
+    customer_id: UUID | None
+    customer_name: str | None
+    buyer: InvoiceBuyerResponse
+    status: InvoiceRequestStatus
+    invoice_symbol: str | None
+    invoice_number: str | None
+    invoice_date: date | None
+    cancel_reason: InvoiceCancelReason | None
+    cancel_note: str | None
+    requested_by_staff_id: UUID
+    requested_by_name: str | None
+    requested_at: datetime
+    closed_by_staff_id: UUID | None
+    closed_by_name: str | None
+    closed_at: datetime | None
+    row_version: int
+    amount: InvoiceAmountResponse
+    replayed: bool = False
+
+
+class InvoiceRequestListResponse(BaseModel):
+    """One tab of *Hóa đơn cần xuất*: open ones oldest first, closed ones newest closed first."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    status: InvoiceRequestStatus
+    evaluated_at: datetime
+    limit: int
+    #: Every request of the store in this status; `requests` holds at most `limit` of them.
+    total_count: int
+    truncated: bool
+    #: Every tab's count, by status.
+    counts: dict[str, int]
+    requests: list[InvoiceRequestResponse]
+    query_version: str
+
+
+class InvoiceSubjectResponse(BaseModel):
+    """An order's or an account month's *Hóa đơn* row: its requests, and whether a new one may be
+    made now (`refusal` null) or why not."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject_kind: InvoiceSubjectKind
+    order_id: UUID | None
+    account_id: UUID | None
+    period_month: str | None
+    customer_id: UUID | None
+    customer_name: str | None
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    privacy_notice_published: bool
+    #: `PRIVACY_NOTICE_UNPUBLISHED`, `INVOICE_SUBJECT_UNAVAILABLE`, `INVOICE_REQUEST_EXISTS`.
+    refusal: str | None
+    profile_savable: bool
+    prefill: InvoiceBuyerResponse | None
+    prefill_from_profile: bool
+    amount: InvoiceAmountResponse | None
+    live: InvoiceRequestResponse | None
+    history: list[InvoiceRequestResponse]
+    history_truncated: bool
+    evaluated_at: datetime
+    query_version: str
+    decision: str
+
+
+class InvoiceRequestCreateRequest(StrictRequest):
+    """*Khách cần hóa đơn*: the buyer, as told. The domain checks every field
+    (`INVOICE_BUYER_FIELD_INVALID`, `INVOICE_TAX_CODE_SHAPE`, `INVOICE_ADDRESS_REQUIRED`,
+    `INVOICE_FIELD_LOOKS_LIKE_PHONE`); the bounds here only stop an absurd body early."""
+
+    buyer_unit_name: str = Field(max_length=2000)
+    buyer_tax_code: str | None = Field(default=None, max_length=200)
+    buyer_address: str | None = Field(default=None, max_length=2000)
+    buyer_email: str | None = Field(default=None, max_length=2000)
+    buyer_name: str | None = Field(default=None, max_length=2000)
+    #: "Lưu cho lần sau": save these on the account customer's record for their next request.
+    save_profile: StrictBool = False
+
+
+class InvoiceIssuedRequest(StrictRequest):
+    """*Ghi số hóa đơn*: what the bookkeeper read back from the provider's portal."""
+
+    invoice_symbol: str = Field(max_length=100)
+    invoice_number: str = Field(max_length=100)
+    invoice_date: date
+
+
+class InvoiceCancelRequest(StrictRequest):
+    reason: InvoiceCancelReason
+    #: Required for `OTHER`; 1-200 characters, never a phone number.
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class InvoiceExportResponse(BaseModel):
+    """The open list for the bookkeeper, once: UTF-8 with a BOM, never stored."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    export_id: UUID
+    store_id: UUID
+    filename: str
+    content_csv: str
+    content_hash: str
+    query_version: str
+    request_count: int
+    row_count: int
+    truncated: bool
+    produced_at: datetime
+
+
+def _invoice_buyer_response(buyer: InvoiceBuyerView) -> InvoiceBuyerResponse:
+    return InvoiceBuyerResponse(
+        unit_name=buyer.unit_name,
+        tax_code=buyer.tax_code,
+        address=buyer.address,
+        email=buyer.email,
+        name=buyer.name,
+        erased=buyer.erased,
+    )
+
+
+def _invoice_amount_response(amount: InvoiceAmount) -> InvoiceAmountResponse:
+    return InvoiceAmountResponse(
+        source=amount.source,
+        total_vnd=amount.total_vnd,
+        storage_fee_vnd=amount.storage_fee_vnd,
+        charge_count=amount.charge_count,
+        month_ended=amount.month_ended,
+    )
+
+
+def _invoice_request_response(
+    view: InvoiceRequestView, *, replayed: bool = False
+) -> InvoiceRequestResponse:
+    return InvoiceRequestResponse(
+        invoice_request_id=view.request_id,
+        store_id=view.store_id,
+        request_number=view.request_number,
+        request_code=view.request_code,
+        subject_kind=view.subject_kind,
+        order_id=view.order_id,
+        ticket_number=view.ticket_number,
+        ticket_issued_on=view.ticket_issued_on,
+        account_id=view.account_id,
+        period_month=None if view.period_month is None else account_month_label(view.period_month),
+        customer_id=view.customer_id,
+        customer_name=view.customer_name,
+        buyer=_invoice_buyer_response(view.buyer),
+        status=view.status,
+        invoice_symbol=view.invoice_symbol,
+        invoice_number=view.invoice_number,
+        invoice_date=view.invoice_date,
+        cancel_reason=view.cancel_reason,
+        cancel_note=view.cancel_note,
+        requested_by_staff_id=view.requested_by_staff_id,
+        requested_by_name=view.requested_by_name,
+        requested_at=view.requested_at,
+        closed_by_staff_id=view.closed_by_staff_id,
+        closed_by_name=view.closed_by_name,
+        closed_at=view.closed_at,
+        row_version=view.row_version,
+        amount=_invoice_amount_response(view.amount),
+        replayed=replayed,
+    )
+
+
+def _invoice_subject_response(read: InvoiceSubjectRead) -> InvoiceSubjectResponse:
+    return InvoiceSubjectResponse(
+        subject_kind=read.subject_kind,
+        order_id=read.order_id,
+        account_id=read.account_id,
+        period_month=None if read.period_month is None else account_month_label(read.period_month),
+        customer_id=read.customer_id,
+        customer_name=read.customer_name,
+        ticket_number=read.ticket_number,
+        ticket_issued_on=read.ticket_issued_on,
+        privacy_notice_published=read.privacy_notice_published,
+        refusal=None if read.refusal is None else read.refusal.value,
+        profile_savable=read.profile_savable,
+        prefill=None if read.prefill is None else _invoice_buyer_response(read.prefill),
+        prefill_from_profile=read.prefill_from_profile,
+        amount=None if read.amount is None else _invoice_amount_response(read.amount),
+        live=None if read.live is None else _invoice_request_response(read.live),
+        history=[_invoice_request_response(item) for item in read.history],
+        history_truncated=read.history_truncated,
+        evaluated_at=read.evaluated_at,
+        query_version=read.query_version,
+        decision=INVOICE_DECISION,
+    )
+
+
+_INVOICE_ERRORS = (
+    InvoiceAuthorizationError,
+    InvoiceNotFoundError,
+    InvoiceRuleError,
+    InvoiceStateError,
+    AccountRuleError,
+    StoreAccessError,
+    IdempotencyConflictError,
+)
+
+
+def _raise_invoice_error(error: Exception) -> NoReturn:
+    """403 opaque; 404 for a request, order or account outside the caller's store; 409 for a stale
+    version or a reused key; 422 `{reason_code, field, decision}` for every refusal the rules make
+    -- by name, with the field it is about and never its value, nothing written."""
+    if isinstance(error, (InvoiceAuthorizationError, StoreAccessError)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    if isinstance(error, InvoiceNotFoundError):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="invoice subject not found"
+        ) from error
+    if isinstance(error, IdempotencyConflictError):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
+    if isinstance(error, InvoiceStateError):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
+    if isinstance(error, InvoiceRuleError):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "reason_code": error.code.value,
+                "field": error.field,
+                "decision": INVOICE_DECISION,
+            },
+        ) from error
+    if isinstance(error, AccountRuleError):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "reason_code": error.code.value,
+                "field": "month",
+                "decision": INVOICE_DECISION,
+            },
+        ) from error
+    raise error
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/orders/{order_id}/invoice",
+    response_model=InvoiceSubjectResponse,
+)
+def read_order_invoice_subject(
+    store_id: UUID,
+    order_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_invoice_reader)],
+    service: Annotated[InvoiceRequestService, Depends(get_invoice_request_service)],
+) -> InvoiceSubjectResponse:
+    """The order page's *Hóa đơn* row: the order's requests, and whether a new one may be made.
+
+    `refusal` names why *Khách cần hóa đơn* would be refused now. An account customer's saved buyer
+    (or their name) comes back as `prefill`. The amount is the order's charges now.
+    """
+    try:
+        read = service.order_subject(store_id=store_id, order_id=order_id, principal=principal)
+    except _INVOICE_ERRORS as error:
+        _raise_invoice_error(error)
+    return _invoice_subject_response(read)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/orders/{order_id}/invoice-requests",
+    response_model=InvoiceRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_order_invoice_request(
+    store_id: UUID,
+    order_id: UUID,
+    request: InvoiceRequestCreateRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_invoice_writer)],
+    service: Annotated[InvoiceRequestService, Depends(get_invoice_request_service)],
+) -> InvoiceRequestResponse:
+    """*Khách cần hóa đơn* on an order; refused `PRIVACY_NOTICE_UNPUBLISHED` until it is out.
+
+    Then `INVOICE_SUBJECT_UNAVAILABLE` (cancelled, or not this store's), `INVOICE_REQUEST_EXISTS`
+    (a live request covers the order, or its account month), and the buyer's field refusals.
+    `Idempotency-Key` replays the first answer, read as the request is now.
+    """
+    try:
+        stored, view = service.create(
+            store_id=store_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            subject_kind=InvoiceSubjectKind.ORDER,
+            order_id=order_id,
+            customer_id=None,
+            month=None,
+            buyer=_invoice_buyer_input(request),
+            save_profile=request.save_profile,
+        )
+    except _INVOICE_ERRORS as error:
+        _raise_invoice_error(error)
+    return _invoice_request_response(view, replayed=stored.replayed)
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}/invoice",
+    response_model=InvoiceSubjectResponse,
+)
+def read_account_month_invoice_subject(
+    store_id: UUID,
+    customer_id: UUID,
+    month: str,
+    principal: Annotated[StaffPrincipal, Depends(require_invoice_reader)],
+    service: Annotated[InvoiceRequestService, Depends(get_invoice_request_service)],
+) -> InvoiceSubjectResponse:
+    """An account customer's *Hóa đơn tháng* row for one calendar month (`YYYY-MM`).
+
+    The amount is the month's account charges, as the statement reads them. A month with nothing
+    charged, or still to come, is `INVOICE_SUBJECT_UNAVAILABLE`.
+    """
+    try:
+        read = service.account_month_subject(
+            store_id=store_id, customer_id=customer_id, month=month, principal=principal
+        )
+    except _INVOICE_ERRORS as error:
+        _raise_invoice_error(error)
+    return _invoice_subject_response(read)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}/invoice-requests",
+    response_model=InvoiceRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_account_month_invoice_request(
+    store_id: UUID,
+    customer_id: UUID,
+    month: str,
+    request: InvoiceRequestCreateRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_invoice_writer)],
+    service: Annotated[InvoiceRequestService, Depends(get_invoice_request_service)],
+) -> InvoiceRequestResponse:
+    """*Khách cần hóa đơn tháng*: one request for an account customer's calendar month.
+
+    The same refusals as on an order; a month is also covered when one of its orders has a live
+    request of its own.
+    """
+    try:
+        stored, view = service.create(
+            store_id=store_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            subject_kind=InvoiceSubjectKind.ACCOUNT_MONTH,
+            order_id=None,
+            customer_id=customer_id,
+            month=month,
+            buyer=_invoice_buyer_input(request),
+            save_profile=request.save_profile,
+        )
+    except _INVOICE_ERRORS as error:
+        _raise_invoice_error(error)
+    return _invoice_request_response(view, replayed=stored.replayed)
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/invoice-requests",
+    response_model=InvoiceRequestListResponse,
+)
+def list_invoice_requests(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_invoice_reader)],
+    service: Annotated[InvoiceRequestService, Depends(get_invoice_request_service)],
+    request_status: Annotated[InvoiceRequestStatus, Query(alias="status")] = (
+        InvoiceRequestStatus.REQUESTED
+    ),
+    limit: Annotated[int, Query(ge=1, le=INVOICE_LIST_MAX_LIMIT)] = 100,
+) -> InvoiceRequestListResponse:
+    """*Hóa đơn cần xuất*: the store's requests in one status, bounded, with every tab's count.
+
+    `REQUESTED` oldest first (the work to do); `ISSUED` and `CANCELLED` newest closed first. Each
+    carries the amount it is for, read now.
+    """
+    try:
+        found = service.list(
+            store_id=store_id, principal=principal, status=request_status, limit=limit
+        )
+    except _INVOICE_ERRORS as error:
+        _raise_invoice_error(error)
+    return InvoiceRequestListResponse(
+        store_id=found.store_id,
+        status=found.status,
+        evaluated_at=found.evaluated_at,
+        limit=found.limit,
+        total_count=found.total_count,
+        truncated=found.truncated,
+        counts=found.counts,
+        requests=[_invoice_request_response(item) for item in found.requests],
+        query_version=found.query_version,
+    )
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/invoice-requests/export",
+    response_model=InvoiceExportResponse,
+)
+def export_invoice_requests(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_invoice_closer)],
+    service: Annotated[InvoiceRequestService, Depends(get_invoice_request_service)],
+) -> InvoiceExportResponse:
+    """*Tải danh sách cho kế toán*: every open request as CSV (`invoice-requests-export-v1`).
+
+    Owner or approver, MFA. Audited: who, when, how many rows and the digest of the exact bytes.
+    **This route deliberately does not honour `Idempotency-Key`**, as the round-6 export release
+    does not: the idempotency ledger keeps a response for ever, and this response is the buyer
+    list. A second press is a second download, recorded as one.
+    """
+    try:
+        produced = service.export_open(store_id=store_id, principal=principal)
+    except _INVOICE_ERRORS as error:
+        _raise_invoice_error(error)
+    return InvoiceExportResponse(
+        export_id=produced.export_id,
+        store_id=produced.store_id,
+        filename=produced.filename,
+        content_csv=produced.content_csv,
+        content_hash=produced.content_hash,
+        query_version=produced.query_version,
+        request_count=produced.request_count,
+        row_count=produced.row_count,
+        truncated=produced.truncated,
+        produced_at=produced.produced_at,
+    )
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/invoice-requests/{request_id}",
+    response_model=InvoiceRequestResponse,
+)
+def read_invoice_request(
+    store_id: UUID,
+    request_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_invoice_reader)],
+    service: Annotated[InvoiceRequestService, Depends(get_invoice_request_service)],
+) -> InvoiceRequestResponse:
+    """One request, with the amount it is for read now. 404 outside the caller's store."""
+    try:
+        view = service.read(store_id=store_id, request_id=request_id, principal=principal)
+    except _INVOICE_ERRORS as error:
+        _raise_invoice_error(error)
+    return _invoice_request_response(view)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/invoice-requests/{request_id}/issued",
+    response_model=InvoiceRequestResponse,
+)
+def record_invoice_issued(
+    store_id: UUID,
+    request_id: UUID,
+    request: InvoiceIssuedRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_invoice_closer)],
+    service: Annotated[InvoiceRequestService, Depends(get_invoice_request_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> InvoiceRequestResponse:
+    """*Ghi số hóa đơn*: the symbol, number and date close the request as ISSUED, for good.
+
+    Owner or approver, MFA, `If-Match` the request's row version. Refusals:
+    `INVOICE_ISSUED_DETAILS_INVALID` (with the field), `INVOICE_NUMBER_TAKEN`,
+    `INVOICE_REQUEST_CLOSED`; 409 `STALE_VERSION`.
+    """
+    expected = _parse_if_match(if_match)
+    try:
+        stored, view = service.record_issued(
+            store_id=store_id,
+            request_id=request_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            expected_row_version=expected,
+            invoice_symbol=request.invoice_symbol,
+            invoice_number=request.invoice_number,
+            invoice_date=request.invoice_date,
+        )
+    except _INVOICE_ERRORS as error:
+        _raise_invoice_error(error)
+    return _invoice_request_response(view, replayed=stored.replayed)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/invoice-requests/{request_id}/cancellation",
+    response_model=InvoiceRequestResponse,
+)
+def cancel_invoice_request(
+    store_id: UUID,
+    request_id: UUID,
+    request: InvoiceCancelRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_invoice_writer)],
+    service: Annotated[InvoiceRequestService, Depends(get_invoice_request_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> InvoiceRequestResponse:
+    """*Huỷ yêu cầu*: with a reason (a note for `OTHER`). `If-Match` the request's row version.
+
+    The note stays in the request's row; no event, audit or outbox payload carries it.
+    """
+    expected = _parse_if_match(if_match)
+    try:
+        stored, view = service.cancel(
+            store_id=store_id,
+            request_id=request_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            expected_row_version=expected,
+            reason=request.reason,
+            note=request.note,
+        )
+    except _INVOICE_ERRORS as error:
+        _raise_invoice_error(error)
+    return _invoice_request_response(view, replayed=stored.replayed)
+
+
+def _invoice_buyer_input(request: InvoiceRequestCreateRequest) -> InvoiceBuyerInput:
+    return InvoiceBuyerInput(
+        unit_name=request.buyer_unit_name,
+        tax_code=request.buyer_tax_code,
+        address=request.buyer_address,
+        email=request.buyer_email,
+        name=request.buyer_name,
+    )
 
 
 if WEB_DIRECTORY.is_dir():

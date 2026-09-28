@@ -1160,7 +1160,7 @@ items:
 - id: OPENCLAW-RETIRE-001
   phase: AGENT_SHADOW
   title: Reversible retirement of OpenClaw from the public runtime path
-  status: PENDING
+  status: COMPLETE
   priority: 112
   depends_on: []
   context_domains:

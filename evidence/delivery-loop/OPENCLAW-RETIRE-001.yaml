@@ -1,0 +1,74 @@
+schema_version: 1
+work_item: OPENCLAW-RETIRE-001
+recorded_at: '2026-09-28T19:30:00+07:00'
+requirement_contract: 'Under ADR-0009 (owner, 2026-09-28): production selects, constructs and deploys only the custom
+  Responses runtime; the public OpenClaw runtime, its scripts, tests, CI jobs and npm tree are removed; a stale
+  OpenClaw registry fails closed at load; no release blocker is weakened (10 -> 8 with each removal covered); every
+  retired byte stays verifiable and the frozen evidence is untouched; the rollback (a revert) is rehearsed and restores
+  the last verified state byte-for-byte.'
+rollback_impact: 'git revert of 5932d1b and f7ee50e. Rehearsed: in a separate worktree the revert of 5932d1b produced
+  a tree byte-identical to a43ffac (git diff --quiet a43ffac), whose verify_contracts reported 16 pinned artifacts
+  and 10 blockers and whose registry and runtime-verifier tests passed (9). No migration; no deployed service changes
+  behaviour (production never ran OpenClaw).'
+unresolved_assumptions: The eval and synthetic suites remain DETERMINISTIC_DEGRADED with no provider call; whether
+  the provider honours store:false on the wire is still EFFECTIVE_PROVIDER_REQUEST_NOT_VERIFIED and blocks release.
+  The release-supply-chain workflow is expected to turn green on its next run but has not yet run in CI against
+  this change. The owner-side .openclaw/ automation is out of scope and untouched. The lockfile coverage scan recognises
+  uv.lock, poetry.lock, Pipfile.lock, package-lock.json, pnpm-lock.yaml and yarn.lock only.
+evidence:
+  accepted_runtime_selection: docs/adr/0009-retire-public-openclaw-runtime.md (owner decision); runtime/model-registry-v2.yaml
+    agent_runtime_id nha-trang-responses-runtime; apps/worker/src/nha_trang_laundry_worker/pipeline.py constructs
+    BoundedResponsesRuntime; no OpenClaw selection or deployment in apps/, deploy/, compose*.yaml or Dockerfiles
+    (auditor grep).
+  public_dependency_and_deployment_removal: 32 files removed, listed in evidence/openclaw-retirement/retired-artifacts-v1.yaml
+    (auditor matched both ways); three OpenClaw CI jobs and every npm step removed from .github/workflows; packages/evals/tests/test_openclaw_retirement.py
+    test_no_live_file_depends_on_a_retired_path and test_the_record_names_the_decision_and_every_retired_file_is_gone
+    pass.
+  historical_evidence_preservation: 'Frozen items unchanged in WORK_QUEUE.yaml; under evidence/ only additions plus
+    the bundle-index pointer (as EVIDENCE-REPIN-001 did); 32 retired files and 48 prior versions re-verified by
+    sha256 and git blob against a43ffac (test_every_recorded_hash_re_verifies_against_the_named_commit); manifests
+    and plugin inventory preserved byte-for-byte and schema-valid; local-synthetic-suite-v5 derived by capture_local_agent_evidence.py
+    (auditor re-derived it: equal except captured_at), v4 retained; openclaw-offline-verification-v1.json unchanged
+    and every hash in it verifiable (test_local_agent_evidence).'
+  startup_fail_closed_tests: packages/contracts/tests/test_runtime_registry.py test_a_version_one_openclaw_registry_is_refused
+    (the real v1 file from a43ffac, an openclaw block, and agent_runtime_id openclaw are each refused); pipeline.py,
+    agent_runner.py and public-agent-tools auth.py load through load_public_runtime_registry (schema_version Literal[2]);
+    release blockers asserted as an exact tuple.
+  rollback_rehearsal: 'Worktree revert of 5932d1b: tree byte-identical to a43ffac, verify_contracts 16 artifacts
+    / 10 blockers, 9 registry and runtime-verifier tests passed; repeated independently by the evidence auditor
+    with the same results.'
+checks:
+- command: uv run pytest
+  status: PASSED
+  result: 3350 passed, 5 skipped, 2 warnings in 522.84s (0:08:42) (DATABASE_URL set; commit f7ee50e)
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 715 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 382 source files'
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 21 JSON and 3 YAML contracts. Validated 669 synthetic combinatorial cases against the domain
+    engines. Validated 109 served internal API operations against their contract. Validated 554 staff-console disclosures
+    against their registry. Validated 4 pinned public-runtime artifacts; release blockers=8.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 167 source references, 39 decisions, 4 gates, 9 phases, 185 work items, 13
+    capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: uv run pytest --require-postgres-integration (at 5932d1b)
+  status: PASSED
+  result: 3349 passed, 5 skipped
+- command: evidence-auditor (fresh context) at 5932d1b
+  status: PASSED
+  result: all five required entries PROVEN, nothing contradicted; three non-blocking follow-ups fixed in f7ee50e
+- command: supply-chain coverage rule mutation check
+  status: PASSED
+  result: with _require_every_lockfile_audited disabled the missing-lockfile test fails
+- command: release-supply-chain workflow in CI
+  status: NOT_RUN
+  result: runs on the pull request

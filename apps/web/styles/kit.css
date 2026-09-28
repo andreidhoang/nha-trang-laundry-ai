@@ -3999,3 +3999,167 @@ a.row-link {
   font: inherit;
   width: 100%;
 }
+
+/* --- VIETQR-001 (DEC-041) — the exact QR for what is owed --------------------------------------
+ * The server's symbol drawn as squares (ui/vietqr.js), the amount and the transfer code in large
+ * type beside it. At the counter the QR is at least 240 px on a desk (15rem) so a customer's phone
+ * reads it from across the counter; on a phone it is stacked and centred. On paper it is sized for
+ * a roll (print.css). The symbol always sits on white with its own quiet zone. */
+
+.vietqr {
+  align-items: center;
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+}
+
+.vietqr__symbol {
+  aspect-ratio: 1;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: block;
+  height: auto;
+  width: min(15rem, 72vw);
+}
+
+.vietqr__facts {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  text-align: center;
+}
+
+.vietqr__facts > p {
+  margin: 0;
+}
+
+.vietqr__label {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+}
+
+.vietqr__amount {
+  font-size: var(--text-display);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-heavy);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.vietqr__code {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-heavy);
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+.vietqr__account,
+.vietqr__note {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.vietqr__check {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-md);
+  color: var(--warn-fg);
+  font-weight: var(--weight-medium);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+}
+
+.vietqr-host {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.vietqr__absent {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+@media (min-width: 48rem) {
+  .vietqr--counter {
+    grid-template-columns: 15rem minmax(0, 1fr);
+    justify-items: start;
+  }
+
+  .vietqr--counter .vietqr__symbol {
+    width: 15rem;
+  }
+
+  .vietqr--counter .vietqr__facts {
+    text-align: left;
+  }
+}
+
+.vietqr--paper .vietqr__symbol {
+  border: 0;
+  border-radius: 0;
+  width: 11rem;
+}
+
+.vietqr--paper .vietqr__amount {
+  font-size: var(--text-xl);
+}
+
+.vietqr--paper .vietqr__code {
+  font-size: var(--text-lg);
+}
+
+.receipt-paper__qr,
+.statement-paper__qr {
+  border-top: 1px dashed var(--border-strong);
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  text-align: center;
+}
+
+.receipt-paper__qr-title {
+  font-weight: var(--weight-bold);
+  margin: 0;
+}
+
+/* "Mã chuyển khoản" sits beside "Hôm nay" and reads as its quiet sibling until pressed. */
+.orders__lookup-row--meta .orders__code-chip {
+  align-items: center;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  font-size: var(--text-sm);
+  min-height: var(--tap-min);
+  padding: 0 var(--space-2);
+}
+
+.orders__lookup-row--meta .orders__code-chip[aria-pressed="true"] {
+  background: var(--brand-050);
+  border-color: var(--brand-400);
+  color: var(--brand-800);
+}
+
+.vietqr__facts > .vietqr__amount + .vietqr__label {
+  margin-top: var(--space-2);
+}
+
+.vietqr__facts > .vietqr__check {
+  margin-top: var(--space-2);
+  text-align: left;
+}
+
+/* With the QR in it, Thu tiền is taller than a desk screen: "Ghi nhận đã thu" stays in reach. */
+#order-payment .sheet__actions {
+  background: var(--surface);
+  bottom: calc(-1 * max(var(--space-4), env(safe-area-inset-bottom)));
+  box-shadow: 0 -1px 0 var(--border);
+  padding: var(--space-3) 0 max(var(--space-4), env(safe-area-inset-bottom));
+  position: sticky;
+}

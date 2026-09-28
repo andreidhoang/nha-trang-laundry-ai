@@ -188,6 +188,12 @@ from nha_trang_laundry_domain.shop_capture import (
     Vehicle,
     trip_cost,
 )
+from nha_trang_laundry_domain.vietqr import (
+    AccountMonthTransferCode,
+    OrderIdTransferCode,
+    TicketTransferCode,
+    parse_transfer_code,
+)
 from nha_trang_laundry_observability import (
     CORRELATION_HEADER,
     CorrelationContext,
@@ -268,6 +274,16 @@ from nha_trang_laundry_api.unclaimed import (
     UnclaimedRefused,
     UnclaimedService,
     UnclaimedServiceUnavailable,
+)
+
+# VIETQR-001 (DEC-041): the exact QR for what is owed.
+from nha_trang_laundry_api.vietqr import (
+    AccountMonthVietQrResponse,
+    OrderVietQrResponse,
+    VietQrService,
+    VietQrServiceUnavailable,
+    account_month_vietqr_response,
+    order_vietqr_response,
 )
 
 # SHOP-OBSERVABILITY-001. Before this call, every `_LOGGER.record(...)` below was a no-op in the
@@ -2253,6 +2269,7 @@ def list_orders(
     open_only: Annotated[bool, Query(alias="open")] = False,
     ticket: Annotated[int | None, Query(ge=1, le=100_000)] = None,
     ticket_date: date | None = None,
+    transfer_code: Annotated[str | None, Query(min_length=1, max_length=40)] = None,
 ) -> list[OrderViewResponse]:
     """The store's orders, newest first.
 
@@ -2260,6 +2277,11 @@ def list_orders(
     newest hundred is three days of trade, and laundry is collected later than that. `ticket=17`
     finds the order a walk-in ticket tracks (`DEC-013`); numbers restart daily, so it means today's
     17 on the shop's business day unless `ticket_date` names the day on the slip.
+
+    `transfer_code=NTL2809012` (`VIETQR-001`, `DEC-041`) finds the order a bank transfer's memo
+    names, case-insensitive: ticket 12 of 28/09 (every year's, newest first -- the code carries no
+    year), or `NTL` + the first 8 hex digits of the order id. 422 `TRANSFER_CODE_INVALID` for a
+    code that names nothing, `TRANSFER_CODE_ACCOUNT_MONTH` for an account month's `NTLCN…` code.
     """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
@@ -2268,6 +2290,7 @@ def list_orders(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail="ticket_date needs a ticket number"
         )
+    transfer = _order_transfer_code(transfer_code, ticket=ticket)
     try:
         return [
             _order_view_response(item)
@@ -2278,6 +2301,7 @@ def list_orders(
                 open_only=open_only,
                 ticket_number=ticket,
                 ticket_date=ticket_date,
+                transfer=transfer,
             )
         ]
     except (OrderAuthorizationError, ValueError) as error:
@@ -8973,6 +8997,97 @@ def dispose_unclaimed_order(
     except _UNCLAIMED_ERRORS as error:
         _raise_unclaimed_error(error)
     return _order_view_response(result.view, replayed=result.replayed)
+
+
+# --- VIETQR-001: an exact VietQR for what is owed (DEC-041) ------------------------------------
+#
+# The payload, its CRC, the transfer code and whether a QR may be shown are
+# `nha_trang_laundry_domain.vietqr`'s; the amount is the payment ledger's remaining balance (or the
+# account statement's unpaid figure), read on the same cursor as the published account. The matrix
+# is drawn here and crosses the API as rows of 0/1 -- never as SVG or HTML. Every QR refuses
+# `BANK_ACCOUNT_UNPUBLISHED` until the owner runs `scripts/publish_bank_account.py`.
+
+
+def get_vietqr_service() -> VietQrService:
+    try:
+        return VietQrService(AuthSettings())
+    except VietQrServiceUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable"
+        ) from error
+
+
+def _order_transfer_code(
+    text: str | None, *, ticket: int | None
+) -> TicketTransferCode | OrderIdTransferCode | None:
+    """`?transfer_code=` as the order it names, or a 422 by name. One lookup at a time."""
+    if text is None:
+        return None
+    if ticket is not None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="ticket and transfer_code are exclusive"
+        )
+    parsed = parse_transfer_code(text)
+    if isinstance(parsed, AccountMonthTransferCode):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"reason_code": "TRANSFER_CODE_ACCOUNT_MONTH"},
+        )
+    if parsed is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail={"reason_code": "TRANSFER_CODE_INVALID"}
+        )
+    return parsed
+
+
+@app.get("/internal/v1/orders/{order_id}/vietqr", response_model=OrderVietQrResponse)
+def read_order_vietqr(
+    order_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+    service: Annotated[VietQrService, Depends(get_vietqr_service)],
+) -> OrderVietQrResponse:
+    """The order's VietQR: the exact amount still owed, the order's transfer code, the account.
+
+    200 with `refusal` null and the QR, or 200 with the refusal by name and no QR:
+    `BANK_ACCOUNT_UNPUBLISHED`, `NOTHING_OWED` (paid, on account, refunded), `ORDER_NOT_ACTIVE`,
+    `NO_PRESENTABLE_TOTAL`. The amount is the order read's `remaining_vnd` -- storage fee included
+    once accrued -- read in this request. Who may ask is the order read's rule; 404 outside the
+    caller's stores.
+    """
+    try:
+        qr = service.order_qr(order_id=order_id, principal=principal)
+    except OrderNotVisibleError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order unavailable") from error
+    except OrderAuthorizationError as error:
+        _raise_operations_error(error)
+    return order_vietqr_response(order_id, qr)
+
+
+@app.get(
+    "/internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}/vietqr",
+    response_model=AccountMonthVietQrResponse,
+)
+def read_account_month_vietqr(
+    store_id: UUID,
+    customer_id: UUID,
+    month: str,
+    principal: Annotated[StaffPrincipal, Depends(require_customer_reader)],
+    service: Annotated[VietQrService, Depends(get_vietqr_service)],
+) -> AccountMonthVietQrResponse:
+    """An account customer's month: what of that statement is still unpaid, as a VietQR.
+
+    The amount is everything charged up to the month's end less every payment the account has
+    made (`account-month-unpaid-v1`), so it includes an earlier month still unpaid
+    (`unpaid_before_month_vnd` says how much) -- account payments settle the oldest money first.
+    Refusals as the order's, plus `MONTH_NOT_STARTED`. The statement read's rule decides who asks.
+    """
+    try:
+        found = service.account_month_qr(
+            store_id=store_id, customer_id=customer_id, month=month, principal=principal
+        )
+    except _ACCOUNT_ERRORS as error:
+        _raise_account_error(error)
+    return account_month_vietqr_response(customer_id, found)
 
 
 if WEB_DIRECTORY.is_dir():

@@ -223,3 +223,31 @@
     max-width: 120mm;
   }
 }
+
+/* VIETQR-001 (DEC-041) — the QR on the slip and the statement: about 40 mm on a roll, black on
+ * white, never split across a page break, with the amount and the code under it. */
+@media print {
+  .receipt-paper__qr,
+  .statement-paper__qr {
+    border-color: #000;
+    break-inside: avoid;
+    padding-top: 2mm;
+  }
+
+  .vietqr--paper .vietqr__symbol {
+    width: 40mm;
+  }
+
+  .vietqr--paper .vietqr__amount {
+    font-size: 12pt;
+  }
+
+  .vietqr--paper .vietqr__code {
+    font-size: 11pt;
+  }
+
+  .vietqr--paper .vietqr__account,
+  .vietqr--paper .vietqr__note {
+    font-size: 8pt;
+  }
+}

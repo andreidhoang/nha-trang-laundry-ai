@@ -134,6 +134,25 @@ const GROUPS = [
         today:
           "Chuyển khoản ghi khi đã thấy tiền vào tài khoản. Sao kê công nợ in từ trang của khách.",
       },
+      // VIETQR-001 (DEC-041, 2026-09-28) built the exact QR: the amount still owed and a transfer
+      // code naming the order, on Thu tiền, the receipt and the statement, and the order search
+      // by that code. What stays absent is confirming a transfer without a person looking, which
+      // needs a feed of the shop's incoming transactions -- the owner's to choose.
+      {
+        ref: "DEC-041",
+        title: "Tự xác nhận chuyển khoản",
+        what: "Máy tự thấy tiền chuyển khoản về và đề xuất ghi vào đúng đơn, nhân viên bấm một lần.",
+        missing:
+          "Mã QR đúng số tiền còn lại và nội dung chuyển khoản của đơn đã có (sau khi chủ tiệm công " +
+          "bố tài khoản), và tìm đơn theo nội dung chuyển khoản đã có. Chưa có nguồn giao dịch " +
+          "ngân hàng để máy tự đối chiếu.",
+        blockedBy:
+          "Chủ tiệm chọn dịch vụ báo biến động số dư hoặc API ngân hàng, cấp tài khoản và khoá, " +
+          "và chọn đường kết nối mạng",
+        today:
+          "Khách quét mã QR ở Thu tiền hoặc trên phiếu; nhân viên xem app ngân hàng đúng nội dung " +
+          "và số tiền rồi bấm Ghi nhận đã thu.",
+      },
       // UNCLAIMED-001 (DEC-036) built the waiting list, contact attempts, the storage fee, the
       // waiver and thanh lý. The question it left open -- whether an order paid in full before
       // day 21 owes a fee afterwards -- the owner ruled on 2026-09-27: it does not (the fee is

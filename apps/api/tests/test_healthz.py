@@ -66,12 +66,13 @@ class StubOperationsService:
         open_only: bool,
         ticket_number: int | None,
         ticket_date: date | None,
+        transfer: object | None = None,
     ) -> tuple[OrderView, ...]:
         assert store_id == STORE_ID
         assert principal.staff_user_id == OWNER_ID
         assert limit == 100
-        # The unfiltered board is what a bare GET asks for.
-        assert (open_only, ticket_number, ticket_date) == (False, None, None)
+        # The unfiltered board is what a bare GET asks for (VIETQR-001: no transfer code either).
+        assert (open_only, ticket_number, ticket_date, transfer) == (False, None, None, None)
         return (
             OrderView(
                 order_id=ORDER_ID,

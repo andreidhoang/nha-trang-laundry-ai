@@ -10,6 +10,10 @@
  *     search and there never will be one. "Số phiếu…" asks the server for that number on a
  *     business day (today unless the date chip says otherwise); the server decides which day
  *     "today" is, not this device's clock.
+ *   - **A transfer's memo finds its order too** (`VIETQR-001`, `DEC-041`). The same field takes a
+ *     transfer code (`NTL2809012`, as the bank app shows it, any case): the server resolves it to
+ *     the ticket's day and number, or to the order id's first eight characters, in this store.
+ *     "Mã chuyển khoản" switches the phone keyboard to letters; on a desk just type it.
  *   - **The list shows open orders by default.** Newest-first by creation, a hundred rows is three
  *     days of trade and laundry is collected later than that, so an order still in play fell off
  *     the list by age. `?open=true` keeps every order not yet completed or cancelled, any age.
@@ -84,6 +88,12 @@ const COMMERCIAL_STATUSES = new Set([
 
 /** A ticket number as staff type it: the counter issues 1, 2, 3… and restarts each morning. */
 const TICKET_NUMBER = /^[1-9][0-9]{0,4}$/;
+
+/**
+ * VIETQR-001: what a transfer code starts with. The console only routes the text to the server's
+ * `transfer_code` search; which order it names is the server's to decide.
+ */
+const TRANSFER_PREFIX = /^NTL/i;
 
 /** A business date as `?date=` may carry it. */
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -398,6 +408,11 @@ export function render_(context) {
   /** @param {Event} [event] */
   async function submitLookup(event) {
     event?.preventDefault();
+    const typed = lookup.number.replace(/\s+/g, "");
+    if (codeMode || TRANSFER_PREFIX.test(typed)) {
+      await submitTransferCode(typed.toUpperCase());
+      return;
+    }
     const number = lookup.number.trim();
     if (!TICKET_NUMBER.test(number)) {
       show(lookupHost, inlineAlert({ state: "warn", title: "Nhập số phiếu, ví dụ 17." }));
@@ -444,6 +459,72 @@ export function render_(context) {
     }
   }
 
+  /**
+   * VIETQR-001: the order a transfer code names, on the server's `transfer_code` search.
+   *
+   * @param {string} code
+   */
+  async function submitTransferCode(code) {
+    if (!TRANSFER_PREFIX.test(code)) {
+      show(lookupHost, inlineAlert({ state: "warn", title: "Nhập mã chuyển khoản, ví dụ NTL2809012." }));
+      return;
+    }
+    const seq = ++lookupSubmission.seq;
+    render(lookupHost, h("p", { class: "muted" }, `Đang tìm mã ${code}…`));
+    try {
+      const items = await request(
+        `/internal/v1/stores/${encodeURIComponent(store)}/orders?${new URLSearchParams({
+          transfer_code: code,
+          limit: "20",
+        })}`,
+      );
+      if (seq !== lookupSubmission.seq) return;
+      const found = Array.isArray(items) ? items : [];
+      if (!found.length) {
+        show(
+          lookupHost,
+          inlineAlert({
+            state: "warn",
+            title: `Không có đơn nào mang mã ${code}.`,
+            body: "Xem lại mã trong app ngân hàng, hoặc tìm theo số phiếu.",
+          }),
+        );
+        return;
+      }
+      render(
+        lookupHost,
+        h("p", { class: "orders__lookup-head" }, found.length === 1 ? `Mã ${code}` : `Mã ${code} có ${found.length} đơn`),
+        list(found.map(orderRow), { label: `Kết quả tìm mã ${code}` }),
+      );
+    } catch (error) {
+      if (seq !== lookupSubmission.seq) return;
+      const codes = /** @type {any} */ (error)?.reasonCodes || [];
+      const reason = ["TRANSFER_CODE_ACCOUNT_MONTH", "TRANSFER_CODE_INVALID"].find((code) =>
+        codes.includes(code),
+      );
+      if (reason) {
+        show(
+          lookupHost,
+          inlineAlert({
+            state: "warn",
+            title:
+              reason === "TRANSFER_CODE_ACCOUNT_MONTH"
+                ? "Đây là mã công nợ tháng (NTLCN…), không phải một đơn."
+                : `Mã ${code} không phải mã chuyển khoản của tiệm.`,
+            body:
+              reason === "TRANSFER_CODE_ACCOUNT_MONTH"
+                ? "Khách công nợ trả theo sao kê: mở trang khách, bấm Thu công nợ."
+                : "Mã đơn có dạng NTL + ngày tháng + số phiếu, ví dụ NTL2809012.",
+          }),
+        );
+        return;
+      }
+      const notice = errorNotice(error);
+      show(lookupHost, notice);
+      revealError(notice);
+    }
+  }
+
   const search = searchField({
     id: "lookup-ticket",
     label: "Số phiếu",
@@ -454,7 +535,29 @@ export function render_(context) {
     },
   });
   search.input.value = lookup.number;
-  search.input.maxLength = 5;
+  // VIETQR-001: long enough for a transfer code typed on a desk; a ticket is still checked as one.
+  search.input.maxLength = 25;
+  let codeMode = false;
+  const codeChip = h(
+    "button",
+    {
+      type: "button",
+      class: "chip orders__code-chip",
+      id: "lookup-code-mode",
+      "aria-pressed": "false",
+      onClick: () => {
+        codeMode = !codeMode;
+        codeChip.setAttribute("aria-pressed", codeMode ? "true" : "false");
+        search.input.inputMode = codeMode ? "text" : "numeric";
+        search.input.placeholder = codeMode ? "Mã chuyển khoản…" : "Số phiếu…";
+        search.input.setAttribute("autocapitalize", codeMode ? "characters" : "off");
+        dateChip.hidden = codeMode;
+        if (codeMode) dateRow.hidden = true;
+        search.input.focus();
+      },
+    },
+    "Mã chuyển khoản",
+  );
   // Enter submits the form below; the kit's own Enter handler is not wired (no `onSubmit`).
 
   const dateInput = /** @type {HTMLInputElement} */ (
@@ -525,6 +628,7 @@ export function render_(context) {
       { class: "orders__lookup-row orders__lookup-row--meta" },
       dateChip,
       dateRow,
+      codeChip,
       // CUSTOMER-001: a regular is found by phone or name, on the customer's own page.
       can(principal(), "CUSTOMERS_READ").allowed
         ? h("a", { href: "#/customers", class: "link-action", id: "orders-customers" }, "Tìm theo khách")

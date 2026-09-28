@@ -170,6 +170,7 @@ method, the optional last characters of the bank reference, the staff member and
 | The rest, or the whole total at once | balance `PAID`; writes the settlement row (the same shapes as before: paid at pickup, prepaid for the counter, prepaid for delivery) | — |
 | The customer hands over more than remains | refused — the counter gives change; no store credit is created | `OVERPAYMENT_REFUSED` |
 | A transfer nobody has seen arrive | refused; the sheet asks "Đã thấy tiền vào tài khoản" | `TRANSFER_NOT_SEEN` |
+| *Chuyển khoản* chosen (`VIETQR-001`, `DEC-041`) | `GET /orders/{id}/vietqr`: the NAPAS VietQR for exactly the ledger's remaining balance, memo = the order's transfer code (`NTL` + ddmm + ticket, or `NTL` + 8 id characters); also on *Phiếu cho khách* while money is owed, and per account month on the statement (`NTLCN…`). The order search resolves a code (`?transfer_code=`). Nothing is posted automatically | `BANK_ACCOUNT_UNPUBLISHED` (until `scripts/publish_bank_account.py`), `NOTHING_OWED` |
 | "The customer takes the goods now" with money still owed | refused: goods leave only when paid | `HANDOVER_REQUIRES_FULL_PAYMENT` |
 | Pickup, `RELEASE` for a self-collect order, or `HAND_OVER` while partly paid | refused (`settlement.goods_may_leave`; an account customer's order leaves through *Giao đồ — ghi công nợ*, §4.1) | `COLLECTION_REQUIRES_PAYMENT` / `INVALID_STATE_TRANSITION` |
 | Quote has no single total (unresolved fee) | no payment can be measured against it | `NO_PRESENTABLE_TOTAL` (`DEC-003`) |

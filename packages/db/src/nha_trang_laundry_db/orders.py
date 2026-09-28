@@ -48,6 +48,7 @@ from nha_trang_laundry_domain.payments import (
 from nha_trang_laundry_domain.promise import PromiseChoice
 from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
 from nha_trang_laundry_domain.unclaimed import awaiting_pickup, order_storage_fee
+from nha_trang_laundry_domain.vietqr import OrderIdTransferCode, TicketTransferCode
 
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
@@ -463,7 +464,12 @@ _LOCK_ORDER_FOR_TRANSITION_SQL: Final = """
 
 
 def _list_statement(
-    *, store_id: UUID, limit: int, open_only: bool, ticket: TicketReference | None
+    *,
+    store_id: UUID,
+    limit: int,
+    open_only: bool,
+    ticket: TicketReference | None,
+    transfer: TicketTransferCode | OrderIdTransferCode | None = None,
 ) -> tuple[str, dict[str, object]]:
     """The board's statement and parameters, exposed so the plan test reads the query it runs."""
 
@@ -471,6 +477,25 @@ def _list_statement(
     parameters: dict[str, object] = {"store_id": store_id, "limit": limit}
     if open_only:
         clauses.append(f"o.{OPEN_ORDERS_SQL_PREDICATE}")
+    # --- VIETQR-001 (`DEC-041`): the order a transfer code names, within this store ----------
+    if isinstance(transfer, TicketTransferCode):
+        # `NTLddmmNNN` carries no year: every year's ticket NNN of that day, newest first.
+        clauses.append(
+            """o.bound_contact_id IN (
+                SELECT ct.id FROM counter_tickets ct
+                WHERE ct.store_id = %(store_id)s
+                  AND ct.ticket_number = %(transfer_ticket)s
+                  AND extract(day FROM ct.issued_on) = %(transfer_day)s
+                  AND extract(month FROM ct.issued_on) = %(transfer_month)s
+            )"""
+        )
+        parameters["transfer_ticket"] = transfer.ticket_number
+        parameters["transfer_day"] = transfer.day
+        parameters["transfer_month"] = transfer.month
+    elif isinstance(transfer, OrderIdTransferCode):
+        # Eight validated hex digits: the id's first group, so no LIKE metacharacter can arrive.
+        clauses.append("o.id::text LIKE %(transfer_prefix)s")
+        parameters["transfer_prefix"] = transfer.prefix + "-%"
     if ticket is not None:
         # Through the ticket's own store-scoped unique key, never a bare number: every store has a
         # "số 1" today, and another store's is not this counter's customer.
@@ -1479,12 +1504,14 @@ class OrderRepository:
         limit: int = 100,
         open_only: bool = False,
         ticket: TicketReference | None = None,
+        transfer: TicketTransferCode | OrderIdTransferCode | None = None,
     ) -> tuple[OrderView, ...]:
         """The store's orders, newest first, optionally narrowed to open ones or to one ticket.
 
         `open_only` is what keeps an order in play from falling off the board by age: at thirty
         orders a day the newest hundred is three days, and laundry is collected later than that.
         `ticket` answers the question the counter actually asks at pickup, "phiếu số 17".
+        `transfer` (`VIETQR-001`) answers the one a bank app asks: which order is `NTL2809012`.
         """
 
         _require_order_read(principal)
@@ -1499,7 +1526,7 @@ class OrderRepository:
         if ticket is not None and ticket.number < 1:
             raise ValueError("a ticket number starts at 1")
         sql, parameters = _list_statement(
-            store_id=store_id, limit=limit, open_only=open_only, ticket=ticket
+            store_id=store_id, limit=limit, open_only=open_only, ticket=ticket, transfer=transfer
         )
         cursor.execute(sql, parameters)
         return tuple(_order_view_row(row) for row in cursor.fetchall())

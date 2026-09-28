@@ -14,6 +14,7 @@ dependencies = [
   "psycopg[binary]>=3.2,<4",
   "pyjwt[crypto]>=2.10,<3",
   "uvicorn[standard]>=0.35,<1",
+  "segno>=1.6,<2",
 ]
 
 [tool.uv.sources]

@@ -287,6 +287,8 @@ DECLARED_CONTROLS = (
     "today.summary-info",
     "today.summary-copy",
     "today.summary-share",
+    # VIETQR-001 (DEC-041): "Mã chuyển khoản" on Đơn hàng switches the search to a transfer code.
+    "orders.lookup-code-mode",
 )
 
 PASS: list[str] = []
@@ -7357,6 +7359,404 @@ def scenario_daily_summary(console: Console) -> None:
     console.sign_in("demo-owner")
 
 
+# --- VIETQR-001 ---------------------------------------------------------------------------------
+
+#: The demo account the scenario publishes: the bank BIN and account of the NAPAS reference vectors
+#: in the spec. A stack, not a shop: no customer ever scans this.
+VIETQR_DEMO_ACCOUNT = (
+    "--bank-bin",
+    "970416",
+    "--account-number",
+    "257678859",
+    "--account-name",
+    "TIEM GIAT DEMO",
+    "--bank-display-name",
+    "ACB",
+)
+
+
+def _publish_bank_account(
+    *extra: str, actor: str = "demo-owner"
+) -> subprocess.CompletedProcess[str]:
+    """Run the owner's bank-account script against the stack's database, as the owner would."""
+
+    staff = sql(f"select id from staff_users where oidc_subject='{actor}'")
+    return subprocess.run(
+        [
+            sys.executable,
+            _script("publish_bank_account.py"),
+            "--database-url",
+            arguments.database_url,
+            "--actor-id",
+            staff,
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+
+def _digits(text: str) -> str:
+    return re.sub(r"\D", "", text or "")
+
+
+def _drawn_cells(console: Console, scope: str) -> set[tuple[int, int]]:
+    """The dark modules the console drew, read back from the SVG path it built (`M x y h run …`)."""
+
+    d = console.page.locator(f"{scope} svg.vietqr__symbol path").first.get_attribute("d") or ""
+    cells: set[tuple[int, int]] = set()
+    for x, y, run in re.findall(r"M(\d+) (\d+)h(\d+)", d):
+        cells.update((int(x) + step, int(y)) for step in range(int(run)))
+    return cells
+
+
+def _server_cells(modules: list[list[int]]) -> set[tuple[int, int]]:
+    return {(x, y) for y, row in enumerate(modules) for x, value in enumerate(row) if value == 1}
+
+
+def _decoded(console: Console, scope: str) -> str | None:
+    """What a real QR decoder reads off the drawn symbol, or None when no decoder is installed.
+
+    `zxing-cpp` (+ Pillow) decodes the element's screenshot -- pixels, not the path -- so this
+    is the check a customer's phone makes. Run with `uv run --with zxing-cpp --with pillow` for it.
+    """
+
+    try:
+        import io
+
+        import zxingcpp  # type: ignore[import-not-found]
+        from PIL import Image  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    shot = console.page.locator(f"{scope} svg.vietqr__symbol").first.screenshot()
+    found = zxingcpp.read_barcodes(Image.open(io.BytesIO(shot)))
+    return found[0].text if found else ""
+
+
+def _open_payment_transfer(console: Console, order_id: str) -> bool:
+    """Thu tiền, then Chuyển khoản: the QR (or its absence) is drawn inside the sheet."""
+
+    console.open_order(order_id)
+    control = console.step_control("TAKE_PAYMENT")
+    if control is None:
+        return False
+    control.click()
+    console.page.wait_for_timeout(600)
+    console.page.locator("#payment-method button[data-value=CHUYEN_KHOAN]").click()
+    touched("orderDetail.payment-method")
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#payment-qr [data-vietqr]", timeout=8000)
+    console.page.wait_for_timeout(300)
+    return True
+
+
+def scenario_vietqr(console: Console) -> None:
+    """`VIETQR-001` (`DEC-041`): an exact VietQR for what is owed. Refused until the owner publishes
+    the shop's account; the owner previews a 1.000 ₫ test QR, is refused without the test transfer,
+    then publishes; the order's QR asks for exactly what the ledger says remains after a part
+    payment; the receipt prints it; the order search finds the order by its transfer code; a paid
+    order says nothing is owed. Every figure is read back from the server, never computed."""
+
+    head("25", "VIETQR — mã QR đúng số còn lại, sau khi chủ tiệm công bố tài khoản (DEC-041)")
+    if not arguments.database_url:
+        ok("publishing the account uses the owner's script, which needs --database-url", False)
+        return
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import workspace_env  # noqa: F401
+    from nha_trang_laundry_domain.vietqr import parse_payload
+
+    console.sign_in("demo-operations")
+    order = console.build_order(kg="7", stop="active")
+    order_id = order["order_id"]
+
+    def read() -> dict[str, Any]:
+        return console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}
+
+    def qr() -> dict[str, Any]:
+        answer = console.call("GET", f"/internal/v1/orders/{order_id}/vietqr")
+        return answer.get("body") or {"status": answer["status"], "text": answer["text"][:200]}
+
+    rows = sql(
+        "select count(*) from configuration_versions where config_type='BANK_TRANSFER_ACCOUNT'"
+    )
+    ok(
+        "no bank account is published on this stack yet (the refusal can only be proven before it)",
+        rows == "0",
+        rows,
+    )
+    before = qr()
+    ok(
+        "the server refuses the QR by name: BANK_ACCOUNT_UNPUBLISHED, no payload, no matrix",
+        before.get("refusal") == "BANK_ACCOUNT_UNPUBLISHED"
+        and before.get("payload") is None
+        and before.get("modules") is None
+        and str(before.get("transfer_code", "")).startswith("NTL"),
+        {k: before.get(k) for k in ("refusal", "transfer_code", "amount_vnd")},
+    )
+    code = str(before.get("transfer_code"))
+    shown = _open_payment_transfer(console, order_id)
+    sheet = console.page.locator("dialog[open]")
+    ok(
+        "Thu tiền → Chuyển khoản: no QR, one short line and the owner's switch in tier 2; the "
+        "rest of the sheet is as before",
+        shown
+        and console.page.locator("#payment-qr svg.vietqr__symbol").count() == 0
+        and "Chưa có mã QR chuyển khoản." in sheet.inner_text()
+        and console.page.locator("#payment-qr .info-btn").count() == 1
+        and console.page.locator("#payment-transfer-seen").count() == 1,
+        sheet.inner_text()[:200].replace("\n", " | ") if sheet.count() else "no sheet",
+    )
+    console.page.keyboard.press("Escape")
+
+    head("25a", "THỬ 1.000 ₫ — the owner previews, is refused without the test, then publishes")
+    import tempfile
+
+    preview_dir = tempfile.mkdtemp(prefix="vietqr-preview-")
+    preview_file = os.path.join(preview_dir, "vietqr-test-1000.svg")
+    previewed = subprocess.run(
+        [
+            sys.executable,
+            _script("publish_bank_account.py"),
+            "--preview",
+            "--out",
+            preview_file,
+            *VIETQR_DEMO_ACCOUNT,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    payload_line = next(
+        (line for line in previewed.stdout.splitlines() if line.startswith("payload: ")), ""
+    )
+    preview = parse_payload(payload_line.removeprefix("payload: ")) if payload_line else None
+    ok(
+        "--preview writes the 1.000 ₫ test QR (memo NTLTEST) and publishes nothing",
+        previewed.returncode == 0
+        and os.path.getsize(preview_file) > 0
+        and preview is not None
+        and (preview.amount_vnd, preview.purpose, preview.bank_bin) == (1000, "NTLTEST", "970416")
+        and sql(
+            "select count(*) from configuration_versions where config_type='BANK_TRANSFER_ACCOUNT'"
+        )
+        == "0",
+        (previewed.stdout or previewed.stderr).strip()[:200],
+    )
+    untested = _publish_bank_account(*VIETQR_DEMO_ACCOUNT)
+    ok(
+        "publishing without --test-transfer-confirmed is refused, and nothing is written",
+        untested.returncode == 2
+        and "test-transfer-confirmed" in untested.stderr
+        and sql(
+            "select count(*) from configuration_versions where config_type='BANK_TRANSFER_ACCOUNT'"
+        )
+        == "0",
+        untested.stderr.strip()[:160],
+    )
+    not_owner = _publish_bank_account(
+        *VIETQR_DEMO_ACCOUNT, "--test-transfer-confirmed", actor="demo-operations"
+    )
+    ok(
+        "only the owner publishes the account: the counter's id is refused",
+        not_owner.returncode == 3 and "OWNER_ADMIN" in not_owner.stderr,
+        not_owner.stderr.strip()[:160],
+    )
+    published = _publish_bank_account(*VIETQR_DEMO_ACCOUNT, "--test-transfer-confirmed")
+    ok(
+        "scripts/publish_bank_account.py publishes it after the test (the owner's act)",
+        published.returncode == 0 and "bank account published" in published.stdout,
+        (published.stdout or published.stderr).strip()[:160],
+    )
+    again = _publish_bank_account(*VIETQR_DEMO_ACCOUNT, "--test-transfer-confirmed")
+    ok(
+        "the same account again changes nothing",
+        again.returncode == 0 and "already in force" in again.stdout,
+        again.stdout.strip()[:160],
+    )
+
+    head("25b", "THU TIỀN — the QR asks for exactly what remains, before and after a deposit")
+    owed = int(read().get("remaining_vnd") or 0)
+    first = qr()
+    parsed = parse_payload(str(first.get("payload"))) if first.get("payload") else None
+    ok(
+        "the QR asks for the ledger's remaining balance, with the order's transfer code",
+        first.get("refusal") is None
+        and first.get("amount_vnd") == owed
+        and first.get("amount_source") == "BALANCE_DUE"
+        and parsed is not None
+        and (parsed.amount_vnd, parsed.purpose, parsed.bank_bin, parsed.account_number)
+        == (owed, code, "970416", "257678859"),
+        {k: first.get(k) for k in ("refusal", "amount_vnd", "transfer_code")},
+    )
+    _open_payment_transfer(console, order_id)
+    scope = "#payment-qr"
+    amount_text = console.page.locator(f"{scope} [data-field=qr-amount]").first.inner_text()
+    code_text = console.page.locator(f"{scope} [data-field=qr-code]").first.inner_text()
+    ok(
+        "the sheet shows the QR with Số tiền and Nội dung in large type and the bank-app check",
+        _digits(amount_text) == str(owed)
+        and code_text.strip() == code
+        and "Kiểm tra app ngân hàng: đúng nội dung và số tiền rồi mới bấm Ghi nhận đã thu."
+        in console.page.locator("dialog[open]").inner_text(),
+        f"{amount_text} · {code_text}",
+    )
+    ok(
+        "the console draws exactly the server's modules: no more, no fewer",
+        _drawn_cells(console, scope) == _server_cells(first.get("modules") or []),
+        f"{len(first.get('modules') or [])} modules a side",
+    )
+    decoded = _decoded(console, scope)
+    if decoded is None:
+        note(
+            "QR decode skipped: zxing-cpp is not installed (uv run --with zxing-cpp --with pillow)"
+        )
+    else:
+        ok(
+            "a real QR decoder (zxing-cpp) reads the drawn symbol back as the server's payload",
+            decoded == first.get("payload"),
+            decoded[:80],
+        )
+    size = console.page.locator(f"{scope} svg.vietqr__symbol").first.bounding_box() or {}
+    viewport_width = console.page.viewport_size["width"] if console.page.viewport_size else 0
+    ok(
+        "the QR is large enough to scan across the counter (>= 240 px on a desk, 200 on a phone)",
+        float(size.get("width") or 0) >= (240 if viewport_width >= 768 else 200),
+        f"{size.get('width')} px at a {viewport_width} px viewport",
+    )
+    console.page.locator("#payment-edit").click()
+    touched("orderDetail.payment-edit")
+    ok(
+        "the amount stays editable: the customer may pay part",
+        console.page.locator("#payment-amount").is_enabled()
+        and console.page.locator(f"{scope} svg.vietqr__symbol").count() == 1,
+    )
+    console.page.keyboard.press("Escape")
+
+    console.pay(order_id, "50.000", method="CHUYEN_KHOAN", seen=True)
+    after = read()
+    part = qr()
+    ok(
+        "after a 50.000 ₫ transfer the QR asks for the new remaining, read in the same request",
+        after.get("balance") == "PARTIALLY_PAID"
+        and part.get("amount_vnd") == after.get("remaining_vnd") == owed - 50_000
+        and parse_payload(str(part.get("payload"))).amount_vnd == owed - 50_000,
+        {"remaining": after.get("remaining_vnd"), "qr": part.get("amount_vnd")},
+    )
+    _open_payment_transfer(console, order_id)
+    ok(
+        "the sheet now shows the new remaining",
+        _digits(console.page.locator("#payment-qr [data-field=qr-amount]").first.inner_text())
+        == str(owed - 50_000),
+    )
+    console.page.keyboard.press("Escape")
+
+    head("25c", "PHIẾU — the receipt prints the QR for what is still owed")
+    console.open(f"#/orders/{order_id}/receipt")
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#receipt-paper [data-field=vietqr]", timeout=10000)
+    paper = console.page.locator("#receipt-paper [data-field=vietqr]")
+    ok(
+        "Phiếu cho khách carries the QR, the remaining amount and the transfer code",
+        paper.count() == 1
+        and _digits(paper.locator("[data-field=qr-amount]").inner_text()) == str(owed - 50_000)
+        and paper.locator("[data-field=qr-code]").inner_text().strip() == code
+        and _drawn_cells(console, "#receipt-paper") == _server_cells(part.get("modules") or []),
+        paper.inner_text()[:160].replace("\n", " | ") if paper.count() else "absent",
+    )
+
+    head("25d", "TÌM ĐƠN — a transfer that arrives later leads straight to its order")
+    found = console.call(
+        "GET", f"/internal/v1/stores/{STORE}/orders?transfer_code={code.lower()}&limit=20"
+    )
+    ok(
+        "the order search resolves the code (any case) to this order, in this store",
+        found["status"] == 200
+        and order_id in [item.get("order_id") for item in found.get("body") or []],
+        found["text"][:160],
+    )
+    wrong = console.call("GET", f"/internal/v1/stores/{STORE}/orders?transfer_code=NTL3213999")
+    ok(
+        "a code that names nothing is refused by name: TRANSFER_CODE_INVALID",
+        wrong["status"] == 422 and "TRANSFER_CODE_INVALID" in wrong["text"],
+        wrong["text"][:120],
+    )
+    console.open("#/orders", settle=1500)
+    touched("shell.nav.orders")
+    console.page.locator("#lookup-code-mode").click()
+    touched("orders.lookup-code-mode")
+    console.type_into("#lookup-ticket", code.lower())
+    console.page.locator("form.orders__lookup button[type=submit]").click()
+    console.page.wait_for_timeout(1800)
+    result = console.page.locator("#lookup-result")
+    ok(
+        "on Đơn hàng, 'Mã chuyển khoản' then the code finds the order in one press",
+        f"Mã {code}" in result.inner_text()
+        and result.locator(f"a[href*='{order_id}']").count() >= 1,
+        result.inner_text()[:160].replace("\n", " | "),
+    )
+
+    head("25e", "ĐÃ TRẢ ĐỦ — a paid order says nothing is owed")
+    console.pay(order_id)
+    paid = qr()
+    ok(
+        "once paid the QR is refused NOTHING_OWED and the code still names the order",
+        read().get("balance") == "PAID"
+        and paid.get("refusal") == "NOTHING_OWED"
+        and paid.get("modules") is None
+        and paid.get("transfer_code") == code,
+        {k: paid.get(k) for k in ("refusal", "transfer_code")},
+    )
+    console.open(f"#/orders/{order_id}/receipt")
+    with contextlib.suppress(Exception):
+        console.page.wait_for_selector("#receipt-paper [data-paid]", timeout=10000)
+    console.page.wait_for_timeout(600)
+    ok(
+        "the paid order's receipt prints no QR",
+        console.page.locator("#receipt-paper [data-field=vietqr]").count() == 0
+        and console.page.locator("#receipt-paper [data-paid]").count() == 1,
+    )
+
+    account = sql(
+        "select a.customer_id || ' ' || a.id from customer_accounts a "
+        f"where a.store_id='{STORE}' order by a.opened_at limit 1"
+    )
+    if " " not in account:
+        note("account-month QR skipped: no account customer on this stack (run after 'accounts')")
+        return
+    head("25f", "SAO KÊ — an account customer's month carries its QR")
+    customer_id, _account_id = account.split(" ", 1)
+    console.sign_in("demo-owner")
+    month = sql("select to_char(now() at time zone 'Asia/Ho_Chi_Minh', 'YYYY-MM')")
+    month_qr = (
+        console.call(
+            "GET",
+            f"/internal/v1/stores/{STORE}/customers/{customer_id}/account/statements/{month}/vietqr",
+        ).get("body")
+        or {}
+    )
+    console.open(f"#/customers/{customer_id}/statement/{month}", settle=2200)
+    drawn = console.page.locator("#statement-paper [data-field=vietqr]")
+    if month_qr.get("refusal") is None:
+        ok(
+            "the statement prints the month's QR: the unpaid figure and the NTLCN code",
+            drawn.count() == 1
+            and _digits(drawn.locator("[data-field=qr-amount]").inner_text())
+            == str(month_qr.get("amount_vnd"))
+            and str(month_qr.get("transfer_code", "")).startswith("NTLCN")
+            and drawn.locator("[data-field=qr-code]").inner_text().strip()
+            == month_qr.get("transfer_code"),
+            {
+                k: month_qr.get(k)
+                for k in ("amount_vnd", "transfer_code", "unpaid_before_month_vnd")
+            },
+        )
+    else:
+        ok(
+            "a month with nothing unpaid prints no QR, and the server says why",
+            drawn.count() == 0 and month_qr.get("refusal") in {"NOTHING_OWED", "MONTH_NOT_STARTED"},
+            month_qr.get("refusal"),
+        )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -7391,6 +7791,10 @@ SCENARIOS = {
     # it proves the refusal on a shop that has not published the account terms, then publishes
     # them; nothing after it depends on the terms being unpublished.
     "accounts": scenario_accounts,
+    # VIETQR-001 (DEC-041). After accounts (its last step reads an account month's QR when one
+    # exists), before unclaimed and promise: it proves the refusal on a shop that has not published
+    # the bank account, then publishes it and leaves it published; nothing after it needs it absent.
+    "vietqr": scenario_vietqr,
     # UNCLAIMED-001. After customers (a full run proves Gọi on a customer record, which needs the
     # privacy notice customers publishes), before promise; it withdraws and publishes the storage
     # policy itself, and leaves it published: nothing after it ages an order.

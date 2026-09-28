@@ -27,6 +27,11 @@
  *   - **Deterministic first paint.** The order read paints the header, the total and the footer at
  *     once; the lines are the second paint. "In phiếu" stays off, with its reason, until they are
  *     in — a receipt without its lines is not one to hand over.
+ *   - **An exact VietQR while money is owed** (`VIETQR-001`, `DEC-041`): the server's QR for what
+ *     the payment ledger says remains, with the amount and the transfer code (*Nội dung*) beside it,
+ *     at print size. The server decides whether there is one (`NOTHING_OWED` once paid,
+ *     `BANK_ACCOUNT_UNPUBLISHED` until the owner publishes the shop's account); without one the
+ *     paper is exactly as before.
  *   - **No identifier on the paper.** The short reference is the first eight characters of the
  *     order's id, upper-cased; the full id stays on the order page's technical drawer.
  *   - **Read-only.** Nothing is written from here; printing and sharing never reach the server.
@@ -55,6 +60,8 @@ import { actionBar, button, infoButton, page, skeletonRows } from "../ui/kit.js"
 import { readStorage, receiptStorageLine, storageCharge } from "../ui/unclaimed.js";
 // The same helper the order list and page use, so the paper cannot word the ticket differently.
 import { orderName } from "./orders.js";
+// VIETQR-001 (DEC-041): the QR for what is still owed.
+import { orderQrPath, qrCard, readQr } from "../ui/vietqr.js";
 
 /** R4, verbatim: what the receipt says for an order without a promised-ready time. */
 export const READY_NOTICE = "Tiệm sẽ báo khi đồ sẵn sàng.";
@@ -183,14 +190,16 @@ function lineAmount(line) {
  *   once anything is paid -- or / Ghi công nợ, once the order left on the customer's account
  * @property {string} closing
  * @property {string|null} storage the storage rule's one line, once published (`DEC-036`)
+ * @property {any|null} qr the server's VietQR while money is owed (`VIETQR-001`), else null
  *
  * @param {any} order an `OrderViewResponse`
  * @param {any|null} detail the bound `QuoteRevisionDetailResponse`, once read
  * @param {any[]|null} catalog the published services, for their names
  * @param {any|null} [storage] the order's `OrderStorageResponse`, when read
+ * @param {any|null} [qr] the order's `OrderVietQrResponse`, when read
  * @returns {ReceiptModel}
  */
-function receiptModel(order, detail, catalog, storage = null) {
+function receiptModel(order, detail, catalog, storage = null, qr = null) {
   const state = snapshot();
   const numbered = order.ticket_number !== null && order.ticket_number !== undefined;
   return {
@@ -241,6 +250,8 @@ function receiptModel(order, detail, catalog, storage = null) {
       order.commercial === "CANCELLED" || order.commercial === "COMPLETED"
         ? null
         : receiptStorageLine(storage),
+    // VIETQR-001: only a QR the server built (no refusal); the amount is the server's remaining.
+    qr: qr && !qr.refusal && Array.isArray(qr.modules) ? qr : null,
   };
 }
 
@@ -265,6 +276,7 @@ export function receiptText(model) {
     `Mã đơn: ${model.reference}`,
     model.closing,
     model.storage,
+    model.qr ? `Chuyển khoản ${money(model.qr.amount_vnd)} · nội dung ${model.qr.transfer_code}` : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -357,6 +369,14 @@ function paper(model, linesFallback) {
           row(model.paid.remainingLabel, model.paid.remaining, { field: "remaining" }),
         )
       : null,
+    model.qr
+      ? h(
+          "section",
+          { class: "receipt-paper__qr", dataField: "vietqr", "aria-label": "Chuyển khoản" },
+          h("p", { class: "receipt-paper__qr-title" }, "Chuyển khoản — quét mã"),
+          qrCard(model.qr, { size: "paper", amountLabel: "Số tiền còn lại" }),
+        )
+      : null,
     h(
       "div",
       { class: "receipt-paper__meta" },
@@ -400,6 +420,12 @@ export function render_(context) {
     h(
       "p",
       { class: "hint" },
+      "Khi đơn còn tiền phải trả, phiếu in mã QR chuyển khoản đúng số còn lại và nội dung chuyển " +
+        "khoản của đơn — chỉ khi chủ tiệm đã công bố tài khoản ngân hàng của tiệm.",
+    ),
+    h(
+      "p",
+      { class: "hint" },
       "Nút “Chia sẻ” chỉ có trên máy có mục chia sẻ (thường là điện thoại). Máy không có thì in " +
         "phiếu, hoặc cho khách xem màn hình này.",
     ),
@@ -417,6 +443,8 @@ export function render_(context) {
   let catalog = null;
   /** @type {any|null} UNCLAIMED-001: the order's storage read, for the rule's one line */
   let storage = null;
+  /** @type {any|null} VIETQR-001: the order's QR read (a refusal is kept and prints nothing) */
+  let qr = null;
   /** @type {unknown} */
   let linesError = null;
   /** @type {string} why the receipt cannot be printed yet, when it is not loading */
@@ -454,7 +482,7 @@ export function render_(context) {
 
   async function share() {
     if (!order || !detail) return;
-    const model = receiptModel(order, detail, catalog, storage);
+    const model = receiptModel(order, detail, catalog, storage, qr);
     try {
       await navigator.share({ title: `${model.ticket} · Phiếu cho khách`, text: receiptText(model) });
       render(statusHost);
@@ -470,7 +498,7 @@ export function render_(context) {
 
   function drawPaper() {
     if (!order) return;
-    const model = receiptModel(order, detail, catalog, storage);
+    const model = receiptModel(order, detail, catalog, storage, qr);
     const fallback = linesError
       ? errorNotice(linesError, {
           title: "Chưa đọc được các món của đơn. Tổng ở dưới là số máy chủ đã trả.",
@@ -490,7 +518,7 @@ export function render_(context) {
     const store = encodeURIComponent(String(order.store_id));
     const quote = encodeURIComponent(String(order.quote_id));
     const revision = encodeURIComponent(String(order.quote_revision));
-    const [read, services, stored] = await Promise.all([
+    const [read, services, stored, owed] = await Promise.all([
       request(`/internal/v1/stores/${store}/quotes/${quote}?revision=${revision}`).catch((error) => {
         linesError = error;
         return null;
@@ -499,8 +527,10 @@ export function render_(context) {
         ? Promise.resolve(catalog)
         : request("/internal/v1/pricebook/services").catch(() => null),
       readStorage(String(order.order_id)),
+      readQr(orderQrPath(String(order.order_id))),
     ]);
     storage = stored;
+    qr = owed;
     catalog = Array.isArray(services) ? services : null;
     detail = read;
     drawPaper();

@@ -630,7 +630,7 @@ export const CONTACT_OUTCOME_VI = {
  */
 export const LATE_REASON_VI = {
   CUSTOMER_ABSENT: "Khách không có nhà",
-  CUSTOMER_WRONG_ADDRESS: "Khách cho sai địa chỉ hoặc số",
+  CUSTOMER_WRONG_ADDRESS: "Khách cho sai địa chỉ hoặc số điện thoại",
   CUSTOMER_ASKED_LATER: "Khách hẹn giờ muộn hơn",
   OTHER: "Lý do khác",
 };

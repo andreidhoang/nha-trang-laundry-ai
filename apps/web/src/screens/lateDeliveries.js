@@ -24,7 +24,7 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { dateOnly, duration, money, promiseTime } from "../core/format.js";
+import { duration, money, promiseTime } from "../core/format.js";
 import { LATE_REASON_VI } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -59,6 +59,18 @@ const NOTE_LIMIT = 120;
  */
 export function lateText(minutes) {
   return Number.isInteger(minutes) ? duration(/** @type {number} */ (minutes) * 60_000_000) : "—";
+}
+
+/**
+ * "27/9": the ticket's day as the counter says it. The server sends `YYYY-MM-DD`; this only picks
+ * the day and the month out of it.
+ *
+ * @param {string} day
+ * @returns {string}
+ */
+function shortDay(day) {
+  const [, month, date] = String(day).split("-");
+  return month && date ? `${Number(date)}/${Number(month)}` : String(day);
 }
 
 /**
@@ -159,18 +171,32 @@ export function render_() {
     } else {
       render(
         listHost,
+        // A real table: on a desk its columns line up across rows; on a phone the stylesheet lays
+        // each row out as a card (`kit.css`, LATE-CREDIT-002 block).
         h(
           "div",
-          { class: "late-table", role: "table", "aria-label": "Giao trễ cần xử lý", id: "late-list" },
+          { class: "late-table" },
           h(
-            "div",
-            { class: "late-table__head", role: "row" },
-            h("span", { role: "columnheader" }, "Đơn"),
-            h("span", { role: "columnheader" }, "Hẹn → giao"),
-            h("span", { role: "columnheader" }, "Trễ"),
-            h("span", { role: "columnheader", class: "late-table__actions-head" }, "Xử lý"),
+            "table",
+            { id: "late-list", "aria-label": "Giao trễ cần xử lý" },
+            h(
+              "thead",
+              null,
+              h(
+                "tr",
+                null,
+                h("th", { scope: "col" }, "Đơn"),
+                h("th", { scope: "col" }, "Hẹn → giao"),
+                h("th", { scope: "col" }, "Trễ"),
+                h("th", { scope: "col", class: "late-table__actions-head" }, "Xử lý"),
+              ),
+            ),
+            h(
+              "tbody",
+              null,
+              orders.map((item) => lateRow(item)),
+            ),
           ),
-          orders.map((item) => lateRow(item)),
         ),
         payload.truncated
           ? h(
@@ -231,36 +257,34 @@ export function render_() {
       decideVerdict,
     );
     return h(
-      "div",
-      { class: "late-row", role: "row", dataLate: orderId },
+      "tr",
+      { class: "late-row", dataLate: orderId },
       h(
-        "a",
-        {
-          class: "late-row__order",
-          role: "cell",
-          href: `#/orders/${encodeURIComponent(orderId)}`,
-        },
-        h("span", { class: "late-row__title" }, rowTitle(item)),
-        item.ticket_issued_on
-          ? h("span", { class: "late-row__meta" }, `Nhận ${dateOnly(item.ticket_issued_on)}`)
-          : null,
+        "td",
+        { class: "late-row__order" },
+        h(
+          "a",
+          { href: `#/orders/${encodeURIComponent(orderId)}` },
+          h("span", { class: "late-row__title" }, rowTitle(item)),
+          item.ticket_issued_on
+            ? h("span", { class: "late-row__meta" }, `Nhận ${shortDay(item.ticket_issued_on)}`)
+            : null,
+        ),
       ),
       h(
-        "span",
-        { class: "late-row__times", role: "cell" },
-        h(
-          "span",
-          null,
-          `Hẹn ${promiseTime(item.deadline_at, { short: true })} → giao ${promiseTime(item.delivered_at, { short: true })}`,
-        ),
+        "td",
+        { class: "late-row__times" },
+        h("span", null, `Hẹn ${promiseTime(item.deadline_at, { short: true })}`),
+        " ",
+        h("span", null, `→ giao ${promiseTime(item.delivered_at, { short: true })}`),
         item.deadline_basis === "CUSTOMER_REQUEST"
           ? h("span", { class: "late-row__meta" }, "Giờ khách hẹn lại")
           : null,
         hint ? h("span", { class: "late-row__hint", dataField: "late-attempts" }, hint) : null,
       ),
       h(
-        "span",
-        { class: "late-row__late", role: "cell" },
+        "td",
+        { class: "late-row__late" },
         statusPill({
           state: "danger",
           text: `Trễ ${lateText(item.late_by_minutes)}`,
@@ -268,10 +292,9 @@ export function render_() {
         }),
       ),
       h(
-        "span",
-        { class: "late-row__actions", role: "cell" },
-        fault,
-        notFault,
+        "td",
+        { class: "late-row__actions" },
+        h("span", { class: "late-row__buttons" }, fault, notFault),
         credit === null || credit === undefined
           ? h(
               "span",
@@ -281,8 +304,8 @@ export function render_() {
           : item.credit_requires_owner
             ? h("span", { class: "hint" }, "Trên mức nhân viên: chủ tiệm duyệt.")
             : null,
+        alertHost,
       ),
-      alertHost,
     );
   }
 
@@ -370,7 +393,7 @@ export function render_() {
     });
     render(
       noteHost,
-      h("label", { class: "field-label", for: "late-note" }, "Vì sao (bắt buộc với “Lý do khác”)"),
+      h("label", { class: "field-label", for: "late-note" }, "Vì sao"),
       noteInput,
       h("p", { class: "hint" }, "Tối đa 120 ký tự. Không ghi số điện thoại khách."),
     );
@@ -492,7 +515,7 @@ export function render_() {
 
   return h(
     "section",
-    { class: "screen late-deliveries" },
+    { class: "screen screen--wide late-deliveries" },
     page({
       title: "Giao trễ cần xử lý",
       subtitle,

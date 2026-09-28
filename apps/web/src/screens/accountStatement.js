@@ -24,8 +24,11 @@ import { h, render } from "../core/dom.js";
 import { UUID, calendarDay, dateOnly, dateTime, money } from "../core/format.js";
 import { PAYMENT_METHOD_VI } from "../core/i18n.js";
 import { navigate } from "../core/router.js";
-import { snapshot, storeId } from "../core/session.js";
+import { principal, snapshot, storeId } from "../core/session.js";
+import { can } from "../core/rbac.js";
 import { errorNotice } from "../ui/components.js";
+// EINVOICE-REQUEST-001 (DEC-040): the month's Hóa đơn tháng row (not printed: only the paper is).
+import { invoiceSection } from "../ui/invoice.js";
 import { actionBar, button, infoButton, page, skeletonRows, techDetails } from "../ui/kit.js";
 
 /**
@@ -85,6 +88,8 @@ export function render_(context) {
   );
   const navHost = h("div", { class: "statement-screen__months" });
   const techHost = h("div", { class: "statement-screen__tech" });
+  const invoiceHost = h("div", { class: "statement-screen__invoice" });
+  const invoiceSheets = h("div");
   const printButton = button({
     label: "In sao kê",
     icon: "printer",
@@ -206,6 +211,19 @@ export function render_(context) {
       );
       render(paperNode, ...paper(read));
       printButton.disabled = false;
+      // EINVOICE-REQUEST-001: this month's invoice request, beside the statement it is for.
+      if (can(principal(), "INVOICES_READ").allowed) {
+        const invoice = invoiceSection({
+          readPath: `/internal/v1/stores/${encodeURIComponent(store)}/customers/${encodeURIComponent(customerId)}/account/statements/${encodeURIComponent(month)}/invoice`,
+          createPath: `/internal/v1/stores/${encodeURIComponent(store)}/customers/${encodeURIComponent(customerId)}/account/statements/${encodeURIComponent(month)}/invoice-requests`,
+          store,
+          heading: "Hóa đơn tháng",
+          title: `Công nợ ${monthName(month).toLowerCase()} · ${read.customer_name || "khách công nợ"}`,
+          sheetsHost: invoiceSheets,
+        });
+        render(invoiceHost, invoice.node);
+        void invoice.load();
+      }
       render(
         techHost,
         techDetails([
@@ -249,7 +267,9 @@ export function render_(context) {
     { class: "screen statement-screen" },
     headHost,
     navHost,
+    invoiceHost,
     paperNode,
+    invoiceSheets,
     techHost,
     actionBar(printButton),
   );

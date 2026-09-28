@@ -237,6 +237,18 @@ def test_the_console_reaches_the_routes_its_screens_depend_on() -> None:
         # them puts the day-3/7/14 reminders back in nobody's memory.
         "/internal/v1/stores/{}/pickup-reminders",
         "/internal/v1/orders/{}/pickup-reminder",
+        # EINVOICE-REQUEST-001 (DEC-040). The order page, the account card and the statement read
+        # a subject's Hóa đơn row and record Khách cần hóa đơn; Hóa đơn cần xuất lists, downloads,
+        # records the issued invoice and cancels. A screen that stops calling any of these puts the
+        # request back into somebody's memory.
+        "/internal/v1/stores/{}/orders/{}/invoice",
+        "/internal/v1/stores/{}/orders/{}/invoice-requests",
+        "/internal/v1/stores/{}/customers/{}/account/statements/{}/invoice",
+        "/internal/v1/stores/{}/customers/{}/account/statements/{}/invoice-requests",
+        "/internal/v1/stores/{}/invoice-requests",
+        "/internal/v1/stores/{}/invoice-requests/export",
+        "/internal/v1/stores/{}/invoice-requests/{}/issued",
+        "/internal/v1/stores/{}/invoice-requests/{}/cancellation",
     }
     missing = sorted(required - referenced)
     assert not missing, f"no screen calls these routes any more: {missing}"

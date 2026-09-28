@@ -923,6 +923,120 @@ def order_view(
     }
 
 
+# --- EINVOICE-REQUEST-001 (DEC-040): invoice requests, as the server answers -------------------
+
+INVOICE_ID = "abababab-1111-4000-8000-000000000031"
+INVOICE_OTHER_ID = "abababab-1111-4000-8000-000000000032"
+
+
+def invoice_request(
+    request_id: str = INVOICE_ID,
+    *,
+    status: str = "REQUESTED",
+    code: str = "YC-0007",
+    unit: str = "Công ty TNHH Biển Xanh",
+    kind: str = "ORDER",
+) -> dict[str, object]:
+    """One `InvoiceRequestResponse`. The amount is the server's, read now; never stored."""
+
+    return {
+        "invoice_request_id": request_id,
+        "store_id": STORE,
+        "request_number": int(code.split("-")[1]),
+        "request_code": code,
+        "subject_kind": kind,
+        "order_id": PICKUP_ORDER_ID if kind == "ORDER" else None,
+        "ticket_number": 12 if kind == "ORDER" else None,
+        "ticket_issued_on": "2026-09-25" if kind == "ORDER" else None,
+        "account_id": None if kind == "ORDER" else "77777777-8888-4333-8444-aaaaaaaaaac1",
+        "period_month": None if kind == "ORDER" else "2026-09",
+        "customer_id": None if kind == "ORDER" else ACCOUNT_CUSTOMER_ID,
+        "customer_name": None,
+        "buyer": {
+            "unit_name": unit,
+            "tax_code": "4201234567" if kind == "ORDER" else None,
+            "address": "12 Trần Phú, Nha Trang" if kind == "ORDER" else None,
+            "email": "ketoan@bienxanh.vn" if kind == "ORDER" else None,
+            "name": None,
+            "erased": False,
+        },
+        "status": status,
+        "invoice_symbol": "1C26TYY" if status == "ISSUED" else None,
+        "invoice_number": "0000123" if status == "ISSUED" else None,
+        "invoice_date": "2026-09-27" if status == "ISSUED" else None,
+        "cancel_reason": "DUPLICATE" if status == "CANCELLED" else None,
+        "cancel_note": None,
+        "requested_by_staff_id": "12121212-3434-4000-8000-000000000001",
+        "requested_by_name": "Nhân viên",
+        "requested_at": "2026-09-27T03:00:00+00:00",
+        "closed_by_staff_id": None,
+        "closed_by_name": None,
+        "closed_at": None,
+        "row_version": 1 if status == "REQUESTED" else 2,
+        "amount": {
+            "source": "ORDER_CHARGES" if kind == "ORDER" else "ACCOUNT_STATEMENT",
+            "total_vnd": 110_000 if kind == "ORDER" else 245_000,
+            "storage_fee_vnd": None,
+            "charge_count": None if kind == "ORDER" else 2,
+            "month_ended": None if kind == "ORDER" else False,
+        },
+        "replayed": False,
+    }
+
+
+def invoice_subject(
+    *, refusal: str | None = None, live: dict[str, object] | None = None, savable: bool = False
+) -> dict[str, object]:
+    """One `InvoiceSubjectResponse`: the order page's Hóa đơn row."""
+
+    return {
+        "subject_kind": "ORDER",
+        "order_id": PICKUP_ORDER_ID,
+        "account_id": None,
+        "period_month": None,
+        "customer_id": None,
+        "customer_name": None,
+        "ticket_number": 12,
+        "ticket_issued_on": "2026-09-25",
+        "privacy_notice_published": refusal != "PRIVACY_NOTICE_UNPUBLISHED",
+        "refusal": refusal,
+        "profile_savable": savable,
+        "prefill": None,
+        "prefill_from_profile": False,
+        "amount": invoice_request()["amount"],
+        "live": live,
+        "history": [live] if live else [],
+        "history_truncated": False,
+        "evaluated_at": "2026-09-27T03:00:00+00:00",
+        "query_version": "invoice-requests-v1:0000000000000000",
+        "decision": "DEC-040",
+    }
+
+
+def invoice_list(status: str) -> dict[str, object]:
+    items = {
+        "REQUESTED": [
+            invoice_request(),
+            invoice_request(
+                INVOICE_OTHER_ID, code="YC-0008", unit="Homestay Hải Âu", kind="ACCOUNT_MONTH"
+            ),
+        ],
+        "ISSUED": [invoice_request("abababab-1111-4000-8000-000000000033", status="ISSUED")],
+        "CANCELLED": [],
+    }[status]
+    return {
+        "store_id": STORE,
+        "status": status,
+        "evaluated_at": "2026-09-27T03:00:00+00:00",
+        "limit": 100,
+        "total_count": len(items),
+        "truncated": False,
+        "counts": {"REQUESTED": 2, "ISSUED": 1, "CANCELLED": 0},
+        "requests": items,
+        "query_version": "invoice-requests-v1:0000000000000000",
+    }
+
+
 # --- UNCLAIMED-001 (DEC-036): the waiting list and one order's storage, as the server answers ---
 
 STORAGE_POLICY = {
@@ -2314,6 +2428,64 @@ with sync_playwright() as playwright:
             return
         if url.endswith("/internal/v1/session"):
             body = SESSION_OK
+        # EINVOICE-REQUEST-001: a subject's Hóa đơn row, the list, and every write captured with its
+        # key and If-Match. Before the statement branch below, whose "/account/statements/" match
+        # would otherwise answer the month's row with a statement.
+        elif route.request.method == "GET" and url.split("?")[0].endswith("/invoice"):
+            state.setdefault("invoice_reads", []).append(url)
+            body = state.get("invoice_subject") or invoice_subject()
+        elif route.request.method == "GET" and url.split("?")[0].endswith("/invoice-requests"):
+            from urllib.parse import parse_qs, urlsplit
+
+            asked = parse_qs(urlsplit(url).query).get("status", ["REQUESTED"])[0]
+            body = invoice_list(asked)
+        elif route.request.method == "POST" and "/invoice-requests" in url:
+            path = url.split("?")[0]
+            state.setdefault("invoice_writes", []).append(
+                {
+                    "path": path,
+                    "body": route.request.post_data,
+                    "if_match": route.request.headers.get("if-match"),
+                    "key": route.request.headers.get("idempotency-key"),
+                }
+            )
+            if path.endswith("/export"):
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "export_id": "abababab-1111-4000-8000-000000000039",
+                            "store_id": STORE,
+                            "filename": "yeu-cau-hoa-don-20260927-1000.csv",
+                            "content_csv": "\ufeffPhiên bản truy vấn,v1\r\n",
+                            "content_hash": "sha256:" + "0" * 64,
+                            "query_version": "invoice-requests-export-v1:0000000000000000",
+                            "request_count": 2,
+                            "row_count": 3,
+                            "truncated": False,
+                            "produced_at": "2026-09-27T03:00:00+00:00",
+                        }
+                    ),
+                )
+                return
+            refusal = state.get("invoice_refuse")
+            if refusal:
+                route.fulfill(status=422, content_type="application/json", body=json.dumps(refusal))
+                return
+            status_after = (
+                "ISSUED"
+                if path.endswith("/issued")
+                else "CANCELLED"
+                if path.endswith("/cancellation")
+                else "REQUESTED"
+            )
+            route.fulfill(
+                status=201 if status_after == "REQUESTED" else 200,
+                content_type="application/json",
+                body=json.dumps(invoice_request(status=status_after)),
+            )
+            return
         elif url.split("?")[0].endswith("/machines") and route.request.method == "GET":
             # SHOP-CAPTURE-001: empty unless a section asks for machines, so every earlier press
             # of Bắt đầu giặt still runs the step directly, as it did before the chooser existed.
@@ -9131,6 +9303,182 @@ with sync_playwright() as playwright:
     )
     state["reminder_list"] = None
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
+
+    # ============================================================================================
+    # 27. EINVOICE-REQUEST-001 (DEC-040) -- Hóa đơn: the order page's row is off with its reason
+    #     before the privacy notice; Khách cần hóa đơn sends the five fields with a key and marks
+    #     the refused field; Hóa đơn cần xuất lists, downloads, records the issued invoice under
+    #     If-Match, and cancels with a reason; the counter cannot download.
+    # ============================================================================================
+    print()
+    print("=" * 74)
+    print("26. HÓA ĐƠN — requests captured, listed, issued and cancelled; nothing issued here")
+    print("=" * 74)
+    state["order_view"] = order_view("SELF_DROP_SELF_COLLECT", balance="UNPAID", collected=False)
+    state["invoice_subject"] = invoice_subject(refusal="PRIVACY_NOTICE_UNPUBLISHED")
+    state["invoice_writes"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders/{PICKUP_ORDER_ID}", wait_until="networkidle")
+    page.wait_for_timeout(1400)
+    row = page.locator("#invoice-section")
+    check(
+        "before the notice, the order's Hóa đơn row says what the owner must do; the press is off",
+        row.count() == 1
+        and "Chủ tiệm cần công bố thông báo bảo mật" in row.inner_text()
+        and page.locator("#invoice-request-open").is_disabled(),
+        row.inner_text()[:160] if row.count() else "absent",
+    )
+    state["invoice_subject"] = invoice_subject()
+    state["invoice_refuse"] = {
+        "detail": {"reason_code": "INVOICE_ADDRESS_REQUIRED", "field": "buyer_address"}
+    }
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders/{PICKUP_ORDER_ID}", wait_until="networkidle")
+    page.wait_for_timeout(1400)
+    page.locator("#invoice-request-open").click()
+    page.wait_for_selector("#invoice-request-sheet[open]")
+    page.locator("#invoice-unit").click()
+    page.keyboard.type("Công ty TNHH Biển Xanh", delay=4)
+    page.locator("#invoice-tax").click()
+    page.keyboard.type("4201234567", delay=4)
+    page.locator("#invoice-request-save").click()
+    page.wait_for_timeout(900)
+    writes = state["invoice_writes"]
+    sent = json.loads(writes[0]["body"] or "{}") if writes else {}
+    check(
+        "Khách cần hóa đơn sends the typed fields with a key and no If-Match",
+        len(writes) == 1
+        and writes[0]["path"].endswith(f"/orders/{PICKUP_ORDER_ID}/invoice-requests")
+        and sent.get("buyer_unit_name") == "Công ty TNHH Biển Xanh"
+        and sent.get("buyer_tax_code") == "4201234567"
+        and sent.get("buyer_address") is None
+        and sent.get("save_profile") is False
+        and bool(writes[0]["key"])
+        and writes[0]["if_match"] is None,
+        repr(writes)[:300],
+    )
+    check(
+        "the refusal stays in the sheet, names the fix and marks the address field",
+        page.locator("#invoice-address[aria-invalid='true']").count() == 1
+        and "Có mã số thuế thì cần ghi địa chỉ đơn vị" in open_dialog_text()
+        and "Sửa ô được đánh dấu đỏ" in open_dialog_text(),
+        open_dialog_text()[:200],
+    )
+    first_key = writes[0]["key"] if writes else ""
+    page.locator("#invoice-request-save").click()
+    page.wait_for_timeout(700)
+    check(
+        "the same words pressed again keep their key (a resend replays, it never records twice)",
+        len(state["invoice_writes"]) == 2 and state["invoice_writes"][1]["key"] == first_key,
+        repr([item["key"] for item in state["invoice_writes"]]),
+    )
+    state["invoice_refuse"] = None
+    page.locator("#invoice-address").click()
+    page.keyboard.type("12 Trần Phú", delay=4)
+    state["invoice_subject"] = invoice_subject(
+        refusal="INVOICE_REQUEST_EXISTS", live=invoice_request()
+    )
+    page.locator("#invoice-request-save").click()
+    page.wait_for_timeout(1200)
+    check(
+        "a changed field is a new key; once written the row reads 'Chờ kế toán xuất' with its code",
+        len(state["invoice_writes"]) == 3
+        and state["invoice_writes"][2]["key"] != first_key
+        and "Chờ kế toán xuất" in page.locator("#invoice-section").inner_text()
+        and "YC-0007" in page.locator("#invoice-section").inner_text(),
+        page.locator("#invoice-section").inner_text()[:160],
+    )
+
+    state["invoice_writes"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/invoices", wait_until="networkidle")
+    page.wait_for_timeout(1400)
+    table = page.locator("#invoices-table")
+    check(
+        "Hóa đơn cần xuất: a table on a desk, the tabs counted, the server's amounts",
+        table.count() == 1
+        and page.locator(f"tr[data-invoice='{INVOICE_ID}']").count() == 1
+        and "110.000" in table.inner_text()
+        and "245.000" in table.inner_text()
+        and "Công nợ tháng 9/2026" in table.inner_text()
+        and "Cần xuất" in page.locator("#invoices-tabs").inner_text()
+        and "2" in page.locator("#invoices-tabs").inner_text(),
+        table.inner_text()[:200] if table.count() else "absent",
+    )
+    page.locator("#invoices-download").click()
+    page.wait_for_timeout(900)
+    exported = [item for item in state["invoice_writes"] if item["path"].endswith("/export")]
+    check(
+        "Tải danh sách cho kế toán asks the server once and says what was taken",
+        len(exported) == 1 and "Đã tải 2 yêu cầu" in page.locator("main").inner_text(),
+        page.locator("main").inner_text()[-200:],
+    )
+    page.locator(f"[data-record-issued='{INVOICE_ID}']").click()
+    page.wait_for_selector("#invoice-issued-sheet[open]")
+    page.locator("#invoice-symbol").click()
+    page.keyboard.type("1c26tyy", delay=4)
+    page.locator("#invoice-number").click()
+    page.keyboard.type("0000123", delay=4)
+    page.locator("#invoice-issued-save").click()
+    page.wait_for_timeout(900)
+    issued = [item for item in state["invoice_writes"] if item["path"].endswith("/issued")]
+    body = json.loads(issued[0]["body"] or "{}") if issued else {}
+    check(
+        "Ghi số hóa đơn sends the symbol upper-cased, the number as typed, a date, under If-Match",
+        len(issued) == 1
+        and body.get("invoice_symbol") == "1C26TYY"
+        and body.get("invoice_number") == "0000123"
+        and len(str(body.get("invoice_date") or "")) == 10
+        and issued[0]["if_match"] == '"1"'
+        and bool(issued[0]["key"]),
+        repr(issued)[:300],
+    )
+    page.locator(f"[data-cancel-invoice='{INVOICE_OTHER_ID}']").click()
+    page.wait_for_selector("#invoice-cancel-sheet[open]")
+    page.locator("#invoice-cancel-sheet .choice-chip[title=DUPLICATE]").click()
+    page.locator("#invoice-cancel-confirm").click()
+    page.wait_for_timeout(200)
+    check(
+        "Huỷ yêu cầu is armed by the first press and sends nothing yet",
+        not [item for item in state["invoice_writes"] if item["path"].endswith("/cancellation")],
+    )
+    page.locator("#invoice-cancel-confirm").click()
+    page.wait_for_timeout(900)
+    cancelled = [item for item in state["invoice_writes"] if item["path"].endswith("/cancellation")]
+    check(
+        "the second press cancels with the reason, under If-Match",
+        len(cancelled) == 1
+        and json.loads(cancelled[0]["body"] or "{}").get("reason") == "DUPLICATE"
+        and cancelled[0]["if_match"] == '"1"',
+        repr(cancelled)[:300],
+    )
+    page.locator("#invoices-tabs [data-value='ISSUED']").click()
+    page.wait_for_timeout(900)
+    check(
+        "Đã xuất shows what the bookkeeper issued, as recorded",
+        "Ký hiệu 1C26TYY · Số 0000123" in page.locator("main").inner_text(),
+        page.locator("main").inner_text()[:200],
+    )
+    SESSION_OK["roles"] = ["OPERATOR"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/invoices", wait_until="networkidle")
+    page.wait_for_timeout(1400)
+    check(
+        "for the counter the download and Ghi số hóa đơn are off, each with who may press them",
+        page.locator("#invoices-download").is_disabled()
+        and page.locator(f"[data-record-issued='{INVOICE_ID}']").is_disabled()
+        and "Chủ tiệm hoặc người duyệt tải danh sách cho kế toán"
+        in page.locator("main").inner_text()
+        and page.locator(f"[data-cancel-invoice='{INVOICE_ID}']").is_enabled(),
+    )
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.wait_for_timeout(500)
+    wide = page.evaluate("document.documentElement.scrollWidth")
+    check("at 390 px each request stands as a card and nothing scrolls sideways", wide <= 390, wide)
+    page.set_viewport_size({"width": 1280, "height": 900})
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    state["order_view"] = None
+    state["invoice_subject"] = None
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

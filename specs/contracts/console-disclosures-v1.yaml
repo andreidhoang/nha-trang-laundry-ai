@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 519
+  DESCRIPTIVE: 537
   MODEL_SEAM: 2
   POLICY_BOUND: 1
-  REPOSITORY_ROLES: 16
+  REPOSITORY_ROLES: 19
   SERVER_GATE: 15
-total: 557
+total: 578
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1683,6 +1683,99 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.PRIVACY_NOTICE_UNPUBLISHED:8c442d8953d7
+  module: core/i18n.js
+  key: REASON_NOTE.PRIVACY_NOTICE_UNPUBLISHED
+  text: Chủ tiệm chưa công bố thông báo bảo mật, nên chưa lưu được thông tin khách hay người mua. Nhận
+    đồ và thu tiền vẫn làm bình thường.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_SUBJECT_UNAVAILABLE:6561044c4258
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_SUBJECT_UNAVAILABLE
+  text: 'Không ghi yêu cầu cho mục này: đơn đã huỷ hoặc không thuộc cửa hàng, hay tháng chưa có đơn nào
+    ghi công nợ.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_REQUEST_EXISTS:160a43e6a9db
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_REQUEST_EXISTS
+  text: Đã có yêu cầu hóa đơn cho mục này (hoặc cho tháng công nợ chứa đơn này). Huỷ yêu cầu cũ nếu cần
+    ghi lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_TAX_CODE_SHAPE:d7e328968e44
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_TAX_CODE_SHAPE
+  text: Mã số thuế gồm 10 số, 10 số và 3 số sau dấu gạch (-), hoặc 12 số.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_ADDRESS_REQUIRED:25788062bba9
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_ADDRESS_REQUIRED
+  text: Có mã số thuế thì cần ghi địa chỉ đơn vị.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_BUYER_FIELD_INVALID:a1a8e14ee28d
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_BUYER_FIELD_INVALID
+  text: 'Kiểm tra lại ô được đánh dấu: tên đơn vị bắt buộc, email phải đúng dạng, không bắt đầu bằng =
+    + - @.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_FIELD_LOOKS_LIKE_PHONE:b4e954b5183e
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_FIELD_LOOKS_LIKE_PHONE
+  text: Ô được đánh dấu có số giống số điện thoại. Danh sách gửi kế toán không ghi số điện thoại; bỏ số
+    đó đi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_REQUEST_CLOSED:0e569355d3ab
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_REQUEST_CLOSED
+  text: Yêu cầu này đã xuất hoặc đã huỷ; không đổi được nữa.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_ISSUED_DETAILS_INVALID:389779c81f0e
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_ISSUED_DETAILS_INVALID
+  text: Ký hiệu gồm chữ in và số (tối đa 12), số hóa đơn tối đa 8 chữ số, ngày không sau hôm nay.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_NUMBER_TAKEN:b5afe1970513
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_NUMBER_TAKEN
+  text: Ký hiệu và số hóa đơn này đã ghi cho một yêu cầu khác. Kiểm tra lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_CANCEL_NOTE_REQUIRED:46c4adbbbb30
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_CANCEL_NOTE_REQUIRED
+  text: Lý do khác cần vài chữ ghi rõ (tối đa 200 ký tự).
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
 - slot_id: core/rbac.js#why:f1857f4fe905
   module: core/rbac.js
   key: why
@@ -2061,6 +2154,42 @@ disclosures:
     capability: UNCLAIMED_DISPOSE
     module: nha_trang_laundry_db.unclaimed
     symbol: DISPOSAL_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
+- slot_id: core/rbac.js#why:85dc4afd914a
+  module: core/rbac.js
+  key: why
+  text: Danh sách yêu cầu hóa đơn dành cho người làm ở cửa hàng đã xác thực hai bước.
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: INVOICES_READ
+    module: nha_trang_laundry_db.invoice_requests
+    symbol: INVOICE_READ_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
+- slot_id: core/rbac.js#why:9992ba05ccaf
+  module: core/rbac.js
+  key: why
+  text: Ghi hoặc huỷ yêu cầu hóa đơn cần vai trò vận hành đã xác thực hai bước.
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: INVOICES_WRITE
+    module: nha_trang_laundry_db.invoice_requests
+    symbol: INVOICE_WRITE_ROLES
+    why: The route gate for this capability admits every role, so binding to it could never fail. The
+      claim is really enforced by an exact role set in the repository layer, and the test asserts the
+      console's list equals it.
+- slot_id: core/rbac.js#why:f40624bc7c25
+  module: core/rbac.js
+  key: why
+  text: Chỉ chủ tiệm hoặc người duyệt tải danh sách cho kế toán và ghi số hóa đơn (DEC-040).
+  binding:
+    kind: REPOSITORY_ROLES
+    capability: INVOICES_CLOSE
+    module: nha_trang_laundry_db.invoice_requests
+    symbol: INVOICE_CLOSE_ROLES
     why: The route gate for this capability admits every role, so binding to it could never fail. The
       claim is really enforced by an exact role set in the repository layer, and the test asserts the
       console's list equals it.
@@ -2849,20 +2978,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#missing:d9e57959468f
+- slot_id: screens/gaps.js#missing:a58659f40e79
   module: screens/gaps.js
   key: missing
   text: Thu tiền tại quầy (đặt cọc, nhiều lần, tiền mặt hay chuyển khoản) và khách công nợ (hạn mức, sao
-    kê tháng, tiền trả trừ vào đơn nợ cũ nhất) đã có. Còn thiếu hoá đơn điện tử, và xác nhận chuyển khoản
-    tự động — không có nguồn dữ liệu ngân hàng.
+    kê tháng, tiền trả trừ vào đơn nợ cũ nhất) đã có. Còn thiếu xác nhận chuyển khoản tự động — không
+    có nguồn dữ liệu ngân hàng.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: screens/gaps.js#blockedBy:6261f5ba6f99
+- slot_id: screens/gaps.js#blockedBy:c19894be4b9b
   module: screens/gaps.js
   key: blockedBy
-  text: Chưa xác nhận giá đã gồm thuế hay chưa, nên chưa xuất hoá đơn; chưa có kết nối ngân hàng
+  text: Chưa có kết nối ngân hàng
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -2871,6 +3000,33 @@ disclosures:
   module: screens/gaps.js
   key: today
   text: Chuyển khoản ghi khi đã thấy tiền vào tài khoản. Sao kê công nợ in từ trang của khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#missing:9e87cccac483
+  module: screens/gaps.js
+  key: missing
+  text: Yêu cầu hóa đơn đã ghi được (thông tin người mua, trạng thái, ký hiệu và số hóa đơn kế toán đã
+    xuất). Chưa tự xuất qua nhà cung cấp hóa đơn điện tử.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#blockedBy:de430d2321b0
+  module: screens/gaps.js
+  key: blockedBy
+  text: Tự xuất qua nhà cung cấp — chờ chủ tiệm chọn nhà cung cấp và kế toán xác nhận loại hóa đơn, thuế
+    suất
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/gaps.js#today:e0a67ab58e3d
+  module: screens/gaps.js
+  key: today
+  text: Bấm “Khách cần hóa đơn” trên trang đơn hoặc khách công nợ. Kế toán tải danh sách ở Hóa đơn cần
+    xuất, xuất trên cổng nhà cung cấp, rồi ghi số hóa đơn.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -3210,6 +3366,23 @@ disclosures:
   text: 'Không còn giữ lời khách phàn nàn. Sự cố do đường agent ghi vốn không kèm mô tả, còn mô tả do
     nhân viên ghi bị xoá sau 365 ngày theo lịch giữ dữ liệu. Bản ghi sự cố thì vẫn nguyên: đây là chuyện
     bình thường, không phải mất dữ liệu.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/invoices.js#hint:dcaea474a428
+  module: screens/invoices.js
+  key: hint
+  text: Chọn một cửa hàng để xem yêu cầu hóa đơn.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: screens/invoices.js#hint:29a8560018ee
+  module: screens/invoices.js
+  key: hint
+  text: 'Tệp tải về là bảng tính (CSV, mở bằng Excel): mỗi dòng dịch vụ một hàng, cột số tiền ghi “Số
+    tiền theo giá tiệm đã thu (chưa tách thuế)”. Mỗi lần tải đều được ghi lại.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -4811,6 +4984,22 @@ disclosures:
   module: ui/handoff.js
   key: hint
   text: Tin này của cửa hàng khác cửa hàng đang chọn — đổi cửa hàng để tạo đơn cho khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/invoice.js#hint:8e8bc589feaa
+  module: ui/invoice.js
+  key: hint
+  text: Ghi đúng như trên giấy phép kinh doanh. Không ghi số điện thoại khách.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/invoice.js#hint:379ec87b9fd4
+  module: ui/invoice.js
+  key: hint
+  text: Chép đúng ký hiệu, số và ngày trên hóa đơn kế toán đã xuất. Ghi rồi không sửa được.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

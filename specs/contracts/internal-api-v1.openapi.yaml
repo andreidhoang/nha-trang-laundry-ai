@@ -1060,6 +1060,60 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}/invoice:
+    get:
+      operationId: read_account_month_invoice_subject
+      summary: An account customer's *Hóa đơn tháng* row for one calendar month (`YYYY-MM`).
+      x-authorization-dependencies:
+      - require_invoice_reader
+      - get_invoice_request_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: month
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}/invoice-requests:
+    post:
+      operationId: create_account_month_invoice_request
+      summary: '*Khách cần hóa đơn tháng*: one request for an account customer''s calendar month.'
+      x-authorization-dependencies:
+      - require_invoice_writer
+      - get_invoice_request_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: month
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/customers/{customer_id}/erase:
     post:
       operationId: erase_customer
@@ -1335,6 +1389,106 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/invoice-requests:
+    get:
+      operationId: list_invoice_requests
+      summary: '*Hóa đơn cần xuất*: the store''s requests in one status, bounded, with every tab''s count.'
+      x-authorization-dependencies:
+      - require_invoice_reader
+      - get_invoice_request_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/invoice-requests/export:
+    post:
+      operationId: export_invoice_requests
+      summary: '*Tải danh sách cho kế toán*: every open request as CSV (`invoice-requests-export-v1`).'
+      x-authorization-dependencies:
+      - require_invoice_closer
+      - get_invoice_request_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/invoice-requests/{request_id}:
+    get:
+      operationId: read_invoice_request
+      summary: One request, with the amount it is for read now. 404 outside the caller's store.
+      x-authorization-dependencies:
+      - require_invoice_reader
+      - get_invoice_request_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/invoice-requests/{request_id}/cancellation:
+    post:
+      operationId: cancel_invoice_request
+      summary: '*Huỷ yêu cầu*: with a reason (a note for `OTHER`). `If-Match` the request''s row version.'
+      x-authorization-dependencies:
+      - require_invoice_writer
+      - get_invoice_request_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/invoice-requests/{request_id}/issued:
+    post:
+      operationId: record_invoice_issued
+      summary: '*Ghi số hóa đơn*: the symbol, number and date close the request as ISSUED, for good.'
+      x-authorization-dependencies:
+      - require_invoice_closer
+      - get_invoice_request_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/machines:
     get:
       operationId: list_machines
@@ -1528,6 +1682,50 @@ paths:
       x-documented-by-fastapi: true
       responses:
         '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/orders/{order_id}/invoice:
+    get:
+      operationId: read_order_invoice_subject
+      summary: 'The order page''s *Hóa đơn* row: the order''s requests, and whether a new one may be made.'
+      x-authorization-dependencies:
+      - require_invoice_reader
+      - get_invoice_request_service
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/orders/{order_id}/invoice-requests:
+    post:
+      operationId: create_order_invoice_request
+      summary: '*Khách cần hóa đơn* on an order; refused `PRIVACY_NOTICE_UNPUBLISHED` until it is out.'
+      x-authorization-dependencies:
+      - require_invoice_writer
+      - get_invoice_request_service
+      x-documented-by-fastapi: true
+      responses:
+        '201':
           description: Success response.
       parameters:
       - name: order_id

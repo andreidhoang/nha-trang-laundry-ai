@@ -82,7 +82,7 @@ from test_reports import AS_OF, DAY, _Order, _person, _seeded_shop, _store
 #: and the two hooks' statements hashed in. v1 was `daily-summary-v1:935e9e90a50bd6a8`.
 #: v3 (round 8, `SUMMARY-ATTENTION-001`): the *Cần chú ý* block and its statements. v2 was
 #: `daily-summary-v2:13441b651e00127d`.
-PINNED_TEMPLATE_VERSION = "daily-summary-v3:3390b4d50f42ee31"
+PINNED_TEMPLATE_VERSION = "daily-summary-v3:30bf7f5b9ac6c31d"
 
 
 def _database_url() -> str:

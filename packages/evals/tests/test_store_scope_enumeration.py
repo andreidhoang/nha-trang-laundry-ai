@@ -315,6 +315,42 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
     ("GET", "/internal/v1/orders/{order_id}/account-handover"): store_scoped(
         "accounts", "AccountRepository.order_handover"
     ),
+    # --- EINVOICE-REQUEST-001 (DEC-040) ---------------------------------------------------------
+    # Role and MFA, then membership of the named store, before anything is read or written; the
+    # subject (an order, an account) is then looked up WHERE store_id = the named store, so another
+    # store's order or account is the missing answer. The three writes check membership again on
+    # the cursor that holds the request row locked (`_lock_open`).
+    ("GET", "/internal/v1/stores/{store_id}/orders/{order_id}/invoice"): store_scoped(
+        "invoice_requests", "InvoiceRequestRepository.order_subject"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/orders/{order_id}/invoice-requests"): store_scoped(
+        "invoice_requests", "InvoiceRequestRepository.create"
+    ),
+    (
+        "GET",
+        "/internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}/invoice",
+    ): store_scoped("invoice_requests", "InvoiceRequestRepository.account_month_subject"),
+    (
+        "POST",
+        "/internal/v1/stores/{store_id}/customers/{customer_id}/account/statements/{month}"
+        "/invoice-requests",
+    ): store_scoped("invoice_requests", "InvoiceRequestRepository.create"),
+    ("GET", "/internal/v1/stores/{store_id}/invoice-requests"): store_scoped(
+        "invoice_requests", "InvoiceRequestRepository.list"
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/invoice-requests/{request_id}"): store_scoped(
+        "invoice_requests", "InvoiceRequestRepository.read"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/invoice-requests/export"): store_scoped(
+        "invoice_requests", "InvoiceRequestRepository.export_open"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/invoice-requests/{request_id}/issued"): store_scoped(
+        "invoice_requests", "InvoiceRequestRepository.record_issued"
+    ),
+    (
+        "POST",
+        "/internal/v1/stores/{store_id}/invoice-requests/{request_id}/cancellation",
+    ): store_scoped("invoice_requests", "InvoiceRequestRepository.cancel"),
     ("POST", "/internal/v1/orders/{order_id}/account-charge"): store_scoped(
         "accounts", "AccountRepository.charge"
     ),

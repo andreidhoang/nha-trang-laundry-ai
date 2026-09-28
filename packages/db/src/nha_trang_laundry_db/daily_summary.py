@@ -43,6 +43,7 @@ from nha_trang_laundry_domain.daily_summary import (
     COMPARE_WEEKS,
     DAILY_SUMMARY_TEMPLATE_IDENTIFIER,
     FEE_SOON_DAYS,
+    INVOICE_STALE_DAYS,
     MISSING_COSTS_AFTER_DAY,
     AccountsDueFigures,
     AttentionFacts,
@@ -70,6 +71,11 @@ from nha_trang_laundry_db.accounts import (
     AccountRepository,
 )
 from nha_trang_laundry_db.identity import StaffPrincipal
+from nha_trang_laundry_db.invoice_requests import (
+    INVOICE_READ_ROLES,
+    INVOICE_WAITING_OVER_SQL,
+    InvoiceRequestRepository,
+)
 from nha_trang_laundry_db.pickup_reminders import (
     REMINDER_READ_ROLES,
     PickupReminderRepository,
@@ -166,6 +172,9 @@ def daily_summary_template_version() -> QueryVersion:
         str(MISSING_COSTS_AFTER_DAY),
         # The reminder schedule the count applies (`PICKUP-REMIND-001`).
         rule_source(reminder_rules),
+        # The invoice requests' waiting count (`EINVOICE-REQUEST-001`).
+        INVOICE_WAITING_OVER_SQL,
+        str(INVOICE_STALE_DAYS),
     )
 
 
@@ -408,7 +417,9 @@ def attention_facts(
         fee_soon=fee_soon_figures(
             cursor, store_id=store_id, principal=principal, live=live, as_of=as_of
         ),
-        invoices_waiting=not_built,
+        invoices_waiting=invoices_waiting(
+            cursor, store_id=store_id, principal=principal, live=live, as_of=as_of
+        ),
         comparison=day_comparison(
             cursor,
             store_id=store_id,
@@ -440,6 +451,22 @@ def reminders_due(
     if truncated:
         return Unavailable(OmissionReason.SOURCE_TRUNCATED, "PICKUP-REMIND-001")
     return count
+
+
+def invoices_waiting(
+    cursor: Any, *, store_id: UUID, principal: StaffPrincipal, live: bool, as_of: datetime
+) -> int | Unavailable:
+    """`EINVOICE-REQUEST-001`: invoice requests still open after `INVOICE_STALE_DAYS` shop days.
+
+    A request's status is what it is now, with no history of when it closed kept for this count,
+    so a past day is `LIVE_ONLY_TODAY` like the other lists."""
+    if not live:
+        return Unavailable(OmissionReason.LIVE_ONLY_TODAY, "EINVOICE-REQUEST-001")
+    if not principal.roles & INVOICE_READ_ROLES:
+        return Unavailable(OmissionReason.ROLE_NOT_PERMITTED, "EINVOICE-REQUEST-001")
+    return InvoiceRequestRepository.count_waiting_over(
+        cursor, store_id=store_id, principal=principal, as_of=as_of, days=INVOICE_STALE_DAYS
+    )
 
 
 def fee_soon_figures(
@@ -639,6 +666,7 @@ __all__ = [
     "day_comparison",
     "day_figures",
     "fee_soon_figures",
+    "invoices_waiting",
     "missing_costs",
     "reminders_due",
     "waiting_pickup_figures",

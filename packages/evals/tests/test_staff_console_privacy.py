@@ -302,3 +302,46 @@ def test_the_reminder_list_prints_no_phone_and_writes_nothing_to_the_device() ->
     # `item.zalo_url` is read twice: whether the row has a link, and the link's `href`.
     assert len(re.findall(r"item\.zalo_url\b", source)) == 2
     assert "href: String(item.zalo_url)" in source
+
+
+# --- EINVOICE-REQUEST-001 (DEC-040): a buyer's details, captured for the bookkeeper --------------
+
+INVOICE_MODULES = (
+    WEB / "src" / "ui" / "invoice.js",
+    WEB / "src" / "screens" / "invoices.js",
+)
+
+
+def test_invoice_requests_keep_nothing_on_the_device_and_name_no_tax() -> None:
+    """A buyer's name, address, email and tax code reach the screen from the server and go back to
+    it; nothing is kept on the shared counter device, and the downloaded list is an in-memory blob
+    revoked after the click. Every field warns, beside it, not to type a customer's phone (the
+    server refuses one, `INVOICE_FIELD_LOOKS_LIKE_PHONE`, so no export can carry one).
+
+    `DEC-040`: the software never issues an invoice and never names a tax, so neither module says
+    VAT, GTGT or a rate, and neither claims to issue anything: the bookkeeper issues in the
+    provider's portal.
+    """
+
+    for module in INVOICE_MODULES:
+        assert module.is_file(), module
+        source = module.read_text(encoding="utf-8")
+        for sink in (
+            "localStorage",
+            "sessionStorage",
+            "indexedDB",
+            "document.cookie",
+            "caches.",
+            "history.pushState",
+            "history.replaceState",
+            "console.",
+        ):
+            assert sink not in source, f"{module.name} reaches {sink}"
+        for word in ("VAT", "GTGT", "thuế suất 8", "thuế suất 10", "%"):
+            assert word not in source, f"{module.name} names a tax: {word}"
+        assert "Xuất hóa đơn" not in source and "Đã xuất hóa đơn" not in source
+    shared = (WEB / "src" / "ui" / "invoice.js").read_text(encoding="utf-8")
+    assert shared.count("Không ghi số điện thoại khách") >= 2
+    assert "Kế toán xuất hóa đơn điện tử trên cổng của nhà cung cấp" in shared
+    screen = (WEB / "src" / "screens" / "invoices.js").read_text(encoding="utf-8")
+    assert "URL.revokeObjectURL(url)" in screen

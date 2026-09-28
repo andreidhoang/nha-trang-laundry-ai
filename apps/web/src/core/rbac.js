@@ -243,6 +243,25 @@ export const CAPABILITIES = {
     mfa: true,
     why: "Chỉ chủ tiệm duyệt thanh lý đồ không ai lấy (DEC-036).",
   },
+  // EINVOICE-REQUEST-001 (`DEC-040`). The exact role sets `nha_trang_laundry_db.invoice_requests`
+  // enforces, each with MFA and store membership: whoever reads the customer reads the requests;
+  // the operations roles record and cancel them; the owner or the approver records what the
+  // bookkeeper issued and downloads the list.
+  INVOICES_READ: {
+    roles: [OWNER, APPROVER, OPERATOR, AUDITOR],
+    mfa: true,
+    why: "Danh sách yêu cầu hóa đơn dành cho người làm ở cửa hàng đã xác thực hai bước.",
+  },
+  INVOICES_WRITE: {
+    roles: [OWNER, APPROVER, OPERATOR],
+    mfa: true,
+    why: "Ghi hoặc huỷ yêu cầu hóa đơn cần vai trò vận hành đã xác thực hai bước.",
+  },
+  INVOICES_CLOSE: {
+    roles: [OWNER, APPROVER],
+    mfa: true,
+    why: "Chỉ chủ tiệm hoặc người duyệt tải danh sách cho kế toán và ghi số hóa đơn (DEC-040).",
+  },
   ASSISTANT: {
     roles: [OWNER, APPROVER, OPERATOR],
     mfa: true,

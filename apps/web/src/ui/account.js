@@ -32,6 +32,8 @@ import { addDays, businessDate, calendarDay, dateOnly, dateTime, money, parseDon
 import { PAYMENT_METHOD_VI } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { errorNotice, gated } from "./components.js";
+// EINVOICE-REQUEST-001 (DEC-040): Hóa đơn tháng on the account card.
+import { invoiceSection } from "./invoice.js";
 import {
   button,
   confirmButton,
@@ -314,11 +316,34 @@ export function accountSection(spec) {
         hero,
         figures,
         h("div", { class: "account__actions" }, collect, statementLink),
+        monthInvoice(statement.month),
         ownerControls,
         openCharges(account),
         recentPayments(account),
       ),
     });
+  }
+
+  /**
+   * EINVOICE-REQUEST-001 (`DEC-040`): *Hóa đơn tháng* for the card's month -- the month's request,
+   * or *Khách cần hóa đơn*. Every other month is on its statement page.
+   *
+   * @param {string|undefined} month `YYYY-MM`
+   * @returns {HTMLElement|null}
+   */
+  function monthInvoice(month) {
+    if (!month || !can(who, "INVOICES_READ").allowed) return null;
+    const made = invoiceSection({
+      readPath: `/internal/v1/stores/${encodeURIComponent(store)}/customers/${encodeURIComponent(customerId)}/account/statements/${encodeURIComponent(month)}/invoice`,
+      createPath: `/internal/v1/stores/${encodeURIComponent(store)}/customers/${encodeURIComponent(customerId)}/account/statements/${encodeURIComponent(month)}/invoice-requests`,
+      store,
+      heading: `Hóa đơn ${monthName(month).toLowerCase()}`,
+      title: `Công nợ ${monthName(month).toLowerCase()} · ${customer?.display_name || "khách công nợ"}`,
+      sheetsHost,
+      bare: true,
+    });
+    void made.load();
+    return made.node;
   }
 
   /**

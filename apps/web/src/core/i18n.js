@@ -597,6 +597,29 @@ export const REASON_NOTE = {
   NO_SINGLE_TOTAL: "Báo giá của đơn chưa có một tổng duy nhất, nên máy không thanh lý.",
   STORAGE_FEE_OWED:
     "Đơn này có phí lưu kho, nên phải thu bằng “Thu tiền” (số còn lại đã gồm phí lưu kho).",
+  // EINVOICE-REQUEST-001 (DEC-040): invoice requests. The shop records them; the bookkeeper
+  // issues the invoice in the provider's portal.
+  PRIVACY_NOTICE_UNPUBLISHED:
+    "Chủ tiệm chưa công bố thông báo bảo mật, nên chưa lưu được thông tin khách hay người mua. " +
+    "Nhận đồ và thu tiền vẫn làm bình thường.",
+  INVOICE_SUBJECT_UNAVAILABLE:
+    "Không ghi yêu cầu cho mục này: đơn đã huỷ hoặc không thuộc cửa hàng, hay tháng chưa có đơn " +
+    "nào ghi công nợ.",
+  INVOICE_REQUEST_EXISTS:
+    "Đã có yêu cầu hóa đơn cho mục này (hoặc cho tháng công nợ chứa đơn này). Huỷ yêu cầu cũ nếu " +
+    "cần ghi lại.",
+  INVOICE_TAX_CODE_SHAPE: "Mã số thuế gồm 10 số, 10 số và 3 số sau dấu gạch (-), hoặc 12 số.",
+  INVOICE_ADDRESS_REQUIRED: "Có mã số thuế thì cần ghi địa chỉ đơn vị.",
+  INVOICE_BUYER_FIELD_INVALID:
+    "Kiểm tra lại ô được đánh dấu: tên đơn vị bắt buộc, email phải đúng dạng, không bắt đầu bằng = + - @.",
+  INVOICE_FIELD_LOOKS_LIKE_PHONE:
+    "Ô được đánh dấu có số giống số điện thoại. Danh sách gửi kế toán không ghi số điện thoại; bỏ số " +
+    "đó đi.",
+  INVOICE_REQUEST_CLOSED: "Yêu cầu này đã xuất hoặc đã huỷ; không đổi được nữa.",
+  INVOICE_ISSUED_DETAILS_INVALID:
+    "Ký hiệu gồm chữ in và số (tối đa 12), số hóa đơn tối đa 8 chữ số, ngày không sau hôm nay.",
+  INVOICE_NUMBER_TAKEN: "Ký hiệu và số hóa đơn này đã ghi cho một yêu cầu khác. Kiểm tra lại.",
+  INVOICE_CANCEL_NOTE_REQUIRED: "Lý do khác cần vài chữ ghi rõ (tối đa 200 ký tự).",
 };
 
 /**
@@ -1067,4 +1090,7 @@ export const NAV = {
   pickup: "Đồ chờ lấy",
   // PICKUP-REMIND-001 (DEC-043).
   reminders: "Nhắc khách lấy đồ",
+
+  // EINVOICE-REQUEST-001 (DEC-040).
+  invoices: "Hóa đơn cần xuất",
 };

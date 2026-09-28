@@ -205,11 +205,10 @@ def test_the_final_functions_carry_every_slices_rule(connection: psycopg.Connect
 
     migrations = discover_migrations()
     versions = [m.version for m in migrations]
-    start = versions.index("0059")
-    assert versions[start : start + 3] == ["0059", "0060", "0061"]
-    # Round 8 added migrations after `0061`; none of them may redefine a function checked below,
-    # or "whatever ran last" would be that migration and not these three.
-    checked = (
+    assert versions[versions.index("0059") : versions.index("0061") + 1] == ["0059", "0060", "0061"]
+    # Round 8 (EINVOICE-REQUEST-001's `0062`, and whatever follows): a later migration may add
+    # tables, but if it replaced one of the functions below this test must be re-read against it.
+    guarded = (
         "enforce_order_payment_ledger",
         "enforce_order_refund_consistency",
         "enforce_storage_fee_settlement",
@@ -217,9 +216,10 @@ def test_the_final_functions_carry_every_slices_rule(connection: psycopg.Connect
         "enforce_account_charge_owes_total_and_fee",
         "enforce_waiver_before_settlement",
     )
-    for later in migrations[start + 3 :]:
+    for later in migrations[versions.index("0061") + 1 :]:
         text = later.path.read_text(encoding="utf-8")
-        assert not any(f"FUNCTION {name}(" in text for name in checked), later.version
+        for name in guarded:
+            assert f"FUNCTION {name}(" not in text, (later.version, name)
 
     def body(name: str) -> str:
         [(text,)] = _rows(

@@ -119,6 +119,8 @@ import {
 import { accountHandover } from "../ui/accountHandover.js";
 // UNCLAIMED-001 (DEC-036): Lưu kho -- days waiting, the storage fee, contact attempts, thanh lý.
 import { readStorage, storageCharge, storageChargeLine, storageSection } from "../ui/unclaimed.js";
+// EINVOICE-REQUEST-001 (DEC-040): the order's Hóa đơn row.
+import { invoiceSection } from "../ui/invoice.js";
 // SHOP-CAPTURE-001: "Máy nào?", the trip-cost fields and the order's recorded cycles and trips.
 import {
   captureRows,
@@ -350,6 +352,8 @@ export function render_(context) {
   const captureHost = h("div", { id: "order-capture" });
   // UNCLAIMED-001: the order's storage, when it is waiting for pickup or has a fee on record.
   const storageHost = h("div", { id: "order-storage-host" });
+  // EINVOICE-REQUEST-001: the Hóa đơn row, read from the order's own store once the order is in.
+  const invoiceHost = h("div", { id: "order-invoice-host" });
   const techHost = h("div");
   // `display: contents`, so the sticky bar inside sticks to the screen, not to this wrapper.
   const actionHost = h("div", { class: "order__actions" });
@@ -444,6 +448,7 @@ export function render_(context) {
       void loadTimeline(found.store_id || storeId());
       void loadCapture();
       void loadStorage(found);
+      void loadInvoice(found);
     }
     return found;
   }
@@ -1772,6 +1777,26 @@ export function render_(context) {
     );
   }
 
+  /**
+   * EINVOICE-REQUEST-001 (`DEC-040`): *Hóa đơn* — the order's invoice request, and *Khách cần hóa
+   * đơn*. Read from the order's own store; a role that does not read requests sees nothing here.
+   *
+   * @param {any} order
+   */
+  async function loadInvoice(order) {
+    if (!can(me, "INVOICES_READ").allowed) return;
+    const store = encodeURIComponent(String(order.store_id || storeId()));
+    const made = invoiceSection({
+      readPath: `/internal/v1/stores/${store}/orders/${id}/invoice`,
+      createPath: `/internal/v1/stores/${store}/orders/${id}/invoice-requests`,
+      store: String(order.store_id || storeId()),
+      title: orderName(order),
+      sheetsHost,
+    });
+    render(invoiceHost, made.node);
+    await made.load();
+  }
+
   /** What the order recorded: its cycles and trip costs, re-read after every write. */
   async function loadCapture() {
     try {
@@ -2182,6 +2207,7 @@ export function render_(context) {
       void loadTimeline(store);
       void loadCapture();
       void loadStorage(found);
+      void loadInvoice(found);
       return;
     }
     render(incidentsHost, empty("Chưa đọc khiếu nại vì chưa đọc được đơn."));
@@ -2232,6 +2258,7 @@ export function render_(context) {
     summaryHost,
     storageHost,
     infoHost,
+    invoiceHost,
     legsHost,
     captureHost,
     section({

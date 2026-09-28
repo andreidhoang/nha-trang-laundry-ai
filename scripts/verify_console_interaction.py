@@ -1007,6 +1007,68 @@ def pickup_list(*rows: dict[str, object], published: bool = True) -> dict[str, o
     }
 
 
+# --- PICKUP-REMIND-001 (DEC-043): the due list and the fixed text, as the server answers ----------
+
+REMINDER_TEXT = (
+    "Cửa hàng demo xin báo: đồ giặt phiếu số 12 (nhận ngày 01/08/2026) đã xong ngày 02/08/2026.\n"
+    "Mời anh/chị qua tiệm lấy đồ.\n"
+    "Số tiền còn lại: 110.000 ₫.\n"
+    "Giờ mở cửa: từ 08:00 đến 20:00.\n"
+    "Cảm ơn anh/chị!"
+)
+REMINDER_CHAT_ID = "77777777-8888-4333-8444-99999999999a"
+REMINDER_STOP_ID = "77777777-8888-4333-8444-99999999999b"
+REMINDER_TICKET_ID = "77777777-8888-4333-8444-99999999999c"
+
+
+def reminder_row(
+    order_id: str,
+    *,
+    ticket: int | None,
+    step: str,
+    days: int,
+    reachable: str,
+    refusal: str | None = None,
+    name: str | None = None,
+    phone: str | None = None,
+) -> dict[str, object]:
+    """One `PickupReminderItemResponse`, every figure as the server computes it."""
+
+    return {
+        "order_id": order_id,
+        "row_version": 9,
+        "balance": "UNPAID",
+        "ticket_number": ticket,
+        "ticket_issued_on": "2026-08-01" if ticket is not None else None,
+        "customer_id": CUSTOMER_ID if phone else None,
+        "customer_name": name,
+        "step": step,
+        "ready_at": "2026-08-02T03:00:00+00:00",
+        "days_waiting": days,
+        "reachable": reachable,
+        "phone": phone,
+        "zalo_url": f"https://zalo.me/{phone}" if phone else None,
+        "phone_last4": phone[-4:] if phone else None,
+        "remaining_vnd": 110_000,
+        "message_refusal": refusal,
+    }
+
+
+def reminder_list(*rows: dict[str, object], published: bool = True) -> dict[str, object]:
+    return {
+        "store_id": STORE,
+        "evaluated_at": "2026-09-27T03:00:00+00:00",
+        "storage_policy_published": True,
+        "messaging_policy_published": published,
+        "limit": 100,
+        "total_count": len(rows),
+        "unreachable_count": sum(1 for row in rows if row["reachable"] == "NONE"),
+        "truncated": False,
+        "phone_visible": any(row.get("phone") for row in rows),
+        "orders": list(rows),
+    }
+
+
 def storage_read(
     *,
     awaiting: bool,
@@ -2257,6 +2319,38 @@ with sync_playwright() as playwright:
             # of Bắt đầu giặt still runs the step directly, as it did before the chooser existed.
             state.setdefault("machine_reads", []).append(url)
             body = {"store_id": STORE, "truncated": False, "machines": state.get("machines") or []}
+        elif route.request.method == "GET" and url.split("?")[0].endswith("/pickup-reminders"):
+            # PICKUP-REMIND-001: empty unless section 26 fills it, so Hôm nay's earlier sections
+            # still read an empty queue for it.
+            state.setdefault("reminder_reads", []).append(url)
+            body = state.get("reminder_list") or reminder_list()
+        elif route.request.method == "GET" and url.split("?")[0].endswith("/pickup-reminder"):
+            state.setdefault("reminder_text_reads", []).append(url)
+            refusal = state.get("reminder_refusal")
+            if refusal:
+                route.fulfill(
+                    status=422,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "detail": {
+                                "reason_code": refusal,
+                                "reason_codes": [refusal],
+                                "decision": "DEC-043",
+                            }
+                        }
+                    ),
+                )
+                return
+            body = {
+                "order_id": PICKUP_ORDER_ID,
+                "step": "READY",
+                "template": "pickup-reminder-v1",
+                "text": REMINDER_TEXT,
+                "evaluated_at": "2026-09-27T03:00:00+00:00",
+                "policy_version": 1,
+                "basis": "OPEN_ORDER",
+            }
         elif route.request.method == "GET" and url.split("?")[0].endswith(
             "/orders/awaiting-pickup"
         ):
@@ -8794,6 +8888,248 @@ with sync_playwright() as playwright:
         page.locator("#daily-summary").count() == 0 and not state["summary_reads"],
         repr(state["summary_reads"]),
     )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+
+    # ============================================================================================
+    # 26. PICKUP-REMIND-001 (DEC-043) -- Nhắc khách lấy đồ: the server's step in words, Mở Zalo and
+    #     Gọi as links built from the number the page never prints, Chép tin nhắn putting exactly
+    #     the server's text on the clipboard, Đã nhắc in one tap with the step and a key (no
+    #     If-Match), refusals in words (the owner's switch unpublished; a STOP), the unreachable
+    #     counted, Hôm nay's card, the auditor shut out of the writes, and a 390 px card layout.
+    # ============================================================================================
+    print()
+    print("[26] Nhắc khách lấy đồ: Mở Zalo, Chép tin nhắn, Gọi, Đã nhắc")
+    SESSION_OK["roles"] = ["OPERATOR"]
+    state["unclaimed_writes"] = []
+    state["reminder_reads"] = []
+    state["reminder_text_reads"] = []
+    state["reminder_refusal"] = None
+    state["reminder_list"] = reminder_list(
+        reminder_row(
+            PICKUP_ORDER_ID,
+            ticket=12,
+            step="READY",
+            days=0,
+            reachable="PHONE",
+            name="chị Lan",
+            phone="0905123456",
+        ),
+        reminder_row(REMINDER_CHAT_ID, ticket=None, step="DAY_7", days=7, reachable="CHAT"),
+        reminder_row(
+            REMINDER_STOP_ID,
+            ticket=18,
+            step="DAY_3",
+            days=3,
+            reachable="PHONE",
+            refusal="SUPPRESSED",
+            name="anh Dũng",
+            phone="0912345678",
+        ),
+        reminder_row(
+            REMINDER_TICKET_ID,
+            ticket=21,
+            step="DAY_14",
+            days=14,
+            reachable="NONE",
+            refusal="NO_CONTACT",
+        ),
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/reminders", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    text = rendered_text()
+    row = page.locator(f"#reminder-list tr[data-reminder='{PICKUP_ORDER_ID}']")
+    check(
+        "the reachable reminders are table rows in the server's order, each step in words",
+        page.locator("#reminder-list tbody tr").count() == 3
+        and page.locator("#reminder-list tbody tr").first.get_attribute("data-reminder")
+        == PICKUP_ORDER_ID
+        and "Báo đồ đã xong" in text
+        and "Nhắc lần 3 (ngày 7)" in text
+        and "Nhắc lần 2 (ngày 3)" in text,
+        text[:200].replace("\n", " | "),
+    )
+    zalo = row.locator(f"a[data-reminder-zalo='{PICKUP_ORDER_ID}']")
+    call = row.locator(f"a[data-reminder-call='{PICKUP_ORDER_ID}']")
+    check(
+        "Mở Zalo and Gọi are links the server's answer built; the number is never printed",
+        zalo.count() == 1
+        and zalo.get_attribute("href") == "https://zalo.me/0905123456"
+        and call.count() == 1
+        and call.get_attribute("href") == "tel:+84905123456"
+        and "0905123456" not in text
+        and "0905 123 456" not in text
+        and page.locator(f"a[data-reminder-zalo='{REMINDER_CHAT_ID}']").count() == 0,
+    )
+    stopped = page.locator(f"#reminder-list tr[data-reminder='{REMINDER_STOP_ID}']")
+    check(
+        "a customer who wrote STOP: the reason in words on the row, Chép tin nhắn and Mở Zalo off",
+        "Khách đã nhắn dừng nhận tin" in stopped.inner_text()
+        and stopped.locator("[data-reminder-copy]").is_disabled()
+        and stopped.locator("[data-reminder-copy]").get_attribute("data-denied") == "true"
+        and stopped.locator("[data-reminder-zalo]").is_disabled()
+        and stopped.locator("a[data-reminder-zalo]").count() == 0,
+        stopped.inner_text()[:160].replace("\n", " | "),
+    )
+    unreachable = page.locator("details[data-unreachable]")
+    check(
+        "the ticket with nobody to message is counted under the table, not a row in it",
+        unreachable.count() == 1
+        and unreachable.get_attribute("data-unreachable") == "1"
+        and page.locator(f"#reminder-list tr[data-reminder='{REMINDER_TICKET_ID}']").count() == 0,
+    )
+    page.evaluate("() => { window.__copied = null; }")
+    row.locator(f"[data-reminder-copy='{PICKUP_ORDER_ID}']").click()
+    page.wait_for_timeout(700)
+    check(
+        "Chép tin nhắn asks the server for the step's text and puts exactly it on the clipboard",
+        len(state["reminder_text_reads"]) == 1
+        and state["reminder_text_reads"][0].endswith(
+            f"/orders/{PICKUP_ORDER_ID}/pickup-reminder?step=READY"
+        )
+        and page.evaluate("() => window.__copied") == REMINDER_TEXT
+        and page.locator(f"[data-reminder-copied='{PICKUP_ORDER_ID}']").count() == 1,
+        repr(state["reminder_text_reads"]),
+    )
+    reads_before = len(state["reminder_reads"])
+    row.locator(f"[data-reminder-done='{PICKUP_ORDER_ID}']").click()
+    page.wait_for_timeout(500)
+    first = page.locator("dialog[open]#reminder-done [data-reminder-outcome]").first
+    check(
+        "Đã nhắc opens the outcomes with Đã gửi tin Zalo first and primary",
+        first.get_attribute("data-reminder-outcome") == "zalo"
+        and first.get_attribute("data-variant") == "primary",
+        open_dialog_text()[:160],
+    )
+    first.click()
+    page.wait_for_timeout(900)
+    writes = state["unclaimed_writes"]
+    check(
+        "one tap records the reminder: channel, outcome, the step, a key, no If-Match; re-reads",
+        len(writes) == 1
+        and writes[0]["path"].endswith(f"/orders/{PICKUP_ORDER_ID}/contact-attempts")
+        and json.loads(writes[0]["body"] or "{}")
+        == {
+            "channel": "ZALO",
+            "outcome": "MESSAGE_SENT",
+            "note": None,
+            "reminder_step": "READY",
+        }
+        and bool(writes[0]["key"])
+        and writes[0]["if_match"] is None
+        and len(state["reminder_reads"]) > reads_before,
+        repr(writes),
+    )
+    state["unclaimed_writes"] = []
+    stopped = page.locator(f"#reminder-list tr[data-reminder='{REMINDER_STOP_ID}']")
+    stopped.locator(f"[data-reminder-done='{REMINDER_STOP_ID}']").click()
+    page.wait_for_timeout(500)
+    zalo_choice = page.locator("dialog[open]#reminder-done [data-reminder-outcome='zalo']")
+    check(
+        "for the STOP customer Đã nhắc offers the call outcomes first and no 'message sent'",
+        zalo_choice.is_disabled()
+        and page.locator("dialog[open]#reminder-done [data-reminder-outcome]").first.get_attribute(
+            "data-reminder-outcome"
+        )
+        == "reached",
+    )
+    page.locator("dialog[open]#reminder-done [data-reminder-outcome='no-answer']").click()
+    page.wait_for_timeout(900)
+    writes = state["unclaimed_writes"]
+    check(
+        "a call is recorded for that step",
+        len(writes) == 1
+        and json.loads(writes[0]["body"] or "{}")
+        == {"channel": "CALL", "outcome": "NO_ANSWER", "note": None, "reminder_step": "DAY_3"},
+        repr(writes),
+    )
+
+    # The owner's switch: before the messaging policy, nothing can be copied; the page says why.
+    unpublished = dict(state["reminder_list"])
+    unpublished["messaging_policy_published"] = False
+    unpublished["orders"] = [
+        dict(item, message_refusal=item["message_refusal"] or "MESSAGING_POLICY_UNPUBLISHED")
+        for item in state["reminder_list"]["orders"]
+    ]
+    state["reminder_list"] = unpublished
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/reminders", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    row = page.locator(f"#reminder-list tr[data-reminder='{PICKUP_ORDER_ID}']")
+    check(
+        "unpublished: one line for the page, Chép tin nhắn off, Gọi still on",
+        "chưa công bố chính sách tin dịch vụ" in rendered_text()
+        and row.locator("[data-reminder-copy]").is_disabled()
+        and row.locator("a[data-reminder-call]").count() == 1,
+        rendered_text()[:200].replace("\n", " | "),
+    )
+    # A refusal the server gives at the press is said inline, in words.
+    state["reminder_list"]["orders"][0]["message_refusal"] = None
+    state["reminder_refusal"] = "MESSAGING_POLICY_UNPUBLISHED"
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/reminders", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    page.evaluate("() => { window.__copied = null; }")
+    row = page.locator(f"#reminder-list tr[data-reminder='{PICKUP_ORDER_ID}']")
+    row.locator(f"[data-reminder-copy='{PICKUP_ORDER_ID}']").click()
+    page.wait_for_timeout(700)
+    check(
+        "a refusal at the press is said beside the row, and nothing reaches the clipboard",
+        "chưa công bố chính sách tin dịch vụ" in row.inner_text()
+        and page.evaluate("() => window.__copied") is None,
+        row.inner_text()[:200].replace("\n", " | "),
+    )
+    state["reminder_refusal"] = None
+
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    tile = page.locator("[data-queue=reminders]")
+    check(
+        "Hôm nay's Nhắc khách lấy đồ card counts the reminders the shop can send, and links",
+        tile.count() == 1
+        and "3" in tile.inner_text()
+        and tile.get_attribute("href") == "#/reminders",
+        tile.inner_text() if tile.count() else "absent",
+    )
+
+    SESSION_OK["roles"] = ["AUDITOR"]
+    masked = dict(state["reminder_list"])
+    masked["orders"] = [dict(item, phone=None, zalo_url=None) for item in masked["orders"]]
+    masked["phone_visible"] = False
+    state["reminder_list"] = masked
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/reminders", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    check(
+        "an auditor reads the list with no links and Đã nhắc shut with who may",
+        page.locator("a[data-reminder-zalo], a[data-reminder-call]").count() == 0
+        and page.locator(f"[data-reminder-done='{PICKUP_ORDER_ID}']").is_disabled()
+        and page.locator("[data-reminder-copy]").count() == 0,
+    )
+    SESSION_OK["roles"] = ["OPERATOR"]
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/reminders", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    wide = page.evaluate("() => document.documentElement.scrollWidth")
+    check(
+        "at 390 px the rows are cards and the page does not scroll sideways",
+        wide <= 390
+        and page.locator("#reminder-list thead").evaluate("(n) => getComputedStyle(n).display")
+        == "none",
+        f"scrollWidth={wide}",
+    )
+    if os.environ.get("CONSOLE_SHOTS_DIR"):
+        shots = os.environ["CONSOLE_SHOTS_DIR"]
+        os.makedirs(shots, exist_ok=True)
+        page.screenshot(path=os.path.join(shots, "stub-reminders-390.png"), full_page=True)
+    page.set_viewport_size({"width": 1280, "height": 900})
+    check(
+        "nothing about the reminders is kept on the device",
+        page.evaluate("() => JSON.stringify(Object.keys(localStorage))") == '["staff_store_id"]',
+    )
+    state["reminder_list"] = None
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
 
     print()

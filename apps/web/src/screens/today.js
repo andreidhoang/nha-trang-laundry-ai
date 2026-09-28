@@ -139,6 +139,25 @@ const TILES = [
     }),
   },
   {
+    // PICKUP-REMIND-001 (DEC-043): reminders due today, from the due list's own page -- the ones
+    // the shop can send (a phone or a chat); the unreachable are counted on the list itself.
+    id: "reminders",
+    title: "Nhắc khách lấy đồ",
+    short: "nhắc khách",
+    icon: "message",
+    capability: "PICKUP_READ",
+    needsStore: true,
+    limit: 200,
+    href: "/reminders",
+    url: (store) => `/internal/v1/stores/${encodeURIComponent(store)}/pickup-reminders?limit=200`,
+    pick: (payload) => ({
+      items: Array.isArray(payload?.orders)
+        ? payload.orders.filter((item) => item.reachable !== "NONE")
+        : null,
+      more: Boolean(payload?.truncated),
+    }),
+  },
+  {
     // The SLA board's own read, one page of its ceiling, counted by the outcome the server gave
     // each row. Nothing here decides whether an order is late: `sla_outcome` is the domain
     // engine's, and a page that has a next page is shown as a floor ("3+"), never as a total.

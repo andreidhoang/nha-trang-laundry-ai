@@ -21,7 +21,12 @@
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { dateOnly, dateTime, money } from "../core/format.js";
-import { CONTACT_CHANNEL_VI, CONTACT_OUTCOME_VI, REASON_NOTE } from "../core/i18n.js";
+import {
+  CONTACT_CHANNEL_VI,
+  CONTACT_OUTCOME_VI,
+  REASON_NOTE,
+  REMINDER_STEP_VI,
+} from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal } from "../core/session.js";
 import { errorNotice, gated } from "./components.js";
@@ -119,15 +124,17 @@ export function feeText(fee, policy, balance) {
 }
 
 /**
- * One contact attempt as a line: "Gọi điện · Không nghe máy".
+ * One contact attempt as a line: "Gọi điện · Không nghe máy", and the reminder it answered when it
+ * answered one ("Zalo · Đã gửi tin · Nhắc lần 2 (ngày 3)", PICKUP-REMIND-001).
  *
- * @param {{channel?: string, outcome?: string}} attempt
+ * @param {{channel?: string, outcome?: string, reminder_step?: string|null}} attempt
  * @returns {string}
  */
 export function attemptTitle(attempt) {
   const channel = CONTACT_CHANNEL_VI[String(attempt?.channel)] || String(attempt?.channel || "");
   const outcome = CONTACT_OUTCOME_VI[String(attempt?.outcome)] || String(attempt?.outcome || "");
-  return `${channel} · ${outcome}`;
+  const step = attempt?.reminder_step ? REMINDER_STEP_VI[String(attempt.reminder_step)] : "";
+  return step ? `${channel} · ${outcome} · ${step}` : `${channel} · ${outcome}`;
 }
 
 /**
@@ -279,7 +286,11 @@ export function contactSheet(spec) {
       choiceChips({
         label: "Kết quả",
         name: "contact-outcome",
-        options: Object.entries(CONTACT_OUTCOME_VI).map(([value, label]) => ({ value, label })),
+        // MESSAGE_SENT is a reminder's (PICKUP-REMIND-001): recorded from Nhắc khách lấy đồ with
+        // its step, never from this sheet, which names none.
+        options: Object.entries(CONTACT_OUTCOME_VI)
+          .filter(([value]) => value !== "MESSAGE_SENT")
+          .map(([value, label]) => ({ value, label })),
         onChange: (value) => {
           outcome = value;
         },

@@ -138,18 +138,22 @@ const GROUPS = [
       // waiver and thanh lý. The question it left open -- whether an order paid in full before
       // day 21 owes a fee afterwards -- the owner ruled on 2026-09-27: it does not (the fee is
       // fixed when the settling payment is taken, which is what the code already did), and its
-      // laundry can still be disposed of from day 60. What remains is a reminder the software
-      // sends itself, which needs a connected channel.
+      // laundry can still be disposed of from day 60. PICKUP-REMIND-001 (DEC-043) then built the
+      // schedule and the text: the server decides who is due (day 0, 3, 7, 14, the day before the
+      // fee) and what the message says; a person sends it in two taps. What remains is the
+      // software sending it by itself, which needs the owner's Zalo Official Account.
       {
-        ref: "DEC-036",
-        title: "Tự nhắc khách tới lấy đồ",
-        what: "Máy tự nhắn khách khi đồ đã giặt xong mà khách chưa tới lấy.",
+        ref: "DEC-043",
+        title: "Tự gửi tin nhắc khách tới lấy đồ",
+        what: "Máy tự gửi tin nhắc khách khi đồ đã giặt xong mà khách chưa tới lấy.",
         missing:
-          "Chưa có tin tự động nhắc khách tới lấy. Đơn đã trả đủ trước ngày hết miễn phí không " +
-          "tính phí lưu kho (chủ tiệm quyết ngày 27/09/2026), nhưng vẫn thanh lý được từ ngày 60.",
-        blockedBy: "Tin nhắc tự động cần kênh Zalo đã kết nối (CHANNEL-ZALO-APPLY-001)",
-        today: "Gọi khách từ màn Đồ chờ lấy và ghi lại mỗi lần.",
-        link: { href: "#/pickup", label: "Đồ chờ lấy" },
+          "Máy chọn ai cần nhắc và soạn sẵn tin, nhưng chưa tự gửi: nhân viên chép tin và gửi " +
+          "bằng Zalo hoặc SMS của tiệm.",
+        blockedBy:
+          "Gửi tự động cần Zalo Official Account, mẫu tin ZNS được duyệt, token và giá mỗi tin " +
+          "của chủ tiệm",
+        today: "Màn Nhắc khách lấy đồ: bấm Chép tin nhắn, dán vào Zalo, gửi, rồi bấm Đã nhắc.",
+        link: { href: "#/reminders", label: "Nhắc khách lấy đồ" },
       },
       {
         ref: "M3",

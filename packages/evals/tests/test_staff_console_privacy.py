@@ -266,3 +266,39 @@ def test_the_waiting_list_prints_no_phone_and_writes_nothing_to_the_device() -> 
     assert "formatPhone" not in pickup
     shared = (WEB / "src" / "ui" / "unclaimed.js").read_text(encoding="utf-8")
     assert "Không ghi số điện thoại khách" in shared
+
+
+# --- PICKUP-REMIND-001 (DEC-043): reminding customers to collect --------------------------------
+
+
+def test_the_reminder_list_prints_no_phone_and_writes_nothing_to_the_device() -> None:
+    """*Nhắc khách lấy đồ* on the counter's screen all day.
+
+    The number reaches the page only inside two links the server's answer builds: `tel:` from
+    `telHref(item.phone)` ("Gọi") and the `zalo.me` link the server itself derived (`zalo_url`,
+    "Mở Zalo"). It is never a text node and never formatted for reading. The message is the
+    server's fixed text, which carries no name and no number (`packages/domain/tests/
+    test_pickup_reminders.py`); it goes to the clipboard, or into a read-only field when there is
+    none, and is kept nowhere on the device.
+    """
+
+    module = WEB / "src" / "screens" / "reminders.js"
+    source = module.read_text(encoding="utf-8")
+    for sink in (
+        "localStorage",
+        "sessionStorage",
+        "indexedDB",
+        "document.cookie",
+        "caches.",
+        "history.pushState",
+        "history.replaceState",
+        "console.",
+    ):
+        assert sink not in source, f"{module.name} reaches {sink}"
+    uses = re.findall(r"item\.phone\b(?!_)", source)
+    assert uses == ["item.phone"], uses
+    assert "telHref(item.phone)" in source
+    assert "formatPhone" not in source and "phoneText" not in source
+    # `item.zalo_url` is read twice: whether the row has a link, and the link's `href`.
+    assert len(re.findall(r"item\.zalo_url\b", source)) == 2
+    assert "href: String(item.zalo_url)" in source

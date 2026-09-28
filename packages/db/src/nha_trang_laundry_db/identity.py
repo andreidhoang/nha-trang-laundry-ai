@@ -24,9 +24,16 @@ class StaffRole(StrEnum):
     AUDITOR = "AUDITOR"
 
 
-SENSITIVE_MFA_ROLES = frozenset(
-    {StaffRole.OWNER_ADMIN, StaffRole.OPS_APPROVER, StaffRole.ACCOUNTANT, StaffRole.AUDITOR}
-)
+#: Roles whose sessions must carry MFA proof: all of them (`AUTHZ-LIFECYCLE-001`).
+#:
+#: This used to omit `OPERATOR` and `DRIVER`, which left six read routes (the order board, order
+#: detail, promise, Shadow reviews/drafts/audit, SLA board) open to an operator session with no
+#: second factor -- customer names and phone numbers among them. `SECURITY_RELIABILITY_SPEC_V1`
+#: §5.1 wants MFA for every role that sees PII before any public channel, and the realm already
+#: demands a second factor at every sign-in (`acr_values=mfa`), so no real session lacked it: this
+#: makes the server say what the deployment already does instead of depending on it. The rule is
+#: applied to the session itself, not per role, so a user with no role gets no exemption either.
+SENSITIVE_MFA_ROLES = frozenset(StaffRole)
 
 
 class StaffSubjectTakenError(ValueError):
@@ -332,8 +339,8 @@ class IdentityRepository:
         subject = _required_text(oidc_subject, "OIDC subject", 255)
         with connection.cursor() as cursor:
             principal = self._principal_for_subject(cursor, subject, mfa_verified)
-        if SENSITIVE_MFA_ROLES & principal.roles and not mfa_verified:
-            raise IdentityStateError("MFA proof is required for this staff role")
+        if not mfa_verified:
+            raise IdentityStateError("MFA proof is required for every staff session")
 
         session_id = uuid4()
         secret = secrets.token_urlsafe(32)
@@ -429,8 +436,8 @@ class IdentityRepository:
             ):
                 raise IdentityStateError("session is inactive, expired, or stale")
             roles = _active_roles(cursor, _uuid(user_id))
-            if SENSITIVE_MFA_ROLES & roles and not bool(mfa):
-                raise IdentityStateError("MFA proof is required for this staff role")
+            if not bool(mfa):
+                raise IdentityStateError("MFA proof is required for every staff session")
             next_idle_expiry = min(
                 timestamp + timedelta(seconds=int(idle_timeout_seconds)), absolute
             )
@@ -506,7 +513,7 @@ class IdentityRepository:
 
         "Live" is exactly `authenticate_session`'s test, read without touching a row: not revoked,
         inside both lifetimes, minted at the user's current authorization version, the account
-        active, and MFA-proven when the user holds a role that needs it. A session that would be
+        active, and MFA-proven (every session must be). A session that would be
         refused at its next request is not listed, because offering to sign out a device that is
         already signed out is a control that does nothing.
 
@@ -539,14 +546,7 @@ class IdentityRepository:
                   AND s.absolute_expires_at > %s
                   AND u.status = 'ACTIVE'
                   AND s.authorization_version = u.authorization_version
-                  AND (
-                    s.mfa_verified
-                    OR NOT EXISTS (
-                        SELECT 1 FROM staff_role_assignments r
-                        WHERE r.staff_user_id = u.id AND r.revoked_at IS NULL
-                          AND r.role = ANY(%s)
-                    )
-                  )
+                  AND s.mfa_verified
                 ORDER BY s.last_seen_at DESC, s.id
                 LIMIT %s
                 """,
@@ -554,7 +554,6 @@ class IdentityRepository:
                     staff_user_id,
                     now,
                     now,
-                    sorted(role.value for role in SENSITIVE_MFA_ROLES),
                     limit + 1,
                 ),
             )

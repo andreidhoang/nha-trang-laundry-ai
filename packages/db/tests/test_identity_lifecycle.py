@@ -324,3 +324,49 @@ _ACTIVE_OWNERS = """
     SELECT count(*) FROM staff_role_assignments r JOIN staff_users u ON u.id = r.staff_user_id
     WHERE r.role = 'OWNER_ADMIN' AND r.revoked_at IS NULL AND u.status = 'ACTIVE'
 """
+
+
+# --- MFA on every session -------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "roles",
+    [(StaffRole.OPERATOR,), (StaffRole.DRIVER,), ()],
+    ids=["operator", "driver", "no-role"],
+)
+def test_no_staff_session_is_minted_without_mfa(
+    connection: psycopg.Connection[Any], roles: tuple[StaffRole, ...]
+) -> None:
+    """`OPERATOR` and `DRIVER` used to be exempt, and a role-less user was exempt too."""
+
+    _, subject = _person(connection, *roles)
+    sessions = _count(connection, "SELECT count(*) FROM staff_sessions")
+
+    with pytest.raises(IdentityStateError, match="MFA proof is required"):
+        IdentityRepository().create_session(
+            connection, oidc_subject=subject, mfa_verified=False, correlation_id=uuid4(), now=NOW
+        )
+
+    assert _count(connection, "SELECT count(*) FROM staff_sessions") == sessions
+
+
+def test_a_session_minted_without_mfa_before_the_rule_is_refused_and_not_listed(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """An operator's pre-existing non-MFA session stops at its next request, with no migration."""
+
+    operator, subject = _person(connection, StaffRole.OPERATOR)
+    token = _sign_in(connection, subject)
+    session_id = UUID(token.split(".", 1)[0])
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE staff_sessions SET mfa_verified = false WHERE id = %s", (session_id,)
+        )
+    repository = IdentityRepository()
+
+    with pytest.raises(IdentityStateError, match="MFA proof is required"):
+        repository.authenticate_session(connection, token, now=NOW)
+    listed = repository.list_live_sessions(
+        connection, staff_user_id=operator, actor_id=operator, now=NOW
+    )
+    assert listed.sessions == ()

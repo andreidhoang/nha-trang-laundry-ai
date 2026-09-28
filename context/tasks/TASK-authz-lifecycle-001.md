@@ -30,5 +30,12 @@ The six commands, plus:
   pass against PostgreSQL.
 - `apps/api/tests/test_route_authorization.py` passes; `specs/contracts/internal-api-v1.openapi.yaml`
   carries `x-authorization` for every operation.
-- `realm_password_policy_applied_on_the_running_realm`: `--import-realm` skips an existing realm, so
-  the policy is set once on the running R1 realm and read back. Until then this evidence is owed.
+- Every staff session requires MFA, whatever the role (`SENSITIVE_MFA_ROLES` is every role).
+- Two owners acting on each other at once leave one owner (concurrency test, fails without the lock).
+
+## REALM-POLICY-001 (deploy day)
+
+`--import-realm` skips an existing realm, so the running R1 realm keeps accepting any password until
+the policy is set there once. `docs/runbooks/production-deploy-day.md` §2a gives the `kcadm.sh`
+command and the read-back that is the evidence. It needs the host and an admin credential, which is
+why it is its own item rather than a claim made from a development container.

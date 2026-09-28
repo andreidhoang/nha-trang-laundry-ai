@@ -9547,6 +9547,12 @@ with sync_playwright() as playwright:
         and stopped.locator("a[data-reminder-zalo]").count() == 0,
         stopped.inner_text()[:160].replace("\n", " | "),
     )
+    heading = page.locator("[data-field='reminder-count']")
+    check(
+        "the heading counts the three the counter can act on, not the one nobody can be reached on",
+        heading.count() == 1 and heading.inner_text().strip() == "3 đơn cần nhắc",
+        heading.inner_text() if heading.count() else "absent",
+    )
     unreachable = page.locator("details[data-unreachable]")
     check(
         "the ticket with nobody to message is counted under the table, not a row in it",

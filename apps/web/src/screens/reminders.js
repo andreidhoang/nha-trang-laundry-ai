@@ -143,9 +143,15 @@ export function render_() {
     const orders = Array.isArray(payload?.orders) ? payload.orders : [];
     const reachable = orders.filter((item) => item.reachable !== "NONE");
     const unreachable = orders.filter((item) => item.reachable === "NONE");
-    subtitle.textContent = payload.total_count
-      ? `${payload.total_count} đơn đến lúc nhắc`
-      : "Không có đơn nào cần nhắc";
+    // Round 8 desk review: the heading counts what the counter can act on; the ones nobody can be
+    // reached on are counted in their own line under the table, not folded into this number.
+    const actionable = Number(payload.total_count || 0) - Number(payload.unreachable_count || 0);
+    subtitle.textContent =
+      actionable > 0
+        ? `${actionable} đơn cần nhắc`
+        : payload.total_count
+          ? "Không có đơn nào nhắc được"
+          : "Không có đơn nào cần nhắc";
     render(
       noticeHost,
       payload.messaging_policy_published === false && reachable.length

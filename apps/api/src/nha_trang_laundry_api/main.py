@@ -187,6 +187,7 @@ from nha_trang_laundry_domain.invoice_requests import (
     InvoiceRuleError,
     InvoiceSubjectKind,
 )
+from nha_trang_laundry_domain.late_delivery import LateDeliveryDecision, NotStoreFaultReason
 from nha_trang_laundry_domain.order_steps import COMPOSITE_STEPS, OrderStep
 from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.promise import (
@@ -271,6 +272,15 @@ from nha_trang_laundry_api.invoice_requests import (
     InvoiceRequestsUnavailable,
 )
 from nha_trang_laundry_api.invoice_requests import LIST_MAX_LIMIT as INVOICE_LIST_MAX_LIMIT
+from nha_trang_laundry_api.late_deliveries import (
+    LATE_DELIVERY_FREE_TEXT_MARKER,
+    LATE_DELIVERY_ROLES,
+    LateDeliveryAuthorizationError,
+    LateDeliveryRefused,
+    LateDeliveryService,
+    LateDeliveryServiceUnavailable,
+)
+from nha_trang_laundry_api.late_deliveries import LIST_MAX_LIMIT as LATE_DELIVERY_LIST_MAX_LIMIT
 from nha_trang_laundry_api.operations import (
     OperationsService,
     OperationsUnavailable,
@@ -4167,10 +4177,12 @@ async def _customer_validation_failed(request: Request, error: Exception) -> Res
     # UNCLAIMED-001: a contact note or a waiver reason is free text a person typed, and is refused
     # when it looks like a phone number -- so it is answered the same way, without its value.
     # EINVOICE-REQUEST-001: a buyer's name, address or email on an invoice-request path too.
+    # LATE-CREDIT-002: the late-delivery decision's note, the same way.
     if (
         CUSTOMER_PATH_MARKER not in request.url.path
         and INVOICE_PATH_MARKER not in request.url.path
         and not request.url.path.endswith(UNCLAIMED_FREE_TEXT_PATH_SUFFIXES)
+        and LATE_DELIVERY_FREE_TEXT_MARKER not in request.url.path
     ):
         return await request_validation_exception_handler(request, error)
     return JSONResponse(
@@ -7541,6 +7553,29 @@ class ReportMonthResponse(BaseModel):
     query_version: str
 
 
+class ReportLateDeliveriesResponse(BaseModel):
+    """`LATE-CREDIT-002` (`report-v4`): deliveries in the window measured late, by decision.
+
+    `UNAVAILABLE` (with `reason`) while no remedy policy is published: every count is then null,
+    never zero, because the threshold is one of the owner's published figures.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["COMPLETE", "UNAVAILABLE"]
+    reason: str | None
+    threshold_minutes: int | None
+    remedy_policy_version: int | None
+    measured: int | None = Field(ge=0)
+    late: int | None = Field(ge=0)
+    store_fault: int | None = Field(ge=0)
+    credited: int | None = Field(ge=0)
+    credited_vnd: int | None = Field(ge=0)
+    not_store_fault: int | None = Field(ge=0)
+    undecided: int | None = Field(ge=0)
+    query_version: str
+
+
 class ReportSummaryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -7554,6 +7589,8 @@ class ReportSummaryResponse(BaseModel):
     capture: ReportCaptureResponse
     #: Every calendar month the window touches: spending by category, takings and margin.
     months: list[ReportMonthResponse]
+    #: `LATE-CREDIT-002` (`DEC-042`, `report-v4`).
+    late_deliveries: ReportLateDeliveriesResponse
 
 
 class ReportDayResponse(BaseModel):
@@ -7731,6 +7768,20 @@ def report_summary(
         sla_rule=_report_sla_rule(report),
         capture=_report_capture(report),
         months=_report_months(report),
+        late_deliveries=ReportLateDeliveriesResponse(
+            status=report.late_deliveries.status,  # type: ignore[arg-type]
+            reason=report.late_deliveries.reason,
+            threshold_minutes=report.late_deliveries.threshold_minutes,
+            remedy_policy_version=report.late_deliveries.remedy_policy_version,
+            measured=report.late_deliveries.measured,
+            late=report.late_deliveries.late,
+            store_fault=report.late_deliveries.store_fault,
+            credited=report.late_deliveries.credited,
+            credited_vnd=report.late_deliveries.credited_vnd,
+            not_store_fault=report.late_deliveries.not_store_fault,
+            undecided=report.late_deliveries.undecided,
+            query_version=report.query_version,
+        ),
     )
 
 
@@ -9931,6 +9982,286 @@ def read_account_month_vietqr(
     except _ACCOUNT_ERRORS as error:
         _raise_account_error(error)
     return account_month_vietqr_response(customer_id, found)
+
+
+# --- LATE-CREDIT-002 (DEC-042): late deliveries measured by the server ---------------------------
+#
+# *Giao trễ cần xử lý* and its one-tap decision. How late is `domain.late_delivery`'s measurement;
+# the would-be credit is the remedy repository's own probe; *Lỗi của tiệm* opens the incident and
+# the `LATE_DELIVERY_CREDIT` proposal at the server's minutes, which then follows the existing
+# remedy authority and execution routes unchanged.
+
+
+def get_late_delivery_service() -> LateDeliveryService:
+    try:
+        return LateDeliveryService(AuthSettings())
+    except LateDeliveryServiceUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable"
+        ) from error
+
+
+def require_late_delivery_staff(
+    principal: Annotated[StaffPrincipal, Depends(current_principal)],
+) -> StaffPrincipal:
+    """The counter roles that propose a remedy, with MFA (`DEC-004` rests the credit on them)."""
+    if not principal.roles & LATE_DELIVERY_ROLES or not principal.mfa_verified:
+        _record_authorization_denial("LATE_DELIVERY_ROLE_OR_MFA_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED)
+    return principal
+
+
+class LateDeliveryItemResponse(BaseModel):
+    """One delivery measured late by more than the published threshold, not yet decided."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    customer_name: str | None
+    first_promise_at: datetime
+    #: The deadline: the first promise, or the newest *Hẹn lại* the customer asked for.
+    deadline_at: datetime
+    deadline_basis: Literal["FIRST_PROMISE", "CUSTOMER_REQUEST"]
+    delivered_at: datetime
+    #: Whole minutes, floored; the server's measurement, never a client's.
+    late_by_minutes: int = Field(ge=0)
+    #: Failed RETURN attempts at or before the deadline, oldest first.
+    failed_attempts_before_deadline: list[datetime]
+    settled_total_vnd: int | None = Field(ge=0)
+    #: The domain's 10%, as `remedy-options` probes it; null on a refunded bill or when refused.
+    credit_vnd: int | None = Field(ge=0)
+    credit_requires_owner: bool
+    credit_refusal: str | None
+    refunded: bool
+
+
+class LateDeliveryFollowUpResponse(BaseModel):
+    """A credited decision whose proposal still waits on execution or the owner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    late_by_minutes: int = Field(ge=0)
+    incident_id: UUID
+    proposal_id: UUID
+    proposal_status: str
+    amount_vnd: int | None = Field(ge=0)
+    approval_id: UUID | None
+    next_step: Literal["EXECUTE", "AWAIT_OWNER"]
+    decided_at: datetime
+
+
+class LateDeliveryListResponse(BaseModel):
+    """*Giao trễ cần xử lý*: oldest arrival first, bounded, `truncated` disclosed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    evaluated_at: datetime
+    #: False until the owner publishes the remedy policy (`REMEDY_POLICY_UNPUBLISHED`): the
+    #: threshold is one of its figures, so nothing is measured as late and `orders` is empty.
+    policy_published: bool
+    threshold_minutes: int | None
+    staff_approval_ceiling_vnd: int | None
+    limit: int
+    orders: list[LateDeliveryItemResponse]
+    truncated: bool
+    follow_up: list[LateDeliveryFollowUpResponse]
+    follow_up_truncated: bool
+
+
+class LateDeliveryDecisionRequest(StrictRequest):
+    """*Lỗi của tiệm* or *Không phải lỗi tiệm*. No minutes and no amount: both are the server's."""
+
+    decision: Literal["STORE_FAULT", "NOT_STORE_FAULT"]
+    #: Required for `NOT_STORE_FAULT`, refused for `STORE_FAULT`.
+    reason_code: NotStoreFaultReason | None = None
+    #: A few words, required for `OTHER`; at most 120 characters, never a phone number.
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class LateDeliveryDecisionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision_id: UUID
+    order_id: UUID
+    decision: Literal["STORE_FAULT_CREDITED", "NOT_STORE_FAULT"]
+    reason_code: str | None
+    late_by_minutes: int
+    deadline_at: datetime
+    deadline_basis: str
+    delivered_at: datetime
+    incident_id: UUID | None
+    proposal_id: UUID | None
+    #: `STAFF_AUTHORIZED` (execute it on the incident) or `OWNER_APPROVAL_REQUIRED`.
+    proposal_status: str | None
+    amount_vnd: int | None
+    approval_id: UUID | None
+    owner_reasons: list[str]
+    decided_at: datetime
+    replayed: bool
+
+
+def _raise_late_delivery_error(error: Exception) -> NoReturn:
+    if isinstance(error, LateDeliveryAuthorizationError):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    if isinstance(error, OrderNotVisibleError):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order unavailable") from error
+    if isinstance(error, LateDeliveryRefused):
+        detail: dict[str, object] = {"reason_code": error.code, "decision": "DEC-042"}
+        if error.threshold_minutes is not None:
+            detail["threshold_minutes"] = error.threshold_minutes
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail) from error
+    _raise_remedy_error(error)
+
+
+_LATE_DELIVERY_ERRORS = (
+    LateDeliveryAuthorizationError,
+    LateDeliveryRefused,
+    OrderNotVisibleError,
+    RemedyAuthorizationError,
+    RemedyStateError,
+    ApprovalEnvelopeError,
+    ApprovalStateError,
+    ApprovalAuthorizationError,
+    IdempotencyConflictError,
+    StoreAccessError,
+    ValueError,
+)
+
+
+@app.get("/internal/v1/stores/{store_id}/late-deliveries", response_model=LateDeliveryListResponse)
+def list_late_deliveries(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_late_delivery_staff)],
+    limit: Annotated[int, Query(ge=1, le=LATE_DELIVERY_LIST_MAX_LIMIT)] = 50,
+    service: Annotated[LateDeliveryService | None, Depends(get_late_delivery_service)] = None,
+) -> LateDeliveryListResponse:
+    """Giao trễ cần xử lý: delivered orders late by more than the published threshold, undecided.
+
+    Measured by the server from the first promise, the customer-requested *Hẹn lại* and the
+    succeeded RETURN leg (`DEC-042`); oldest arrival first, bounded by `limit` with `truncated`.
+    Each row carries the would-be credit from the remedy probe (null on a refunded bill). Beside
+    it, `follow_up`: credited decisions still waiting on execution or the owner.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        found = service.list_late(store_id=store_id, principal=principal, limit=limit)
+    except _LATE_DELIVERY_ERRORS as error:
+        _raise_late_delivery_error(error)
+    return LateDeliveryListResponse(
+        store_id=found.store_id,
+        evaluated_at=found.evaluated_at,
+        policy_published=found.policy_published,
+        threshold_minutes=found.threshold_minutes,
+        staff_approval_ceiling_vnd=found.staff_approval_ceiling_vnd,
+        limit=found.limit,
+        orders=[
+            LateDeliveryItemResponse(
+                order_id=row.order_id,
+                ticket_number=row.ticket_number,
+                ticket_issued_on=row.ticket_issued_on,
+                customer_name=row.customer_name,
+                first_promise_at=row.first_promise_at,
+                deadline_at=row.deadline_at,
+                deadline_basis=row.deadline_basis,  # type: ignore[arg-type]
+                delivered_at=row.delivered_at,
+                late_by_minutes=row.late_by_minutes,
+                failed_attempts_before_deadline=list(row.failed_attempts_before_deadline),
+                settled_total_vnd=row.settled_total_vnd,
+                credit_vnd=row.credit_vnd,
+                credit_requires_owner=row.credit_requires_owner,
+                credit_refusal=row.credit_refusal,
+                refunded=row.refunded,
+            )
+            for row in found.orders
+        ],
+        truncated=found.truncated,
+        follow_up=[
+            LateDeliveryFollowUpResponse(
+                order_id=item.order_id,
+                ticket_number=item.ticket_number,
+                ticket_issued_on=item.ticket_issued_on,
+                late_by_minutes=item.late_by_minutes,
+                incident_id=item.incident_id,
+                proposal_id=item.proposal_id,
+                proposal_status=item.proposal_status,
+                amount_vnd=item.amount_vnd,
+                approval_id=item.approval_id,
+                next_step=item.next_step,  # type: ignore[arg-type]
+                decided_at=item.decided_at,
+            )
+            for item in found.follow_up
+        ],
+        follow_up_truncated=found.follow_up_truncated,
+    )
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/late-deliveries/{order_id}/decision",
+    response_model=LateDeliveryDecisionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def decide_late_delivery(
+    store_id: UUID,
+    order_id: UUID,
+    request: LateDeliveryDecisionRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_late_delivery_staff)],
+    service: Annotated[LateDeliveryService | None, Depends(get_late_delivery_service)] = None,
+) -> LateDeliveryDecisionResponse:
+    """Lỗi của tiệm / Không phải lỗi tiệm for one measured late delivery (`DEC-042`).
+
+    `STORE_FAULT` opens the late-delivery incident and the `LATE_DELIVERY_CREDIT` proposal with the
+    server's measured minutes and the fault attested, then the decision -- one transaction. The
+    proposal follows the existing remedy path: staff-authorised up to the published ceiling (then
+    `POST /remedy-proposals/{id}/execution`), the owner's envelope above it. `NOT_STORE_FAULT`
+    writes only the decision, with `reason_code` (a note for `OTHER`). Refusals, 422:
+    `REMEDY_POLICY_UNPUBLISHED`, `NOT_LATE`, `ALREADY_DECIDED`, `LATE_DELIVERY_NOT_MEASURABLE`,
+    the reason and note codes, and the remedy refusals as they are. No `If-Match`: the decision
+    changes nothing on the order row, and one per order is enforced under the order's row lock.
+    """
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
+    try:
+        stored = service.decide(
+            store_id=store_id,
+            order_id=order_id,
+            decision=(
+                LateDeliveryDecision.STORE_FAULT_CREDITED
+                if request.decision == "STORE_FAULT"
+                else LateDeliveryDecision.NOT_STORE_FAULT
+            ),
+            reason=request.reason_code,
+            note=request.note,
+            idempotency_key=idempotency_key,
+            principal=principal,
+        )
+    except _LATE_DELIVERY_ERRORS as error:
+        _raise_late_delivery_error(error)
+    return LateDeliveryDecisionResponse(
+        decision_id=stored.decision_id,
+        order_id=stored.order_id,
+        decision=stored.decision,  # type: ignore[arg-type]
+        reason_code=stored.reason_code,
+        late_by_minutes=stored.late_by_minutes,
+        deadline_at=stored.deadline_at,
+        deadline_basis=stored.deadline_basis,
+        delivered_at=stored.delivered_at,
+        incident_id=stored.incident_id,
+        proposal_id=stored.proposal_id,
+        proposal_status=stored.proposal_status,
+        amount_vnd=stored.amount_vnd,
+        approval_id=stored.approval_id,
+        owner_reasons=list(stored.owner_reasons),
+        decided_at=stored.decided_at,
+        replayed=stored.replayed,
+    )
 
 
 if WEB_DIRECTORY.is_dir():

@@ -116,6 +116,8 @@ class OmissionReason(StrEnum):
     TOO_LITTLE_HISTORY = "TOO_LITTLE_HISTORY"
     #: No storage policy is published: there is no free-storage period to run out.
     STORAGE_POLICY_UNPUBLISHED = "STORAGE_POLICY_UNPUBLISHED"
+    #: No remedy policy is published: there is no late threshold and no credit to decide.
+    REMEDY_POLICY_UNPUBLISHED = "REMEDY_POLICY_UNPUBLISHED"
 
 
 #: The reason in the owner's words, shown with the omitted line. Fixed text, part of the template.
@@ -131,6 +133,7 @@ _OMISSION_NOTE_VI: Final = {
     OmissionReason.DAY_NOT_OVER: "chỉ so sánh sau giờ đóng cửa",
     OmissionReason.TOO_LITTLE_HISTORY: "chưa đủ 3 tuần có số liệu để so sánh",
     OmissionReason.STORAGE_POLICY_UNPUBLISHED: "chủ tiệm chưa công bố quy định lưu kho",
+    OmissionReason.REMEDY_POLICY_UNPUBLISHED: "chủ tiệm chưa công bố quy định bồi hoàn",
 }
 
 #: What each omissible line is about, in the owner's words.
@@ -751,6 +754,7 @@ _SILENT_IN_ATTENTION: Final = frozenset(
         OmissionReason.SOURCE_NOT_BUILT,
         OmissionReason.LIVE_ONLY_TODAY,
         OmissionReason.STORAGE_POLICY_UNPUBLISHED,
+        OmissionReason.REMEDY_POLICY_UNPUBLISHED,
     }
 )
 

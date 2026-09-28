@@ -62,6 +62,7 @@ import {
   statusPill,
   techDetails,
 } from "../ui/kit.js";
+import { lateReportTile } from "../ui/lateDelivery.js";
 import { captureTiles, machineSection, marginTile, monthSection } from "../ui/shopReport.js";
 import { KIND_LABEL } from "./remedies.js";
 
@@ -352,6 +353,8 @@ function tiles(summary) {
       ratioTile(kpis.REWASH, "đơn vào kiểm tra"),
       ratioTile(kpis.COMPLAINTS, "đơn hoàn tất"),
       remediesTile(kpis.REMEDIES_EXECUTED),
+      // LATE-CREDIT-002 (DEC-042, report-v4): deliveries measured late, by what was decided.
+      lateReportTile(summary.late_deliveries),
       // SHOP-CAPTURE-001: what the shop measured, and the latest month's margin (or why not).
       ...captureTiles(summary.capture),
       months.length ? marginTile(months[months.length - 1]) : null,

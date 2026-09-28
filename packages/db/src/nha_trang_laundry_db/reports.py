@@ -74,10 +74,20 @@ that day; one a microsecond after midnight is in the next.
   shop paid a hired vehicle belongs in Sổ thu chi too; the console says so where the figure is.
 * Labour minutes per order are not captured, by decision (`DEC-038`): wages enter through Sổ thu
   chi.
+
+**Late deliveries** (`LATE-CREDIT-002`, `DEC-042`; since `report-v4`): the orders whose laundry
+reached the customer in the window (the succeeded `RETURN` leg, as the trip figures read it) and
+that carry a promise, measured by `late_delivery.late_delivery_clock` -- the first promise, moved
+only by a customer-requested *Hẹn lại* -- against the published remedy threshold. Of those late by
+more than it: decided as the shop's fault (and of those, credited: the credit executed, its value
+summed by PostgreSQL), not the shop's fault, and not yet decided. The threshold is one of the
+owner's published remedy figures, so the block names the version it used; with no remedy policy
+published it is `UNAVAILABLE` with that reason, never zeros.
 """
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import StrEnum
@@ -85,6 +95,7 @@ from typing import Any, Final
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from nha_trang_laundry_domain import late_delivery as late_delivery_module
 from nha_trang_laundry_domain.catalog import SlaOutcome
 from nha_trang_laundry_domain.orders import PRODUCTION_SEQUENCE
 from nha_trang_laundry_domain.promise import met_first_promise
@@ -100,7 +111,9 @@ from nha_trang_laundry_domain.shop_capture import (
 from nha_trang_laundry_domain.sla import ProductionSlaPolicy, evaluate_production_sla
 
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from nha_trang_laundry_db.late_deliveries import LATE_POPULATION_SQL, late_orders_in
 from nha_trang_laundry_db.query_version import QueryVersion, query_version
+from nha_trang_laundry_db.remedies import read_published_remedy_policy
 from nha_trang_laundry_db.settlement import BUSINESS_TIMEZONE
 from nha_trang_laundry_db.shadow_console import sla_board_query_version
 from nha_trang_laundry_db.shop_capture import CategoryTotal, expense_totals
@@ -122,7 +135,9 @@ REPORT_MAX_DAYS: Final = 92
 #: `capture` and `months[]` (`SHOP-CAPTURE-001`, `DEC-038`) -- and money in from the payment ledger,
 #: split by method (`PAYMENT-001`, `DEC-035`). All four are in this version, so it carries its own
 #: identifier, and every statement they add is hashed into the digest.
-REPORT_QUERY_IDENTIFIER: Final = "report-v3"
+#: `v4` (`LATE-CREDIT-002`, `DEC-042`): the late-delivery block -- measured late deliveries and
+#: what was decided about them -- with its two statements and the clock's identity in the digest.
+REPORT_QUERY_IDENTIFIER: Final = "report-v4"
 
 #: The production sequence the rewash rule compares positions in, as the SQL receives it.
 _SEQUENCE: Final = tuple(status.value for status in PRODUCTION_SEQUENCE)
@@ -379,6 +394,24 @@ _MONTH_MONEY_SQL = """
 """
 
 
+#: `LATE-CREDIT-002`. What was decided about the late deliveries the clock found, counted and
+#: summed by PostgreSQL over the ids the domain measured as late.
+_LATE_DECISIONS_SQL = """
+    SELECT count(*)::bigint,
+           count(d.id) FILTER (WHERE d.decision = 'STORE_FAULT_CREDITED')::bigint,
+           count(d.id) FILTER (
+               WHERE d.decision = 'STORE_FAULT_CREDITED' AND p.status = 'EXECUTED'
+           )::bigint,
+           coalesce(sum(p.amount_vnd) FILTER (WHERE p.status = 'EXECUTED'), 0)::bigint,
+           count(d.id) FILTER (WHERE d.decision = 'NOT_STORE_FAULT')::bigint,
+           count(*) FILTER (WHERE d.id IS NULL)::bigint
+    FROM unnest(%(late)s::uuid[]) AS late(order_id)
+    LEFT JOIN late_delivery_decisions d
+      ON d.order_id = late.order_id AND d.store_id = %(store)s
+    LEFT JOIN remedy_proposals p ON p.id = d.remedy_proposal_id
+"""
+
+
 def report_query_version(policy: ProductionSlaPolicy) -> QueryVersion:
     """The version that travels with every report figure.
 
@@ -406,6 +439,11 @@ def report_query_version(policy: ProductionSlaPolicy) -> QueryVersion:
         "|".join(category.value for category in ExpenseCategory),
         "|".join(category.value for category in CORE_MARGIN_CATEGORIES),
         "per_order_vnd:half-up;cycle_minutes:round-numeric",
+        # LATE-CREDIT-002: the delivered population, the decisions statement and the clock's rule
+        # (the domain module's own source, so a change to how lateness is measured moves this).
+        LATE_POPULATION_SQL,
+        _LATE_DECISIONS_SQL,
+        inspect.getsource(late_delivery_module),
     )
 
 
@@ -519,6 +557,30 @@ class MonthFigures:
 
 
 @dataclass(frozen=True, slots=True)
+class LateDeliveryFigures:
+    """`LATE-CREDIT-002`: the window's delivered orders measured late, and what was decided.
+
+    `status` is `UNAVAILABLE` (with `reason`, and every count `None`) while no remedy policy is
+    published: the threshold is one of its figures, and a count measured against no threshold
+    would be a guess printed as a fact.
+    """
+
+    status: str
+    reason: str | None
+    threshold_minutes: int | None
+    remedy_policy_version: int | None
+    #: Delivered in the window with a promise: the population the clock measured.
+    measured: int | None
+    late: int | None
+    store_fault: int | None
+    #: Of `store_fault`, the credits executed, and their value summed by PostgreSQL.
+    credited: int | None
+    credited_vnd: int | None
+    not_store_fault: int | None
+    undecided: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class StoreReport:
     store_id: UUID
     window: ReportWindow
@@ -533,6 +595,8 @@ class StoreReport:
     #: `SHOP-CAPTURE-001`.
     capture: CaptureFigures
     months: tuple[MonthFigures, ...]
+    #: `LATE-CREDIT-002` (`report-v4`).
+    late_deliveries: LateDeliveryFigures
 
 
 def validate_window(from_date: date, to_date: date, *, today: date) -> ReportWindow:
@@ -671,7 +735,49 @@ class ReportRepository:
             evaluated_at=as_of,
             capture=capture,
             months=months,
+            late_deliveries=_late_deliveries(cursor, parameters),
         )
+
+
+def _late_deliveries(cursor: Any, parameters: dict[str, object]) -> LateDeliveryFigures:
+    """The window's late deliveries. The clock is the domain's; the counts and sums SQL's."""
+    published = read_published_remedy_policy(cursor)
+    if published is None:
+        return LateDeliveryFigures(
+            status="UNAVAILABLE",
+            reason="REMEDY_POLICY_UNPUBLISHED",
+            threshold_minutes=None,
+            remedy_policy_version=None,
+            measured=None,
+            late=None,
+            store_fault=None,
+            credited=None,
+            credited_vnd=None,
+            not_store_fault=None,
+            undecided=None,
+        )
+    threshold = published.policy.late_delivery_threshold_minutes
+    cursor.execute(LATE_POPULATION_SQL, parameters)
+    population = [(row[0], row[1]) for row in cursor.fetchall()]
+    late = late_orders_in(cursor, population, threshold_minutes=threshold)
+    cursor.execute(_LATE_DECISIONS_SQL, {"store": parameters["store"], "late": list(late)})
+    counted = cursor.fetchone()
+    late_count, store_fault, credited, credited_vnd, not_store_fault, undecided = (
+        int(value) for value in counted
+    )
+    return LateDeliveryFigures(
+        status="COMPLETE",
+        reason=None,
+        threshold_minutes=threshold,
+        remedy_policy_version=published.version,
+        measured=len(population),
+        late=late_count,
+        store_fault=store_fault,
+        credited=credited,
+        credited_vnd=credited_vnd,
+        not_store_fault=not_store_fault,
+        undecided=undecided,
+    )
 
 
 def _capture(cursor: Any, parameters: dict[str, object]) -> CaptureFigures:
@@ -844,6 +950,7 @@ __all__ = [
     "REPORT_READ_ROLES",
     "CaptureFigures",
     "DataQuality",
+    "LateDeliveryFigures",
     "MachineCycles",
     "MonthFigures",
     "ReportAuthorizationError",

@@ -462,22 +462,8 @@ class RemedyProposalRepository:
         at = datetime.now(UTC)
         rewash_closes = _window_close(facts, days=policy.free_rewash_window_days)
         defect_closes = _window_close(facts, hours=policy.defect_report_window_hours)
-        credit: int | None = None
-        if facts.expects_return_leg and facts.return_leg_succeeded:
-            # Priced through the domain rather than multiplied here, so the number the form shows is
-            # the number a proposal would produce. No arithmetic on money outside the domain.
-            probe = evaluate_remedy(
-                policy=policy,
-                facts=facts,
-                request=RemedyRequest(
-                    kind=RemedyKind.LATE_DELIVERY_CREDIT,
-                    store_fault_attested=True,
-                    attested_late_by_minutes=policy.late_delivery_threshold_minutes + 1,
-                ),
-                requested_at=at,
-                committed=prior,
-            )
-            credit = probe.amount_vnd if isinstance(probe, RemedyAuthorized) else None
+        probe = late_delivery_credit_probe(policy, facts, prior, at)
+        credit = probe.amount_vnd if isinstance(probe, RemedyAuthorized) else None
         # Per line, the terms `evaluate_remedy` will apply -- the same domain function, the same
         # committed-total filter -- so the form's "staff can approve" is the server's answer.
         committed_by_line = _read_line_commitments(cursor, order_id=record.order_id)
@@ -1334,6 +1320,88 @@ def spend_reserved_remedy_credits(
     return tuple(spent)
 
 
+# --- LATE-CREDIT-002 (DEC-042): the would-be credit, as the options read computes it -------------
+
+
+def late_delivery_credit_probe(
+    policy: RemedyPolicy,
+    facts: RemedyOrderFacts,
+    prior: RemedyCommitments,
+    at: datetime,
+) -> RemedyAuthorized | RemedyRefused | None:
+    """What a `LATE_DELIVERY_CREDIT` proposal on this order would come to, asked of the domain.
+
+    One function for `RemedyOptions` and the late-delivery list (`LATE-CREDIT-002`), so the figure
+    either screen shows is the figure a proposal would produce. The lateness is stated as one
+    minute past the published threshold: the probe asks about the money, not about the clock.
+    `None` when no delivery was recorded that could have been late.
+    """
+
+    if not (facts.expects_return_leg and facts.return_leg_succeeded):
+        return None
+    # Priced through the domain rather than multiplied here, so the number the form shows is the
+    # number a proposal would produce. No arithmetic on money outside the domain.
+    outcome = evaluate_remedy(
+        policy=policy,
+        facts=facts,
+        request=RemedyRequest(
+            kind=RemedyKind.LATE_DELIVERY_CREDIT,
+            store_fault_attested=True,
+            attested_late_by_minutes=policy.late_delivery_threshold_minutes + 1,
+        ),
+        requested_at=at,
+        committed=prior,
+    )
+    assert isinstance(outcome, (RemedyAuthorized, RemedyRefused))
+    return outcome
+
+
+@dataclass(frozen=True, slots=True)
+class LateCreditPreview:
+    """One order's would-be late-delivery credit, read the way `RemedyOptions` reads it."""
+
+    #: The settled total the 10% is taken of; `None` when nothing was settled or it was refunded.
+    settled_total_vnd: int | None
+    refunded: bool
+    #: The domain's figure; `None` on a refunded bill, with nothing settled, or when a credit was
+    #: already proposed or paid for this order.
+    credit_vnd: int | None
+    #: The figure is above the published staff limit, so the owner must approve it.
+    requires_owner: bool
+    #: The domain's refusal code when there is no figure, else `None`.
+    refusal: str | None
+
+
+def read_late_credit_preview(
+    cursor: Any, *, order_id: UUID, policy: RemedyPolicy, at: datetime
+) -> LateCreditPreview:
+    """The late-delivery credit one order would earn now. Reads only; decides nothing."""
+
+    record = _read_order_record(cursor, order_id=order_id)
+    prior = _read_commitments(cursor, order_id=order_id, order_line_id=None)
+    probe = late_delivery_credit_probe(policy, record.facts, prior, at)
+    refunded = record.facts.refunded
+    authorized = isinstance(probe, RemedyAuthorized) and not refunded
+    return LateCreditPreview(
+        settled_total_vnd=record.facts.settled_total_vnd,
+        refunded=refunded,
+        # `DEC-004` / `DEC-042`: none on a refunded bill, whatever a partial settlement row says.
+        credit_vnd=probe.amount_vnd if authorized and isinstance(probe, RemedyAuthorized) else None,
+        requires_owner=authorized
+        and isinstance(probe, RemedyAuthorized)
+        and probe.requires_owner_approval,
+        refusal=(
+            "ORDER_REFUNDED"
+            if refunded
+            else probe.reason_code
+            if isinstance(probe, RemedyRefused)
+            else "REMEDY_DELIVERY_NOT_RECORDED"
+            if probe is None
+            else None
+        ),
+    )
+
+
 # --- reading the order's recorded facts ----------------------------------------------------------
 
 
@@ -2030,6 +2098,7 @@ __all__ = [
     "REMEDY_PROPOSAL_RECORDED",
     "REMEDY_ROLES",
     "REWASH_COMMANDED",
+    "LateCreditPreview",
     "PublishedRemedyPolicy",
     "RemedyAuthorizationError",
     "RemedyCreditRedemptionCommand",
@@ -2043,7 +2112,9 @@ __all__ = [
     "StoredCreditRedemption",
     "StoredRemedyExecution",
     "StoredRemedyProposal",
+    "late_delivery_credit_probe",
     "publish_remedy_policy",
+    "read_late_credit_preview",
     "read_published_remedy_policy",
     "read_reserved_remedy_credits",
     "spend_reserved_remedy_credits",

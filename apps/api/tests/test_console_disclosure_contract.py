@@ -966,8 +966,11 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # VIETQR-001 (round 8, DEC-041): 554 + 5 = 559, none retired. The new "Tự xác nhận chuyển
     #   khoản" gaps entry's missing/blockedBy/today, the receipt ⓘ's QR hint, and ui/vietqr.js's
     #   "Trong lúc chờ…" hint under the unpublished-account note.
-    # All three round-8 console slices merged: 554 + 3 + 21 + 5 = 583.
-    assert sum(counts.values()) == _registry()["total"] == 583
+    # LATE-CREDIT-002 (round 8, DEC-042): 554 + 6 = 560 -- four REASON_NOTE refusals (NOT_LATE,
+    #   ALREADY_DECIDED, LATE_DELIVERY_NOT_MEASURABLE, LATE_DELIVERY_REASON_REQUIRED) and two hints
+    #   on Giao trễ cần xử lý; the FR-RPT-006 gap's three texts re-keyed (now the self-collect gap).
+    # All four round-8 console slices merged: 554 + 3 + 21 + 5 + 6 = 589.
+    assert sum(counts.values()) == _registry()["total"] == 589
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

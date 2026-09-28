@@ -76,6 +76,11 @@ from nha_trang_laundry_db.invoice_requests import (
     INVOICE_WAITING_OVER_SQL,
     InvoiceRequestRepository,
 )
+from nha_trang_laundry_db.late_deliveries import (
+    LATE_CANDIDATES_SQL,
+    LATE_DELIVERY_ROLES,
+    LateDeliveryRepository,
+)
 from nha_trang_laundry_db.pickup_reminders import (
     REMINDER_READ_ROLES,
     PickupReminderRepository,
@@ -175,6 +180,8 @@ def daily_summary_template_version() -> QueryVersion:
         # The invoice requests' waiting count (`EINVOICE-REQUEST-001`).
         INVOICE_WAITING_OVER_SQL,
         str(INVOICE_STALE_DAYS),
+        # The late-delivery list's statement (`LATE-CREDIT-002`).
+        LATE_CANDIDATES_SQL,
     )
 
 
@@ -408,9 +415,10 @@ def attention_facts(
     The three round-8 lists (late deliveries, reminders, invoices) are wired at their integration;
     until then they answer `SOURCE_NOT_BUILT`, which the template never lists to the owner.
     """
-    not_built = Unavailable(OmissionReason.SOURCE_NOT_BUILT, "ROUND-8")
     return AttentionFacts(
-        late_deliveries_undecided=not_built,
+        late_deliveries_undecided=late_deliveries_undecided(
+            cursor, store_id=store_id, principal=principal, live=live
+        ),
         reminders_due=reminders_due(
             cursor, store_id=store_id, principal=principal, live=live, as_of=as_of
         ),
@@ -432,6 +440,23 @@ def attention_facts(
         ),
         missing_costs=missing_costs(cursor, store_id=store_id, day=day),
     )
+
+
+def late_deliveries_undecided(
+    cursor: Any, *, store_id: UUID, principal: StaffPrincipal, live: bool
+) -> int | Unavailable:
+    """`LATE-CREDIT-002`: deliveries late beyond the published threshold with no decision yet."""
+    if not live:
+        return Unavailable(OmissionReason.LIVE_ONLY_TODAY, "LATE-CREDIT-002")
+    if not principal.roles & LATE_DELIVERY_ROLES:
+        return Unavailable(OmissionReason.ROLE_NOT_PERMITTED, "LATE-CREDIT-002")
+    counted = LateDeliveryRepository.count_undecided(cursor, store_id=store_id, principal=principal)
+    if counted is None:
+        return Unavailable(OmissionReason.REMEDY_POLICY_UNPUBLISHED, "LATE-CREDIT-002")
+    count, truncated = counted
+    if truncated:
+        return Unavailable(OmissionReason.SOURCE_TRUNCATED, "LATE-CREDIT-002")
+    return count
 
 
 def reminders_due(
@@ -667,6 +692,7 @@ __all__ = [
     "day_figures",
     "fee_soon_figures",
     "invoices_waiting",
+    "late_deliveries_undecided",
     "missing_costs",
     "reminders_due",
     "waiting_pickup_figures",

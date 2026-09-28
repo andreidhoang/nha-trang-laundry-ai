@@ -287,6 +287,16 @@ DECLARED_CONTROLS = (
     "today.summary-info",
     "today.summary-copy",
     "today.summary-share",
+    # LATE-CREDIT-002 (DEC-042): Giao trễ from the navigation and from Hôm nay's count, the two
+    # buttons, the reason picker with its note, and the credited row's link to its complaint.
+    "shell.nav.late-deliveries",
+    "today.late-link",
+    "late.fault",
+    "late.not-fault",
+    "late.reason",
+    "late.note",
+    "late.reason-submit",
+    "late.follow-link",
     # VIETQR-001 (DEC-041): "Mã chuyển khoản" on Đơn hàng switches the search to a transfer code.
     "orders.lookup-code-mode",
     # EINVOICE-REQUEST-001 (DEC-040): Khách cần hóa đơn on an order and on an account month (the
@@ -3911,12 +3921,12 @@ def scenario_report(console: Console) -> None:
 
     ok("two orders more were created", delta("ORDERS_CREATED")[0] == 2, delta("ORDERS_CREATED"))
     ok(
-        "one more completed, a count with no denominator (report-v3)",
+        "one more completed, a count with no denominator (report-v4)",
         delta("ORDERS_COMPLETED") == (1, 0) and after["ORDERS_COMPLETED"]["denominator"] is None,
         delta("ORDERS_COMPLETED"),
     )
     ok(
-        "one more cancelled, a count with no denominator (report-v3)",
+        "one more cancelled, a count with no denominator (report-v4)",
         delta("ORDERS_CANCELLED") == (1, 0) and after["ORDERS_CANCELLED"]["denominator"] is None,
         delta("ORDERS_CANCELLED"),
     )
@@ -3954,7 +3964,7 @@ def scenario_report(console: Console) -> None:
     ok(
         "every figure carries the rule's version, and the on-time figure says what it assumed",
         len({kpi["query_version"] for kpi in after.values()}) == 1
-        and next(iter(after.values()))["query_version"].startswith("report-v3:")
+        and next(iter(after.values()))["query_version"].startswith("report-v4:")
         and isinstance(assumed, int)
         and on_time["data_quality"] == ("RULE_ASSUMED" if assumed else "COMPLETE")
         and all(
@@ -8677,6 +8687,433 @@ def scenario_vietqr(console: Console) -> None:
         )
 
 
+# --- LATE-CREDIT-002 (DEC-042): late deliveries, measured by the server ---------------------------
+
+
+def _publish_remedies() -> subprocess.CompletedProcess[str]:
+    """The owner's remedy figures (`DEC-004`), published with the owner's own script."""
+
+    owner = sql("select id from staff_users where oidc_subject='demo-owner'")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return subprocess.run(
+        [
+            sys.executable,
+            os.path.join(root, "scripts", "publish_remedy_policy.py"),
+            "--database-url",
+            arguments.database_url,
+            "--actor-id",
+            owner,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+
+
+def _promise_back(order_id: str, minutes: int) -> str:
+    """HARNESS STEP (documented, `LATE-CREDIT-002`): Nhận đồ happened earlier than it did, so the
+    promise it made is `minutes` minutes in the past now. The walk cannot wait hours for a
+    promise to pass, and the first promise is immutable by `0057`'s trigger -- which is exactly the
+    guarantee `DEC-042` rests on, so it is lifted for this one statement only, inside one
+    transaction, by the table's owner on the migration URL, and restored before the transaction
+    ends. The first promise, what the customer was told and the acceptance stamp move back by the
+    same interval (the order's timeline shifts; nothing about it is rewritten), the row version
+    advances by one as `0036`'s projection guard requires, and no event is written. Everything the
+    software decides -- the deadline, the minutes, the list, the credit -- is computed by the
+    server from it."""
+
+    sql(
+        "alter table orders disable trigger orders_promise_guard; "
+        "update orders set "
+        f"production_accepted_at = production_accepted_at - (promised_ready_at - "
+        f"(now() - make_interval(mins => {minutes}))), "
+        f"current_promise_at = current_promise_at - (promised_ready_at - "
+        f"(now() - make_interval(mins => {minutes}))), "
+        f"promised_ready_at = now() - make_interval(mins => {minutes}), "
+        f"row_version = row_version + 1 where id = '{order_id}'; "
+        "alter table orders enable trigger orders_promise_guard"
+    )
+    return stored(order_id, "promised_ready_at")
+
+
+def _past_failed_return(order_id: str, minutes_before_deadline: int) -> str:
+    """HARNESS STEP (documented): a failed delivery attempt made `minutes_before_deadline` minutes
+    before the promise -- the driver went, the customer was not home. The walk cannot record a
+    trip in the past through the route (it stamps the press), and the legs table is append-only,
+    so the earlier trip is inserted as its row: the same columns the route writes, under the
+    operator's name. It carries no event; the list reads the rows."""
+
+    return sql(
+        "insert into delivery_legs (id, store_id, order_id, leg_kind, outcome, recorded_by, "
+        "recorded_at, correlation_id) select gen_random_uuid(), o.store_id, o.id, 'RETURN', "
+        "'FAILED', s.id, o.promised_ready_at - "
+        f"make_interval(mins => {minutes_before_deadline}), gen_random_uuid() "
+        f"from orders o, staff_users s where o.id = '{order_id}' "
+        "and s.oidc_subject = 'demo-operations'"
+    )
+
+
+def _delivery_to_door(console: Console, *, late_minutes: int | None, failed: bool = False) -> str:
+    """A delivery order taken at the counter under the published turnaround policy, washed, paid,
+    handed to the courier and delivered now. With `late_minutes`, the documented harness step
+    first puts its promise that many minutes in the past (and, with `failed`, an earlier failed
+    trip an hour before the promise)."""
+
+    order = console.build_order(kg="5", mode="PICKUP_AND_RETURN", distance_m=1500, stop="created")
+    order_id = order["order_id"]
+    console.step(order_id, "RECEIVE")
+    if late_minutes is not None:
+        _promise_back(order_id, late_minutes)
+    for step in ("START_WASH", "QUALITY_CHECK", "MARK_READY"):
+        console.call(
+            "POST",
+            f"/internal/v1/orders/{order_id}/steps",
+            {"step": step},
+            if_match=console.current_version(order_id, order["row_version"]),
+        )
+    console.pay(order_id)
+    console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/steps",
+        {"step": "RELEASE"},
+        if_match=console.current_version(order_id, order["row_version"]),
+    )
+    if failed:
+        _past_failed_return(order_id, 60)
+    console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/delivery-legs",
+        {"leg_kind": "RETURN", "outcome": "SUCCEEDED"},
+    )
+    return order_id
+
+
+def _measured_minutes(order_id: str) -> str:
+    """An independent reading of the lateness, in SQL: whole minutes from the first promise to the
+    succeeded RETURN leg, floored. The walk compares the server's figure with it."""
+
+    return sql(
+        "select floor(extract(epoch from (l.recorded_at - o.promised_ready_at)) / 60)::int "
+        "from orders o join delivery_legs l on l.order_id = o.id "
+        "and l.leg_kind = 'RETURN' and l.outcome = 'SUCCEEDED' "
+        f"where o.id = '{order_id}'"
+    )
+
+
+def _late_report(console: Console) -> dict[str, Any]:
+    today = sql("select (now() at time zone 'Asia/Ho_Chi_Minh')::date")
+    read = console.call(
+        "GET", f"/internal/v1/stores/{STORE}/reports/summary?from={today}&to={today}"
+    )
+    return (read["body"] or {}).get("late_deliveries") or {}
+
+
+def _open_late(console: Console) -> None:
+    """Giao trễ cần xử lý, reached as a person reaches it: the sidebar, or "Thêm" on a phone."""
+
+    console.open("#/", settle=1400)
+    link = console.page.locator("nav a", has_text="Giao trễ").first
+    if link.count() and not link.is_visible():
+        console.page.locator("nav a", has_text="Thêm").first.click()
+        console.page.wait_for_timeout(700)
+        link = console.page.locator("main a[data-nav='/late-deliveries']").first
+    if link.count():
+        link.click()
+        touched("shell.nav.late-deliveries")
+        console.page.wait_for_timeout(1800)
+    else:
+        console.open("#/late-deliveries", settle=1800)
+
+
+def scenario_late_delivery(console: Console) -> None:
+    """LATE-CREDIT-002 (DEC-042): before the owner publishes the remedy policy nothing is measured
+    and deciding refuses by name; after, a delivery on time is not listed, one 3 hours late is --
+    with the server's minutes and the failed trip before the deadline -- and "Lỗi của tiệm"
+    records the complaint and the 10% credit at those minutes, which the existing remedy path then
+    pays; another late one is "Không phải lỗi tiệm" with a reason and leaves the list; the report
+    counts both."""
+
+    head("LD", "GIAO TRỄ — before the owner publishes the remedy policy (DEC-042)")
+    if not READS_DATABASE or not arguments.database_url:
+        note(
+            "--database-url is required: the remedy policy is published with the owner's own "
+            "script, and the promise is moved by a documented harness step"
+        )
+        FAIL.append("late_delivery scenario needs --database-url")
+        return
+    turnaround_in_force = sql(
+        "select coalesce((select coalesce(payload->>'withdrawn', 'false') from "
+        "configuration_versions where config_type='TURNAROUND_POLICY' and lifecycle='PUBLISHED' "
+        "order by version desc limit 1), 'none')"
+    )
+    published_turnaround = False
+    if turnaround_in_force != "false":
+        # The promise is what the clock measures from: a stack that has not published the
+        # turnaround policy gets it from the owner's script here, and the reversal at the end.
+        published = _publish_turnaround("--tet-dates", _TET_FIXTURE)
+        published_turnaround = published.returncode == 0
+        note(f"turnaround policy published for this walk ({published.stdout.strip()[-60:]})")
+    remedy_published = sql(
+        "select count(*) from configuration_versions where config_type='REMEDY_POLICY'"
+    ) not in ("", "0")
+    console.sign_in("demo-operations")
+    on_time = _delivery_to_door(console, late_minutes=None)
+    store_fault = _delivery_to_door(console, late_minutes=180, failed=True)
+    not_fault = _delivery_to_door(console, late_minutes=240)
+    ok(
+        "a delivery order taken at Nhận đồ carries its promise, like a walk-in",
+        all(stored(order, "promised_ready_at") for order in (on_time, store_fault, not_fault)),
+        [stored(order, "promised_ready_at") for order in (on_time, store_fault, not_fault)],
+    )
+    ok(
+        "all three reached the customer (a succeeded RETURN leg each)",
+        sql(
+            "select count(*) from delivery_legs where leg_kind='RETURN' and outcome='SUCCEEDED' "
+            f"and order_id in ('{on_time}','{store_fault}','{not_fault}')"
+        )
+        == "3",
+    )
+    if remedy_published:
+        # No withdrawal exists for the remedy policy, so a stack that pre-published it cannot show
+        # the refusal. That is the stack's defect, stated rather than passed over.
+        FAIL.append(
+            "late_delivery: the stack pre-published the remedy policy, so the refusal before "
+            "publication cannot be shown (run on a stack that leaves REMEDY_POLICY to this walk)"
+        )
+    else:
+        listed = console.call("GET", f"/internal/v1/stores/{STORE}/late-deliveries")
+        ok(
+            "before publication the list measures nothing and says the owner has not published",
+            listed["status"] == 200
+            and (listed["body"] or {}).get("policy_published") is False
+            and (listed["body"] or {}).get("orders") == [],
+            listed["text"][:160],
+        )
+        refused = console.call(
+            "POST",
+            f"/internal/v1/stores/{STORE}/late-deliveries/{store_fault}/decision",
+            {"decision": "STORE_FAULT"},
+        )
+        ok(
+            "and deciding is refused by name, REMEDY_POLICY_UNPUBLISHED, with nothing written",
+            refused["status"] == 422
+            and "REMEDY_POLICY_UNPUBLISHED" in refused["text"]
+            and sql("select count(*) from late_delivery_decisions") in ("0", ""),
+            refused["text"][:160],
+        )
+        _open_late(console)
+        ok(
+            "and the screen says so in one line, with no row",
+            "chưa công bố mức bồi hoàn" in console.text()
+            and console.page.locator("[data-late]").count() == 0,
+            console.text()[:160],
+        )
+        console.sign_in("demo-owner")
+        unavailable = _late_report(console)
+        ok(
+            "the report's late-delivery block is unavailable, with the reason, not zeros",
+            unavailable.get("status") == "UNAVAILABLE"
+            and unavailable.get("reason") == "REMEDY_POLICY_UNPUBLISHED"
+            and unavailable.get("late") is None,
+            unavailable,
+        )
+        publish = _publish_remedies()
+        ok(
+            "the owner publishes the remedy policy with the script",
+            publish.returncode == 0 and "remedy policy" in publish.stdout,
+            (publish.stdout + publish.stderr)[-200:],
+        )
+
+    head("LD2", "GIAO TRỄ — measured by the server, one tap each way")
+    console.sign_in("demo-owner")
+    before = _late_report(console)
+    console.sign_in("demo-operations")
+    measured = _measured_minutes(store_fault)
+    listed = console.call("GET", f"/internal/v1/stores/{STORE}/late-deliveries")
+    rows = {row["order_id"]: row for row in (listed["body"] or {}).get("orders", [])}
+    ok(
+        "the delivery on time is not listed",
+        listed["status"] == 200 and on_time not in rows,
+        list(rows)[:4],
+    )
+    row = rows.get(store_fault) or {}
+    ok(
+        "the one 3 hours late is, with the server's minutes (equal to an independent reading)",
+        str(row.get("late_by_minutes")) == measured and 180 <= int(measured or 0) <= 190,
+        (row.get("late_by_minutes"), measured),
+    )
+    ok(
+        "with the failed trip before the deadline, and the would-be credit from the remedy rules",
+        len(row.get("failed_attempts_before_deadline") or []) == 1
+        and isinstance(row.get("credit_vnd"), int)
+        and row["credit_vnd"] > 0,
+        row,
+    )
+    console.open("#/", settle=2200)
+    tile = console.page.locator("[data-queue=late-deliveries]")
+    ok(
+        "Hôm nay counts the late deliveries to decide and links to the list",
+        tile.count() == 1 and (tile.get_attribute("href") or "").endswith("#/late-deliveries"),
+        tile.inner_text().replace("\n", " | ") if tile.count() else console.text()[:160],
+    )
+    if tile.count():
+        tile.click()
+        touched("today.late-link")
+        console.page.wait_for_timeout(1800)
+    else:
+        _open_late(console)
+    entry = console.page.locator(f"#late-list [data-late='{store_fault}']")
+    entry_text = entry.first.inner_text() if entry.count() else ""
+    ok(
+        "the screen shows hẹn → giao, trễ 3 giờ, the failed trip, and the credit on its button",
+        entry.count() == 1
+        and "Trễ 3 giờ" in entry_text
+        and "không gặp khách" in entry_text
+        and "Lỗi của tiệm — giảm" in entry_text
+        and console.page.locator(f"#late-list [data-late='{on_time}']").count() == 0,
+        entry_text.replace("\n", " | ")[:200],
+    )
+    answers = console.press_capturing(
+        console.page.locator(f"button[data-late-fault='{store_fault}']"), "/decision"
+    )
+    touched("late.fault")
+    console.page.wait_for_timeout(1500)
+    decided = answers[0] if answers else {"status": 0, "body": None, "text": "no call"}
+    body = decided["body"] or {}
+    ok(
+        "Lỗi của tiệm records the shop's fault at the server's minutes",
+        decided["status"] == 201
+        and body.get("decision") == "STORE_FAULT_CREDITED"
+        and str(body.get("late_by_minutes")) == measured,
+        decided["text"][:200],
+    )
+    ok(
+        "in one transaction: the complaint, the LATE_DELIVERY_CREDIT proposal at those minutes "
+        "with the fault attested, and the decision",
+        sql(
+            "select count(*) from late_delivery_decisions d "
+            "join remedy_proposals p on p.id = d.remedy_proposal_id "
+            "join customer_incidents i on i.id = d.incident_id "
+            f"where d.order_id = '{store_fault}' and p.kind = 'LATE_DELIVERY_CREDIT' "
+            f"and p.attested_late_by_minutes = {measured or 0} and p.store_fault_attested "
+            "and p.amount_vnd = " + str(row.get("credit_vnd") or 0)
+        )
+        == "1",
+    )
+    follow = console.page.locator(f"[data-late-follow='{store_fault}'] a")
+    ok(
+        "the row moves to 'Đã ghi lỗi của tiệm' with Cấp giảm trừ on its complaint",
+        console.page.locator(f"#late-list [data-late='{store_fault}']").count() == 0
+        and follow.count() == 1
+        and "Cấp giảm trừ" in follow.first.inner_text(),
+        console.text()[:200],
+    )
+    if follow.count():
+        follow.first.click()
+        touched("late.follow-link")
+        console.page.wait_for_timeout(2000)
+    ok(
+        "which opens the complaint's own page, where the existing remedy path pays it",
+        f"#/incidents/{body.get('incident_id')}" in console.page.url,
+        console.page.url,
+    )
+    executed = console.call(
+        "POST", f"/internal/v1/remedy-proposals/{body.get('proposal_id')}/execution"
+    )
+    ok(
+        "and the existing execution route issues the credit, unchanged",
+        executed["status"] == 201
+        and (executed["body"] or {}).get("amount_vnd") == row.get("credit_vnd"),
+        executed["text"][:160],
+    )
+
+    _open_late(console)
+    console.page.locator(f"button[data-late-not-fault='{not_fault}']").click()
+    touched("late.not-fault")
+    console.page.wait_for_timeout(700)
+    console.page.locator("dialog[open] input[name=late-reason][value=OTHER]").check()
+    touched("late.reason")
+    console.type_into("dialog[open] #late-note", "khách dặn giao sau 18 giờ", "late.note")
+    console.page.locator("dialog[open] input[name=late-reason][value=CUSTOMER_ABSENT]").check()
+    answers = console.press_capturing(console.page.locator("#late-reason-submit"), "/decision")
+    touched("late.reason-submit")
+    console.page.wait_for_timeout(1500)
+    decided = answers[0] if answers else {"status": 0, "body": None, "text": "no call"}
+    ok(
+        "Không phải lỗi tiệm records the reason, and only the decision",
+        decided["status"] == 201
+        and (decided["body"] or {}).get("reason_code") == "CUSTOMER_ABSENT"
+        and (decided["body"] or {}).get("proposal_id") is None
+        and sql(f"select count(*) from remedy_proposals where order_id = '{not_fault}'") == "0",
+        decided["text"][:200],
+    )
+    ok(
+        "and the order leaves the list",
+        console.page.locator(f"#late-list [data-late='{not_fault}']").count() == 0,
+        console.text()[:160],
+    )
+    again = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/late-deliveries/{not_fault}/decision",
+        {"decision": "STORE_FAULT"},
+    )
+    ok(
+        "a second decision on the same delivery is refused by name, ALREADY_DECIDED",
+        again["status"] == 422 and "ALREADY_DECIDED" in again["text"],
+        again["text"][:160],
+    )
+    on_time_refused = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/late-deliveries/{on_time}/decision",
+        {"decision": "NOT_STORE_FAULT", "reason_code": "CUSTOMER_ABSENT"},
+    )
+    ok(
+        "and the delivery on time cannot be decided at all: NOT_LATE",
+        on_time_refused["status"] == 422 and "NOT_LATE" in on_time_refused["text"],
+        on_time_refused["text"][:160],
+    )
+    ok(
+        "no note reached an event, audit or outbox payload",
+        sql(
+            "select (select count(*) from domain_events where payload::text like '%sau 18 giờ%')"
+            " + (select count(*) from audit_events where details::text like '%sau 18 giờ%')"
+            " + (select count(*) from outbox_events where payload::text like '%sau 18 giờ%')"
+        )
+        == "0",
+    )
+
+    console.sign_in("demo-owner")
+    after = _late_report(console)
+
+    def moved(key: str) -> int:
+        return int(after.get(key) or 0) - int(before.get(key) or 0)
+
+    ok(
+        "the report counts them: +1 the shop's fault and credited, +1 not its fault, 2 fewer "
+        "undecided, the credit's value in the credited amount",
+        after.get("status") == "COMPLETE"
+        and moved("store_fault") == 1
+        and moved("credited") == 1
+        and moved("credited_vnd") == int(row.get("credit_vnd") or -1)
+        and moved("not_store_fault") == 1
+        and moved("undecided") == -2
+        and moved("late") == 0
+        and str(after.get("query_version", "")).startswith("report-v4:"),
+        {"before": before, "after": after},
+    )
+    console.open("#/reports", settle=2200)
+    tile = console.page.locator("[data-kpi=LATE_DELIVERIES]")
+    ok(
+        "and the report screen prints the block",
+        tile.count() == 1 and "Lỗi của tiệm" in tile.first.inner_text(),
+        tile.first.inner_text() if tile.count() else console.text()[:160],
+    )
+    if published_turnaround:
+        withdrawn = _publish_turnaround("--withdraw")
+        note(f"turnaround policy withdrawn again ({withdrawn.stdout.strip()[-60:]})")
+    console.sign_in("demo-owner")
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -8689,6 +9126,10 @@ SCENARIOS = {
     "prepaid": scenario_prepaid,
     "pickup_only": scenario_pickup_only,
     "busy": scenario_busy,
+    # LATE-CREDIT-002 (DEC-042). Before remedy: it proves the refusal on a shop that has not
+    # published the remedy policy, then publishes it with the owner's script; everything after it
+    # that needs the remedy figures finds them published.
+    "late_delivery": scenario_late_delivery,
     "remedy": scenario_remedy,
     "receipt": scenario_receipt,
     "rework": scenario_rework,

@@ -1401,7 +1401,7 @@ DAILY_SUMMARY = {
         },
     ],
     "text": "\n".join(text for _, text, _ in DAILY_SUMMARY_LINES),
-    "sources": [{"key": "report", "query_version": "report-v3:ac05595a37f3c36d"}],
+    "sources": [{"key": "report", "query_version": "report-v4:fd921dce5b2ee508"}],
 }
 
 #: The SLA board, in the shape and the order the server really answers in: acceptance order,
@@ -1419,7 +1419,8 @@ SLA_BOARD_POLICY_NOTICE = (
 #: fraction that does not round to a whole percent, a denominator of zero (no order reached quality
 #: check), and a window whose refunds exceeded its takings, so the drawer went OUT. The screen must
 #: print every one as the server sent it and compute none of them.
-REPORT_VERSION = "report-v3:ac05595a37f3c36d"
+#: `report-v4` since LATE-CREDIT-002 (the late-delivery block; `report-v3` was ac05595a37f3c36d).
+REPORT_VERSION = "report-v4:fd921dce5b2ee508"
 
 #: SHOP-CAPTURE-001 (DEC-038). The machines a load goes into, in the server's order (the last one
 #: used first): the console must offer exactly these, in this order, and never re-sort them.
@@ -1720,6 +1721,65 @@ def report_body(url: str, *, daily: bool) -> dict[str, object]:
                 "query_version": REPORT_VERSION,
             }
         ],
+        # LATE-CREDIT-002 (report-v4): 3 deliveries measured late of 5 with a promise.
+        "late_deliveries": {
+            "status": "COMPLETE",
+            "reason": None,
+            "threshold_minutes": 120,
+            "remedy_policy_version": 1,
+            "measured": 5,
+            "late": 3,
+            "store_fault": 1,
+            "credited": 1,
+            "credited_vnd": 12_000,
+            "not_store_fault": 1,
+            "undecided": 1,
+            "query_version": REPORT_VERSION,
+        },
+    }
+
+
+#: LATE-CREDIT-002, section 26: the ids the late list uses.
+LATE_ORDER_ID = "7a7a7a7a-0000-4000-8000-000000000001"
+LATE_OWNER_ORDER_ID = "7a7a7a7a-0000-4000-8000-000000000002"
+LATE_INCIDENT_ID = "7a7a7a7a-0000-4000-8000-0000000000a1"
+LATE_NOTE = "khách dặn giao sau 18 giờ"
+
+
+def late_row(order_id: str, *, ticket: int, credit: int | None, owner: bool = False) -> dict:
+    """One `LateDeliveryItemResponse`: 190 minutes late, one failed attempt before the deadline."""
+
+    return {
+        "order_id": order_id,
+        "ticket_number": ticket,
+        "ticket_issued_on": "2026-09-27",
+        "customer_name": None,
+        "first_promise_at": "2026-09-28T10:00:00+00:00",
+        "deadline_at": "2026-09-28T10:00:00+00:00",
+        "deadline_basis": "FIRST_PROMISE",
+        "delivered_at": "2026-09-28T13:10:00+00:00",
+        "late_by_minutes": 190,
+        "failed_attempts_before_deadline": ["2026-09-28T07:05:00+00:00"],
+        "settled_total_vnd": None if credit is None else credit * 10,
+        "credit_vnd": credit,
+        "credit_requires_owner": owner,
+        "credit_refusal": None if credit is not None else "ORDER_REFUNDED",
+        "refunded": credit is None,
+    }
+
+
+def late_list(*rows: dict, published: bool = True, follow_up: list | None = None) -> dict:
+    return {
+        "store_id": STORE,
+        "evaluated_at": "2026-09-28T14:00:00+00:00",
+        "policy_published": published,
+        "threshold_minutes": 120 if published else None,
+        "staff_approval_ceiling_vnd": 100_000 if published else None,
+        "limit": 50,
+        "orders": list(rows),
+        "truncated": False,
+        "follow_up": follow_up or [],
+        "follow_up_truncated": False,
     }
 
 
@@ -2582,6 +2642,47 @@ with sync_playwright() as playwright:
             # read an empty queue for it.
             state.setdefault("pickup_reads", []).append(url)
             body = state.get("pickup_list") or pickup_list(published=False)
+        elif route.request.method == "GET" and url.split("?")[0].endswith("/late-deliveries"):
+            # LATE-CREDIT-002: empty and unpublished unless section 26 fills it, so Hôm nay's
+            # earlier sections still read an empty queue for it.
+            state.setdefault("late_reads", []).append(url)
+            body = state.get("late_list") or late_list(published=False)
+        elif route.request.method == "POST" and "/late-deliveries/" in url:
+            state.setdefault("late_writes", []).append(
+                {
+                    "path": url.split("?")[0],
+                    "body": route.request.post_data,
+                    "if_match": route.request.headers.get("if-match"),
+                    "key": route.request.headers.get("idempotency-key"),
+                }
+            )
+            sent = json.loads(route.request.post_data or "{}")
+            fault = sent.get("decision") == "STORE_FAULT"
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "decision_id": "7a7a7a7a-0000-4000-8000-0000000000d1",
+                        "order_id": url.split("/late-deliveries/")[1].split("/")[0],
+                        "decision": "STORE_FAULT_CREDITED" if fault else "NOT_STORE_FAULT",
+                        "reason_code": None if fault else sent.get("reason_code"),
+                        "late_by_minutes": 190,
+                        "deadline_at": "2026-09-28T10:00:00+00:00",
+                        "deadline_basis": "FIRST_PROMISE",
+                        "delivered_at": "2026-09-28T13:10:00+00:00",
+                        "incident_id": LATE_INCIDENT_ID if fault else None,
+                        "proposal_id": "7a7a7a7a-0000-4000-8000-0000000000b1" if fault else None,
+                        "proposal_status": "STAFF_AUTHORIZED" if fault else None,
+                        "amount_vnd": 12_000 if fault else None,
+                        "approval_id": None,
+                        "owner_reasons": [],
+                        "decided_at": "2026-09-28T14:01:00+00:00",
+                        "replayed": False,
+                    }
+                ),
+            )
+            return
         elif route.request.method == "GET" and url.split("?")[0].endswith("/storage"):
             body = state.get("storage") or storage_read(awaiting=False)
         elif route.request.method == "GET" and url.split("?")[0].endswith("/vietqr"):
@@ -8926,6 +9027,171 @@ with sync_playwright() as playwright:
     state["storage"] = None
     state["order_view"] = None
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
+
+    # ============================================================================================
+    # 26. LATE-CREDIT-002 (DEC-042) -- Giao trễ cần xử lý: the server's measured rows, "Lỗi của
+    #     tiệm — giảm {credit}" sends only the decision (no minutes, no amount) under a key, "Không
+    #     phải lỗi tiệm" refuses without a reason and asks for a note only for "Lý do khác", the
+    #     follow-up row links to the complaint or the approvals, Hôm nay counts it, the report
+    #     prints its block, and before publication the screen says nothing is measured.
+    # ============================================================================================
+    print()
+    print("[26] Giao trễ cần xử lý: đo bởi máy chủ, Lỗi của tiệm, Không phải lỗi tiệm")
+    SESSION_OK["roles"] = ["OPERATOR"]
+    state["late_writes"] = []
+    state["late_list"] = late_list(published=False)
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/late-deliveries", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    text = rendered_text()
+    check(
+        "before the remedy policy is published the screen says nothing is measured, and no row",
+        "chưa công bố mức bồi hoàn" in text and page.locator("[data-late]").count() == 0,
+        text[:200].replace("\n", " | "),
+    )
+    state["late_list"] = late_list(
+        late_row(LATE_ORDER_ID, ticket=12, credit=12_000),
+        late_row(LATE_OWNER_ORDER_ID, ticket=17, credit=None),
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/late-deliveries", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    text = rendered_text()
+    fault = page.locator(f"button[data-late-fault='{LATE_ORDER_ID}']")
+    check(
+        "each row shows the ticket, hẹn → giao, the server's lateness and the failed attempt",
+        page.locator("#late-list [data-late]").count() == 2
+        and "Phiếu 12" in text
+        and "Trễ 3 giờ 10 phút" in text
+        and "Hẹn 17:00 28/9 → giao 20:10 28/9" in text
+        and "Giao 14:05 không gặp khách" in text,
+        text[:300].replace("\n", " | "),
+    )
+    check(
+        "the fault button names the server's credit; a refunded bill offers none and says why",
+        "Lỗi của tiệm — giảm 12.000" in fault.inner_text()
+        and page.locator(f"button[data-late-fault='{LATE_OWNER_ORDER_ID}']").is_disabled()
+        and "Đơn đã hoàn tiền: không có giảm trừ." in text,
+    )
+    reads_before = len(state["late_reads"])
+    fault.click()
+    page.wait_for_timeout(900)
+    writes = state["late_writes"]
+    check(
+        "Lỗi của tiệm sends the decision alone with a key and no If-Match, then re-reads",
+        len(writes) == 1
+        and writes[0]["path"].endswith(f"/late-deliveries/{LATE_ORDER_ID}/decision")
+        and json.loads(writes[0]["body"] or "{}") == {"decision": "STORE_FAULT"}
+        and bool(writes[0]["key"])
+        and writes[0]["if_match"] is None
+        and len(state["late_reads"]) > reads_before,
+        repr(writes),
+    )
+    page.locator(f"button[data-late-not-fault='{LATE_ORDER_ID}']").click()
+    page.wait_for_timeout(600)
+    page.locator("dialog[open] #late-reason-submit").click()
+    page.wait_for_timeout(400)
+    check(
+        "Không phải lỗi tiệm with no reason is refused inline and sends nothing",
+        "Chọn một lý do" in open_dialog_text() and len(state["late_writes"]) == 1,
+    )
+    note_hidden = page.locator("dialog[open] #late-note").is_hidden()
+    page.locator("dialog[open] input[name=late-reason][value=OTHER]").check()
+    page.wait_for_timeout(200)
+    note_shown = page.locator("dialog[open] #late-note").is_visible()
+    page.locator("dialog[open] #late-note").fill(LATE_NOTE)
+    page.locator("dialog[open] #late-reason-submit").click()
+    page.wait_for_timeout(900)
+    writes = state["late_writes"]
+    check(
+        "the note appears only for Lý do khác; the reason and the note are sent, nothing else",
+        note_hidden
+        and note_shown
+        and len(writes) == 2
+        and json.loads(writes[1]["body"] or "{}")
+        == {"decision": "NOT_STORE_FAULT", "reason_code": "OTHER", "note": LATE_NOTE}
+        and writes[1]["key"] != writes[0]["key"],
+        repr(writes[-1:]),
+    )
+    state["late_list"] = late_list(
+        follow_up=[
+            {
+                "order_id": LATE_ORDER_ID,
+                "ticket_number": 12,
+                "ticket_issued_on": "2026-09-27",
+                "late_by_minutes": 190,
+                "incident_id": LATE_INCIDENT_ID,
+                "proposal_id": "7a7a7a7a-0000-4000-8000-0000000000b1",
+                "proposal_status": "STAFF_AUTHORIZED",
+                "amount_vnd": 12_000,
+                "approval_id": None,
+                "next_step": "EXECUTE",
+                "decided_at": "2026-09-28T14:01:00+00:00",
+            },
+            {
+                "order_id": LATE_OWNER_ORDER_ID,
+                "ticket_number": 17,
+                "ticket_issued_on": "2026-09-27",
+                "late_by_minutes": 300,
+                "incident_id": "7a7a7a7a-0000-4000-8000-0000000000a2",
+                "proposal_id": "7a7a7a7a-0000-4000-8000-0000000000b2",
+                "proposal_status": "OWNER_APPROVAL_REQUIRED",
+                "amount_vnd": 150_000,
+                "approval_id": "7a7a7a7a-0000-4000-8000-0000000000c2",
+                "next_step": "AWAIT_OWNER",
+                "decided_at": "2026-09-28T14:02:00+00:00",
+            },
+        ]
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/late-deliveries", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    give = page.locator(f"[data-late-follow='{LATE_ORDER_ID}'] a")
+    wait = page.locator(f"[data-late-follow='{LATE_OWNER_ORDER_ID}'] a")
+    check(
+        "a credited row links to its complaint to give the credit; above the limit it waits",
+        give.count() == 1
+        and give.get_attribute("href") == f"#/incidents/{LATE_INCIDENT_ID}"
+        and "Cấp giảm trừ" in give.inner_text()
+        and wait.count() == 1
+        and wait.get_attribute("href") == "#/approvals"
+        and "Chờ chủ tiệm duyệt" in wait.inner_text(),
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    tile = page.locator("[data-queue=late-deliveries]")
+    check(
+        "Hôm nay counts the credit still to give and links to Giao trễ",
+        tile.count() == 1
+        and "1" in tile.inner_text()
+        and tile.get_attribute("href") == "#/late-deliveries",
+        tile.inner_text() if tile.count() else "absent",
+    )
+    SESSION_OK["roles"] = ["AUDITOR"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/late-deliveries", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    check(
+        "an auditor is refused the screen with who may, and nothing is asked of the server",
+        page.locator("[data-late]").count() == 0 and "Chỉ" in rendered_text(),
+        rendered_text()[:160],
+    )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/reports", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    late_tile = page.locator("[data-kpi=LATE_DELIVERIES]")
+    check(
+        "the report prints the late-delivery block from the server's counts",
+        late_tile.count() == 1
+        and "3" in late_tile.inner_text()
+        and "trên 5 chuyến giao có hẹn" in late_tile.inner_text()
+        and "Lỗi của tiệm: 1 · đã giảm 1 (12.000" in late_tile.inner_text()
+        and "Chưa xử lý: 1" in late_tile.inner_text(),
+        late_tile.inner_text() if late_tile.count() else "absent",
+    )
+    state["late_list"] = None
 
     print()
     print("=" * 74)

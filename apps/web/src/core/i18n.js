@@ -597,6 +597,13 @@ export const REASON_NOTE = {
   NO_SINGLE_TOTAL: "Báo giá của đơn chưa có một tổng duy nhất, nên máy không thanh lý.",
   STORAGE_FEE_OWED:
     "Đơn này có phí lưu kho, nên phải thu bằng “Thu tiền” (số còn lại đã gồm phí lưu kho).",
+  // LATE-CREDIT-002 (DEC-042): Giao trễ cần xử lý.
+  NOT_LATE: "Máy chủ đo lại thấy chuyến này không trễ quá mức chủ tiệm đặt, nên không cần xử lý.",
+  ALREADY_DECIDED: "Chuyến giao này đã có người xử lý rồi. Tải lại danh sách.",
+  LATE_DELIVERY_NOT_MEASURABLE:
+    "Đơn này không đo được giao trễ: không giao tận nơi, không có giờ hẹn, hoặc chưa giao xong.",
+  LATE_DELIVERY_REASON_REQUIRED: "Chọn lý do vì sao không phải lỗi của tiệm.",
+  LATE_DELIVERY_REASON_NOT_APPLICABLE: "Lỗi của tiệm thì không cần lý do.",
   // EINVOICE-REQUEST-001 (DEC-040): invoice requests. The shop records them; the bookkeeper
   // issues the invoice in the provider's portal.
   PRIVACY_NOTICE_UNPUBLISHED:
@@ -652,6 +659,17 @@ export const REMINDER_STEP_VI = {
   DAY_7: "Nhắc lần 3 (ngày 7)",
   DAY_14: "Nhắc lần 4 (ngày 14)",
   BEFORE_FEE: "Nhắc trước khi tính phí",
+};
+
+/**
+ * LATE-CREDIT-002 (`DEC-042`): `NotStoreFaultReason`, as the "Không phải lỗi tiệm" picker says it.
+ * Scoped, capitalised for a control label.
+ */
+export const LATE_REASON_VI = {
+  CUSTOMER_ABSENT: "Khách không có nhà",
+  CUSTOMER_WRONG_ADDRESS: "Khách cho sai địa chỉ hoặc số điện thoại",
+  CUSTOMER_ASKED_LATER: "Khách hẹn giờ muộn hơn",
+  OTHER: "Lý do khác",
 };
 
 /**
@@ -1088,6 +1106,8 @@ export const NAV = {
   customers: "Khách hàng",
   // UNCLAIMED-001 (DEC-036).
   pickup: "Đồ chờ lấy",
+  // LATE-CREDIT-002 (DEC-042).
+  lateDeliveries: "Giao trễ",
   // PICKUP-REMIND-001 (DEC-043).
   reminders: "Nhắc khách lấy đồ",
 

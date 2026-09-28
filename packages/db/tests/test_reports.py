@@ -618,10 +618,13 @@ def test_the_report_version_is_pinned_and_moves_with_the_boards_rule() -> None:
     `report-v2`); the digest is recomputed from the merged code.
     """
     version = report_query_version(STANDARD_WASH_SLA)
-    # `report-v3` also carries `PAYMENT-001`'s money in from the payment ledger, split by method
+    # `report-v3` also carried `PAYMENT-001`'s money in from the payment ledger, split by method
     # (that branch's `report-v2` was `d91e5f4abde87847`; `report-v1` was `2e30b2c5fdd366f2`).
-    assert version.identifier == "report-v3"
-    assert version.digest == "ac05595a37f3c36d"
+    # `report-v4` (`LATE-CREDIT-002`, `DEC-042`) adds the late-delivery block: the delivered
+    # population, the decisions statement and the clock's own source (`report-v3` was
+    # `ac05595a37f3c36d`).
+    assert version.identifier == "report-v4"
+    assert version.digest == "fd921dce5b2ee508"
     stricter = ProductionSlaPolicy(
         policy_id="SLA_STANDARD_CLOTHES",
         policy_type=SlaPolicyType.COMMITMENT,

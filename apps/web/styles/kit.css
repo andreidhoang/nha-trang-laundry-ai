@@ -4670,3 +4670,214 @@ table.reminders th {
   padding: var(--space-3) 0 max(var(--space-4), env(safe-area-inset-bottom));
   position: sticky;
 }
+
+/* LATE-CREDIT-002 (DEC-042) ---------------------------------------------------------------------
+ * "Giao trễ cần xử lý": a real table. From 64rem it is laid out as one — Đơn | Hẹn → giao | Trễ |
+ * Xử lý, the columns aligned across rows, the two buttons side by side at the right; below that
+ * every row is a card (order, hẹn → giao, the lateness, then the two buttons at thumb size). */
+
+.late-table {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.late-table table {
+  border-collapse: collapse;
+  display: block;
+  width: 100%;
+}
+
+.late-table thead {
+  display: none;
+}
+
+.late-table tbody,
+.late-table td {
+  display: block;
+}
+
+/* A phone card: the order and the lateness on one line, then hẹn → giao, then the buttons. */
+.late-table td {
+  border: 0;
+  padding: 0;
+}
+
+.late-table tr.late-row {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: var(--space-2) var(--space-3);
+  grid-template-areas:
+    "order late"
+    "times times"
+    "actions actions";
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: var(--space-3) var(--space-4);
+}
+
+.late-table td.late-row__order {
+  grid-area: order;
+}
+
+.late-table td.late-row__late {
+  align-self: start;
+  grid-area: late;
+}
+
+.late-table td.late-row__times {
+  grid-area: times;
+}
+
+.late-table td.late-row__actions {
+  grid-area: actions;
+}
+
+.late-table tr.late-row:first-child {
+  border-top: 0;
+}
+
+.late-row__order a {
+  color: inherit;
+  display: grid;
+  gap: 2px;
+  text-decoration: none;
+}
+
+.late-row__title {
+  font-weight: var(--weight-medium);
+}
+
+.late-row__meta,
+.late-row__hint {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.late-row__hint {
+  color: var(--warn-fg);
+}
+
+.late-row__times > span {
+  display: block;
+}
+
+.late-row__buttons {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: 1fr;
+}
+
+.late-row__actions .btn {
+  justify-content: center;
+  min-height: var(--tap-min);
+  white-space: nowrap;
+  width: 100%;
+}
+
+.late-row__actions .hint {
+  display: block;
+  margin: var(--space-1) 0 0;
+}
+
+.late-row__alert:empty {
+  display: none;
+}
+
+.late-follow {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  justify-content: space-between;
+}
+
+.late-follow + .late-follow {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+
+.late-follow__main {
+  display: grid;
+  gap: 2px;
+}
+
+@media (min-width: 64rem) {
+  .late-table table {
+    display: table;
+  }
+
+  .late-table thead {
+    display: table-header-group;
+  }
+
+  .late-table tbody {
+    display: table-row-group;
+  }
+
+  .late-table tr.late-row {
+    border-top: 0;
+    display: table-row;
+    padding: 0;
+  }
+
+  .late-table td,
+  .late-table th {
+    display: table-cell;
+    padding: var(--space-3);
+    text-align: left;
+    vertical-align: middle;
+  }
+
+  .late-table td:first-child,
+  .late-table th:first-child {
+    padding-left: var(--space-4);
+  }
+
+  .late-table td:last-child,
+  .late-table th:last-child {
+    padding-right: var(--space-4);
+  }
+
+  .late-table th {
+    background: var(--surface-sunken);
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    padding-bottom: var(--space-2);
+    padding-top: var(--space-2);
+    white-space: nowrap;
+  }
+
+  .late-table th.late-table__actions-head {
+    text-align: right;
+  }
+
+  .late-table tr.late-row + tr.late-row td {
+    border-top: 1px solid var(--border);
+  }
+
+  .late-row__times > span:not(.late-row__hint):not(.late-row__meta),
+  .late-row__order a > span,
+  .late-row__late .pill {
+    white-space: nowrap;
+  }
+
+  .late-table td.late-row__actions {
+    text-align: right;
+    width: 1%;
+  }
+
+  .late-row__buttons {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: var(--space-2);
+    justify-content: flex-end;
+  }
+
+  .late-row__actions .btn {
+    width: auto;
+  }
+}

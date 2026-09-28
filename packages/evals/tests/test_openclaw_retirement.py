@@ -94,6 +94,22 @@ def test_every_recorded_hash_re_verifies_against_the_named_commit() -> None:
         ).stdout
         assert _digest(data) == entry["sha256"], path
         assert len(data) == entry["bytes"], path
+    # The pre-retirement bytes of files this change modified: retained evidence that pinned them
+    # trusts these entries, so they are checked against the commit exactly as the retired files are.
+    assert RECORD["prior_versions"]
+    for entry in RECORD["prior_versions"]:
+        data = subprocess.run(
+            ["git", "show", f"{BASE}:{entry['path']}"], cwd=ROOT, check=True, capture_output=True
+        ).stdout
+        assert _digest(data) == entry["sha256"], entry["path"]
+        blob = subprocess.run(
+            ["git", "rev-parse", f"{BASE}:{entry['path']}"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert blob == entry["git_blob"], entry["path"]
 
 
 @pytest.mark.parametrize("retired_path", sorted(PRESERVED))

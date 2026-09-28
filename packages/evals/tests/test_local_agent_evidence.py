@@ -163,6 +163,9 @@ def test_openclaw_offline_evidence_is_retained_non_release_and_still_verifiable(
     assert result["dependency_audit_critical"] == 0
     assert result["dependency_audit_high"] == 0
     assert result["real_customer_data_allowed"] is False
+    assert len(result["release_blockers"]) == 10
+    assert "OPENCLAW_DEPENDENCY_AUDIT_HIGH" not in result["release_blockers"]
+    assert result["openclaw_build_revision"]
 
     record = yaml.safe_load(RETIREMENT_RECORD.read_text(encoding="utf-8"))
     retired = {entry["path"]: entry["sha256"] for entry in record["files"]}

@@ -170,6 +170,20 @@ def test_a_repository_with_one_dependency_tree_passes_with_one_lockfile(tmp_path
     _verify(repository, path)
 
 
+def test_a_lockfile_under_a_nested_artifacts_directory_must_still_be_audited(
+    tmp_path: Path,
+) -> None:
+    """Only the root `artifacts/` (workflow output) is skipped; a nested one is source."""
+
+    repository, path, _ = _fixture(tmp_path)
+    nested = repository / "apps/tool/artifacts/package-lock.json"
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b'{"lockfileVersion":3}\n')
+
+    with pytest.raises(SupplyChainEvidenceError, match=r"missing=.*apps/tool/artifacts"):
+        _verify(repository, path)
+
+
 def test_version_one_evidence_is_refused(tmp_path: Path) -> None:
     repository, path, bundle = _fixture(tmp_path)
     _rewrite(path, {**bundle, "schema_version": 1})

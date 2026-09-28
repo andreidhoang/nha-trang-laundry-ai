@@ -115,7 +115,10 @@ def verify_supply_chain_evidence(
 LOCKFILE_NAMES = frozenset(
     {"uv.lock", "poetry.lock", "Pipfile.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 )
-_UNSCANNED_DIRECTORIES = frozenset({".git", ".venv", "node_modules", "__pycache__", "artifacts"})
+#: Skipped wherever they appear: version control, installed environments and caches, never sources.
+_UNSCANNED_DIRECTORIES = frozenset({".git", ".venv", "node_modules", "__pycache__"})
+#: Skipped only at the repository root: the release workflow's own generated output.
+_UNSCANNED_ROOT_DIRECTORIES = frozenset({"artifacts"})
 
 
 def repository_lockfiles(repository: Path) -> frozenset[str]:
@@ -124,7 +127,9 @@ def repository_lockfiles(repository: Path) -> frozenset[str]:
     found: set[str] = set()
     for path in repository.rglob("*"):
         relative = path.relative_to(repository)
-        if _UNSCANNED_DIRECTORIES.intersection(relative.parts):
+        if _UNSCANNED_DIRECTORIES.intersection(relative.parts) or (
+            relative.parts[0] in _UNSCANNED_ROOT_DIRECTORIES
+        ):
             continue
         if path.name in LOCKFILE_NAMES and path.is_file():
             found.add(relative.as_posix())

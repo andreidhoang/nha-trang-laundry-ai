@@ -261,6 +261,8 @@ def test_the_fee_the_waiver_and_cash_at_pickup_including_the_fee(
         "fee_per_started_day_vnd": None,
         "cap_vnd": None,
         "capped": False,
+        # MONEY-LIFECYCLE-009: the part of an unfixed fee a part payment covered; 0 once fixed.
+        "already_paid_vnd": 0,
     }
 
     # A second order, waived by the approver instead.

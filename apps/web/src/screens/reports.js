@@ -113,11 +113,13 @@ const KPI = {
   MONEY: {
     label: "Tiền đã thu",
     definition:
-      "Tiền khách trả tại quầy trong khoảng ngày, trừ tiền đã hoàn lại cho khách trong khoảng " +
-      "ngày. Mỗi khoản tính vào ngày tiền thật sự vào hoặc ra két, theo giờ Việt Nam — đúng quy " +
-      "tắc của ô tiền trên màn Hôm nay. Tiền đặt cọc tính vào ngày khách đặt. Máy chủ cộng từ sổ " +
-      "thu tiền (tách tiền mặt và chuyển khoản) và sổ hoàn tiền; màn hình này không tự cộng. Đây " +
-      "không phải doanh thu, cũng không phải lợi nhuận.",
+      "Tiền khách trả tại quầy trong khoảng ngày (tiền mặt và chuyển khoản), trừ tiền đã hoàn " +
+      "lại cho khách trong khoảng ngày. Mỗi khoản tính vào ngày tiền thật sự được thu hoặc " +
+      "hoàn, theo giờ Việt Nam — đúng quy tắc của ô tiền trên màn Hôm nay. Tiền đặt cọc tính " +
+      "vào ngày khách đặt. Máy chủ cộng từ sổ thu tiền (tách tiền mặt và chuyển khoản) và sổ " +
+      "hoàn tiền; màn hình này không tự cộng. Đây không phải doanh thu, cũng không phải lợi " +
+      "nhuận. Tiền mặt trong két là riêng tiền mặt: tiền mặt thu trừ tiền mặt hoàn; khoản hoàn " +
+      "ghi trước khi hệ thống hỏi cách hoàn không tính vào két và được nói riêng.",
   },
   REMEDIES_EXECUTED: {
     label: "Bồi hoàn đã chi",
@@ -230,6 +232,12 @@ function moneyTile(kpis) {
   const net = kpis.MONEY_NET;
   const collected = kpis.MONEY_COLLECTED;
   const refunded = kpis.MONEY_REFUNDED;
+  // GOODS-AND-DRAWER-009 (review M4): the drawer is its own figure -- cash in minus cash handed
+  // back (`report-v5`); `MONEY_NET` is every method and is not called the drawer any more.
+  const drawer = kpis.MONEY_DRAWER;
+  const excluded = Array.isArray(drawer?.by_kind)
+    ? drawer.by_kind.find((entry) => entry.kind === "EXCLUDED_UNKNOWN_REFUNDS" && entry.count > 0)
+    : null;
   const out = net?.direction === "OUT";
   const inAndOut = [
     `Thu ${money(collected?.numerator)} (${integer(collected?.entries)} lần)`,
@@ -245,8 +253,9 @@ function moneyTile(kpis) {
     "div",
     { class: "kpi kpi--hero", dataKpi: "MONEY_NET", dataDirection: String(net?.direction || "") },
     moneyHero({
-      // A net that went OUT is said as a word, never as a minus sign (invariant 2).
-      label: out ? "Két giảm (hoàn nhiều hơn thu)" : KPI.MONEY.label,
+      // A net that went OUT is said as a word, never as a minus sign (invariant 2). It is every
+      // method, so it is not "két" (GOODS-AND-DRAWER-009): the drawer is the row below.
+      label: out ? "Hoàn nhiều hơn thu" : KPI.MONEY.label,
       amount: money(net?.numerator),
       state: out ? "warn" : "ok",
       caption: inAndOut,
@@ -265,6 +274,28 @@ function moneyTile(kpis) {
               money(entry.amount_vnd),
             ]),
           ),
+        )
+      : null,
+    drawer
+      ? h(
+          "div",
+          { class: "kpi__drawer", dataKpi: "MONEY_DRAWER", dataDirection: String(drawer.direction) },
+          keyValues([
+            [
+              "Tiền mặt trong két",
+              drawer.numerator === 0
+                ? "không đổi"
+                : `${drawer.direction === "OUT" ? "giảm" : "tăng"} ${money(drawer.numerator)}`,
+            ],
+          ]),
+          excluded
+            ? h(
+                "p",
+                { class: "hint", dataField: "drawer-excludes" },
+                `Chưa tính ${integer(excluded.count)} lần hoàn chưa rõ cách hoàn ` +
+                  `(${money(excluded.amount_vnd)}).`,
+              )
+            : null,
         )
       : null,
   );

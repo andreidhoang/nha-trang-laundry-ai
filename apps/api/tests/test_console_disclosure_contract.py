@@ -970,7 +970,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   ALREADY_DECIDED, LATE_DELIVERY_NOT_MEASURABLE, LATE_DELIVERY_REASON_REQUIRED) and two hints
     #   on Giao trễ cần xử lý; the FR-RPT-006 gap's three texts re-keyed (now the self-collect gap).
     # All four round-8 console slices merged: 554 + 3 + 21 + 5 + 6 = 589.
-    assert sum(counts.values()) == _registry()["total"] == 589
+    # GOODS-AND-DRAWER-009 (round 9, review M2/M4): 589 + 3 = 592. RELEASE_BY_PAYMENT merged into
+    #   PAY_BEFORE_GOODS_LEAVE (every mode now); GOODS_NOT_READY, REFUND_METHOD_REQUIRED and the
+    #   refund-method hint in ui/goodsAndDrawer.js added.
+    assert sum(counts.values()) == _registry()["total"] == 592
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

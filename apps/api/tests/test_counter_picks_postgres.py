@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "db" /
 
 import quote_test_data
 from message_draft_test_data import record_customer_message
-from test_remedies import NOW, _execute, _incident, _propose, _released_order, _settle, _shop
+from test_remedies import NOW, _execute, _incident, _propose, _released_order, _shop
 
 DENIED = {"detail": "operation denied"}
 
@@ -165,8 +165,9 @@ def _credit(
     """One executed damage credit in `store_id`, issued at `executed_at`: (credit id, order id)."""
 
     if order_incident is None:
+        # GOODS-AND-DRAWER-009: `_released_order` settles before it releases (goods leave only
+        # when paid), so the separate settlement this used to make would be a second one.
         order_id, _ = _released_order(connection, store_id, staff)
-        _settle(connection, order_id, staff, collected=True)
         incident_id = _incident(connection, store_id, order_id, staff)
     else:
         order_id, incident_id = order_incident

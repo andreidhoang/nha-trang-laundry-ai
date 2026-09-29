@@ -24,6 +24,7 @@ from nha_trang_laundry_db.delivery_legs import (
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.orders import CreateOrderCommand, OrderRepository, OrderTransitionCommand
+from nha_trang_laundry_db.payments import PaymentCommand, PaymentRepository
 from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
@@ -31,8 +32,10 @@ from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     FulfillmentMode,
     IntakeStatus,
+    ProductionStatus,
 )
 from nha_trang_laundry_domain.orders import IntakeReadiness
+from nha_trang_laundry_domain.payments import PaymentMethod
 from quote_test_data import accepted_quote
 
 # Inside the fixture quote's validity window: `quote_test_data` prices at 2026-08-01 and the
@@ -151,6 +154,58 @@ def _active_order(
     return stored.order_id
 
 
+def _washed_and_paid(connection: Any, order_id: UUID, staff: StaffPrincipal) -> None:
+    """Finished on the shelf and paid in full at the counter -- the moment the courier may take it.
+
+    GOODS-AND-DRAWER-009 (review M2): the tests below recorded return legs on orders that were
+    neither washed nor paid, which the leg route now refuses (`GOODS_NOT_READY_FOR_HANDOVER`,
+    `DELIVERY_REQUIRES_PAYMENT`) -- that was the defect, written down as a fixture.
+    """
+
+    for target in (
+        ProductionStatus.QUEUED,
+        ProductionStatus.IN_PROCESS,
+        ProductionStatus.QUALITY_CHECK,
+        ProductionStatus.READY_AT_STORE,
+    ):
+        OrderRepository().transition(
+            connection,
+            OrderTransitionCommand(
+                order_id,
+                _row_version(connection, order_id),
+                staff,
+                f"move-{uuid4().hex}",
+                uuid4(),
+                production_target=target,
+            ),
+        )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT q.display_total_min_vnd FROM orders o
+            JOIN quote_revisions q
+              ON q.quote_id = o.current_quote_id AND q.revision = o.current_quote_revision
+            WHERE o.id = %s
+            """,
+            (order_id,),
+        )
+        total = int(cursor.fetchone()[0])
+    PaymentRepository().record(
+        connection,
+        PaymentCommand(
+            order_id=order_id,
+            expected_row_version=_row_version(connection, order_id),
+            amount_vnd=total,
+            method=PaymentMethod.TIEN_MAT,
+            transfer_seen=False,
+            bank_ref_last=None,
+            collected_by_customer=False,
+            principal=staff,
+            correlation_id=uuid4(),
+        ),
+    )
+
+
 def test_only_a_succeeded_return_leg_lets_the_order_be_completed(
     postgres_connection: psycopg.Connection[Any],
 ) -> None:
@@ -163,14 +218,6 @@ def test_only_a_succeeded_return_leg_lets_the_order_be_completed(
     )
     repository = DeliveryLegRepository()
 
-    failed = repository.record(
-        postgres_connection,
-        RecordDeliveryLegCommand(
-            order_id, DeliveryLegKind.RETURN, DeliveryLegOutcome.FAILED, staff, uuid4(), NOW
-        ),
-    )
-    assert failed.completes_fulfillment is False
-
     pickup = repository.record(
         postgres_connection,
         RecordDeliveryLegCommand(
@@ -179,6 +226,17 @@ def test_only_a_succeeded_return_leg_lets_the_order_be_completed(
     )
     # Collecting the laundry is not delivering it.
     assert pickup.completes_fulfillment is False
+    # GOODS-AND-DRAWER-009: the failed trip used to come first, on laundry nobody had washed or
+    # paid for. The courier leaves with finished, paid laundry; then a trip may fail.
+    _washed_and_paid(postgres_connection, order_id, staff)
+
+    failed = repository.record(
+        postgres_connection,
+        RecordDeliveryLegCommand(
+            order_id, DeliveryLegKind.RETURN, DeliveryLegOutcome.FAILED, staff, uuid4(), NOW
+        ),
+    )
+    assert failed.completes_fulfillment is False
 
     succeeded = repository.record(
         postgres_connection,
@@ -233,6 +291,7 @@ def test_the_same_return_cannot_succeed_twice(
     order_id = _active_order(
         postgres_connection, store_id, staff, FulfillmentMode.PICKUP_AND_RETURN
     )
+    _washed_and_paid(postgres_connection, order_id, staff)
     repository = DeliveryLegRepository()
     repository.record(
         postgres_connection,
@@ -296,7 +355,9 @@ def test_a_pickup_leg_is_refused_on_an_order_the_customer_brings_in(
             ),
         )
 
-    # The leg the mode does expect is still accepted; a rule that refuses both closes the shop.
+    # The leg the mode does expect is still accepted -- once the laundry is finished and paid for
+    # (GOODS-AND-DRAWER-009); a rule that refuses both closes the shop.
+    _washed_and_paid(postgres_connection, order_id, staff)
     returned = repository.record(
         postgres_connection,
         RecordDeliveryLegCommand(

@@ -70,6 +70,7 @@ from nha_trang_laundry_domain.catalog import (
     ProductionStatus,
 )
 from nha_trang_laundry_domain.orders import IntakeReadiness
+from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.remedies import RemedyKind
 from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA, ProductionSlaPolicy, SlaPolicyType
 from quote_test_data import accepted_quote
@@ -339,9 +340,11 @@ def _seeded_shop(connection: Any) -> _Shop:
         (P.IN_PROCESS, local(DAY, 9, 20)),
         (P.QUALITY_CHECK, local(DAY, 11)),
         (P.READY_AT_STORE, local(DAY, 12)),
-        (P.RELEASED, local(DAY, 12, 30)),
     )
+    # GOODS-AND-DRAWER-009 (review M2): paid, then released -- at the same 12:30. The fixture
+    # used to release first, the unpaid release the review found.
     a.settle(local(DAY, 12, 30), collected=True)
+    a.produce((P.RELEASED, local(DAY, 12, 30)))
     a.move(local(DAY, 12, 31), commercial_target=CommercialOrderStatus.COMPLETED)
     first = _incident(connection, a, store_id, local(DAY, 13))
     _remedy(connection, store_id, first, staff, local(DAY, 13, 5), kind=RemedyKind.FREE_REWASH)
@@ -396,6 +399,8 @@ def _seeded_shop(connection: Any) -> _Shop:
         MIDNIGHT,
         commercial_target=CommercialOrderStatus.CANCELLED,
         custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        # GOODS-AND-DRAWER-009 (review M4): handed back from the drawer.
+        refund_method=PaymentMethod.TIEN_MAT,
     )
 
     g = _Order(connection, store_id, staff, created=local(DAY, 15))
@@ -468,12 +473,26 @@ def test_every_kpi_over_a_two_day_window_matches_the_fixture(
         "MONEY_COLLECTED": (220_000, None),
         "MONEY_REFUNDED": (110_000, None),
         "MONEY_NET": (110_000, None),
+        # GOODS-AND-DRAWER-009 (review M4): both payments were settlements (cash, `0056`), and F's
+        # refund went back from the drawer: 220.000 - 110.000 in cash.
+        "MONEY_DRAWER": (110_000, None),
         "REMEDIES_EXECUTED": (2, None),
     }
     figures = _figures(report.summary)
     assert figures[ReportKey.MONEY_COLLECTED].entries == 2
     assert figures[ReportKey.MONEY_REFUNDED].entries == 1
+    assert figures[ReportKey.MONEY_REFUNDED].by_kind == (
+        ("TIEN_MAT", 1, 110_000),
+        ("CHUYEN_KHOAN", 0, 0),
+        ("UNKNOWN", 0, 0),
+    )
     assert figures[ReportKey.MONEY_NET].direction == "IN"
+    assert figures[ReportKey.MONEY_DRAWER].direction == "IN"
+    assert figures[ReportKey.MONEY_DRAWER].by_kind == (
+        ("CASH_IN", 2, 220_000),
+        ("CASH_REFUNDED", 1, 110_000),
+        ("EXCLUDED_UNKNOWN_REFUNDS", 0, 0),
+    )
     assert figures[ReportKey.REMEDIES_EXECUTED].amount_vnd == 80_000
     assert figures[ReportKey.REMEDIES_EXECUTED].by_kind == (
         ("FREE_REWASH", 1, None),
@@ -516,6 +535,10 @@ def test_each_day_is_its_own_row_and_the_midnight_boundary_files_each_fact_once(
     assert on_next["MONEY_REFUNDED"] == (110_000, None)
     assert _figures(report.days[1])[ReportKey.MONEY_NET].direction == "OUT"
     assert on_next["MONEY_NET"] == (110_000, None)
+    # The drawer on each day: DAY took 220.000 in cash; NEXT handed 110.000 back from it.
+    assert on_day["MONEY_DRAWER"] == (220_000, None)
+    assert on_next["MONEY_DRAWER"] == (110_000, None)
+    assert _figures(report.days[1])[ReportKey.MONEY_DRAWER].direction == "OUT"
     assert on_day["COMPLAINTS"] == (2, 1)
     assert on_next["COMPLAINTS"] == (1, 0)
 
@@ -550,7 +573,7 @@ def test_a_day_with_nothing_on_it_is_a_row_of_zeros_not_a_missing_row(
 def test_the_money_over_one_day_is_the_takings_figure_the_counter_sees(
     connection: psycopg.Connection[Any],
 ) -> None:
-    """One rule, two widths: a one-day report reads exactly what `collected-today-v3` reads."""
+    """One rule, two widths: a one-day report reads exactly what `collected-today-v4` reads."""
     shop = _seeded_shop(connection)
     operator = _person(connection, shop.store_id, frozenset({StaffRole.OPERATOR}))
     for day in (DAY, NEXT):
@@ -569,6 +592,14 @@ def test_the_money_over_one_day_is_the_takings_figure_the_counter_sees(
         assert figures[ReportKey.MONEY_REFUNDED].entries == takings.refund_count
         assert figures[ReportKey.MONEY_NET].numerator == takings.net_vnd
         assert figures[ReportKey.MONEY_NET].direction == takings.net_direction
+        # GOODS-AND-DRAWER-009 (review M4): the drawer too, and the refunds by how they went back.
+        assert figures[ReportKey.MONEY_DRAWER].numerator == takings.drawer_vnd
+        assert figures[ReportKey.MONEY_DRAWER].direction == takings.drawer_direction
+        assert figures[ReportKey.MONEY_REFUNDED].by_kind == (
+            ("TIEN_MAT", takings.refunded_cash_count, takings.refunded_cash_vnd),
+            ("CHUYEN_KHOAN", takings.refunded_transfer_count, takings.refunded_transfer_vnd),
+            ("UNKNOWN", takings.refunded_unknown_count, takings.refunded_unknown_vnd),
+        )
 
 
 # --- the on-time rule is the SLA board's rule ---------------------------------------------------
@@ -623,8 +654,10 @@ def test_the_report_version_is_pinned_and_moves_with_the_boards_rule() -> None:
     # `report-v4` (`LATE-CREDIT-002`, `DEC-042`) adds the late-delivery block: the delivered
     # population, the decisions statement and the clock's own source (`report-v3` was
     # `ac05595a37f3c36d`).
-    assert version.identifier == "report-v4"
-    assert version.digest == "fd921dce5b2ee508"
+    # `report-v5` (GOODS-AND-DRAWER-009, review M4): refunds by how they went back and
+    # `MONEY_DRAWER` -- cash in minus cash handed back (`report-v4` was `fd921dce5b2ee508`).
+    assert version.identifier == "report-v5"
+    assert version.digest == "06bed9941d4e5cf3"
     stricter = ProductionSlaPolicy(
         policy_id="SLA_STANDARD_CLOTHES",
         policy_type=SlaPolicyType.COMMITMENT,

@@ -36,6 +36,7 @@ from nha_trang_laundry_db.orders import (
     OrderStepCommand,
     OrderStepResult,
 )
+from nha_trang_laundry_db.payments import PaymentCommand, PaymentRepository
 from nha_trang_laundry_db.reports import ReportRepository, shop_today
 from nha_trang_laundry_db.settlement import SettlementCommand, SettlementRepository
 from nha_trang_laundry_db.shop_capture import (
@@ -62,6 +63,7 @@ from nha_trang_laundry_domain.catalog import (
     Unit,
 )
 from nha_trang_laundry_domain.order_steps import OrderStep
+from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.shop_capture import (
     CYCLE_START_CATEGORIES,
     ExpenseCategory,
@@ -573,6 +575,37 @@ def _leg(
     )
 
 
+def _deliverable(shop: _Shop, order_id: UUID) -> None:
+    """Washed (no machine named), finished and paid in full at the counter: what the courier may
+    take back. GOODS-AND-DRAWER-009 (review M2): the tests below recorded return trips on laundry
+    never washed or paid for, which the leg route now refuses."""
+
+    with shop.connection.cursor() as cursor:
+        version = OrderRepository.read_for_principal(
+            cursor, order_id=order_id, principal=shop.staff
+        ).row_version
+    for step in (OrderStep.START_WASH, OrderStep.QUALITY_CHECK, OrderStep.MARK_READY):
+        version = shop.step(order_id, version, step).view.row_version
+    with shop.connection.cursor() as cursor:
+        remaining = OrderRepository.read_for_principal(
+            cursor, order_id=order_id, principal=shop.staff
+        ).remaining_vnd
+    PaymentRepository().record(
+        shop.connection,
+        PaymentCommand(
+            order_id=order_id,
+            expected_row_version=version,
+            amount_vnd=remaining or 0,
+            method=PaymentMethod.TIEN_MAT,
+            transfer_seen=False,
+            bank_ref_last=None,
+            collected_by_customer=False,
+            principal=shop.staff,
+            correlation_id=uuid4(),
+        ),
+    )
+
+
 def test_a_trip_cost_rides_on_its_leg_and_its_note_reaches_no_ledger(connection: Any) -> None:
     shop = _Shop(connection)
     lines = (FixtureLine("line-1", "WET_KG", Unit.KG, "20", 20_000, 400_000),)
@@ -590,6 +623,7 @@ def test_a_trip_cost_rides_on_its_leg_and_its_note_reaches_no_ledger(connection:
         assert cursor.fetchone()[0]["trip_recorded"] is True
     assert "ghi-chú-riêng" not in _payloads(connection, "")
     # An empty trip writes no row, and the leg's event is exactly what it was before costs.
+    _deliverable(shop, order_id)
     empty_leg = _leg(
         connection, shop, order_id, DeliveryLegKind.RETURN, TripCost(None, None, None, None)
     )
@@ -747,6 +781,9 @@ def test_the_report_counts_capture_and_withholds_margin_until_the_month_is_compl
     running, version = shop.order(at=base - timedelta(minutes=5))
     shop.step(running, version, OrderStep.START_WASH, machine="WASH-01", at=base)
     # Two delivered orders: one costed on both legs (20.000 + 25.001), one with an uncosted pickup.
+    # GOODS-AND-DRAWER-009 (review M2): each is washed (no machine named) and paid in full before
+    # its return trip, as the leg route now requires -- two more uncaptured cycles and 2 x 110.000
+    # more money in than when this fixture delivered unwashed, unpaid laundry.
     costed, _ = shop.order(FulfillmentMode.PICKUP_AND_RETURN)
     _leg(
         connection,
@@ -755,6 +792,7 @@ def test_the_report_counts_capture_and_withholds_margin_until_the_month_is_compl
         DeliveryLegKind.PICKUP,
         TripCost(Vehicle.XE_MAY, None, 20_000, None),
     )
+    _deliverable(shop, costed)
     _leg(
         connection,
         shop,
@@ -764,6 +802,7 @@ def test_the_report_counts_capture_and_withholds_margin_until_the_month_is_compl
     )
     partial, _ = shop.order(FulfillmentMode.PICKUP_AND_RETURN)
     _leg(connection, shop, partial, DeliveryLegKind.PICKUP, None)
+    _deliverable(shop, partial)
     _leg(
         connection,
         shop,
@@ -800,7 +839,8 @@ def test_the_report_counts_capture_and_withholds_margin_until_the_month_is_compl
 
     report = read()
     capture = report.capture
-    assert (capture.cycles, capture.cycles_captured) == (3, 2)
+    # 3 washes of the fixture's own (2 on WASH-01) + the 2 delivered orders' washes, skipped.
+    assert (capture.cycles, capture.cycles_captured) == (5, 2)
     [machine] = capture.machines
     assert (machine.code, machine.closed_cycles, machine.average_minutes) == ("WASH-01", 1, 42)
     assert (capture.delivered_orders, capture.costed_orders) == (2, 1)
@@ -808,7 +848,8 @@ def test_the_report_counts_capture_and_withholds_margin_until_the_month_is_compl
     assert capture.cost_per_delivered_order_vnd == 45_001
     month = report.months[-1]
     assert month.month == TODAY.strftime("%Y-%m") and month.in_progress
-    assert month.spending_vnd == 50_000 and month.collected_vnd == 110_000
+    # 110.000 settled on `timed` + the two delivered orders paid before their trips.
+    assert month.spending_vnd == 50_000 and month.collected_vnd == 330_000
     assert month.margin.status is MarginStatus.INCOMPLETE
     assert month.margin.amount_vnd is None
     assert [category.value for category in month.margin.missing] == ["NUOC", "LUONG", "MAT_BANG"]
@@ -822,7 +863,7 @@ def test_the_report_counts_capture_and_withholds_margin_until_the_month_is_compl
     connection.commit()
     complete = read().months[-1]
     assert complete.margin.status is MarginStatus.COMPLETE
-    assert (complete.margin.amount_vnd, complete.margin.direction) == (30_000, "IN")
+    assert (complete.margin.amount_vnd, complete.margin.direction) == (250_000, "IN")
     assert json.dumps([m.month for m in read().months])
 
 

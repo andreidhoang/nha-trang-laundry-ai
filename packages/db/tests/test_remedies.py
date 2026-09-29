@@ -83,6 +83,7 @@ from nha_trang_laundry_domain.catalog import (
     Unit,
 )
 from nha_trang_laundry_domain.orders import IntakeReadiness
+from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.pricebook_import import (
     import_pricebook_csv,
     runtime_price_rules,
@@ -174,7 +175,14 @@ def _released_order(
     lines: tuple[FixtureLine, ...] | None = None,
     pricebook: Any = None,
 ) -> tuple[UUID, int]:
-    """An order walked to ACTIVE with production RELEASED, through every real transition."""
+    """An order walked to ACTIVE, washed, paid in full and released, through every real command.
+
+    GOODS-AND-DRAWER-009 (review M2): goods leave only when paid, for every mode. This fixture used
+    to move production to RELEASED first and settle afterwards -- the order a counter can no longer
+    follow, because RELEASE of an unpaid order is refused. So the exact total is settled on the
+    shelf (collected at the counter for a self-collect mode, prepaid for a delivery), then the
+    laundry is released: the same end state every remedy test reads, reached legally.
+    """
 
     quote_id, revision, quote, contact_id = accepted_quote(
         connection,
@@ -219,9 +227,18 @@ def _released_order(
         {"production_target": ProductionStatus.IN_PROCESS},
         {"production_target": ProductionStatus.QUALITY_CHECK},
         {"production_target": ProductionStatus.READY_AT_STORE},
-        {"production_target": ProductionStatus.RELEASED},
     ):
         version = _advance(connection, order_id, staff, version, **step).row_version
+    version = _settle(
+        connection,
+        order_id,
+        staff,
+        collected=mode not in {FulfillmentMode.PICKUP_AND_RETURN, FulfillmentMode.RETURN_ONLY},
+        amount=QUOTED_TOTAL if lines is None else sum(line.amount_vnd for line in lines) + 10_000,
+    ).row_version
+    version = _advance(
+        connection, order_id, staff, version, production_target=ProductionStatus.RELEASED
+    ).row_version
     return order_id, version
 
 
@@ -232,8 +249,8 @@ def _settle(
     *,
     collected: bool,
     amount: int = QUOTED_TOTAL,
-) -> None:
-    SettlementRepository().record(
+) -> Any:
+    return SettlementRepository().record(
         connection,
         SettlementCommand(
             order_id=order_id,
@@ -297,17 +314,11 @@ def _shop(
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     if publish:
         _publish_policy(connection, staff)
+    # GOODS-AND-DRAWER-009: a released order is a paid one (`_released_order` settles first), so
+    # there is no unpaid released order to ask for any more.
+    if not settle:
+        raise ValueError("goods leave only when paid: a released order has been settled")
     order_id, _ = _released_order(connection, store_id, staff, mode, lines, pricebook)
-    if settle:
-        _settle(
-            connection,
-            order_id,
-            staff,
-            collected=mode not in {FulfillmentMode.PICKUP_AND_RETURN, FulfillmentMode.RETURN_ONLY},
-            amount=(
-                QUOTED_TOTAL if lines is None else sum(line.amount_vnd for line in lines) + 10_000
-            ),
-        )
     return store_id, staff, order_id, _incident(connection, store_id, order_id, staff)
 
 
@@ -1237,6 +1248,8 @@ def test_a_late_delivery_credit_on_a_fully_refunded_order_is_refused(
         version,
         commercial_target=CommercialOrderStatus.CANCELLED,
         custody_resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE,
+        # GOODS-AND-DRAWER-009 (review M4): the money goes back, so the staff member says how.
+        refund_method=PaymentMethod.TIEN_MAT,
     )
     assert cancelled.balance.value == "REFUNDED"
 

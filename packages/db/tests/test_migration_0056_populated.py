@@ -40,7 +40,6 @@ from nha_trang_laundry_db.settlement import (
 )
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
-    CustodyResolution,
     OrderBalanceStatus,
     ProductionStatus,
 )
@@ -49,6 +48,7 @@ from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.settlement import SettlementShape
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
+from test_migration_0067_populated import _refund_as_before
 from test_reports import DAY, NEXT, QUOTED_TOTAL, _Order, _person, _store, local
 
 MIGRATION_UNDER_TEST = "0056"
@@ -233,11 +233,9 @@ def test_every_settlement_before_0056_becomes_its_one_payment_and_no_day_moves(
             local(DAY, 15, 5),
         )
         refunded.move(local(NEXT, 10), commercial_target=CommercialOrderStatus.CANCELLATION_REVIEW)
-        refunded.move(
-            local(NEXT, 10, 5),
-            commercial_target=CommercialOrderStatus.CANCELLED,
-            custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
-        )
+        # Refunded the way the pre-`0067` repository wrote it (GOODS-AND-DRAWER-009): the refund
+        # row with no method -- the column does not exist yet here -- and the order's move.
+        _refund_as_before(connection, refunded, local(NEXT, 10, 5))
         # Unpaid and running.
         unpaid = active(local(NEXT, 8))
         connection.commit()

@@ -60,6 +60,7 @@ from nha_trang_laundry_domain.catalog import (
     FulfillmentMode,
 )
 from nha_trang_laundry_domain.late_delivery import LateDeliveryDecision, NotStoreFaultReason
+from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.promise import PromiseChangeReason
 from nha_trang_laundry_domain.remedies import RemedyKind
 from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA
@@ -211,6 +212,23 @@ def _leg(connection: Any, shop: Shop, order_id: UUID, at: datetime, *, ok: bool 
             recorded_at=at,
         ),
     )
+
+
+def _legacy_leg(connection: Any, shop: Shop, order_id: UUID, at: datetime) -> None:
+    """A succeeded return trip on an UNPAID order, as the leg route recorded one before
+    GOODS-AND-DRAWER-009 (review M2) refused it -- written directly, because no path writes it any
+    more, and such rows can still be in a shop's history."""
+
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO delivery_legs (
+                id, store_id, order_id, leg_kind, outcome, recorded_by, recorded_at,
+                correlation_id
+            ) VALUES (%s, %s, %s, 'RETURN', 'SUCCEEDED', %s, %s, %s)
+            """,
+            (uuid4(), shop.store_id, order_id, shop.operator.staff_user_id, at, uuid4()),
+        )
 
 
 def _list(connection: Any, shop: Shop, principal: StaffPrincipal | None = None) -> Any:
@@ -424,7 +442,9 @@ def test_a_refused_proposal_rolls_the_incident_back_too(
 
     _publish_remedies(connection, shop)
     order_id, promise = _delivery_order(connection, shop, settle=False)
-    _leg(connection, shop, order_id, promise + timedelta(hours=3))
+    # An unpaid order can no longer be delivered (GOODS-AND-DRAWER-009); one delivered before that
+    # was enforced is still in the history, and the credit is still refused for it.
+    _legacy_leg(connection, shop, order_id, promise + timedelta(hours=3))
     listed = _list(connection, shop).orders[0]
     assert listed.credit_vnd is None and listed.credit_refusal == "REMEDY_ORDER_NOT_SETTLED"
     with pytest.raises(RemedyStateError) as refused:
@@ -769,6 +789,8 @@ def test_a_refunded_bill_shows_no_credit(connection: psycopg.Connection[Any], sh
         {
             "commercial_target": CommercialOrderStatus.CANCELLED,
             "custody_resolution": CustodyResolution.SHOP_FAULT_NO_CHARGE,
+            # GOODS-AND-DRAWER-009 (review M4): how the money went back.
+            "refund_method": PaymentMethod.CHUYEN_KHOAN,
         },
     ):
         version = (

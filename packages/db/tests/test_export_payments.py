@@ -199,8 +199,13 @@ def test_the_signed_statement_names_each_money_column_s_ledger_and_cut() -> None
         "paid_transfer_vnd",
         "paid_vnd",
         "remaining_vnd",
+        # GOODS-AND-DRAWER-009 (review M4): not an amount, but it says which ledger's row the
+        # refund amount beside it went back through, so it is signed with the money sources.
+        "refund_method",
     ]
-    assert sorted(source.column for source in EXPORT_MONEY_SOURCES) == sorted(money_columns)
+    assert sorted(source.column for source in EXPORT_MONEY_SOURCES) == sorted(
+        [*money_columns, "refund_method"]
+    )
     ledgers = {source.column: source.ledger for source in EXPORT_MONEY_SOURCES}
     assert (
         ledgers["paid_cash_vnd"].startswith("order_payments.")
@@ -275,6 +280,8 @@ def test_a_partly_paid_order_exports_what_was_paid_by_method_and_an_unpaid_one_w
         view.row_version,
         OrderStep.CANCEL,
         custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        # GOODS-AND-DRAWER-009 (review M4): the deposit went back from the drawer.
+        refund_method=PaymentMethod.TIEN_MAT,
     )
 
     created = _request(connection, shop, _local_date(shop.now), None)
@@ -327,6 +334,9 @@ def test_a_partly_paid_order_exports_what_was_paid_by_method_and_an_unpaid_one_w
         "30000",
     )
     assert gone["remaining_vnd"] == "0"
+    # GOODS-AND-DRAWER-009: how the refund went back is on its row; no refund, no method.
+    assert gone["refund_method"] == "TIEN_MAT"
+    assert full["refund_method"] == part["refund_method"] == none["refund_method"] == ""
 
     # The header names when the money columns stood so: the release's own instant.
     header = dict(line.split(",", 1) for line in produced.content_csv.splitlines()[:6])

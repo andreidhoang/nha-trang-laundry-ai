@@ -82,7 +82,9 @@ from test_reports import AS_OF, DAY, _Order, _person, _seeded_shop, _store
 #: and the two hooks' statements hashed in. v1 was `daily-summary-v1:935e9e90a50bd6a8`.
 #: v3 (round 8, `SUMMARY-ATTENTION-001`): the *Cần chú ý* block and its statements. v2 was
 #: `daily-summary-v2:13441b651e00127d`.
-PINNED_TEMPLATE_VERSION = "daily-summary-v3:b73120eb9bf3c640"
+#: v4 (round 9, GOODS-AND-DRAWER-009, review M4): the money line says how refunds went back and what
+#: the drawer did -- cash in minus cash handed back. v3 was `daily-summary-v3:b73120eb9bf3c640`.
+PINNED_TEMPLATE_VERSION = "daily-summary-v4:c8b8abadb5e4578f"
 
 
 def _database_url() -> str:
@@ -163,7 +165,7 @@ def _as_json(summary: DailySummary) -> str:
 
 def test_the_template_version_is_pinned() -> None:
     version = daily_summary_template_version()
-    assert version.identifier == "daily-summary-v3"
+    assert version.identifier == "daily-summary-v4"
     assert version.label == PINNED_TEMPLATE_VERSION
 
 
@@ -243,6 +245,13 @@ def test_every_figure_beside_a_sentence_is_the_reports_own(
         "refunded_vnd",
         "net_vnd",
         "net_direction",
+        # GOODS-AND-DRAWER-009 (review M4): the refunds by method and the drawer.
+        "refunded_cash_vnd",
+        "refunded_transfer_vnd",
+        "refunded_unknown_vnd",
+        "refunded_unknown_entries",
+        "drawer_vnd",
+        "drawer_direction",
     ):
         assert figures[field] == getattr(expected, field), field
     assert (figures["cash_vnd"], figures["transfer_vnd"]) == (

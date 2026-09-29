@@ -612,7 +612,9 @@ def day_figures(report: StoreReport) -> DayFigures:
     collected = figures[ReportKey.MONEY_COLLECTED]
     by_method = {kind: (count, amount or 0) for kind, count, amount in collected.by_kind or ()}
     refunded = figures[ReportKey.MONEY_REFUNDED]
+    by_refund = {kind: (count, amount or 0) for kind, count, amount in refunded.by_kind or ()}
     net = figures[ReportKey.MONEY_NET]
+    drawer = figures[ReportKey.MONEY_DRAWER]
     return DayFigures(
         orders_created=figures[ReportKey.ORDERS_CREATED].numerator,
         orders_completed=figures[ReportKey.ORDERS_COMPLETED].numerator,
@@ -632,6 +634,14 @@ def day_figures(report: StoreReport) -> DayFigures:
         refund_entries=refunded.entries or 0,
         net_vnd=net.numerator,
         net_direction=net.direction or "IN",
+        refunded_cash_vnd=by_refund.get("TIEN_MAT", (0, 0))[1],
+        refunded_cash_entries=by_refund.get("TIEN_MAT", (0, 0))[0],
+        refunded_transfer_vnd=by_refund.get("CHUYEN_KHOAN", (0, 0))[1],
+        refunded_transfer_entries=by_refund.get("CHUYEN_KHOAN", (0, 0))[0],
+        refunded_unknown_vnd=by_refund.get("UNKNOWN", (0, 0))[1],
+        refunded_unknown_entries=by_refund.get("UNKNOWN", (0, 0))[0],
+        drawer_vnd=drawer.numerator,
+        drawer_direction=drawer.direction or "IN",
     )
 
 

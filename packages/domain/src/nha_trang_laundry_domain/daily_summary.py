@@ -45,7 +45,11 @@ from typing import Final
 #: pickup reminders and the free-storage days running out, invoices waiting to be issued, and the
 #: day against the same weekday of the previous four weeks with last month's missing cost
 #: categories), or one "nothing needs attention" line when every source answered and none fired.
-DAILY_SUMMARY_TEMPLATE_IDENTIFIER: Final = "daily-summary-v3"
+#:
+#: v4 (round 9, GOODS-AND-DRAWER-009, review M4): the money line says how refunds went back and
+#: what the drawer did -- cash in minus cash handed back -- beside "Thu trừ hoàn" (every method),
+#: and names the refunds of unknown method (written before `0067`) that the drawer figure excludes.
+DAILY_SUMMARY_TEMPLATE_IDENTIFIER: Final = "daily-summary-v4"
 
 #: `Asia/Ho_Chi_Minh` weekday names, Monday first, as the counter says them.
 _WEEKDAY_VI: Final = ("thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy", "Chủ nhật")
@@ -205,6 +209,16 @@ class DayFigures:
     refund_entries: int
     net_vnd: int
     net_direction: str
+    #: GOODS-AND-DRAWER-009 (review M4): `MONEY_REFUNDED` split by how the money went back, and
+    #: `MONEY_DRAWER` -- cash in minus cash handed back -- which excludes the unknown-method ones.
+    refunded_cash_vnd: int
+    refunded_cash_entries: int
+    refunded_transfer_vnd: int
+    refunded_transfer_entries: int
+    refunded_unknown_vnd: int
+    refunded_unknown_entries: int
+    drawer_vnd: int
+    drawer_direction: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -512,10 +526,26 @@ def _money(figures: DayFigures) -> SummaryLine:
             f"Hoàn lại khách {format_vnd(figures.refunded_vnd)} "
             f"({format_count(figures.refund_entries, 'khoản')})."
         )
+        if figures.refunded_cash_entries:
+            sentences.append(f"Hoàn tiền mặt {format_vnd(figures.refunded_cash_vnd)}.")
+        if figures.refunded_transfer_entries:
+            sentences.append(f"Hoàn chuyển khoản {format_vnd(figures.refunded_transfer_vnd)}.")
         if figures.net_direction == "OUT":
             sentences.append(f"Tiền hoàn nhiều hơn tiền thu {format_vnd(figures.net_vnd)}.")
         else:
             sentences.append(f"Thu trừ hoàn còn {format_vnd(figures.net_vnd)}.")
+        # GOODS-AND-DRAWER-009: the drawer is cash only, said as a word, never a minus sign.
+        if figures.drawer_vnd == 0:
+            sentences.append("Tiền mặt trong két không đổi.")
+        else:
+            moved = "giảm" if figures.drawer_direction == "OUT" else "tăng"
+            sentences.append(f"Tiền mặt trong két {moved} {format_vnd(figures.drawer_vnd)}.")
+        if figures.refunded_unknown_entries:
+            sentences.append(
+                "Số tiền trong két chưa tính "
+                f"{format_count(figures.refunded_unknown_entries, 'khoản hoàn')} chưa rõ cách hoàn "
+                f"({format_vnd(figures.refunded_unknown_vnd)})."
+            )
     return SummaryLine(
         LineKey.MONEY,
         " ".join(sentences),
@@ -530,6 +560,14 @@ def _money(figures: DayFigures) -> SummaryLine:
             ("refund_entries", figures.refund_entries),
             ("net_vnd", figures.net_vnd),
             ("net_direction", figures.net_direction),
+            ("refunded_cash_vnd", figures.refunded_cash_vnd),
+            ("refunded_cash_entries", figures.refunded_cash_entries),
+            ("refunded_transfer_vnd", figures.refunded_transfer_vnd),
+            ("refunded_transfer_entries", figures.refunded_transfer_entries),
+            ("refunded_unknown_vnd", figures.refunded_unknown_vnd),
+            ("refunded_unknown_entries", figures.refunded_unknown_entries),
+            ("drawer_vnd", figures.drawer_vnd),
+            ("drawer_direction", figures.drawer_direction),
         ),
     )
 

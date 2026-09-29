@@ -20,6 +20,8 @@ from nha_trang_laundry_domain.catalog import (
 )
 from nha_trang_laundry_domain.order_steps import (
     COMPOSITE_STEPS,
+    REFUND_METHOD_REQUIRED,
+    GoodsMayNotLeave,
     NextStep,
     OrderStep,
     PlannedTransition,
@@ -42,11 +44,17 @@ from nha_trang_laundry_domain.orders import (
 from nha_trang_laundry_domain.payments import (
     ChargeKind,
     OrderCharge,
+    PaymentMethod,
     owed_charges,
     payment_position,
 )
 from nha_trang_laundry_domain.promise import PromiseChoice
-from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
+from nha_trang_laundry_domain.settlement import (
+    RELEASE_REQUIRES_PAYMENT,
+    QuotedTotal,
+    SettlementShape,
+    goods_may_leave,
+)
 from nha_trang_laundry_domain.unclaimed import awaiting_pickup, order_storage_fee
 from nha_trang_laundry_domain.vietqr import OrderIdTransferCode, TicketTransferCode
 
@@ -88,6 +96,21 @@ class OrderStepRequiresHuman(OrderStateError):
     def __init__(self, message: str, reason_codes: tuple[str, ...]) -> None:
         super().__init__(message)
         self.reason_codes = reason_codes
+
+
+class OrderGoodsMayNotLeaveError(OrderStateError):
+    """GOODS-AND-DRAWER-009 (review M2): the goods would leave an order whose money forbids it.
+
+    Raised before anything is written -- by `RELEASE` for every fulfilment mode, and by any other
+    move of production to `RELEASED` (the per-axis route) -- when `goods_may_leave` says no: not
+    paid in full and not charged to the customer's account. `reason_code` is the named refusal the
+    routes send (`RELEASE_REQUIRES_PAYMENT`) and `decision` the owner decision it keeps.
+    """
+
+    def __init__(self, reason_code: str, message: str, *, decision: str = "DEC-035") -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.decision = decision
 
 
 class OrderPromiseRefused(OrderStateError):
@@ -164,6 +187,10 @@ class OrderTransitionCommand:
     #: `REWASH` step; used only if the move opens a wash cycle. Never set by the per-axis routes,
     #: whose cycles are recorded as not captured.
     machine_id: UUID | None = None
+    #: GOODS-AND-DRAWER-009 (review M4): how the money of a refunding cancellation went back --
+    #: `TIEN_MAT` from the drawer or `CHUYEN_KHOAN` by bank transfer, as the staff member says.
+    #: Required exactly when the transition writes a refund, refused otherwise.
+    refund_method: PaymentMethod | None = None
 
 
 @dataclass(frozen=True)
@@ -196,6 +223,9 @@ class OrderStepCommand:
     #: `SHOP-CAPTURE-001` (`DEC-038`): "Máy nào?" at *Bắt đầu giặt*, or at a rewash. Optional;
     #: absent is "Bỏ qua" and the cycle is counted as not captured.
     machine_id: UUID | None = None
+    #: GOODS-AND-DRAWER-009 (review M4): `CANCEL` only, and required when the cancellation hands
+    #: money back -- how it went back (`TIEN_MAT` / `CHUYEN_KHOAN`).
+    refund_method: PaymentMethod | None = None
 
 
 #: SHOP-CAPTURE-001: the steps that put a load into a machine, and so may name one.
@@ -943,6 +973,13 @@ class OrderRepository:
             "custody_resolution": (
                 command.custody_resolution.value if command.custody_resolution else None
             ),
+            # GOODS-AND-DRAWER-009: present only when given, so a key used before refunds had a
+            # method hashes as it did, and the same key resent with the other method conflicts.
+            **(
+                {}
+                if command.refund_method is None
+                else {"refund_method": command.refund_method.value}
+            ),
         }
 
         def transition_once() -> dict[str, object]:
@@ -1028,8 +1065,18 @@ class OrderRepository:
                 next_state = transition_production(current, command.production_target)
                 dimension = "production"
                 target = command.production_target.value
+                # GOODS-AND-DRAWER-009 (review M2): `RELEASED` is the goods leaving the shop, by
+                # whichever route asks for it -- the `RELEASE` / `HAND_OVER` steps (which the
+                # domain plan has already refused) or the per-axis production route, which asked
+                # nothing and so let an unpaid order's goods out. One rule, every mode.
+                if next_state.production is ProductionStatus.RELEASED and not goods_may_leave(
+                    current.balance
+                ):
+                    raise GoodsMayNotLeave(RELEASE_REQUIRES_PAYMENT)
             else:
                 raise OrderStateError("order transition target is missing")
+        except GoodsMayNotLeave as error:
+            raise OrderGoodsMayNotLeaveError(error.reason_code, str(error)) from error
         except OrderTransitionError as error:
             raise OrderStateError(str(error)) from error
 
@@ -1038,15 +1085,32 @@ class OrderRepository:
         # settlement ledger, under the order lock already held. Nobody types the amount: it is
         # the settled amount, and `order_refunds`' composite key to `order_settlements` makes it
         # impossible for the row to say anything else.
+        refunding = (
+            current.balance in {OrderBalanceStatus.PAID, OrderBalanceStatus.PARTIALLY_PAID}
+            and next_state.balance is OrderBalanceStatus.REFUNDED
+        )
+        # GOODS-AND-DRAWER-009 (review M4): the refund says how the money went back, because the
+        # drawer is cash in minus cash handed back and nobody may guess which a refund was.
+        if refunding and command.refund_method is None:
+            raise OrderStepRequiresHuman(
+                "HUMAN_APPROVAL_REQUIRED: REFUND_METHOD_REQUIRED: a cancellation that hands money "
+                "back says how it went back (refund_method)",
+                (REFUND_METHOD_REQUIRED,),
+            )
+        if not refunding and command.refund_method is not None:
+            raise OrderStateError(
+                "VALIDATION_ERROR: refund_method is taken only by a cancellation that hands money "
+                "back"
+            )
         refund = (
             _refund_for_cancellation(
                 connection,
                 order_id=command.order_id,
                 resolution=command.custody_resolution,
+                method=command.refund_method,
                 partly_paid=current.balance is OrderBalanceStatus.PARTIALLY_PAID,
             )
-            if current.balance in {OrderBalanceStatus.PAID, OrderBalanceStatus.PARTIALLY_PAID}
-            and next_state.balance is OrderBalanceStatus.REFUNDED
+            if refunding
             else None
         )
         closed_at = (
@@ -1117,8 +1181,8 @@ class OrderRepository:
                     INSERT INTO order_refunds (
                         id, order_id, store_id, settlement_id, refunded_amount_vnd,
                         direction, custody_resolution, attested_by_staff_id, refunded_at,
-                        created_at
-                    ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s)
+                        created_at, refund_method
+                    ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s, %s)
                     """,
                     (
                         refund.refund_id,
@@ -1130,6 +1194,7 @@ class OrderRepository:
                         command.principal.staff_user_id,
                         occurred_at,
                         occurred_at,
+                        refund.method.value,
                     ),
                 )
             cursor.execute(
@@ -1343,6 +1408,12 @@ class OrderRepository:
             **_promise_payload(command),
             # SHOP-CAPTURE-001: present only when given, for the same reason as the two above.
             **({} if command.machine_id is None else {"machine_id": str(command.machine_id)}),
+            # GOODS-AND-DRAWER-009: present only when given, for the same reason.
+            **(
+                {}
+                if command.refund_method is None
+                else {"refund_method": command.refund_method.value}
+            ),
         }
         if command.step is not OrderStep.RECEIVE and (
             command.promise_choice is not None or command.custom_promise_at is not None
@@ -1382,9 +1453,12 @@ class OrderRepository:
                     accepted_at=occurred_at,
                     rewash_reason=command.rewash_reason,
                     rejection_reason=command.rejection_reason,
+                    refund_method=command.refund_method,
                 )
             except StepRequiresHuman as error:
                 raise OrderStepRequiresHuman(str(error), error.reason_codes) from error
+            except GoodsMayNotLeave as error:
+                raise OrderGoodsMayNotLeaveError(error.reason_code, str(error)) from error
             except OrderTransitionError as error:
                 raise OrderStateError(str(error)) from error
             # PROMISE-001: decided before anything is written, so a refusal writes nothing.
@@ -1422,6 +1496,7 @@ class OrderRepository:
                         rewash_reason=planned.rewash_reason,
                         rejection_reason=planned.rejection_reason,
                         machine_id=command.machine_id,
+                        refund_method=planned.refund_method,
                     ),
                     locked,
                     moment,
@@ -1565,6 +1640,8 @@ class _CancellationRefund:
     store_id: UUID
     amount_vnd: int
     resolution: CustodyResolution
+    #: GOODS-AND-DRAWER-009 (review M4): how the money went back, as the staff member said.
+    method: PaymentMethod
 
     def document(self) -> dict[str, object]:
         return {
@@ -1573,6 +1650,7 @@ class _CancellationRefund:
             "refunded_amount_vnd": self.amount_vnd,
             "direction": "TO_CUSTOMER",
             "custody_resolution": self.resolution.value,
+            "refund_method": self.method.value,
         }
 
 
@@ -1581,6 +1659,7 @@ def _refund_for_cancellation(
     *,
     order_id: UUID,
     resolution: CustodyResolution | None,
+    method: PaymentMethod | None,
     partly_paid: bool = False,
 ) -> _CancellationRefund:
     """Read the settlement a refunding cancellation reverses, or refuse.
@@ -1597,6 +1676,8 @@ def _refund_for_cancellation(
 
     if resolution is None:
         raise OrderStateError("HUMAN_APPROVAL_REQUIRED: a refund needs a custody resolution")
+    if method is None:  # pragma: no cover - `_apply_locked_transition` refused it by name first
+        raise OrderStateError("HUMAN_APPROVAL_REQUIRED: a refund needs its refund_method")
     if partly_paid:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -1620,6 +1701,7 @@ def _refund_for_cancellation(
             store_id=_uuid(ledger[0]),
             amount_vnd=int(ledger[1]),
             resolution=resolution,
+            method=method,
         )
     with connection.cursor() as cursor:
         cursor.execute(
@@ -1637,6 +1719,7 @@ def _refund_for_cancellation(
         store_id=_uuid(row[1]),
         amount_vnd=int(row[2]),
         resolution=resolution,
+        method=method,
     )
 
 

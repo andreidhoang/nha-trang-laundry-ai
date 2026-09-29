@@ -179,7 +179,12 @@ def _ready_active_order(
     staff: StaffPrincipal,
     mode: FulfillmentMode = FulfillmentMode.SELF_DROP_SELF_COLLECT,
 ) -> tuple[UUID, int]:
-    """Drive an order to ACTIVE with production RELEASED, through every real transition."""
+    """Drive an order to ACTIVE, washed and on the shelf, through every real transition.
+
+    GOODS-AND-DRAWER-009 (review M2): this fixture used to go on to RELEASED before any money was
+    taken -- goods leaving an unpaid order, which is now refused for every mode. A test settles on
+    the shelf and then releases (`_release`), the order the counter itself follows.
+    """
     order_id = _order(connection, store_id, staff, mode)
     version = 1
     for step in (
@@ -196,11 +201,19 @@ def _ready_active_order(
         {"production_target": ProductionStatus.IN_PROCESS},
         {"production_target": ProductionStatus.QUALITY_CHECK},
         {"production_target": ProductionStatus.READY_AT_STORE},
-        {"production_target": ProductionStatus.RELEASED},
     ):
         stored = _advance(connection, order_id, staff, version, **step)
         version = stored.row_version
     return order_id, version
+
+
+def _release(connection: Any, order_id: UUID, staff: StaffPrincipal, version: int) -> int:
+    """Production to RELEASED, once the order is paid (GOODS-AND-DRAWER-009)."""
+    return int(
+        _advance(
+            connection, order_id, staff, version, production_target=ProductionStatus.RELEASED
+        ).row_version
+    )
 
 
 def _settle(
@@ -259,6 +272,7 @@ def test_an_order_reaches_completed_after_settlement(
 
     commercial, balance, collected, version = _order_row(connection, order_id)
     assert (commercial, balance, collected) == ("ACTIVE", "PAID", True)
+    version = _release(connection, order_id, staff, version)
 
     completed = _advance(
         connection,
@@ -371,12 +385,13 @@ def test_goods_that_did_not_leave_with_the_customer_are_refused(
     stored = _settle(connection, order_id, staff, collected=False)
     assert stored.settlement_shape == "EXACT_PAYMENT_PREPAID_SELF_COLLECTION"
     assert _order_row(connection, order_id)[1:3] == ("PAID", False)
+    released = _release(connection, order_id, staff, stored.row_version)
     with pytest.raises(OrderStateError, match="fulfillment is incomplete"):
         _advance(
             connection,
             order_id,
             staff,
-            stored.row_version,
+            released,
             commercial_target=CommercialOrderStatus.COMPLETED,
         )
     assert version < stored.row_version
@@ -639,6 +654,7 @@ def test_a_pickup_only_order_is_settled_and_closed_at_the_counter(
     _, balance, collected, version = _order_row(connection, order_id)
     assert balance == "PAID"
     assert collected
+    version = _release(connection, order_id, staff, version)
 
     completed = _advance(
         connection,

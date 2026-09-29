@@ -54,6 +54,16 @@ BUSINESS_TIMEZONE = "Asia/Ho_Chi_Minh"
 
 #: The takings figure, as one statement so that one edit moves one rule (`OPS-BOARD-001`).
 #:
+#: v4 (GOODS-AND-DRAWER-009, review M4): the drawer. v3 netted every refund against money in by
+#: EVERY method and the console called that "Tiền trong két": 500.000 cash + 2.000.000 transfer -
+#: 100.000 refund read "tăng 2.400.000" while the drawer moved about 400.000. `0067` records how
+#: each new refund went back, so the drawer is now its own figure: cash taken minus cash handed back
+#: (`drawer_vnd` + `drawer_direction`, magnitude and direction as for the net). Refunds are split
+#: by method -- `TIEN_MAT`, `CHUYEN_KHOAN`, and those written before `0067` with no method, which
+#: are counted and summed as UNKNOWN and are NOT in the drawer figure: the reader is told the drawer
+#: excludes them rather than having them netted as a guess. `net_vnd` / `net_direction` keep their
+#: v2 meaning -- all money in minus all money back, every method -- and are no longer the drawer.
+#:
 #: v3 (`PAYMENT-001`, `DEC-035`): money in is the payment ledger, `order_payments`, not the
 #: settlements. A deposit taken today is money in today's drawer even though the order is not paid
 #: in full, and a settlement no longer says how the money came. `0056` gave every earlier settlement
@@ -93,7 +103,17 @@ _COLLECTED_TODAY_SQL = """
         WHERE store_id = %(store)s
           AND (attested_at AT TIME ZONE %(zone)s)::date = %(business_date)s
     ), refunded AS (
-        SELECT coalesce(sum(refunded_amount_vnd), 0) AS amount, count(*) AS entries
+        SELECT coalesce(sum(refunded_amount_vnd), 0) AS amount, count(*) AS entries,
+               coalesce(sum(refunded_amount_vnd) FILTER (WHERE refund_method = 'TIEN_MAT'), 0)
+                   AS cash,
+               count(*) FILTER (WHERE refund_method = 'TIEN_MAT') AS cash_entries,
+               coalesce(
+                   sum(refunded_amount_vnd) FILTER (WHERE refund_method = 'CHUYEN_KHOAN'), 0
+               ) AS transfer,
+               count(*) FILTER (WHERE refund_method = 'CHUYEN_KHOAN') AS transfer_entries,
+               coalesce(sum(refunded_amount_vnd) FILTER (WHERE refund_method IS NULL), 0)
+                   AS unknown,
+               count(*) FILTER (WHERE refund_method IS NULL) AS unknown_entries
         FROM order_refunds
         WHERE store_id = %(store)s
           AND direction = 'TO_CUSTOMER'
@@ -102,7 +122,11 @@ _COLLECTED_TODAY_SQL = """
     SELECT taken.amount, settled.entries, refunded.amount, refunded.entries,
            abs(taken.amount - refunded.amount),
            CASE WHEN taken.amount >= refunded.amount THEN 'IN' ELSE 'OUT' END,
-           taken.entries, taken.cash, taken.cash_entries, taken.transfer, taken.transfer_entries
+           taken.entries, taken.cash, taken.cash_entries, taken.transfer, taken.transfer_entries,
+           refunded.cash, refunded.cash_entries, refunded.transfer, refunded.transfer_entries,
+           refunded.unknown, refunded.unknown_entries,
+           abs(taken.cash - refunded.cash),
+           CASE WHEN taken.cash >= refunded.cash THEN 'IN' ELSE 'OUT' END
     FROM taken, settled, refunded
 """
 
@@ -111,7 +135,7 @@ _COLLECTED_TODAY_SQL = """
 #: This is the one money figure the console shows, so "which rule produced it" is not a developer
 #: convenience: the day boundary is hashed with the SQL because moving it would change the total
 #: while leaving the statement word for word identical.
-COLLECTED_TODAY_QUERY = query_version("collected-today-v3", _COLLECTED_TODAY_SQL, BUSINESS_TIMEZONE)
+COLLECTED_TODAY_QUERY = query_version("collected-today-v4", _COLLECTED_TODAY_SQL, BUSINESS_TIMEZONE)
 
 
 #: Which way the counter's drawer moved over a day: money in (including no change) or money out.
@@ -240,6 +264,20 @@ class CollectedToday:
     cash_count: int = 0
     transfer_vnd: int = 0
     transfer_count: int = 0
+    #: v4 (GOODS-AND-DRAWER-009, review M4): the same refunds split by how the money went back
+    #: (`0067`), and the ones written before `0067`, whose method nobody recorded, apart.
+    #: `refunded_cash_vnd + refunded_transfer_vnd + refunded_unknown_vnd` is `refunded_vnd` by
+    #: construction of the statement; nothing in Python adds them.
+    refunded_cash_vnd: int = 0
+    refunded_cash_count: int = 0
+    refunded_transfer_vnd: int = 0
+    refunded_transfer_count: int = 0
+    refunded_unknown_vnd: int = 0
+    refunded_unknown_count: int = 0
+    #: The drawer: cash taken minus cash handed back, a magnitude and a direction. Refunds of
+    #: unknown method are NOT in it (`refunded_unknown_*` says how many and how much it excludes).
+    drawer_vnd: int = 0
+    drawer_direction: DrawerDirection = "IN"
 
 
 class SettlementRepository:
@@ -648,7 +686,9 @@ class SettlementRepository:
         if row is None:  # pragma: no cover - an aggregate always returns one row
             return CollectedToday(collected_vnd=0, settlement_count=0)
         direction = str(row[5])
-        if direction not in ("IN", "OUT"):  # pragma: no cover - the CASE has exactly two arms
+        drawer_direction = str(row[18])
+        directions = {direction, drawer_direction}
+        if not directions <= {"IN", "OUT"}:  # pragma: no cover - each CASE has exactly two arms
             # Not a counter-facing refusal: nothing staff did can reach this, so it has no reason
             # code and no Vietnamese note. It fails loudly rather than guessing a direction.
             raise RuntimeError("the drawer direction is not one the rule produces")
@@ -664,6 +704,14 @@ class SettlementRepository:
             cash_count=int(row[8]),
             transfer_vnd=int(row[9]),
             transfer_count=int(row[10]),
+            refunded_cash_vnd=int(row[11]),
+            refunded_cash_count=int(row[12]),
+            refunded_transfer_vnd=int(row[13]),
+            refunded_transfer_count=int(row[14]),
+            refunded_unknown_vnd=int(row[15]),
+            refunded_unknown_count=int(row[16]),
+            drawer_vnd=int(row[17]),
+            drawer_direction="IN" if drawer_direction == "IN" else "OUT",
         )
 
 

@@ -38,6 +38,7 @@ from nha_trang_laundry_domain.catalog import (
     FulfillmentMode,
     Unit,
 )
+from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.quotes import ConfigurationSnapshotReference
 from nha_trang_laundry_domain.remedies import RemedyKind, RemedyRefusal, RemedyStatus
 from quote_test_data import FixtureLine
@@ -557,6 +558,8 @@ def _refund(connection: Any, order_id: UUID, staff: Any) -> None:
         version,
         commercial_target=CommercialOrderStatus.CANCELLED,
         custody_resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE,
+        # GOODS-AND-DRAWER-009 (review M4): the money goes back, so the staff member says how.
+        refund_method=PaymentMethod.TIEN_MAT,
     )
     assert cancelled.balance.value == "REFUNDED"
 

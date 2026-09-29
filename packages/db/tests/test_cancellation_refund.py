@@ -52,6 +52,7 @@ from nha_trang_laundry_domain.catalog import (
     ProductionStatus,
 )
 from nha_trang_laundry_domain.orders import IntakeReadiness
+from nha_trang_laundry_domain.payments import PaymentMethod
 from quote_test_data import accepted_quote
 
 READY = IntakeReadiness(True, True, True, True, True, True)
@@ -159,15 +160,21 @@ class _Order:
         self.move(commercial_target=CommercialOrderStatus.ACTIVE)
         return self
 
-    def release(self) -> _Order:
+    def finish(self) -> _Order:
+        """Washed and on the shelf. GOODS-AND-DRAWER-009 (review M2): this helper used to go on to
+        RELEASED before any money was taken; goods now leave only when paid, so a test settles
+        first and then calls `release`."""
         for target in (
             ProductionStatus.QUEUED,
             ProductionStatus.IN_PROCESS,
             ProductionStatus.QUALITY_CHECK,
             ProductionStatus.READY_AT_STORE,
-            ProductionStatus.RELEASED,
         ):
             self.move(production_target=target)
+        return self
+
+    def release(self) -> _Order:
+        self.move(production_target=ProductionStatus.RELEASED)
         return self
 
     def settle(self, *, collected: bool, at: datetime) -> Any:
@@ -186,14 +193,22 @@ class _Order:
         return stored
 
     def cancel_after_review(
-        self, resolution: CustodyResolution, *, at: datetime, key: str | None = None
+        self,
+        resolution: CustodyResolution,
+        *,
+        at: datetime,
+        key: str | None = None,
+        method: PaymentMethod | None = PaymentMethod.TIEN_MAT,
     ) -> Any:
+        """Through review to CANCELLED. `method` is how any money went back (GOODS-AND-DRAWER-009,
+        review M4): required when the cancellation refunds, refused when it does not."""
         self.move(commercial_target=CommercialOrderStatus.CANCELLATION_REVIEW, at=at)
         return self.move(
             commercial_target=CommercialOrderStatus.CANCELLED,
             custody_resolution=resolution,
             at=at,
             key=key,
+            **({} if method is None else {"refund_method": method}),
         )
 
 
@@ -249,10 +264,23 @@ def _takings(
         "cash_count",
         "transfer_vnd",
         "transfer_count",
+        # `collected-today-v4` (GOODS-AND-DRAWER-009): refunds by how they went back, and the
+        # drawer -- cash in minus cash handed back.
+        "refunded_cash_vnd",
+        "refunded_cash_count",
+        "refunded_transfer_vnd",
+        "refunded_transfer_count",
+        "refunded_unknown_vnd",
+        "refunded_unknown_count",
+        "drawer_vnd",
     }
     assert all(value >= 0 for value in numeric.values()), numeric
     assert takings.cash_vnd + takings.transfer_vnd == takings.collected_vnd
     assert takings.cash_count + takings.transfer_count == takings.payment_count
+    assert (
+        takings.refunded_cash_vnd + takings.refunded_transfer_vnd + takings.refunded_unknown_vnd
+        == takings.refunded_vnd
+    )
     assert takings.net_direction in ("IN", "OUT")
     return takings
 
@@ -368,8 +396,9 @@ def test_shop_fault_no_charge_on_a_paid_collected_order_refunds_the_settled_amou
     staff = _staff(connection, store_id)
     now = datetime.now(UTC)
     order = _Order(connection, store_id, staff, FulfillmentMode.SELF_DROP_SELF_COLLECT, at=now)
-    order.to_active().release()
+    order.to_active().finish()
     order.settle(collected=True, at=now)
+    order.release()
 
     cancelled = order.cancel_after_review(CustodyResolution.SHOP_FAULT_NO_CHARGE, at=now)
 
@@ -471,6 +500,7 @@ def test_the_refund_the_transition_and_its_ledger_rows_commit_together(
         order.move(
             commercial_target=CommercialOrderStatus.CANCELLED,
             custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+            refund_method=PaymentMethod.TIEN_MAT,
         )
 
     # Nothing of the cancellation survived: no refund, still paid, still under review.
@@ -554,6 +584,7 @@ def test_replaying_the_cancellation_returns_the_prior_result_and_refunds_once(
         commercial_target=CommercialOrderStatus.CANCELLED,
         custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
         occurred_at=now,
+        refund_method=PaymentMethod.TIEN_MAT,
     )
     first = OrderRepository().transition(connection, command)
     again = OrderRepository().transition(connection, replace(command, correlation_id=uuid4()))
@@ -622,8 +653,11 @@ def test_a_refund_cannot_differ_from_the_settlement_or_be_edited(
             """
             INSERT INTO order_refunds (
                 id, order_id, store_id, settlement_id, refunded_amount_vnd, direction,
-                custody_resolution, attested_by_staff_id, refunded_at, created_at
-            ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', 'RETURNED_UNWASHED_REFUNDED', %s, %s, %s)
+                custody_resolution, attested_by_staff_id, refunded_at, created_at, refund_method
+            ) VALUES (
+                %s, %s, %s, %s, %s, 'TO_CUSTOMER', 'RETURNED_UNWASHED_REFUNDED', %s, %s, %s,
+                'TIEN_MAT'
+            )
             """,
             (
                 uuid4(),
@@ -662,7 +696,9 @@ def test_cancelling_an_unpaid_order_is_unchanged(connection: psycopg.Connection[
 
     reviewed = _Order(connection, store_id, staff, FulfillmentMode.PICKUP_AND_RETURN, at=now)
     reviewed.to_active()
-    cancelled = reviewed.cancel_after_review(CustodyResolution.RETURNED_UNWASHED_REFUNDED, at=now)
+    cancelled = reviewed.cancel_after_review(
+        CustodyResolution.RETURNED_UNWASHED_REFUNDED, at=now, method=None
+    )
     assert (cancelled.commercial, cancelled.balance) == (
         CommercialOrderStatus.CANCELLED,
         OrderBalanceStatus.UNPAID,
@@ -693,8 +729,9 @@ def test_a_paid_order_that_completes_stays_paid_and_counted(
     staff = _staff(connection, store_id)
     now = datetime.now(UTC)
     order = _Order(connection, store_id, staff, FulfillmentMode.SELF_DROP_SELF_COLLECT, at=now)
-    order.to_active().release()
+    order.to_active().finish()
     order.settle(collected=True, at=now)
+    order.release()
     done = order.move(commercial_target=CommercialOrderStatus.COMPLETED)
 
     assert done.balance is OrderBalanceStatus.PAID

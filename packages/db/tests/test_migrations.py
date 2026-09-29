@@ -78,6 +78,9 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0063", "invoice_requests"),
         ("0064", "late_delivery_decisions"),
         ("0065", "reminder_steps"),
+        # Round 9: 0066 is reserved for MONEY-LIFECYCLE-009 (slice A); GOODS-AND-DRAWER-009 records
+        # how a refund's money went back (review M4).
+        ("0067", "refund_method"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

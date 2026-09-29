@@ -31,6 +31,7 @@ from nha_trang_laundry_db.orders import (
     OrderStateError,
     OrderTransitionCommand,
 )
+from nha_trang_laundry_db.settlement import SettlementCommand, SettlementRepository
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
@@ -282,7 +283,27 @@ def test_the_ready_clock_clears_for_a_rewash_and_restamps_when_it_is_finished_ag
     assert second_ready is not None
     assert second_ready > first_ready, "the second completion is the one that counts"
 
-    # And releasing keeps it: the laundry left, nothing was redone.
+    # And releasing keeps it: the laundry left, nothing was redone. It leaves paid
+    # (GOODS-AND-DRAWER-009, review M2): the exact total is settled on the shelf first, which
+    # writes no production move and so leaves the clock alone too. Settlement is for a running
+    # order, so the order is made ACTIVE first -- commercial moves, which never touch the clock.
+    for commercial in (
+        CommercialOrderStatus.STORE_CONFIRMATION_PENDING,
+        CommercialOrderStatus.CONFIRMED,
+        CommercialOrderStatus.ACTIVE,
+    ):
+        move(commercial_target=commercial)
+    SettlementRepository().record(
+        connection,
+        SettlementCommand(
+            order_id=order_id,
+            paid_amount_vnd=110_000,
+            collected_by_customer=True,
+            principal=principal,
+            correlation_id=uuid4(),
+        ),
+    )
+    assert _ready_at(connection, order_id) == second_ready
     move(production_target=ProductionStatus.RELEASED)
     assert _ready_at(connection, order_id) == second_ready
 

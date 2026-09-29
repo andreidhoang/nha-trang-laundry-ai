@@ -52,7 +52,7 @@ import {
   quantity as quantityText,
 } from "../core/format.js";
 import { QUOTE_ADJUSTMENT_VI } from "../core/i18n.js";
-import { snapshot } from "../core/session.js";
+import { onSignOut, snapshot } from "../core/session.js";
 import { errorNotice } from "../ui/components.js";
 import { clock, serviceName, unitShort } from "../ui/quoting.js";
 import { actionBar, button, infoButton, page, skeletonRows } from "../ui/kit.js";
@@ -75,6 +75,10 @@ export const KEEP_TICKET_NOTICE = "Giữ phiếu này để nhận đồ.";
 
 /** @type {string|null} the order `#/new` just created, until its page has offered the receipt */
 let offered = null;
+// CONSOLE-SHELL-009 (C1): the offer belongs to the person who created the order, not the next one.
+onSignOut(() => {
+  offered = null;
+});
 
 /**
  * `#/new` marks the order it just created, so the order page it lands on can offer "In phiếu cho

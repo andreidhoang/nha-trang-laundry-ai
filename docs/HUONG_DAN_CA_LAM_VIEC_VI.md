@@ -284,6 +284,9 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 
    Không có gì thì máy ghi *Không có việc cần chú ý* — chỉ khi mọi nguồn đều đọc được. Máy đếm
    và so sánh bằng quy tắc cố định, không phải AI.
+7. Hết ca, bấm **Thoát** và đợi màn hình **Chưa đăng nhập** — lúc đó trên máy không còn tên hay
+   số của khách nào. Nếu máy báo **Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại** thì bạn
+   **vẫn đang đăng nhập**: kiểm tra mạng rồi bấm **Thoát** lần nữa, đừng để máy cho người khác.
 
 ---
 
@@ -453,6 +456,7 @@ hạn thì bấm **Xin duyệt lại**. *Nhập mã thủ công* chỉ dùng cho
 | **Chưa nhận đồ được** | Đơn còn thiếu điều kiện (thường là chưa tích *Tiệm làm kịp đơn này*) | Đọc từng dòng lý do ngay bên dưới, làm đúng việc đó rồi bấm lại |
 | Huỷ một đơn đã nhận đồ | Phải nói đồ và tiền đã xử lý thế nào | **Khác** → **Huỷ đơn**, chọn một cách xử lý, bấm hai lần |
 | **Phiên đăng nhập đã kết thúc** | Hết phiên | Đăng nhập lại. Không mất dữ liệu |
+| **Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại** | Bấm **Thoát** mà máy chủ chưa nhận được. Bạn vẫn đang đăng nhập | Kiểm tra mạng rồi bấm **Thoát** lần nữa, tới khi thấy **Chưa đăng nhập** |
 | Mất điện thoại, hoặc quên thoát ở máy khác | Máy đó vẫn đang đăng nhập | Từ một máy khác, đăng nhập rồi **bấm tên mình** ở thanh trên cùng → **Thiết bị đang đăng nhập** → ở máy bị mất bấm **Đăng xuất thiết bị này** (bấm hai lần). Dòng **Thiết bị này** là máy đang cầm. Các máy khác vẫn làm việc bình thường. Chủ tiệm cũng làm được việc này cho người khác: **Nhân sự** → bấm tên người đó → cùng danh sách |
 | **Đơn đã thay đổi sau khi gửi duyệt — mở đơn để xem lại** (thẻ duyệt) | Đơn đã chuyển bước sau khi xin duyệt, nên phiếu này không còn đúng | Nút **Duyệt** khoá. Bấm **Từ chối**, mở đơn xem lại; còn cần thì xin duyệt lại. Thẻ ghi **Đơn chưa thay đổi kể từ khi gửi duyệt** thì duyệt bình thường |
 | **Máy chủ gặp lỗi** | Lỗi thật | **Đừng thử lại.** Xem bảng đơn để biết lệnh đã vào hay chưa, chụp màn hình, báo chủ tiệm |

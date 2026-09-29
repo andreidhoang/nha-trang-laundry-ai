@@ -36,7 +36,7 @@ import { UNKNOWN, UUID, ago, dateOnly, dateTime, matchesFilter, money, shortId }
 import { enumLabel, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { navigate } from "../core/router.js";
-import { principal, storeId } from "../core/session.js";
+import { onSignOut, principal, storeId } from "../core/session.js";
 import {
   boundInput,
   errorNotice,
@@ -97,6 +97,10 @@ const REFUSAL_NOTE = {
  * reads it once on render, clears it, and opens the sheet with that order already chosen.
  */
 let orderPrefill = "";
+// CONSOLE-SHELL-009 (C1): a hand-off staged by the person who signed out is not the next person's.
+onSignOut(() => {
+  orderPrefill = "";
+});
 
 /**
  * Stage an order UUID for this screen's next render.

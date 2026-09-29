@@ -2540,6 +2540,17 @@ with sync_playwright() as playwright:
             return
         if url.endswith("/internal/v1/session"):
             body = SESSION_OK
+        elif url.split("?")[0].endswith("/internal/v1/auth/logout"):
+            # CONSOLE-SHELL-009 (C1): "Thoát", answered as the section asks -- 200 by default. A
+            # sign-out the server accepted ends the session: every later call is a 401.
+            state.setdefault("logout_posts", []).append(
+                {"key": route.request.headers.get("idempotency-key")}
+            )
+            status, answer = state.get("logout_answer") or (200, {"end_session_url": None})
+            if status < 300:
+                state["authenticated"] = False
+            route.fulfill(status=status, content_type="application/json", body=json.dumps(answer))
+            return
         # EINVOICE-REQUEST-001: a subject's Hóa đơn row, the list, and every write captured with its
         # key and If-Match. Before the statement branch below, whose "/account/statements/" match
         # would otherwise answer the month's row with a statement.
@@ -9889,6 +9900,199 @@ with sync_playwright() as playwright:
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
     state["order_view"] = None
     state["invoice_subject"] = None
+
+    # ============================================================================================
+    # CONSOLE-SHELL-009 -- the shell: the skip control (C5), the navigation a role sees (C6), the
+    # approvals badge (C11), the "Có bản mới" offer after a deploy (C7), and "Thoát" (C1). Each
+    # check below failed against the shell as it was at 872ecd4.
+
+    def shell_text() -> str:
+        return str(page.evaluate("() => document.body.textContent || ''"))
+
+    def shell_shot(name: str, target: object = None) -> None:
+        """With `CONSOLE_SHELL_SHOTS` set, keep what this state looks like (full page)."""
+        folder = os.environ.get("CONSOLE_SHELL_SHOTS", "")
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+            (target or page).screenshot(  # type: ignore[attr-defined]
+                path=os.path.join(folder, f"{name}.png"), full_page=True
+            )
+
+    def visible_nav() -> list[str]:
+        """What the sidebar or the tab bar shows without opening anything, as `path` or `(Khác)`."""
+        return list(
+            page.evaluate(
+                """() => {
+                    // `checkVisibility`, not a bounding box: a closed <details> keeps its
+                    // content's layout boxes in Chrome (`content-visibility: hidden`).
+                    const shown = (node) => node.checkVisibility({visibilityProperty: true});
+                    const out = [];
+                    for (const link of document.querySelectorAll('nav.nav a.nav__link')) {
+                        if (shown(link)) out.push(link.getAttribute('href').slice(1));
+                    }
+                    for (const fold of document.querySelectorAll('nav.nav summary')) {
+                        if (shown(fold)) out.push('(Khác)');
+                    }
+                    return out;
+                }"""
+            )
+        )
+
+    print()
+    print("=" * 74)
+    print("CONSOLE-SHELL-009 C1. THOÁT — out means the screen is cleared; not out means say so")
+    print("=" * 74)
+
+    def customer_on_screen() -> None:
+        """The customers screen with a regular found by the last four digits, plus two nodes a
+        screen leaves in <body> -- a closed sheet and a toast -- each carrying the same person."""
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/customers", wait_until="networkidle")
+        page.wait_for_timeout(700)
+        page.locator("#customers-search").fill("3456")
+        page.locator("#customers-search").press("Enter")
+        page.wait_for_timeout(800)
+        page.evaluate(
+            """async () => {
+                const kit = await import('/src/ui/kit.js');
+                const held = kit.sheet({title: 'chị Lan', body: 'SĐT 0905123456'});
+                held.open();
+                held.close();
+                kit.toast('Đã lưu chị Lan · 0905123456');
+            }"""
+        )
+        page.wait_for_timeout(200)
+
+    def phone_digits_in(text: str) -> bool:
+        return bool(re.search(r"0905\D?123\D?456|\b3456\b", text))
+
+    def press_sign_out() -> None:
+        """The app bar's Thoát -- when there is one to press (a console that has already dropped
+        its session shows none, and the checks below then say what went wrong)."""
+        button = page.locator(".appbar__signout")
+        if button.count():
+            button.first.click()
+
+    state["authenticated"] = True
+    state["logout_posts"] = []
+    customer_on_screen()
+    before = shell_text()
+    check(
+        "set-up: the customer's name and number are in the page before Thoát",
+        "chị Lan" in before and phone_digits_in(before),
+        before[:120],
+    )
+
+    # 1. Offline: nothing leaves the device, and nothing is ended.
+    context.set_offline(True)
+    page.wait_for_timeout(300)
+    press_sign_out()
+    page.wait_for_timeout(600)
+    failed = page.locator("[data-sign-out-failed]")
+    shell_shot("stub-signout-offline-desk")
+    check(
+        "offline, Thoát says 'Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại'",
+        failed.count() == 1
+        and "Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại" in failed.first.inner_text(),
+    )
+    check(
+        "and the operator is still signed in, with the screen untouched and nothing sent",
+        page.locator(".appbar__account").count() == 1
+        and "Chưa đăng nhập" not in page.locator(".appbar").inner_text()
+        and "chị Lan" in shell_text()
+        and state["logout_posts"] == [],
+    )
+    context.set_offline(False)
+    page.wait_for_timeout(300)
+
+    # 2. The server fails: same outcome, one request, no retry.
+    state["logout_answer"] = (503, {"detail": "operations unavailable"})
+    press_sign_out()
+    page.wait_for_timeout(800)
+    check(
+        "a 503 is not a sign-out either: the notice, still signed in, the screen as it was",
+        page.locator("[data-sign-out-failed]").count() == 1
+        and page.locator(".appbar__account").count() == 1
+        and "chị Lan" in shell_text(),
+    )
+    check(
+        "one request, with an Idempotency-Key, and no automatic retry",
+        len(state["logout_posts"]) == 1 and bool(state["logout_posts"][0]["key"]),
+        repr(state["logout_posts"]),
+    )
+
+    # 3. The server signs the person out: the page is cleared at once, before any reload.
+    state["logout_answer"] = (200, {"end_session_url": None})
+    press_sign_out()
+    page.wait_for_timeout(500)
+    out = page.evaluate(
+        """() => ({
+            heading: document.querySelector('main h1')?.textContent || '',
+            text: document.body.textContent || '',
+            open: document.querySelectorAll('dialog[open]').length,
+            dialogs: document.querySelectorAll('dialog').length,
+            extra: [...document.body.children].map((n) => n.id || n.className || n.tagName),
+            hash: location.hash,
+        })"""
+    )
+    shell_shot("stub-signed-out-desk")
+    check(
+        "a real sign-out shows the signed-out screen at once, with no reload",
+        out["heading"] == "Chưa đăng nhập",
+        repr(out["heading"]),
+    )
+    check(
+        "and no customer name or number is left anywhere in the page",
+        "chị Lan" not in out["text"] and not phone_digits_in(out["text"]),
+        out["text"][:200],
+    )
+    check(
+        "no dialog is open, and no sheet, toast or other screen leftover remains in <body>",
+        out["open"] == 0 and out["dialogs"] == 0 and len(out["extra"]) == 4,
+        repr(out["extra"]),
+    )
+    check(
+        "the address is back at #/ and neither banner claims typed input survived",
+        out["hash"] == "#/"
+        and "vẫn còn trên màn hình" not in out["text"]
+        and page.locator("[data-sign-out-failed]").count() == 0,
+        out["hash"],
+    )
+
+    # 4. Signing in again on this page is an ordinary session, the same person included.
+    state["authenticated"] = True
+    recheck = page.locator("button", has_text="Kiểm tra lại phiên")
+    if recheck.count():
+        recheck.first.click()
+        page.wait_for_timeout(1200)
+    check(
+        "'Kiểm tra lại phiên' after a sign-out opens Hôm nay for the session that is there",
+        page.locator(".appbar__account").count() == 1
+        and "Chưa đăng nhập" not in page.locator("main").inner_text(),
+    )
+
+    # 5. From the account sheet, against a server whose session already ended (401): out.
+    customer_on_screen()
+    if page.locator(".appbar__account").count():
+        page.locator(".appbar__account").click()
+        page.wait_for_timeout(500)
+    state["authenticated"] = False
+    in_sheet = page.locator("dialog[open] .sheet__actions button", has_text="Thoát")
+    if in_sheet.count():
+        in_sheet.first.click()
+        page.wait_for_timeout(600)
+    check(
+        "a 401 to Thoát is the goal state: the sheet closes and the page is cleared the same way",
+        page.locator("dialog[open]").count() == 0
+        and "chị Lan" not in shell_text()
+        and not phone_digits_in(shell_text())
+        and page.locator("main h1").first.inner_text() == "Chưa đăng nhập",
+    )
+    state["logout_answer"] = None
+    state["authenticated"] = True
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(700)
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

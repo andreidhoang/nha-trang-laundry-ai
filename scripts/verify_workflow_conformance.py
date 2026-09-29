@@ -409,6 +409,15 @@ class Console:
         self.page.goto(target, wait_until="networkidle")
         self.page.wait_for_timeout(settle)
 
+    def session_status(self) -> int:
+        """What the server says about this browser's session cookie: 200 alive, 401 gone."""
+        return int(
+            self.page.evaluate(
+                "() => fetch('/internal/v1/session', {credentials: 'same-origin'})"
+                ".then((r) => r.status)"
+            )
+        )
+
     def text(self) -> str:
         try:
             return self.page.locator("main").first.inner_text() or ""
@@ -1851,11 +1860,49 @@ def scenario_resilience(console: Console) -> None:
     # The button, not the route behind it. An enumeration of the console's 28 write controls found
     # this one driven by no check anywhere: every script called `POST /auth/logout` directly, so the
     # control a staff member actually presses at the end of a shift had never been pressed.
+    #
+    # CONSOLE-SHELL-009 (C1): what the page shows is asserted BEFORE anything reloads it. This
+    # check used to reload first, so it only ever saw a fresh page -- never the order that stayed
+    # on screen after "Thoát", which is the defect a shared counter PC actually had.
+    console.open_order(order["order_id"])
+    ticket = (
+        console.call("GET", f"/internal/v1/orders/{order['order_id']}").get("body") or {}
+    ).get("ticket_number")
+    shown_before = console.page.evaluate("() => document.body.textContent || ''")
+    ok(
+        "set-up: the order is on screen before Thoát",
+        order["order_id"] in shown_before and (ticket is None or f"Phiếu {ticket}" in shown_before),
+        f"Phiếu {ticket}",
+    )
     signout = console.page.locator("button", has_text="Thoát").first
     ok("the app bar offers a sign-out control", signout.count() > 0, "")
     signout.click()
-    console.page.wait_for_timeout(1600)
+    console.page.wait_for_timeout(1200)
     touched("shell.sign-out")
+    now = console.page.evaluate(
+        """() => ({
+            heading: document.querySelector('main h1')?.textContent || '',
+            text: document.body.textContent || '',
+            open: document.querySelectorAll('dialog[open]').length,
+            hash: location.hash,
+        })"""
+    )
+    ok(
+        "at once, with no reload, the console shows the signed-out screen",
+        now["heading"] == "Chưa đăng nhập",
+        now["heading"],
+    )
+    ok(
+        "and nothing of the order that was open is left anywhere in the page",
+        order["order_id"] not in now["text"]
+        and (ticket is None or f"Phiếu {ticket}" not in now["text"]),
+        now["hash"],
+    )
+    ok("no dialog is left open", now["open"] == 0, now["open"])
+    ok(
+        "and the server ended the session: this browser's cookie opens nothing any more",
+        console.session_status() == 401,
+    )
     console.page.reload(wait_until="networkidle")
     console.page.wait_for_timeout(1300)
     ok("a signed-out console says so", "Chưa đăng nhập" in console.page.content(), "")

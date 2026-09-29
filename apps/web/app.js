@@ -33,6 +33,12 @@ const appbarActions = document.querySelector("#appbar-actions");
 const banners = document.querySelector("#banners");
 const navList = document.querySelector("#nav-list");
 const outlet = document.querySelector("#main");
+/**
+ * What `index.html` put in `<body>`: the skip control, the shell, `noscript`, the module script.
+ * Anything else was added since -- a screen's sheet, the account sheet, the toast host -- and goes
+ * when the person signs out (C1).
+ */
+const SHELL_NODES = new Set(document.body.children);
 
 function currentPath() {
   return router.current().path;
@@ -170,6 +176,29 @@ function publishNavHeight() {
   document.documentElement.style.setProperty("--nav-height", `${bar.offsetHeight}px`);
 }
 
+/**
+ * "Thoát", pressed (CONSOLE-SHELL-009, C1). One press, one request, no retry; the answer decides.
+ *
+ * Signed out: `session.signOut()` has already run `wipeWorkspace()` and the signed-out screen is
+ * on show -- nothing of the last customer is left in the page. Not signed out (offline, a 5xx, a
+ * timeout): the session is kept, here and on the server, and the banner says so in words; the
+ * screen is untouched. Only a person presses "Thoát" again.
+ */
+let signingOut = false;
+/** @type {unknown} why the last "Thoát" did not end the session, until the next press or a sign-out */
+let signOutFailure = null;
+
+async function pressSignOut() {
+  if (signingOut) return;
+  signingOut = true;
+  signOutFailure = null;
+  syncChrome();
+  const outcome = await session.signOut();
+  signingOut = false;
+  if (!outcome.signedOut) signOutFailure = outcome.error || true;
+  syncChrome();
+}
+
 /** The account sheet: who is signed in, with which roles, and the one way out. */
 const accountSheet = sheet({
   title: "Tài khoản",
@@ -180,9 +209,10 @@ const accountSheet = sheet({
       type: "button",
       dataVariant: "danger",
       class: "btn btn--block",
+      dataSignOut: "sheet",
       onClick: () => {
         accountSheet.close();
-        void session.signOut();
+        void pressSignOut();
       },
     },
     icon("logout"),
@@ -291,7 +321,10 @@ function renderAppbar() {
         class: "appbar__signout",
         "aria-label": "Thoát",
         title: "Thoát",
-        onClick: () => void session.signOut(),
+        dataSignOut: "appbar",
+        disabled: signingOut,
+        "aria-busy": signingOut ? "true" : null,
+        onClick: () => void pressSignOut(),
       },
       icon("logout"),
       h("span", { class: "appbar__signout-label" }, "Thoát"),
@@ -375,6 +408,17 @@ function renderBanners() {
     );
   }
 
+  // C1: "Thoát" did not reach the server, so the session is still open -- here and there.
+  if (signOutFailure && state.status === "active") {
+    children.push(
+      h(
+        "div",
+        { class: "banner", dataState: "danger", role: "alert", dataSignOutFailed: "true" },
+        "Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại. Phiên của bạn vẫn đang mở.",
+      ),
+    );
+  }
+
   if (state.status === "unreachable") {
     children.push(
       h(
@@ -391,7 +435,9 @@ function renderBanners() {
     );
   }
 
-  if (state.status === "ended") {
+  // Not after "Thoát": the person chose to leave, the screen was cleared, and "what you typed is
+  // still on screen" would be false. The signed-out screen says what is true.
+  if (state.status === "ended" && !state.signedOut) {
     // An expiry with no error used to render nothing at all: the operator's next action failed and
     // the console said why only inside that one form. The banner is the standing condition, and it
     // states the thing that most needs saying — that nothing they typed was thrown away.
@@ -696,7 +742,35 @@ function contentKey() {
   return `${state.status}|${state.principal?.staffUserId || ""}|${state.storeId || ""}`;
 }
 
+/**
+ * Clear everything the person who just signed out could have left in this page (C1).
+ *
+ * Run by `session.signOut()` once the server has ended the session, before subscribers hear of it
+ * -- so the signed-out screen they render lands on an empty page, in the same task, with nothing
+ * painted in between. Not run for an idle expiry: that path keeps the screen on purpose.
+ *
+ *   - every open dialog is closed, and every node a screen appended to `<body>` -- sheets, the
+ *     account sheet with its device list, toasts -- is removed with whatever it said;
+ *   - the outlet is emptied (the signed-out screen follows), and the address goes back to `#/` so
+ *     the next person does not start on the last customer's order;
+ *   - what the shell held for this person is dropped: the device list, the badge, a failed-sign-out
+ *     notice. Screens drop their own hand-offs through `session.onSignOut`.
+ */
+function wipeWorkspace() {
+  for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
+  for (const node of [...document.body.children]) {
+    if (!SHELL_NODES.has(node)) node.remove();
+  }
+  render(accountSheet.body);
+  accountDevices = null;
+  approvalsBadge = "";
+  signOutFailure = null;
+  outlet.replaceChildren();
+  if (currentPath() !== "/") router.replace("/");
+}
+
 async function boot() {
+  session.onSignOut(wipeWorkspace);
   session.watchConnectivity();
 
   /** @type {string|null} null until an authenticated screen has been rendered at least once. */
@@ -718,7 +792,14 @@ async function boot() {
     // incident for the most trivial cause. On boot (`renderedKey === null`) it still renders, which
     // is where `unreachableScreen()` belongs; mid-shift the banner below carries it and the form
     // stays exactly where the operator left it.
-    if ((state.status === "ended" || state.status === "unreachable") && renderedKey !== null) {
+    //
+    // A sign-out is the opposite case (C1): the person chose to leave, `wipeWorkspace()` has
+    // already emptied the page, and the signed-out screen is rendered in its place at once.
+    if (
+      (state.status === "ended" || state.status === "unreachable") &&
+      renderedKey !== null &&
+      !state.signedOut
+    ) {
       return;
     }
 

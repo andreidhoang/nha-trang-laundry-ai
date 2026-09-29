@@ -707,6 +707,10 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Tìm theo khách",
         "Xoá thông tin (khách yêu cầu)",
         "Giữ phiếu này để nhận đồ",
+        # CONSOLE-SHELL-009 (C1): the end of a shift -- signed out, or a sign-out the server never
+        # received, which the guide tells the counter how to finish.
+        "Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại",
+        "Chưa đăng nhập",
     ]
 
     absent_from_guide = [phrase for phrase in quoted if phrase not in guide]

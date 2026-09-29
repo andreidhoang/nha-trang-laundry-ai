@@ -53,6 +53,7 @@ import time
 import traceback
 import urllib.request
 import uuid
+from decimal import Decimal
 from typing import Any
 
 from console_recording import Recorder, add_arguments, viewport, watch_render_defects
@@ -9152,6 +9153,16 @@ def _race_shot(console: Console, name: str) -> None:
         console.page.screenshot(path=os.path.join(directory, f"{name}-{tag}.png"), full_page=True)
 
 
+def _quantities(revision: dict[str, Any]) -> list[Decimal]:
+    """A revision read's line quantities as numbers, whatever decimal form the server writes."""
+
+    found: list[Decimal] = []
+    for line in revision.get("lines") or []:
+        with contextlib.suppress(Exception):
+            found.append(Decimal(str(line.get("quantity"))))
+    return found
+
+
 def _qr_read(console: Console, order_id: str, part: int | None = None) -> dict[str, Any]:
     path = f"/internal/v1/orders/{order_id}/vietqr"
     answer = console.call("GET", path if part is None else f"{path}?amount_vnd={part}")
@@ -9223,7 +9234,7 @@ def scenario_counter_race(console: Console) -> None:
         "C2: 5,8 kg priced, corrected to 6,2 kg while 'Tính giá' was in flight -- the server "
         "priced 5,8 kg, and 'Tiếp tục' is not offered for that price",
         in_flight
-        and [line.get("quantity") for line in read_1.get("lines") or []] == ["5.8"]
+        and _quantities(read_1) == [Decimal("5.8")]
         and page.locator("#new-next").count() == 0
         and "Đã sửa sau khi tính giá" in receipt
         and (
@@ -9252,7 +9263,7 @@ def scenario_counter_race(console: Console) -> None:
         second["status"] == 201
         and body_2.get("quote_id") == quote_id
         and body_2.get("revision") == (first.get("revision") or 0) + 1
-        and [line.get("quantity") for line in read_2.get("lines") or []] == ["6.2"]
+        and _quantities(read_2) == [Decimal("6.2")]
         and page.locator("#new-next").count() == 1
         and page.locator("#new-next").is_enabled(),
         second["text"][:200],
@@ -9443,9 +9454,11 @@ def scenario_counter_race(console: Console) -> None:
 
     policy_row = sql(
         "select payload::text from configuration_versions where config_type='TURNAROUND_POLICY' "
-        "and status='PUBLISHED' order by version desc limit 1"
+        "and lifecycle='PUBLISHED' order by version desc limit 1"
     )
-    policy = parse_turnaround_policy(json.loads(policy_row)) if policy_row else None
+    policy = None
+    with contextlib.suppress(Exception):
+        policy = parse_turnaround_policy(json.loads(policy_row))
     base_day = datetime.fromisoformat(
         str(body["current_promise_at"]).replace("Z", "+00:00")
     ).astimezone(timezone(timedelta(hours=7)))

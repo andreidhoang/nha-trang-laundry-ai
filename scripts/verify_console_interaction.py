@@ -10009,6 +10009,20 @@ with sync_playwright() as playwright:
         node = page.locator(selector)
         return node.first.input_value(timeout=5000) if node.count() else ""
 
+    def race_shot(name: str) -> None:
+        """With CONSOLE_STUB_SHOTS set, the screen at this moment at desk and phone width."""
+
+        directory = os.environ.get("CONSOLE_STUB_SHOTS", "")
+        if not directory:
+            return
+        os.makedirs(directory, exist_ok=True)
+        for tag, size in (("desk", (1366, 900)), ("phone", (390, 844))):
+            page.set_viewport_size({"width": size[0], "height": size[1]})
+            page.wait_for_timeout(300)
+            page.screenshot(path=os.path.join(directory, f"stub-{name}-{tag}.png"), full_page=True)
+        page.set_viewport_size({"width": 1280, "height": 900})
+        page.wait_for_timeout(200)
+
     def release_quotes(body: dict[str, object]) -> None:
         for held_route in held_quote_routes:
             held_route.fulfill(status=201, content_type="application/json", body=json.dumps(body))
@@ -10063,6 +10077,7 @@ with sync_playwright() as playwright:
     state["hold_quote"] = False
     release_quotes(revision(1))
     page.wait_for_timeout(900)
+    race_shot("c2-edited-while-pricing")
     check(
         "C2: 5,8 kg priced, corrected to 6,2 kg while 'Tính giá' was in flight -- 'Tiếp tục' is "
         "not offered for the 5,8 kg price",
@@ -10258,6 +10273,7 @@ with sync_playwright() as playwright:
     )
     typed_part("20.000")
     page.wait_for_timeout(900)
+    race_shot("c3-part-qr")
     reads = state["vietqr_reads"]
     drawn27: set[tuple[int, int]] = set()
     path_d27 = page.locator("#payment-qr svg.vietqr__symbol path").first.get_attribute("d") or ""
@@ -10278,6 +10294,7 @@ with sync_playwright() as playwright:
     typed_part("200.000")
     gone_at_once = qr_symbols() == 0 and "20.000" not in qr_amount()
     page.wait_for_timeout(900)
+    race_shot("c3-above-remaining")
     check(
         "C3: the moment the typed amount changes, the 20.000 ₫ QR is gone -- never beside 200.000",
         gone_at_once,
@@ -10363,9 +10380,11 @@ with sync_playwright() as playwright:
     tap("dialog[open] #payment-submit")
     page.wait_for_timeout(900)
     refused = "người khác đổi" in open_dialog_text()
+    race_shot("c4-payment-stale")
     state["order_view"] = partly15
     state["order_write_reply"] = None
     reload_in_sheet()
+    race_shot("c4-payment-reloaded")
     hero = text_of("dialog[open] [data-field=payment-hero]")
     check(
         "C4 Thu tiền: after a stale refusal 'tải lại' leaves the sheet open on the fresh figures",
@@ -10488,6 +10507,7 @@ with sync_playwright() as playwright:
     state["order_view"] = moved(promise27, current_promise_at="2026-09-26T10:00:00+00:00")
     state["order_write_reply"] = None
     reload_in_sheet()
+    race_shot("c4-promise-reloaded")
     now_line = text_of("dialog[open] [data-field=promise-now]")
     check(
         "C4 Hẹn lại: the sheet stays on the fresh 'Đang hẹn', with the time, reason and note kept",
@@ -10755,6 +10775,7 @@ with sync_playwright() as playwright:
     state["storage"] = storage_read(awaiting=True, fee=30_000, status="ACCRUING", days=26)
     state["unclaimed_write_reply"] = None
     reload_in_sheet("Tải lại")
+    race_shot("c4-waiver-reloaded")
     waiver_text = open_dialog_text()
     check(
         "C4 Miễn phí lưu kho: the sheet stays with the fresh fee, the reason typed kept",

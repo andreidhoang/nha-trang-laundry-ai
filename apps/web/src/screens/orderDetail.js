@@ -1639,12 +1639,15 @@ export function render_(context) {
     });
 
     async function send() {
+      // The order as it stands now, not as it stood when the sheet opened: after "Đơn vừa đổi —
+      // tải lại" the next press carries the version just read (review C4's rule, from the start).
+      const now = current || order;
       const body = {
         amount_vnd: 0,
         method: "TIEN_MAT",
         transfer_seen: false,
         bank_ref_last: null,
-        collected_by_customer: handOver && order?.payment_may_hand_over === true,
+        collected_by_customer: handOver && now.payment_may_hand_over === true,
       };
       render(alertHost);
       await pressing(submit, async () => {
@@ -1652,11 +1655,11 @@ export function render_(context) {
           const recorded = await request(`/internal/v1/orders/${id}/payments`, {
             method: "POST",
             body,
-            ifMatch: order?.row_version,
-            idempotencyKey: keyFor(`settle|${order?.row_version}|${JSON.stringify(body)}`),
+            ifMatch: now.row_version,
+            idempotencyKey: keyFor(`settle|${now.row_version}|${JSON.stringify(body)}`),
           });
           releaseKey();
-          toast(`Đã tất toán · ${orderName(order)}`);
+          toast(`Đã tất toán · ${orderName(now)}`);
           const view = await reread();
           successState(
             made,

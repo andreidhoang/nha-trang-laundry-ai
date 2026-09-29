@@ -10139,6 +10139,40 @@ with sync_playwright() as playwright:
     page.keyboard.press("Escape")
     page.set_viewport_size({"width": 1280, "height": 900})
     page.wait_for_timeout(300)
+    # A stale refusal, then "Đơn vừa đổi — tải lại": the next press carries the version just read.
+    settled_reply = state["order_write_reply"]
+    state["order_writes"] = []
+    state["order_write_reply"] = (409, {"detail": "STALE_VERSION: order changed"})
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    open_order(covered)
+    page.locator(".action-bar--v2 button[data-step=TAKE_PAYMENT]").click()
+    page.wait_for_timeout(500)
+    if page.locator("dialog[open] #settle-submit").count():
+        page.locator("dialog[open] #settle-submit").click()
+        page.wait_for_timeout(800)
+    fresh = dict(covered)
+    fresh["row_version"] = 15
+    state["order_view"] = fresh
+    reload = page.locator("dialog[open]").get_by_role("button", name="Đơn vừa đổi — tải lại")
+    if reload.count():
+        reload.first.click()
+        page.wait_for_timeout(900)
+    state["order_write_reply"] = settled_reply
+    if page.locator("dialog[open] #settle-submit").count():
+        page.locator("dialog[open] #settle-submit").click()
+        page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "after a stale refusal and 'tải lại', the next Tất toán carries the version just read",
+        len(writes) == 2
+        and writes[0]["if_match"] == '"14"'
+        and writes[1]["if_match"] == '"15"'
+        and writes[0]["key"] != writes[1]["key"],
+        repr([(w["if_match"], w["key"]) for w in writes]),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
 
     # M3 / M7: the cancellation is refused for remedy money; the reason is the server's sentence.
     state["storage"] = None

@@ -185,6 +185,10 @@ class LockedStorageFee:
     published: PublishedStoragePolicy | None
     awaiting: bool
     ready_at: datetime | None
+    #: `MONEY-LIFECYCLE-009`: the facts the fee was measured against, for the waiver's effect.
+    quoted_total_vnd: int | None = None
+    paid_vnd: int = 0
+    waived: bool = False
 
 
 def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> LockedStorageFee:
@@ -205,7 +209,9 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
                EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id),
         """
         + _POLICY_DOCUMENT_SQL
-        + """
+        + """,
+               (SELECT coalesce(sum(p.amount_vnd), 0) FROM order_payments p
+                 WHERE p.order_id = o.id)
         FROM orders o
         JOIN quote_revisions r
           ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
@@ -224,17 +230,79 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
         self_collection_recorded=bool(row[3]),
     )
     ready_at = row[4] if isinstance(row[4], datetime) else None
+    quoted = None if row[5] is None else int(str(row[5]))
+    paid = int(str(row[10]))
     fee = order_storage_fee(
         None if published is None else published.policy,
         awaiting=awaiting,
         ready_at=ready_at,
         as_of=moment,
-        quoted_total_vnd=None if row[5] is None else int(str(row[5])),
+        quoted_total_vnd=quoted,
         waived=bool(row[8]),
         settled=bool(row[6]),
         fixed_vnd=None if row[7] is None else int(str(row[7])),
+        paid_vnd=paid,
     )
-    return LockedStorageFee(fee=fee, published=published, awaiting=awaiting, ready_at=ready_at)
+    return LockedStorageFee(
+        fee=fee,
+        published=published,
+        awaiting=awaiting,
+        ready_at=ready_at,
+        quoted_total_vnd=quoted,
+        paid_vnd=paid,
+        waived=bool(row[8]),
+    )
+
+
+def insert_fixed_storage_fee(
+    cursor: Any,
+    *,
+    order_id: UUID,
+    store_id: UUID,
+    settlement_id: UUID,
+    storage: LockedStorageFee,
+    amount_vnd: int,
+    fixed_by_staff_id: UUID,
+    fixed_at: datetime,
+) -> str:
+    """Fix the order's storage fee beside the settlement that pays it; return the basis (`0066`).
+
+    `ACCRUED` when the amount is the fee the published policy computed now -- the trace (days,
+    chargeable days, policy version) is recorded as `0060` always has. `ALREADY_PAID` when it is the
+    part of the fee the ledger had already covered before the fee fell (`MONEY-LIFECYCLE-009`):
+    there is no accrual behind that figure, so no trace is written for it.
+    """
+
+    trace = storage.fee.fee
+    accrued = (
+        trace is not None
+        and storage.published is not None
+        and trace.chargeable_days > 0
+        and trace.amount_vnd == amount_vnd
+    )
+    basis = "ACCRUED" if accrued else "ALREADY_PAID"
+    cursor.execute(
+        """
+        INSERT INTO order_storage_fees (
+            id, order_id, store_id, settlement_id, amount_vnd, days_waiting,
+            chargeable_days, policy_version_id, fixed_by_staff_id, fixed_at, basis
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            uuid4(),
+            order_id,
+            store_id,
+            settlement_id,
+            amount_vnd,
+            trace.days_waiting if accrued and trace is not None else None,
+            trace.chargeable_days if accrued and trace is not None else None,
+            storage.published.version_id if accrued and storage.published is not None else None,
+            fixed_by_staff_id,
+            fixed_at,
+            basis,
+        ),
+    )
+    return basis
 
 
 def _require_active_owner(cursor: Any, actor_id: UUID) -> None:
@@ -259,6 +327,7 @@ __all__ = [
     "LockedStorageFee",
     "PublishedStoragePolicy",
     "StoragePolicyAuthorizationError",
+    "insert_fixed_storage_fee",
     "policy_from_column",
     "publish_storage_policy",
     "published_from_document",

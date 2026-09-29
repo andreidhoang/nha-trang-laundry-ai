@@ -283,6 +283,7 @@ def _remaining(
         waived=waived,
         settled=settled,
         fixed_vnd=fixed_vnd,
+        paid_vnd=paid_vnd,
     )
     return payment_position(
         owed_charges(QuotedTotal(quoted_total, quoted_total), storage_fee_vnd=fee.amount_vnd),

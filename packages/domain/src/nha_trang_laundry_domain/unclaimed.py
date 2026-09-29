@@ -322,6 +322,12 @@ class StorageFeeStatus(StrEnum):
     #: the customer paid (`amount_vnd`, 0 when the order was paid before any fee accrued). A fee
     #: once paid stays on the order whatever the policy later says (`DEC-036` "Reversal").
     FIXED = "FIXED"
+    #: `MONEY-LIFECYCLE-009` (M1): the order's payments already cover more of the fee than the fee
+    #: computed now -- it was waived, the order was held, the laundry was rewashed and its free days
+    #: restarted, the owner withdrew the policy, the order is no longer waiting. Money that moved is
+    #: never un-owed by a later event (`fee_already_paid`): `amount_vnd` is the part already paid,
+    #: and returning it is a refund, a separate and explicit act. Nothing is left to pay on the fee.
+    ALREADY_PAID = "ALREADY_PAID"
     #: An `OPS_APPROVER` or the owner waived it; nothing accrues on this order any more.
     WAIVED = "WAIVED"
     #: The owner has not published the storage policy (or withdrew it): no fee.
@@ -341,8 +347,38 @@ class OrderStorageFee:
     status: StorageFeeStatus
     #: What the order owes for storage now: the charge added to its list of charges when > 0.
     amount_vnd: int
-    #: The computation, when one was made (`FREE_PERIOD`, `ACCRUING`).
+    #: The computation, when one was made (`FREE_PERIOD`, `ACCRUING`, and `ALREADY_PAID` over
+    #: either of those).
     fee: StorageFee | None = None
+    #: `MONEY-LIFECYCLE-009`: the part of the storage fee the order's payments already cover
+    #: (`fee_already_paid`) -- 0 when they do not reach past the quoted total, and 0 once the fee is
+    #: `FIXED` (a settled order's fee is what its settlement says, all of it paid or charged).
+    already_paid_vnd: int = 0
+
+
+def fee_already_paid(*, paid_vnd: int, quoted_total_vnd: int | None) -> int:
+    """How much of the storage fee the order's payments already cover (`MONEY-LIFECYCLE-009`).
+
+    A payment is measured against every charge on the order, so money beyond the quoted total paid
+    toward the storage fee: 103.000 d paid on a 100.000 d total is 3.000 d of the fee. That part
+    stays owed-for whatever happens to the fee afterwards -- a waiver, a hold, a rewash, a withdrawn
+    policy, a cancellation. The alternative is an order whose ledger holds more than it "owes":
+    reads that cannot state it, a waiver that strands the order, and money a later event quietly
+    turned into a debt of the shop's. Returning it is a refund, which is its own act.
+
+    0 when the quote presents no single total (no payment can have been taken against one).
+    """
+
+    for value in (paid_vnd, quoted_total_vnd):
+        if value is not None and (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not 0 <= value <= MAX_SETTLEMENT_VND
+        ):
+            raise ValueError("amounts are non-negative whole numbers of đồng")
+    if quoted_total_vnd is None:
+        return 0
+    return max(0, paid_vnd - quoted_total_vnd)
 
 
 def order_storage_fee(
@@ -355,18 +391,50 @@ def order_storage_fee(
     waived: bool,
     settled: bool,
     fixed_vnd: int | None,
+    paid_vnd: int,
 ) -> OrderStorageFee:
     """The storage fee one order owes at `as_of`, from its stored facts.
 
     `settled` is whether a settlement row exists (the order was paid in full); `fixed_vnd` is the
     fee recorded beside it, or `None` when none was (the order was paid before any fee accrued, or
     the fee was waived, or no policy was in force). A settled order's fee never moves again.
+
+    `paid_vnd` is the sum of the order's payment ledger. Before the fee is fixed it is never less
+    than the part of it the ledger already covers (`fee_already_paid`, status `ALREADY_PAID`), so
+    what the order owes is never below what it has been paid (`MONEY-LIFECYCLE-009`, M1).
     """
 
     if fixed_vnd is not None:
         return OrderStorageFee(StorageFeeStatus.FIXED, fixed_vnd)
     if settled:
         return OrderStorageFee(StorageFeeStatus.FIXED, 0)
+    owed_now = _unfixed_storage_fee(
+        policy,
+        awaiting=awaiting,
+        ready_at=ready_at,
+        as_of=as_of,
+        quoted_total_vnd=quoted_total_vnd,
+        waived=waived,
+    )
+    already = fee_already_paid(paid_vnd=paid_vnd, quoted_total_vnd=quoted_total_vnd)
+    if already > owed_now.amount_vnd:
+        return OrderStorageFee(
+            StorageFeeStatus.ALREADY_PAID, already, owed_now.fee, already_paid_vnd=already
+        )
+    return OrderStorageFee(owed_now.status, owed_now.amount_vnd, owed_now.fee, already)
+
+
+def _unfixed_storage_fee(
+    policy: StoragePolicy | None,
+    *,
+    awaiting: bool,
+    ready_at: datetime | None,
+    as_of: datetime,
+    quoted_total_vnd: int | None,
+    waived: bool,
+) -> OrderStorageFee:
+    """What the published policy charges an order whose fee is not fixed, before what was paid."""
+
     if waived:
         return OrderStorageFee(StorageFeeStatus.WAIVED, 0)
     if policy is None:
@@ -378,6 +446,62 @@ def order_storage_fee(
     fee = storage_fee(policy, ready_at=ready_at, as_of=as_of, quoted_total_vnd=quoted_total_vnd)
     status = StorageFeeStatus.ACCRUING if fee.amount_vnd > 0 else StorageFeeStatus.FREE_PERIOD
     return OrderStorageFee(status, fee.amount_vnd, fee)
+
+
+@dataclass(frozen=True, slots=True)
+class WaiverEffect:
+    """What *Miễn phí lưu kho* does to an order now (`MONEY-LIFECYCLE-009`, M1/A3).
+
+    A waiver takes off the part of the fee that is not yet paid, and never lowers what is owed
+    below what is paid: the part already paid is kept (`fee_already_paid`). When that leaves nothing
+    owed, the waiver settles the order in the same transaction -- otherwise an order whose ledger
+    covers everything it owes would read "partly paid" with nothing left to take, and could never
+    be paid in full or handed over.
+    """
+
+    #: The order's quoted total, which a settlement the waiver writes is measured against.
+    quoted_total_vnd: int
+    #: What the waiver takes off: the part of the fee the payments do not cover.
+    waived_vnd: int
+    #: The part of the fee already paid, which stays owed-for.
+    kept_vnd: int
+    #: What the order owes once waived: its quoted total plus `kept_vnd`.
+    owed_after_vnd: int
+    #: What is still owed once waived.
+    remaining_after_vnd: int
+
+    @property
+    def settles(self) -> bool:
+        """Whether the waiver leaves nothing owed, and so settles the order with it."""
+
+        return self.remaining_after_vnd == 0
+
+
+def waiver_effect(
+    fee: OrderStorageFee, *, quoted_total_vnd: int | None, paid_vnd: int
+) -> WaiverEffect | None:
+    """What waiving the fee would do now, or `None` when nothing unpaid is left to waive.
+
+    Only an `ACCRUING` fee is waived; `already_paid_vnd` is what `order_storage_fee` found the
+    ledger already covers. Pure arithmetic on the three figures, each validated; no rounding.
+    """
+
+    if fee.status is not StorageFeeStatus.ACCRUING or quoted_total_vnd is None:
+        return None
+    kept = fee.already_paid_vnd
+    if kept != fee_already_paid(paid_vnd=paid_vnd, quoted_total_vnd=quoted_total_vnd):
+        raise ValueError("the fee was computed against a different ledger")
+    waived = fee.amount_vnd - kept
+    if waived <= 0:
+        return None
+    owed_after = quoted_total_vnd + kept
+    return WaiverEffect(
+        quoted_total_vnd=quoted_total_vnd,
+        waived_vnd=waived,
+        kept_vnd=kept,
+        owed_after_vnd=owed_after,
+        remaining_after_vnd=owed_after - paid_vnd,
+    )
 
 
 # --- disposal -------------------------------------------------------------------------------------
@@ -491,17 +615,20 @@ __all__ = [
     "StorageFeeStatus",
     "StoragePolicy",
     "StoragePolicyError",
+    "WaiverEffect",
     "awaiting_pickup",
     "clean_note",
     "days_waiting",
     "disposal_money",
     "disposal_rule_vi",
     "disposal_verdict",
+    "fee_already_paid",
     "order_storage_fee",
     "parse_storage_policy",
     "receipt_line_vi",
     "shop_date",
     "storage_fee",
     "validate_storage_document",
+    "waiver_effect",
     "withdrawal_document",
 ]

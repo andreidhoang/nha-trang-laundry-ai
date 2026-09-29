@@ -225,7 +225,8 @@ def evaluate_payment(
 ) -> PaymentOutcome:
     """Decide whether this payment may be recorded, and what the balance becomes (`DEC-035`).
 
-    Accepts 1 <= `amount_vnd` <= owed - paid. `paid_vnd` is the sum of the order's payment ledger,
+    Accepts 1 <= `amount_vnd` <= owed - paid, and 0 exactly when nothing remains (it settles the
+    order and moves no money). `paid_vnd` is the sum of the order's payment ledger,
     computed by the database under the order's row lock. `bank_ref_last` is the already-normalised
     value (`normalise_bank_ref`). `collected_by_customer` is the staff member's word that the
     customer takes the goods now; it is accepted only with the payment that settles the order, and
@@ -248,17 +249,30 @@ def evaluate_payment(
         return PaymentRefused(PaymentRefusal.BANK_REF_INVALID)
     position = payment_position(charges, paid_vnd)
     assert position.owed_vnd is not None and position.remaining_vnd is not None
-    if position.owed_vnd == 0 and paid_vnd == 0 and amount_vnd == 0:
-        # A bill a credit covered in full. The exact-total settlement accepted 0 for it, and this
-        # route must not strand such an order unpaid forever: 0 đồng settles it, and no ledger row
-        # is written (a payment row is money that moved, and none did).
-        return PaymentAccepted(0, 0, 0, 0, OrderBalanceStatus.PAID, collected_by_customer)
+    if amount_vnd == 0 and position.remaining_vnd == 0:
+        # Nothing is left to take, so 0 đồng settles the order and no ledger row is written (a
+        # payment row is money that moved, and none did). Two ways to get here:
+        #
+        # * a bill a credit covered in full -- the exact-total settlement accepted 0 for it, and
+        #   this route must not strand such an order unpaid forever;
+        # * `MONEY-LIFECYCLE-009` (M1): a ledger that already covers everything owed on a balance
+        #   still reading partly paid -- the storage fee fell after a part payment covered some of
+        #   it (a hold, a rewash that restarted the free days, a withdrawn policy), and what is owed
+        #   is now exactly what was paid. Without this the order could never read paid, and goods
+        #   leave only when paid.
+        return PaymentAccepted(
+            0,
+            position.owed_vnd,
+            paid_vnd,
+            0,
+            OrderBalanceStatus.PAID,
+            collected_by_customer,
+        )
     if amount_vnd < 1:
         return PaymentRefused(PaymentRefusal.PAYMENT_AMOUNT_INVALID)
     if position.remaining_vnd == 0:
-        # A ledger that already covers what is owed on a balance still reading unpaid. The balance
-        # and the ledger move together (`0056`), so this is not reachable by a command; refusing it
-        # as "nothing owed" is the truthful answer if it ever is.
+        # Money offered on an order whose ledger already covers what it owes. The counter settles
+        # it with 0 đồng (above); taking more would be an overpayment by another name.
         return PaymentRefused(PaymentRefusal.NOTHING_OWED)
     if amount_vnd > position.remaining_vnd:
         return PaymentRefused(PaymentRefusal.OVERPAYMENT_REFUSED)

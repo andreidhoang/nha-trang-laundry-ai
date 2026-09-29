@@ -1638,6 +1638,8 @@ def _money_rows(
             waived=bool(waived),
             settled=leading[9] is not None,
             fixed_vnd=_optional_int(fixed),
+            # MONEY-LIFECYCLE-009: never below the part of the fee the ledger already holds.
+            paid_vnd=int(paid),
         )
         try:
             money = exported_money(

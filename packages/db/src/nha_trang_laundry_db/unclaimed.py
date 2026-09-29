@@ -14,6 +14,9 @@
 * **The waiver** (*Miễn phí lưu kho*): an `OPS_APPROVER` or the owner, with a reason, while a fee is
   accruing. Nothing accrues on the order afterwards. The order's row version advances, because what
   it owes changed: a payment sheet opened before the waiver is refused `STALE_VERSION`.
+  `MONEY-LIFECYCLE-009`: it waives only the part of the fee the ledger does not cover -- what was
+  paid stays owed-for -- and when that leaves nothing owed it settles the order in the same
+  transaction (settlement row, the kept fee part fixed beside it, balance `PAID`).
 * **Disposal** (*Thanh lý*): the owner, with MFA, when the domain's verdict allows it. One
   `order_disposals` row (what was owed, kept and written off), then the order goes
   ACTIVE -> CANCELLATION_REVIEW -> CANCELLED with custody resolution `UNCLAIMED_DISPOSED`, each move
@@ -44,13 +47,19 @@ from nha_trang_laundry_domain.pickup_reminders import (
     ReminderRefusal,
     ReminderStep,
 )
-from nha_trang_laundry_domain.settlement import QuotedTotal
+from nha_trang_laundry_domain.settlement import (
+    QuotedTotal,
+    SettlementNotSupported,
+    SettlementShape,
+    evaluate_settlement,
+)
 from nha_trang_laundry_domain.unclaimed import (
     ContactChannel,
     ContactOutcome,
     DisposalVerdict,
     OrderStorageFee,
     StorageFeeStatus,
+    WaiverEffect,
     awaiting_pickup,
     clean_note,
     days_waiting,
@@ -59,6 +68,7 @@ from nha_trang_laundry_domain.unclaimed import (
     disposal_verdict,
     order_storage_fee,
     receipt_line_vi,
+    waiver_effect,
 )
 
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
@@ -77,9 +87,11 @@ from nha_trang_laundry_db.orders import (
 )
 from nha_trang_laundry_db.personal_data import open_phone
 from nha_trang_laundry_db.query_version import QueryVersion, query_version
+from nha_trang_laundry_db.settlement import collected_by_for_shape
 from nha_trang_laundry_db.storage_fees import (
     STORAGE_POLICY_UNPUBLISHED,
     PublishedStoragePolicy,
+    insert_fixed_storage_fee,
     read_published_storage_policy,
     storage_fee_for_order,
 )
@@ -299,6 +311,10 @@ class OrderStorageRead:
     attempts_total: int
     disposal_verdict: DisposalVerdict
     disposal: DisposalView | None
+    #: `MONEY-LIFECYCLE-009` (A3): what *Miễn phí lưu kho* would do now -- the part waived, the
+    #: part kept because it was paid, and whether it settles the order -- or `None` when nothing
+    #: unpaid is left to waive. The waiver sheet states it before the press.
+    waiver_effect: WaiverEffect | None = None
 
 
 # --- commands -------------------------------------------------------------------------------------
@@ -452,6 +468,7 @@ class UnclaimedRepository:
                 self_collection_recorded=bool(row[22]),
             )
             quoted = None if row[11] is None else int(str(row[11]))
+            paid = int(str(row[15]))
             fee = order_storage_fee(
                 policy,
                 awaiting=awaiting,
@@ -461,8 +478,8 @@ class UnclaimedRepository:
                 waived=bool(row[14]),
                 settled=bool(row[12]),
                 fixed_vnd=None if row[13] is None else int(str(row[13])),
+                paid_vnd=paid,
             )
-            paid = int(str(row[15]))
             times = tuple(datetime.fromisoformat(str(value)) for value in (row[17] or []))
             last = row[18] if isinstance(row[18], dict) else None
             found.append(
@@ -796,17 +813,31 @@ class UnclaimedRepository:
                     cursor, order_id=command.order_id, moment=occurred_at
                 )
             status = storage.fee.status
-            if status is StorageFeeStatus.WAIVED:
+            if storage.waived:
                 raise UnclaimedRefused("STORAGE_FEE_ALREADY_WAIVED")
             if status is StorageFeeStatus.POLICY_UNPUBLISHED:
                 raise UnclaimedRefused(STORAGE_POLICY_UNPUBLISHED)
-            if status is not StorageFeeStatus.ACCRUING:
+            # MONEY-LIFECYCLE-009 (M1, A3): the waiver takes off the part of the fee the ledger
+            # does not cover and keeps the part it does -- it never lowers what is owed below what
+            # is paid. Nothing unpaid (no fee, or the ledger already covers it) is nothing to waive.
+            effect = waiver_effect(
+                storage.fee, quoted_total_vnd=storage.quoted_total_vnd, paid_vnd=storage.paid_vnd
+            )
+            if effect is None:
                 raise UnclaimedRefused("NO_STORAGE_FEE_OWED")
             assert storage.fee.fee is not None and storage.published is not None
-            amount = storage.fee.amount_vnd
+            amount = effect.waived_vnd
             policy_version_id = storage.published.version_id
             days = storage.fee.fee.days_waiting
             next_version = command.expected_row_version + 1
+            # When the waiver leaves nothing owed it settles the order in this transaction, as the
+            # payment that brings the ledger to what is owed would: otherwise the balance reads
+            # "partly paid" with nothing left to take, and the goods could never leave.
+            settlement = (
+                _waiver_settlement(connection, command.order_id, store_id, effect)
+                if effect.settles
+                else None
+            )
 
             def mutation(cursor: Any) -> None:
                 cursor.execute(
@@ -828,8 +859,70 @@ class UnclaimedRepository:
                         occurred_at,
                     ),
                 )
-                _advance_version(cursor, command.order_id, command.expected_row_version)
+                if settlement is None:
+                    _advance_version(cursor, command.order_id, command.expected_row_version)
+                    return
+                # The waiver row first (`0060`/`0061` refuse a waiver beside a settlement or a
+                # fixed fee), then the settlement, the kept fee part fixed beside it (`0066`'s
+                # ALREADY_PAID), and the balance last, when `0056` can see every row it checks.
+                cursor.execute(
+                    """
+                    INSERT INTO order_settlements (
+                        id, order_id, store_id, settled_quote_id, settled_quote_revision,
+                        settled_quote_snapshot_hash, expected_total_vnd, paid_amount_vnd,
+                        settlement_shape, collected_by, attested_by_staff_id, attested_at,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        settlement.settlement_id,
+                        command.order_id,
+                        store_id,
+                        settlement.quote_id,
+                        settlement.quote_revision,
+                        settlement.snapshot_hash,
+                        effect.owed_after_vnd,
+                        effect.owed_after_vnd,
+                        settlement.shape.value,
+                        collected_by_for_shape(settlement.shape),
+                        command.principal.staff_user_id,
+                        occurred_at,
+                        occurred_at,
+                    ),
+                )
+                if effect.kept_vnd > 0:
+                    insert_fixed_storage_fee(
+                        cursor,
+                        order_id=command.order_id,
+                        store_id=store_id,
+                        settlement_id=settlement.settlement_id,
+                        storage=storage,
+                        amount_vnd=effect.kept_vnd,
+                        fixed_by_staff_id=command.principal.staff_user_id,
+                        fixed_at=occurred_at,
+                    )
+                cursor.execute(
+                    """
+                    UPDATE orders
+                    SET balance_status = 'PAID', row_version = row_version + 1
+                    WHERE id = %s AND row_version = %s AND balance_status = 'PARTIALLY_PAID'
+                    RETURNING id
+                    """,
+                    (command.order_id, command.expected_row_version),
+                )
+                if cursor.fetchone() is None:
+                    raise OrderStateError("STALE_VERSION: order changed during the waiver")
 
+            settled_facts: dict[str, object] = (
+                {}
+                if settlement is None
+                else {
+                    "kept_vnd": effect.kept_vnd,
+                    "settlement_id": str(settlement.settlement_id),
+                    "settlement_shape": settlement.shape.value,
+                    "balance_status": "PAID",
+                }
+            )
             commit_material_change(
                 connection,
                 MaterialChange(
@@ -838,12 +931,20 @@ class UnclaimedRepository:
                     aggregate_version=next_version,
                     event_type="ORDER_STORAGE_FEE_WAIVED",
                     # The amount and the days; the reason stays in its table.
-                    event_payload={"waived_amount_vnd": amount, "days_waiting": days},
+                    event_payload={
+                        "waived_amount_vnd": amount,
+                        "days_waiting": days,
+                        **settled_facts,
+                    },
                     audit_action="ORDER_STORAGE_FEE_WAIVE",
                     actor_type="STAFF",
                     actor_id=command.principal.staff_user_id,
                     correlation_id=command.correlation_id,
-                    audit_details={"waived_amount_vnd": amount, "days_waiting": days},
+                    audit_details={
+                        "waived_amount_vnd": amount,
+                        "days_waiting": days,
+                        **settled_facts,
+                    },
                     outbox_events=(
                         OutboxEvent(
                             "order.storage_fee_waived.v1",
@@ -853,6 +954,21 @@ class UnclaimedRepository:
                                 "row_version": next_version,
                             },
                             f"order:{command.order_id}:storage-fee-waiver",
+                        ),
+                        # The key every settlement of this order uses, however it was paid.
+                        *(
+                            ()
+                            if settlement is None
+                            else (
+                                OutboxEvent(
+                                    "order.settlement_recorded.v1",
+                                    {
+                                        "order_id": str(command.order_id),
+                                        "settlement_id": str(settlement.settlement_id),
+                                    },
+                                    f"order:{command.order_id}:settlement",
+                                ),
+                            )
                         ),
                     ),
                     occurred_at=occurred_at,
@@ -1101,6 +1217,64 @@ def _advance_version(cursor: Any, order_id: UUID, expected: int) -> None:
         raise OrderStateError("STALE_VERSION: order changed during the change")
 
 
+@dataclass(frozen=True, slots=True)
+class _WaiverSettlement:
+    """The settlement a waiver writes when it leaves nothing owed (`MONEY-LIFECYCLE-009`)."""
+
+    settlement_id: UUID
+    quote_id: UUID
+    quote_revision: int
+    snapshot_hash: str
+    shape: SettlementShape
+
+
+def _waiver_settlement(
+    connection: Any, order_id: UUID, store_id: UUID, effect: WaiverEffect
+) -> _WaiverSettlement:
+    """The settlement row's facts, read under the order lock the waiver holds.
+
+    The shape is `evaluate_settlement`'s, over the quoted total, exactly as the payment that settles
+    an order decides it: the customer is not taking the goods in this press (a waiver is not a
+    handover), so a counter order reads "paid, still to collect" and *Khách đã nhận đồ* follows.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT o.current_quote_id, o.current_quote_revision, o.current_quote_snapshot_hash,
+                   o.fulfillment_mode, r.display_total_min_vnd, r.display_total_max_vnd,
+                   o.store_id
+            FROM orders o
+            JOIN quote_revisions r
+              ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
+            WHERE o.id = %s
+            """,
+            (order_id,),
+        )
+        row = cursor.fetchone()
+    if row is None or _uuid(row[6]) != store_id:
+        raise OrderStateError("STALE_VERSION: order is missing or stale")
+    quoted = QuotedTotal(
+        None if row[4] is None else int(str(row[4])),
+        None if row[5] is None else int(str(row[5])),
+    )
+    settled = evaluate_settlement(
+        quoted=quoted,
+        tendered_vnd=effect.quoted_total_vnd,
+        collected_by_customer=False,
+        fulfillment_mode=FulfillmentMode(str(row[3])),
+    )
+    if isinstance(settled, SettlementNotSupported):
+        raise UnclaimedRefused(settled.reason_code)
+    return _WaiverSettlement(
+        settlement_id=uuid4(),
+        quote_id=_uuid(row[0]),
+        quote_revision=int(str(row[1])),
+        snapshot_hash=str(row[2]),
+        shape=settled.shape,
+    )
+
+
 def _attempt_times(cursor: Any, order_id: UUID) -> tuple[datetime, ...]:
     cursor.execute(
         """
@@ -1156,6 +1330,13 @@ def _storage_read(
     disposal_row = cursor.fetchone()
     policy = None if published is None else published.policy
     return OrderStorageRead(
+        waiver_effect=(
+            None
+            if storage.waived
+            else waiver_effect(
+                storage.fee, quoted_total_vnd=storage.quoted_total_vnd, paid_vnd=storage.paid_vnd
+            )
+        ),
         order_id=order_id,
         store_id=store_id,
         row_version=row_version,

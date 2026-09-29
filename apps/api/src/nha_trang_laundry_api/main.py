@@ -8638,14 +8638,32 @@ class StorageFeeResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    #: `FIXED`, `WAIVED`, `POLICY_UNPUBLISHED`, `NOT_WAITING`, `NO_SINGLE_TOTAL`, `FREE_PERIOD`,
-    #: `ACCRUING`.
+    #: `FIXED`, `ALREADY_PAID`, `WAIVED`, `POLICY_UNPUBLISHED`, `NOT_WAITING`, `NO_SINGLE_TOTAL`,
+    #: `FREE_PERIOD`, `ACCRUING`.
     status: str
     amount_vnd: int = Field(ge=0)
     chargeable_days: int | None
     fee_per_started_day_vnd: int | None
     cap_vnd: int | None
     capped: bool
+    #: `MONEY-LIFECYCLE-009`: the part of the fee the order's payments already cover. It stays
+    #: owed-for whatever happens to the fee later (`ALREADY_PAID` when it is more than the fee now).
+    already_paid_vnd: int = Field(default=0, ge=0)
+
+
+class WaiverEffectResponse(BaseModel):
+    """What *Miễn phí lưu kho* would do now (`MONEY-LIFECYCLE-009`, A3): stated before the press."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    waived_vnd: int = Field(ge=0)
+    #: The part of the fee already paid, kept: a waiver never lowers what is owed below what is
+    #: paid.
+    kept_vnd: int = Field(ge=0)
+    owed_after_vnd: int = Field(ge=0)
+    remaining_after_vnd: int = Field(ge=0)
+    #: Nothing is owed once waived, so the waiver settles the order in the same transaction.
+    settles: bool
 
 
 class DisposalVerdictResponse(BaseModel):
@@ -8765,6 +8783,8 @@ class OrderStorageResponse(BaseModel):
     attempts_truncated: bool
     disposal_verdict: DisposalVerdictResponse
     disposal: DisposalRecordResponse | None
+    #: `MONEY-LIFECYCLE-009` (A3): what the waiver would do now; null when nothing unpaid is left.
+    waiver_effect: WaiverEffectResponse | None = None
 
 
 class ContactAttemptRequest(StrictRequest):
@@ -8825,6 +8845,7 @@ def _storage_fee_response(fee: OrderStorageFee) -> StorageFeeResponse:
         fee_per_started_day_vnd=None if trace is None else trace.fee_per_started_day_vnd,
         cap_vnd=None if trace is None else trace.cap_vnd,
         capped=trace is not None and trace.capped,
+        already_paid_vnd=fee.already_paid_vnd,
     )
 
 
@@ -8980,6 +9001,15 @@ def read_order_storage(
         attempts_total=found.attempts_total,
         attempts_truncated=found.attempts_total > len(found.attempts),
         disposal_verdict=_disposal_verdict_response(found.disposal_verdict),
+        waiver_effect=None
+        if found.waiver_effect is None
+        else WaiverEffectResponse(
+            waived_vnd=found.waiver_effect.waived_vnd,
+            kept_vnd=found.waiver_effect.kept_vnd,
+            owed_after_vnd=found.waiver_effect.owed_after_vnd,
+            remaining_after_vnd=found.waiver_effect.remaining_after_vnd,
+            settles=found.waiver_effect.settles,
+        ),
         disposal=None
         if disposal is None
         else DisposalRecordResponse(

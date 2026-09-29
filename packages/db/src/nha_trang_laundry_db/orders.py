@@ -1800,6 +1800,8 @@ def _storage_fee_of_row(row: tuple[object, ...], facts: StepFacts, as_of: dateti
         waived=bool(row[_VIEW_STORAGE_FEE_FIXED + 1]),
         settled=facts.settlement_shape is not None,
         fixed_vnd=None if fixed is None else int(str(fixed)),
+        # MONEY-LIFECYCLE-009: never below the part of the fee the ledger already holds.
+        paid_vnd=int(str(row[_VIEW_PAID_VND])),
     ).amount_vnd
 
 

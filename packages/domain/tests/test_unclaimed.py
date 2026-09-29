@@ -160,6 +160,8 @@ def fee_for(**overrides: object) -> OrderStorageFee:
         "waived": False,
         "settled": False,
         "fixed_vnd": None,
+        # MONEY-LIFECYCLE-009: the ledger's sum is an input now; nothing paid, as before.
+        "paid_vnd": 0,
     }
     arguments.update(overrides)
     policy = arguments.pop("policy", POLICY)

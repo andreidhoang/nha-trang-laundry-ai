@@ -204,6 +204,58 @@ def test_the_order_qr_is_refused_until_published_then_asks_for_exactly_what_rema
     assert paid["modules"] is None and paid["transfer_code"] == code
 
 
+def test_a_typed_part_payment_gets_a_qr_for_exactly_that_amount_or_a_named_refusal(
+    connection: Any, client: TestClient, shop: Shop
+) -> None:
+    """COUNTER-UI-RACE-009 (C3). A 50.000 ₫ deposit typed at the counter: the QR asks for 50.000 ₫,
+    never the whole balance; above what remains it is refused by name; a malformed amount is a 422.
+    The matrix: {no part, part, all of it, one đồng over} x {unpaid, after a deposit}."""
+
+    order_id = shop.ready_order(shop.customer())
+    _as(shop.counter)
+    path = f"/internal/v1/orders/{order_id}/vietqr"
+    unpublished = client.get(path, params={"amount_vnd": 50_000}).json()
+    assert unpublished["refusal"] == "BANK_ACCOUNT_UNPUBLISHED"
+    assert unpublished["amount_source"] == "PART_OF_BALANCE_DUE"
+    _publish(connection, shop)
+
+    def part(amount: int) -> dict[str, Any]:
+        response = client.get(path, params={"amount_vnd": amount})
+        assert response.status_code == 200, response.text
+        return dict(response.json())
+
+    full = _qr(client, order_id)
+    assert full["amount_vnd"] == TOTAL_VND and full["amount_source"] == "BALANCE_DUE"
+    deposit = part(50_000)
+    assert deposit["refusal"] is None
+    assert deposit["amount_vnd"] == 50_000
+    assert deposit["amount_source"] == "PART_OF_BALANCE_DUE"
+    assert deposit["transfer_code"] == full["transfer_code"]
+    assert parse_payload(deposit["payload"]).amount_vnd == 50_000
+    assert deposit["modules"] == qr_modules(deposit["payload"])
+    assert part(TOTAL_VND)["amount_vnd"] == TOTAL_VND
+    over = part(TOTAL_VND + 1)
+    assert over["refusal"] == "AMOUNT_ABOVE_REMAINING"
+    assert (over["payload"], over["modules"], over["amount_vnd"]) == (None, None, None)
+    assert over["transfer_code"] == full["transfer_code"]
+
+    nothing = part(0)
+    assert nothing["refusal"] == "AMOUNT_INVALID" and nothing["modules"] is None
+    for bad in ("-1", "50000.5", "abc", "9007199254740992"):
+        refused = client.get(path, params={"amount_vnd": bad})
+        assert refused.status_code == 422, (bad, refused.text)
+
+    _pay(client, order_id, 50_000)
+    remaining = client.get(f"/internal/v1/orders/{order_id}").json()["remaining_vnd"]
+    assert remaining == TOTAL_VND - 50_000
+    assert part(remaining)["amount_vnd"] == remaining
+    assert part(remaining + 1)["refusal"] == "AMOUNT_ABOVE_REMAINING"
+    assert part(20_000)["amount_vnd"] == 20_000
+
+    _pay(client, order_id, remaining)
+    assert part(20_000)["refusal"] == "NOTHING_OWED"
+
+
 def test_the_order_qr_is_the_order_reads_to_give(
     connection: Any, client: TestClient, shop: Shop
 ) -> None:

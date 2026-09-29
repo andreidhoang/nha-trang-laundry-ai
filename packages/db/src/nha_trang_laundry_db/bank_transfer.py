@@ -217,9 +217,18 @@ class BankTransferRepository:
 
     @staticmethod
     def order_qr(
-        cursor: Any, *, order_id: UUID, principal: StaffPrincipal, now: datetime
+        cursor: Any,
+        *,
+        order_id: UUID,
+        principal: StaffPrincipal,
+        now: datetime,
+        part_vnd: int | None = None,
     ) -> TransferQr:
         """The order's QR: the ledger's remaining balance, the order's transfer code, the account.
+
+        With `part_vnd` (a part payment the counter typed) the QR asks for exactly that, when the
+        payment route would take it -- 1 up to what remains -- and is refused by name otherwise
+        (`order_qr_amount`); what remains is read in this request, as for the full amount.
 
         The order read's rule decides who may ask (`OrderRepository.read_for_principal`: a reading
         role, and membership of the store the order row names -- `OrderNotVisibleError` otherwise,
@@ -233,7 +242,10 @@ class BankTransferRepository:
             ticket_issued_on=view.ticket_issued_on,
         )
         amount = order_qr_amount(
-            commercial=view.commercial, balance=view.balance, remaining_vnd=view.remaining_vnd
+            commercial=view.commercial,
+            balance=view.balance,
+            remaining_vnd=view.remaining_vnd,
+            part_vnd=part_vnd,
         )
         return _qr(cursor, amount=amount, code=code, now=now)
 

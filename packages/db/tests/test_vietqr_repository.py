@@ -145,13 +145,16 @@ class Shop:
             ),
         )
 
-    def qr(self, order_id: UUID, principal: StaffPrincipal | None = None) -> TransferQr:
+    def qr(
+        self, order_id: UUID, principal: StaffPrincipal | None = None, *, part: int | None = None
+    ) -> TransferQr:
         with self.connection.cursor() as cursor:
             return BankTransferRepository.order_qr(
                 cursor,
                 order_id=order_id,
                 principal=principal or self.operator,
                 now=datetime.now(UTC),
+                **({} if part is None else {"part_vnd": part}),
             )
 
     def search(self, code: str, principal: StaffPrincipal | None = None) -> list[UUID]:
@@ -225,6 +228,44 @@ def test_the_qr_asks_for_the_ledgers_remaining_balance_and_nothing_once_paid(sho
     paid = shop.qr(order_id)
     assert paid.refusal is QrRefusal.NOTHING_OWED
     assert paid.payload is None and paid.transfer_code == first.transfer_code
+
+
+def test_a_typed_part_is_asked_for_exactly_against_the_ledger_read_now(shop: Shop) -> None:
+    """COUNTER-UI-RACE-009 (C3): a deposit typed at the counter is the QR's amount, checked against
+    what the ledger says remains in this read -- before and after a part payment -- and refused by
+    name above it; the order's own refusals still come first."""
+
+    order_id = shop.order()
+    shop.publish()
+
+    deposit = shop.qr(order_id, part=50_000)
+    assert deposit.refusal is None and deposit.amount_vnd == 50_000
+    assert deposit.payload is not None
+    assert parse_payload(deposit.payload).amount_vnd == 50_000
+    assert deposit.transfer_code == shop.qr(order_id).transfer_code
+    whole = shop.qr(order_id, part=TOTAL_VND)
+    assert whole.refusal is None and whole.amount_vnd == TOTAL_VND
+    above = shop.qr(order_id, part=TOTAL_VND + 1)
+    assert above.refusal is QrRefusal.AMOUNT_ABOVE_REMAINING
+    assert (above.payload, above.amount_vnd, above.account) == (None, None, None)
+
+    shop.pay(order_id, 50_000)
+    remaining = _read(shop.connection, order_id, shop.operator).remaining_vnd
+    assert remaining == TOTAL_VND - 50_000
+    assert shop.qr(order_id, part=remaining).amount_vnd == remaining
+    assert shop.qr(order_id, part=remaining + 1).refusal is QrRefusal.AMOUNT_ABOVE_REMAINING
+    assert shop.qr(order_id, part=20_000).amount_vnd == 20_000
+
+    shop.pay(order_id, remaining)
+    assert shop.qr(order_id, part=20_000).refusal is QrRefusal.NOTHING_OWED
+
+
+def test_a_typed_part_above_what_remains_is_refused_before_the_account_is_asked(
+    shop: Shop,
+) -> None:
+    order_id = shop.order()
+    assert shop.qr(order_id, part=TOTAL_VND + 1).refusal is QrRefusal.AMOUNT_ABOVE_REMAINING
+    assert shop.qr(order_id, part=50_000).refusal is QrRefusal.BANK_ACCOUNT_UNPUBLISHED
 
 
 def test_the_qr_includes_an_accrued_storage_fee(shop: Shop) -> None:

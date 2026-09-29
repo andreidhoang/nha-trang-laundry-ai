@@ -199,6 +199,7 @@ from nha_trang_laundry_domain.promise import (
 from nha_trang_laundry_domain.quote_composition import RequestedLine
 from nha_trang_laundry_domain.range_prices import RangePriceChoice
 from nha_trang_laundry_domain.remedies import RemedyKind
+from nha_trang_laundry_domain.settlement import MAX_SETTLEMENT_VND
 from nha_trang_laundry_domain.shop_capture import (
     ExpenseCategory,
     MachineCategory,
@@ -9931,6 +9932,7 @@ def read_order_vietqr(
     order_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
     service: Annotated[VietQrService, Depends(get_vietqr_service)],
+    amount_vnd: Annotated[int | None, Query(ge=0, le=MAX_SETTLEMENT_VND)] = None,
 ) -> OrderVietQrResponse:
     """The order's VietQR: the exact amount still owed, the order's transfer code, the account.
 
@@ -9939,14 +9941,20 @@ def read_order_vietqr(
     `NO_PRESENTABLE_TOTAL`. The amount is the order read's `remaining_vnd` -- storage fee included
     once accrued -- read in this request. Who may ask is the order read's rule; 404 outside the
     caller's stores.
+
+    COUNTER-UI-RACE-009 (C3): `?amount_vnd=` asks for a part payment the counter typed (a deposit):
+    the QR then carries exactly that amount (`amount_source` `PART_OF_BALANCE_DUE`), or is refused
+    `AMOUNT_ABOVE_REMAINING` when it is more than remains -- the payment route would refuse it too
+    -- and `AMOUNT_INVALID` for 0. A negative, fractional or non-numeric amount, or one above the
+    settlement ceiling, is a 422.
     """
     try:
-        qr = service.order_qr(order_id=order_id, principal=principal)
+        qr = service.order_qr(order_id=order_id, principal=principal, part_vnd=amount_vnd)
     except OrderNotVisibleError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order unavailable") from error
     except OrderAuthorizationError as error:
         _raise_operations_error(error)
-    return order_vietqr_response(order_id, qr)
+    return order_vietqr_response(order_id, qr, part=amount_vnd is not None)
 
 
 @app.get(

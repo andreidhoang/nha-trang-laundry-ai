@@ -59,7 +59,9 @@ class TransferQrResponse(BaseModel):
     `refusal` is `BANK_ACCOUNT_UNPUBLISHED` until the owner publishes the shop's account;
     `NOTHING_OWED` when the order is paid, refunded or on the customer's account (or a credit
     covered the bill); `ORDER_NOT_ACTIVE` / `NO_PRESENTABLE_TOTAL` exactly when the payment route
-    would refuse to record the money; `MONTH_NOT_STARTED` for an account month that has not begun.
+    would refuse to record the money; `MONTH_NOT_STARTED` for an account month that has not begun;
+    `AMOUNT_ABOVE_REMAINING` / `AMOUNT_INVALID` for an order QR asked for a typed part amount the
+    payment route would refuse (COUNTER-UI-RACE-009).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -72,8 +74,9 @@ class TransferQrResponse(BaseModel):
     modules: list[list[int]] | None
     amount_vnd: int | None
     #: Where the amount comes from: the payment ledger's remaining balance for an order, the
-    #: statement's unpaid figure for an account month.
-    amount_source: Literal["BALANCE_DUE", "STATEMENT_UNPAID"]
+    #: statement's unpaid figure for an account month, or -- `PART_OF_BALANCE_DUE` -- the part
+    #: payment the counter typed, checked against that remaining balance (at most all of it).
+    amount_source: Literal["BALANCE_DUE", "PART_OF_BALANCE_DUE", "STATEMENT_UNPAID"]
     account_name: str | None
     bank_display_name: str | None
     #: Tier 3: the published account's configuration version and digest.
@@ -95,7 +98,9 @@ class AccountMonthVietQrResponse(TransferQrResponse):
     query_version: str
 
 
-def _fields(qr: TransferQr, source: Literal["BALANCE_DUE", "STATEMENT_UNPAID"]) -> dict[str, Any]:
+def _fields(
+    qr: TransferQr, source: Literal["BALANCE_DUE", "PART_OF_BALANCE_DUE", "STATEMENT_UNPAID"]
+) -> dict[str, Any]:
     published = qr.account
     return {
         "refusal": None if qr.refusal is None else qr.refusal.value,
@@ -112,8 +117,15 @@ def _fields(qr: TransferQr, source: Literal["BALANCE_DUE", "STATEMENT_UNPAID"]) 
     }
 
 
-def order_vietqr_response(order_id: UUID, qr: TransferQr) -> OrderVietQrResponse:
-    return OrderVietQrResponse(order_id=order_id, **_fields(qr, "BALANCE_DUE"))
+def order_vietqr_response(
+    order_id: UUID, qr: TransferQr, *, part: bool = False
+) -> OrderVietQrResponse:
+    """`part`: the QR was asked for a typed part amount (`?amount_vnd=`), not the whole balance."""
+
+    source: Literal["BALANCE_DUE", "PART_OF_BALANCE_DUE"] = (
+        "PART_OF_BALANCE_DUE" if part else "BALANCE_DUE"
+    )
+    return OrderVietQrResponse(order_id=order_id, **_fields(qr, source))
 
 
 def account_month_vietqr_response(
@@ -140,7 +152,9 @@ class VietQrService:
         self._database_url = settings.database_url
         self._connection_factory = connection_factory
 
-    def order_qr(self, *, order_id: UUID, principal: StaffPrincipal) -> TransferQr:
+    def order_qr(
+        self, *, order_id: UUID, principal: StaffPrincipal, part_vnd: int | None = None
+    ) -> TransferQr:
         """The balance and the account are read on one cursor, in one request."""
 
         with (
@@ -148,7 +162,11 @@ class VietQrService:
             connection.cursor() as cursor,
         ):
             return BankTransferRepository.order_qr(
-                cursor, order_id=order_id, principal=principal, now=datetime.now(UTC)
+                cursor,
+                order_id=order_id,
+                principal=principal,
+                now=datetime.now(UTC),
+                part_vnd=part_vnd,
             )
 
     def account_month_qr(

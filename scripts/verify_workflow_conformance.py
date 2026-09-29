@@ -327,6 +327,10 @@ DECLARED_CONTROLS = (
     "reminders.call",
     "reminders.done",
     "reminders.outcome",
+    # MONEY-LIFECYCLE-009 (round 9, review M1): "Tất toán" -- 0 ₫ settles an order whose ledger
+    # already covers what it owes, with the handover tick.
+    "orderDetail.settle-hand-over",
+    "orderDetail.settle-submit",
 )
 
 PASS: list[str] = []
@@ -6953,6 +6957,307 @@ def scenario_unclaimed(console: Console) -> None:
     console.sign_in("demo-owner")
 
 
+# --- MONEY-LIFECYCLE-009 (round 9, review M1, M3, M7) ---------------------------------------
+
+
+def _part_paid_on_the_shelf(console: Console) -> tuple[str, int]:
+    """A bag ready 25 shop days ago whose customer paid the quoted total and 3.000 ₫ of the
+    25.000 ₫ storage fee at the counter -- the part payment M1 is about."""
+
+    order = console.build_order(kg="7", stop="ready")
+    order_id = order["order_id"]
+    total = int(
+        (console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}).get(
+            "payable_total_vnd"
+        )
+        or 0
+    )
+    _age_ready(order_id, 25)
+    part = total + 3_000
+    console.pay(order_id, f"{part:,}".replace(",", "."))
+    return order_id, part
+
+
+def _money_reads_agree(console: Console, order_id: str, what: str) -> None:
+    """The order read, the board and the waiting list all answer for the store, and agree."""
+
+    read = console.call("GET", f"/internal/v1/orders/{order_id}")
+    board = console.call("GET", f"/internal/v1/stores/{STORE}/orders?limit=200")
+    waiting = console.call("GET", f"/internal/v1/stores/{STORE}/orders/awaiting-pickup")
+    body = read.get("body") or {}
+    row = next(
+        (
+            item
+            for item in (board.get("body") or [])
+            if isinstance(item, dict) and item.get("order_id") == order_id
+        ),
+        {},
+    )
+    ok(
+        f"{what}: the order read, the board and the waiting list answer, and agree",
+        read["status"] == 200
+        and board["status"] == 200
+        and waiting["status"] == 200
+        and (row.get("owed_vnd"), row.get("paid_vnd"), row.get("remaining_vnd"))
+        == (body.get("owed_vnd"), body.get("paid_vnd"), body.get("remaining_vnd"))
+        and int(body.get("owed_vnd") or 0) >= int(body.get("paid_vnd") or 0),
+        f"{read['status']}/{board['status']}/{waiting['status']} {read['text'][:160]}",
+    )
+
+
+def _dialog_reason_codes(console: Console) -> set[str]:
+    """The reason codes on the refusal inside the open sheet (`data-reason-codes`), which the
+    notice keeps out of its visible words and inside "Chi tiết kỹ thuật"."""
+
+    try:
+        values = console.page.eval_on_selector_all(
+            "dialog[open] [data-reason-codes], main [data-reason-codes]",
+            "(els) => els.map((e) => e.dataset.reasonCodes)",
+        )
+    except Exception:
+        return set()
+    return {code for value in values for code in str(value or "").split()}
+
+
+def scenario_money_lifecycle(console: Console) -> None:
+    """MONEY-LIFECYCLE-009 (round 9). M1: a customer paid part of a storage fee, then the fee
+    fell -- waived by an approver (the waiver sheet says it settles, and it does), or the laundry
+    was rewashed and its free days restarted (the page offers "Tất toán": 0 ₫ settles, the bag goes
+    home). Every read of the store keeps answering. M3/M7: a cancellation that would pay a remedy
+    twice, or lose a credit the bill spent, is refused at Huỷ đơn, in Vietnamese, naming it."""
+
+    head("ML", "TIỀN ĐÃ TRẢ KHÔNG BỊ XOÁ — part of the storage fee paid, then waived")
+    if not READS_DATABASE or not arguments.database_url:
+        note(
+            "--database-url is required: the laundry's ready time is moved by the documented "
+            "harness step, and the storage and remedy policies are the owner's scripts"
+        )
+        FAIL.append("money_lifecycle scenario needs --database-url")
+        return
+    in_force = sql(
+        "select payload ->> 'withdrawn' from configuration_versions "
+        "where config_type = 'STORAGE_POLICY' and lifecycle = 'PUBLISHED' "
+        "order by version desc limit 1"
+    )
+    if in_force in ("", "true"):
+        published = _publish_storage()
+        ok(
+            "the owner publishes the storage policy with the script (DEC-036)",
+            published.returncode == 0,
+            (published.stdout + published.stderr)[-200:],
+        )
+    console.sign_in("demo-operations")
+    order_id, part = _part_paid_on_the_shelf(console)
+    read = console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}
+    ok(
+        "the counter took the quoted total and 3.000 ₫ of the 25.000 ₫ fee; 22.000 ₫ remain",
+        read.get("balance") == "PARTIALLY_PAID"
+        and read.get("paid_vnd") == part
+        and read.get("remaining_vnd") == 22_000,
+        json.dumps(read)[:200],
+    )
+    console.sign_in("demo-approver")
+    console.open(f"#/orders/{order_id}", settle=2200)
+    console.page.locator("#order-storage-waive").click()
+    touched("orderDetail.storage-waive")
+    console.page.wait_for_selector("dialog[open] #waiver-submit", state="visible", timeout=8000)
+    sheet = console.dialog_text()
+    ok(
+        "the waiver sheet says before the press: 3.000 ₫ kept, 22.000 ₫ waived, the order settles",
+        "Khách đã trả đủ — đơn sẽ được tất toán." in sheet
+        and "Khách đã trả phí (giữ nguyên)" in sheet
+        and "3.000" in sheet
+        and "22.000" in sheet,
+        sheet[:240].replace("\n", " | "),
+    )
+    console.type_into("dialog[open] #waiver-reason", "khách quen", "orderDetail.waiver-reason")
+    (waived,) = console.press_capturing(
+        console.page.locator("dialog[open] #waiver-submit"), "/storage-fee-waiver"
+    )
+    touched("orderDetail.waiver-submit")
+    console.page.wait_for_timeout(1800)
+    after = waived.get("body") or {}
+    ok(
+        "the waiver settles the order: paid in full at what was paid, nothing owed",
+        waived["status"] == 200
+        and after.get("balance") == "PAID"
+        and (after.get("owed_vnd"), after.get("paid_vnd"), after.get("remaining_vnd"))
+        == (part, part, 0),
+        waived["text"][:200],
+    )
+    ok(
+        "the paid part of the fee is fixed beside the settlement, as what the customer paid",
+        sql(
+            "select f.amount_vnd || '|' || f.basis || '|' || s.expected_total_vnd "
+            "from order_storage_fees f join order_settlements s on s.id = f.settlement_id "
+            f"where f.order_id = '{order_id}'"
+        )
+        == f"3000|ALREADY_PAID|{part}"
+        and sql(f"select waived_amount_vnd from storage_fee_waivers where order_id='{order_id}'")
+        == "22000",
+        "",
+    )
+    _money_reads_agree(console, order_id, "after the waiver")
+    console.sign_in("demo-operations")
+    console.open(f"#/orders/{order_id}", settle=2200)
+    said = console.step(order_id, "COLLECT", reopen=False)
+    if console.page.locator("dialog[open] #collection-submit").count():
+        console.page.locator("dialog[open] #collection-submit").click()
+        touched("orderDetail.collection-submit")
+        console.page.wait_for_timeout(1800)
+    closed = console.step(order_id, "HAND_OVER")
+    ok(
+        "and the goods leave: Khách đã nhận đồ, then the order closes",
+        stored(order_id, "commercial_status") == "COMPLETED"
+        and stored(order_id, "self_collection_recorded") == "t",
+        f"{said[:100]} || {closed[:100]}",
+    )
+
+    head("ML2", "TẤT TOÁN — part of the fee paid, the bag rewashed: 0 ₫ settles, the bag goes home")
+    order_id, part = _part_paid_on_the_shelf(console)
+    said = console.step(order_id, "REWASH", reason="NOT_CLEAN")
+    for step in ("QUALITY_CHECK", "MARK_READY"):
+        console.call(
+            "POST",
+            f"/internal/v1/orders/{order_id}/steps",
+            {"step": step},
+            if_match=console.current_version(order_id, 0),
+        )
+    _money_reads_agree(console, order_id, "rewashed and ready again (free days restarted)")
+    console.open_order(order_id, settle=2200)
+    money_text = console.page.locator(".order__money").inner_text()
+    primary = console.page.locator(".action-bar--v2 button[data-step=TAKE_PAYMENT]")
+    ok(
+        "the page says the customer has paid enough and offers Tất toán as the one next step",
+        primary.count() == 1
+        and primary.first.inner_text().strip() == "Tất toán"
+        and "Khách đã trả đủ" in money_text,
+        f"{said[:80]} || {money_text[:160]}".replace("\n", " | "),
+    )
+    primary.first.click()
+    touched("orderDetail.step-primary")
+    console.page.wait_for_selector("dialog[open] #settle-submit", state="visible", timeout=8000)
+    tick = console.page.locator("dialog[open] #settle-hand-over")
+    if tick.count():
+        tick.check()
+        touched("orderDetail.settle-hand-over")
+    (settled,) = console.press_capturing(
+        console.page.locator("dialog[open] #settle-submit"), "/payments"
+    )
+    touched("orderDetail.settle-submit")
+    console.page.wait_for_timeout(1800)
+    body = settled.get("body") or {}
+    ok(
+        "Tất toán settles at 0 ₫ with the handover: no money taken, no ledger row",
+        settled["status"] == 201
+        and (body.get("amount_vnd"), body.get("payment_id"), body.get("balance_status"))
+        == (0, None, "PAID")
+        and body.get("self_collection_recorded") is True
+        and sql(f"select count(*) from order_payments where order_id='{order_id}'") == "1",
+        settled["text"][:200],
+    )
+    closed = console.step(order_id, "HAND_OVER")
+    ok(
+        "and the order closes",
+        stored(order_id, "commercial_status") == "COMPLETED",
+        closed[:160],
+    )
+
+    head("ML3", "HUỶ BỊ TỪ CHỐI — a remedy already paid out, a credit already spent")
+    remedy_in_force = sql(
+        "select count(*) from configuration_versions "
+        "where config_type = 'REMEDY_POLICY' and lifecycle = 'PUBLISHED'"
+    )
+    if remedy_in_force in ("", "0"):
+        remedies = _publish_remedies()
+        ok(
+            "the owner publishes the remedy figures with the script (DEC-004)",
+            remedies.returncode == 0,
+            (remedies.stdout + remedies.stderr)[-200:],
+        )
+    suits = console.build_order(
+        stop="ready",
+        lines=[
+            {
+                "service_code": "IRON_SUIT",
+                "quantity": "3",
+                "unit": "ITEM",
+                "quantity_basis": "STAFF_MEASUREMENT",
+            }
+        ],
+    )
+    suits_id = suits["order_id"]
+    console.pay(suits_id, hand_over=True)
+    released = console.call(
+        "POST",
+        f"/internal/v1/orders/{suits_id}/steps",
+        {"step": "RELEASE"},
+        if_match=console.current_version(suits_id, 0),
+    )
+    ok("the suits are paid for and handed back", released["status"] == 200, released["text"][:160])
+    opened = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/incidents",
+        {"order_id": suits_id, "evidence_summary": "Áo vest thứ nhất bị sờn cổ sau khi ủi"},
+    )
+    incident = str((opened.get("body") or {}).get("incident_id") or "")
+    console.open(f"#/incidents/{incident}", settle=2000)
+    _propose_remedy(console, kind="DAMAGE_COMPENSATION", amount="40000", garment="1")
+    carry_out = console.page.locator("button[data-remedy-execute]")
+    if carry_out.count():
+        carry_out.first.click()
+        touched("remedy.execute")
+        console.page.wait_for_timeout(2200)
+    credits = (
+        console.call("GET", f"/internal/v1/stores/{STORE}/orders/{suits_id}/remedy-credits")["body"]
+        or {}
+    ).get("credits") or []
+    credit_id = str(credits[0]["credit_id"]) if credits else ""
+    ok("a 40.000 ₫ credit is issued for the first suit", bool(credit_id), json.dumps(credits)[:160])
+    said = console.step(suits_id, "CANCEL", custody="SHOP_FAULT_NO_CHARGE")
+    ok(
+        "Huỷ đơn 'lỗi tiệm, không thu tiền' is refused at the control, naming the credit, in "
+        "Vietnamese -- no refund on top of the credit",
+        "Không huỷ được: khách đã nhận khoản Bồi thường món bị hỏng 40.000 ₫ từ đơn này" in said
+        and "CANCEL_AFTER_MONEY_REMEDY" in _dialog_reason_codes(console)
+        and "CANCEL_AFTER_MONEY_REMEDY" not in console.notices()
+        and stored(suits_id, "commercial_status || '|' || balance_status") == "ACTIVE|PAID"
+        and sql(f"select count(*) from order_refunds where order_id='{suits_id}'") == "0",
+        said[:240],
+    )
+
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "7")
+    console.price()
+    console.page.locator("#new-credit-open").click()
+    touched("newOrder.credit-open")
+    row = console.page.locator(f"#new-credit-list [data-credit-id='{credit_id}']")
+    with contextlib.suppress(Exception):
+        row.wait_for(state="visible", timeout=8000)
+    if row.count():
+        console.press_capturing(row.first, "/remedy-credits")
+        touched("newOrder.credit-pick")
+        console.page.wait_for_timeout(1200)
+    done = console.confirm()
+    spent_id = str(((done.get("order") or {}).get("body") or {}).get("order_id") or "")
+    ok(
+        "the credit is spent on the customer's next bag",
+        bool(spent_id)
+        and sql(f"select redeemed_at is not null from remedy_credits where id='{credit_id}'")
+        == "t",
+        (done.get("order") or {}).get("text", "")[:160],
+    )
+    before = stored(spent_id, "commercial_status || '|' || row_version")
+    said = console.step(spent_id, "CANCEL")
+    ok(
+        "cancelling that bag is refused at the control too: the credit it spent would be lost",
+        "Không huỷ được: đơn đã dùng khoản Bồi thường món bị hỏng 40.000 ₫ của khách" in said
+        and "CANCEL_WOULD_LOSE_SPENT_CREDIT" in _dialog_reason_codes(console)
+        and stored(spent_id, "commercial_status || '|' || row_version") == before,
+        said[:240],
+    )
+
+
 # --- DAILY-SUMMARY-001: the owner's evening summary (DEC-039) ---------------------------------
 
 
@@ -9177,6 +9482,10 @@ SCENARIOS = {
     # while it is published). It proves MESSAGING_POLICY_UNPUBLISHED on a stack that has not
     # published the messaging policy, then publishes it; nothing after it depends on it.
     "pickup_reminders": scenario_pickup_reminders,
+    # MONEY-LIFECYCLE-009 (round 9). After unclaimed (whose storage policy it finds in force, or
+    # publishes itself with --only) and the remedy scenarios (whose policy it finds, or publishes);
+    # before promise, which publishes the turnaround policy it has no use for.
+    "money_lifecycle": scenario_money_lifecycle,
     # PROMISE-001. Last: it publishes the turnaround policy, and every scenario above proves its
     # own workflow on a shop that has not (the receipt's R4 line, the report's assumed rule).
     "promise": scenario_promise,

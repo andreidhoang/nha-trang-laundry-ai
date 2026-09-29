@@ -152,7 +152,8 @@ liệt kê mọi đơn đã giặt xong mà khách chưa lấy, đơn chờ lâu
 | L1 | Khách có số trong hồ sơ: bấm **Gọi** — máy gọi số đó (màn hình không in số ra). Khách chỉ có số phiếu thì không có nút **Gọi** | Đồ chờ lấy |
 | L2 | Gọi xong (hoặc nhắn Zalo, SMS, tới nhà): bấm **Ghi lần liên hệ**, chọn cách liên hệ và kết quả (**Đã nói chuyện**, **Không nghe máy**, **Sai số**, **Hẹn sẽ tới lấy**), ghi vài chữ nếu cần, bấm **Lưu lần liên hệ** | Đồ chờ lấy, hoặc trang đơn |
 | L3 | Khách tới lấy sau 20 ngày: mở đơn — **Phải thu** đã gồm phí lưu kho (ghi rõ *Gồm phí lưu kho …*). Thu như bước 11. Phí được chốt khi khách trả đủ | Chi tiết đơn |
-| L4 | Khách quen, chủ tiệm cho miễn: người duyệt hoặc chủ tiệm bấm **Miễn phí lưu kho** ở ô **Lưu kho** của đơn, ghi lý do, bấm **Miễn phí lưu kho**. Miễn rồi thì đơn đó không tính phí nữa | Chi tiết đơn |
+| L4 | Khách quen, chủ tiệm cho miễn: người duyệt hoặc chủ tiệm bấm **Miễn phí lưu kho** ở ô **Lưu kho** của đơn, ghi lý do, bấm **Miễn phí lưu kho**. Miễn rồi thì đơn đó không tính phí nữa. Phần phí khách **đã trả** thì giữ nguyên (phiếu ghi *Khách đã trả phí (giữ nguyên)*); khách đã trả đủ thì phiếu báo *Khách đã trả đủ — đơn sẽ được tất toán* và miễn xong là đơn đủ tiền — đưa đồ rồi bấm **Khách đã nhận đồ** | Chi tiết đơn |
+| L4a | Đơn ghi *Khách đã trả đủ — bấm “Tất toán” rồi giao đồ* (khách đã trả một phần phí, rồi phí giảm: giặt lại, tạm dừng, chủ tiệm thôi tính phí): bấm **Tất toán**, để tích **Khách lấy đồ luôn** nếu khách lấy ngay, bấm **Tất toán**. Không thu thêm tiền | Chi tiết đơn |
 | L5 | Từ ngày 60, khi đã liên hệ **ít nhất 3 lần trong ít nhất 2 ngày khác nhau**: chủ tiệm bấm **Thanh lý**, đọc quy định trên phiếu, bấm hai lần. Đơn đóng; tiền khách đã trả giữ nguyên, tiền còn nợ được xoá | Chi tiết đơn |
 
 - **Chưa công bố thì chưa tính phí.** Khi chủ tiệm chưa chạy lệnh công bố phí lưu kho, màn hình
@@ -452,6 +453,7 @@ hạn thì bấm **Xin duyệt lại**. *Nhập mã thủ công* chỉ dùng cho
 | **Máy chủ không ghi nhận khoản này** | Số tiền hoặc tình huống không được hỗ trợ | Đọc lý do ngay bên dưới — nó nói rõ phải làm gì |
 | **Chưa nhận đồ được** | Đơn còn thiếu điều kiện (thường là chưa tích *Tiệm làm kịp đơn này*) | Đọc từng dòng lý do ngay bên dưới, làm đúng việc đó rồi bấm lại |
 | Huỷ một đơn đã nhận đồ | Phải nói đồ và tiền đã xử lý thế nào | **Khác** → **Huỷ đơn**, chọn một cách xử lý, bấm hai lần |
+| **Không huỷ được: khách đã nhận khoản …** / **đơn đã dùng khoản …** | Đơn đã có khoản giảm trừ (bồi thường, giảm trừ do giao trễ) — huỷ không thu tiền sẽ trả khách hai lần hoặc làm mất khoản khách đã dùng | Không huỷ. Giữ đơn, làm tiếp như thường (đang xét huỷ thì bấm **Không huỷ nữa, làm tiếp**), báo chủ tiệm. Chưa có quy định trừ bù |
 | **Phiên đăng nhập đã kết thúc** | Hết phiên | Đăng nhập lại. Không mất dữ liệu |
 | Mất điện thoại, hoặc quên thoát ở máy khác | Máy đó vẫn đang đăng nhập | Từ một máy khác, đăng nhập rồi **bấm tên mình** ở thanh trên cùng → **Thiết bị đang đăng nhập** → ở máy bị mất bấm **Đăng xuất thiết bị này** (bấm hai lần). Dòng **Thiết bị này** là máy đang cầm. Các máy khác vẫn làm việc bình thường. Chủ tiệm cũng làm được việc này cho người khác: **Nhân sự** → bấm tên người đó → cùng danh sách |
 | **Đơn đã thay đổi sau khi gửi duyệt — mở đơn để xem lại** (thẻ duyệt) | Đơn đã chuyển bước sau khi xin duyệt, nên phiếu này không còn đúng | Nút **Duyệt** khoá. Bấm **Từ chối**, mở đơn xem lại; còn cần thì xin duyệt lại. Thẻ ghi **Đơn chưa thay đổi kể từ khi gửi duyệt** thì duyệt bình thường |

@@ -7,6 +7,10 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
 from uuid import UUID, uuid4
 
+from nha_trang_laundry_domain.cancellation_money import (
+    RemedyCreditFact,
+    cancellation_money_refusal,
+)
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
     CommercialOrderStatus,
@@ -46,6 +50,7 @@ from nha_trang_laundry_domain.payments import (
     payment_position,
 )
 from nha_trang_laundry_domain.promise import PromiseChoice
+from nha_trang_laundry_domain.remedies import RemedyKind
 from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
 from nha_trang_laundry_domain.unclaimed import awaiting_pickup, order_storage_fee
 from nha_trang_laundry_domain.vietqr import OrderIdTransferCode, TicketTransferCode
@@ -88,6 +93,19 @@ class OrderStepRequiresHuman(OrderStateError):
     def __init__(self, message: str, reason_codes: tuple[str, ...]) -> None:
         super().__init__(message)
         self.reason_codes = reason_codes
+
+
+class OrderCancellationRefused(OrderStateError):
+    """`MONEY-LIFECYCLE-009` (M3, M7): a cancellation refused for the remedy money on the order.
+
+    `reason_codes` are `CancellationMoneyRefusal` values; `reason_vi` is the domain's sentence,
+    naming each credit and what to do instead. Nothing was written.
+    """
+
+    def __init__(self, reason_codes: tuple[str, ...], reason_vi: str) -> None:
+        self.reason_codes = reason_codes
+        self.reason_vi = reason_vi
+        super().__init__(f"HUMAN_APPROVAL_REQUIRED: {', '.join(reason_codes)}")
 
 
 class OrderPromiseRefused(OrderStateError):
@@ -1034,6 +1052,16 @@ class OrderRepository:
             raise OrderStateError(str(error)) from error
 
         next_version = command.expected_row_version + 1
+        if (
+            next_state.commercial is CommercialOrderStatus.CANCELLED
+            and current.commercial is not CommercialOrderStatus.CANCELLED
+        ):
+            # MONEY-LIFECYCLE-009 (M3, M7): a cancellation charges the customer nothing, so it may
+            # not close an order a remedy already paid out on, or whose bill spent a credit. Read
+            # under the order lock the caller holds, before anything is written.
+            _refuse_cancellation_losing_remedy_money(
+                connection, command.order_id, command.custody_resolution
+            )
         # DEC-024. The domain decided whether money goes back; this reads how much, from the
         # settlement ledger, under the order lock already held. Nobody types the amount: it is
         # the settled amount, and `order_refunds`' composite key to `order_settlements` makes it
@@ -1638,6 +1666,47 @@ def _refund_for_cancellation(
         amount_vnd=int(row[2]),
         resolution=resolution,
     )
+
+
+def _refuse_cancellation_losing_remedy_money(
+    connection: Any, order_id: UUID, resolution: CustodyResolution | None
+) -> None:
+    """Raise `OrderCancellationRefused` when the domain refuses this cancellation for remedy money.
+
+    Two facts, from the credits table: the credits executed remedies issued *from* this order
+    (spent since or not -- M3), and the credits this order's accepted revision *spent* (M7). The
+    decision is `cancellation_money.cancellation_money_refusal`'s.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT p.kind, c.amount_vnd, c.issued_from_order_id = o.id
+            FROM orders o
+            JOIN remedy_credits c
+              ON c.issued_from_order_id = o.id
+              OR (
+                  c.redeemed_quote_id = o.current_quote_id
+                  AND c.redeemed_quote_revision = o.current_quote_revision
+              )
+            JOIN remedy_proposals p ON p.id = c.remedy_proposal_id
+            WHERE o.id = %s
+            ORDER BY c.issued_at, c.id
+            """,
+            (order_id,),
+        )
+        rows = cursor.fetchall()
+    issued = tuple(
+        RemedyCreditFact(RemedyKind(str(row[0])), int(str(row[1]))) for row in rows if row[2]
+    )
+    spent = tuple(
+        RemedyCreditFact(RemedyKind(str(row[0])), int(str(row[1]))) for row in rows if not row[2]
+    )
+    refused = cancellation_money_refusal(
+        resolution=resolution, issued_from_order=issued, spent_on_order=spent
+    )
+    if refused is not None:
+        raise OrderCancellationRefused(refused.reason_codes, refused.reason_vi)
 
 
 def _order_state(row: tuple[object, ...]) -> OrderState:

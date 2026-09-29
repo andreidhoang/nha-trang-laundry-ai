@@ -88,6 +88,7 @@ from nha_trang_laundry_db.manual_sends import (
 from nha_trang_laundry_db.message_drafts import SEND_MESSAGE_POLICY_VERSION
 from nha_trang_laundry_db.orders import (
     OrderAuthorizationError,
+    OrderCancellationRefused,
     OrderNotVisibleError,
     OrderPromiseRefused,
     OrderStateError,
@@ -6428,6 +6429,17 @@ def _raise_operations_error(error: Exception) -> NoReturn:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
     if isinstance(error, IdempotencyConflictError):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
+    if isinstance(error, OrderCancellationRefused):
+        # MONEY-LIFECYCLE-009 (M3, M7): a person has to decide what the remedy money does; the
+        # domain's sentence names the credit and what to do instead. Nothing was written.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "outcome": "REQUIRE_HUMAN",
+                "reason_codes": list(error.reason_codes),
+                "reason_vi": error.reason_vi,
+            },
+        ) from error
     raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
 
 

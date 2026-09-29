@@ -4829,10 +4829,12 @@ def scenario_shop_capture(console: Console) -> None:
     head("S4", "BÁO CÁO — the measured lines, and margin withheld with what is missing")
     after = _summary(console, today)
     cap0, cap1 = before["capture"], after["capture"]
+    # Four since GOODS-AND-DRAWER-009: S1's three, and S2's trip order washed (no machine named)
+    # before its return trip -- the courier no longer takes laundry nobody washed or paid for.
     ok(
-        "three more cycles, two of them with a machine",
+        "four more cycles, two of them with a machine",
         (cap1["cycles"] - cap0["cycles"], cap1["cycles_captured"] - cap0["cycles_captured"])
-        == (3, 2),
+        == (4, 2),
         (cap1["cycles"] - cap0["cycles"], cap1["cycles_captured"] - cap0["cycles_captured"]),
     )
     timed = {m["code"]: m for m in cap1["machines"]}

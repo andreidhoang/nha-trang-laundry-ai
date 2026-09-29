@@ -585,7 +585,8 @@ export const REASON_NOTE = {
   STORAGE_POLICY_UNPUBLISHED:
     "Chủ tiệm chưa công bố phí lưu kho, nên chưa tính phí và chưa thanh lý được. Danh sách chờ " +
     "lấy và việc ghi liên hệ vẫn dùng bình thường.",
-  NO_STORAGE_FEE_OWED: "Đơn này chưa có phí lưu kho nào để miễn (còn trong những ngày miễn phí).",
+  NO_STORAGE_FEE_OWED:
+    "Đơn này không còn phí lưu kho chưa trả để miễn (còn trong ngày miễn phí, hoặc khách đã trả).",
   STORAGE_FEE_ALREADY_WAIVED: "Phí lưu kho của đơn này đã được miễn rồi.",
   NOTE_REQUIRED: "Cần ghi vài chữ lý do.",
   NOTE_TOO_LONG: "Tối đa 120 ký tự.",
@@ -627,6 +628,14 @@ export const REASON_NOTE = {
     "Ký hiệu gồm chữ in và số (tối đa 12), số hóa đơn tối đa 8 chữ số, ngày không sau hôm nay.",
   INVOICE_NUMBER_TAKEN: "Ký hiệu và số hóa đơn này đã ghi cho một yêu cầu khác. Kiểm tra lại.",
   INVOICE_CANCEL_NOTE_REQUIRED: "Lý do khác cần vài chữ ghi rõ (tối đa 200 ký tự).",
+  // MONEY-LIFECYCLE-009 (M3, M7): a cancellation refused for the remedy money on the order. The
+  // server's sentence names the credit; this says why a person has to decide.
+  CANCEL_AFTER_MONEY_REMEDY:
+    "Chưa có quy định trừ khoản bồi thường vào tiền hoàn cho khách; chủ tiệm quyết định. Không có " +
+    "gì được ghi.",
+  CANCEL_WOULD_LOSE_SPENT_CREDIT:
+    "Chưa có quy định cấp lại khoản giảm trừ khách đã dùng cho đơn này; chủ tiệm quyết định. Không " +
+    "có gì được ghi.",
 };
 
 /**

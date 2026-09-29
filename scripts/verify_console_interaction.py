@@ -1242,9 +1242,24 @@ def storage_read(
     status: str = "NOT_WAITING",
     allowed: bool = False,
     days: int | None = None,
+    already_paid: int = 0,
+    waiver_effect: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    """One `OrderStorageResponse`."""
+    """One `OrderStorageResponse`.
 
+    `MONEY-LIFECYCLE-009`: `waiver_effect` is what the server says the waiver would do now. For an
+    accruing fee on an order nothing was paid on it is written out as the server computes it:
+    the whole fee waived, nothing kept, the 110.000 ₫ total still owed.
+    """
+
+    if waiver_effect is None and status == "ACCRUING" and not already_paid:
+        waiver_effect = {
+            "waived_vnd": fee,
+            "kept_vnd": 0,
+            "owed_after_vnd": 110_000,
+            "remaining_after_vnd": 110_000,
+            "settles": False,
+        }
     return {
         "order_id": PICKUP_ORDER_ID,
         "row_version": 14,
@@ -1261,8 +1276,10 @@ def storage_read(
             "fee_per_started_day_vnd": 5_000 if fee else None,
             "cap_vnd": 55_000 if fee else None,
             "capped": False,
+            "already_paid_vnd": already_paid,
         },
         "waiver": None,
+        "waiver_effect": waiver_effect,
         "attempts": [
             {
                 "attempt_id": "abababab-0000-4000-8000-000000000001",
@@ -9889,6 +9906,280 @@ with sync_playwright() as playwright:
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
     state["order_view"] = None
     state["invoice_subject"] = None
+
+    # ============================================================================================
+    # 28. MONEY-LIFECYCLE-009 (review M1, M3, M7) -- money that moved is never un-owed. The waiver
+    #     sheet says before the press what it keeps and that the order will be settled; a fee the
+    #     customer already paid reads "khách đã trả, giữ nguyên" with no waiver to press; an order
+    #     whose ledger covers everything reads "Tất toán" and settles at 0 ₫ (with the handover);
+    #     a cancellation refused for remedy money names the credit in Vietnamese at the control,
+    #     never the raw code.
+    # ============================================================================================
+    print()
+    print("[28] Tiền đã trả không bị xoá: Miễn phí báo tất toán, Tất toán 0 ₫, Huỷ bị từ chối")
+    SESSION_OK["roles"] = ["OPS_APPROVER"]
+    part_paid = order_view(
+        "SELF_DROP_SELF_COLLECT",
+        balance="PARTIALLY_PAID",
+        collected=False,
+        production="READY_AT_STORE",
+        paid=110_000,
+        steps=[step("TAKE_PAYMENT", primary=True, requires=["amount_vnd", "method"])],
+    )
+    part_paid["charges"] = [
+        {"kind": "QUOTED_TOTAL", "amount_vnd": 110_000},
+        {"kind": "STORAGE_FEE", "amount_vnd": 25_000},
+    ]
+    part_paid["owed_vnd"] = 135_000
+    part_paid["paid_vnd"] = 113_000
+    part_paid["remaining_vnd"] = 22_000
+    state["storage"] = storage_read(
+        awaiting=True,
+        fee=25_000,
+        status="ACCRUING",
+        days=25,
+        already_paid=3_000,
+        waiver_effect={
+            "waived_vnd": 22_000,
+            "kept_vnd": 3_000,
+            "owed_after_vnd": 113_000,
+            "remaining_after_vnd": 0,
+            "settles": True,
+        },
+    )
+    state["unclaimed_writes"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    open_order(part_paid)
+    page.wait_for_timeout(600)
+    if page.locator("#order-storage-waive").count():
+        page.locator("#order-storage-waive").click()
+        page.wait_for_timeout(500)
+    sheet_text = open_dialog_text()
+    check(
+        "the waiver sheet says before the press: the paid part kept, the rest waived, then settled",
+        "Khách đã trả đủ — đơn sẽ được tất toán." in sheet_text
+        and "Khách đã trả phí (giữ nguyên)" in sheet_text
+        and "3.000" in sheet_text
+        and "22.000" in sheet_text
+        and "Còn lại sau khi miễn" not in sheet_text
+        and not state["unclaimed_writes"],
+        sheet_text[:240].replace("\n", " | "),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    # (a) paid below the quoted total: the waiver does not settle, and says what is left.
+    state["storage"] = storage_read(
+        awaiting=True,
+        fee=25_000,
+        status="ACCRUING",
+        days=25,
+        waiver_effect={
+            "waived_vnd": 25_000,
+            "kept_vnd": 0,
+            "owed_after_vnd": 110_000,
+            "remaining_after_vnd": 60_000,
+            "settles": False,
+        },
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    open_order(part_paid)
+    page.wait_for_timeout(600)
+    if page.locator("#order-storage-waive").count():
+        page.locator("#order-storage-waive").click()
+        page.wait_for_timeout(500)
+    sheet_text = open_dialog_text()
+    check(
+        "a waiver that leaves money owed says what remains and promises no settlement",
+        "Còn lại sau khi miễn" in sheet_text
+        and "60.000" in sheet_text
+        and "tất toán" not in sheet_text
+        and "giữ nguyên" not in sheet_text,
+        sheet_text[:240].replace("\n", " | "),
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # The fee fell after part of it was paid: kept, said so, and nothing is left to waive.
+    covered = dict(part_paid)
+    covered["charges"] = [
+        {"kind": "QUOTED_TOTAL", "amount_vnd": 110_000},
+        {"kind": "STORAGE_FEE", "amount_vnd": 3_000},
+    ]
+    covered["owed_vnd"] = 113_000
+    covered["paid_vnd"] = 113_000
+    covered["remaining_vnd"] = 0
+    covered["payment_may_hand_over"] = True
+    state["storage"] = storage_read(
+        awaiting=True, fee=3_000, status="ALREADY_PAID", days=25, already_paid=3_000
+    )
+    SESSION_OK["roles"] = ["OPERATOR"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    open_order(covered)
+    page.wait_for_timeout(700)
+    storage_text = (
+        page.locator("#order-storage").inner_text()
+        if page.locator("#order-storage").count()
+        else ""
+    )
+    money_text = page.locator(".order__money").inner_text()
+    primary = page.locator(".action-bar--v2 button[data-step=TAKE_PAYMENT]")
+    check(
+        "a fee part already paid reads 'khách đã trả, giữ nguyên', with no waiver to press",
+        "khách đã trả, giữ nguyên" in storage_text
+        and "3.000" in storage_text
+        and page.locator("#order-storage-waive").count() == 0,
+        storage_text[:200].replace("\n", " | "),
+    )
+    check(
+        "an order whose ledger covers everything offers 'Tất toán' and says why",
+        primary.count() == 1
+        and primary.inner_text().strip() == "Tất toán"
+        and "Khách đã trả đủ — bấm “Tất toán” rồi giao đồ." in money_text,
+        money_text[:200].replace("\n", " | "),
+    )
+    state["order_writes"] = []
+    state["order_write_reply"] = (
+        201,
+        {
+            "payment_id": None,
+            "order_id": PICKUP_ORDER_ID,
+            "amount_vnd": 0,
+            "method": "TIEN_MAT",
+            "bank_ref_last": None,
+            "recorded_at": "2026-09-29T09:00:00+00:00",
+            "balance_status": "PAID",
+            "owed_vnd": 113_000,
+            "paid_vnd": 113_000,
+            "remaining_vnd": 0,
+            "settlement_id": "78787878-9090-4333-8444-121212121299",
+            "settlement_shape": "EXACT_PAYMENT_SELF_COLLECTION",
+            "self_collection_recorded": True,
+            "row_version": 15,
+            "replayed": False,
+        },
+    )
+    primary.click()
+    page.wait_for_timeout(500)
+    sheet_text = open_dialog_text()
+    check(
+        "Tất toán's sheet shows the server's figures, takes nothing more, offers the handover",
+        "Khách đã trả đủ — bấm “Tất toán”, không thu thêm tiền." in sheet_text
+        and "113.000" in sheet_text
+        and page.locator("dialog[open] #settle-hand-over").is_checked()
+        and page.locator("dialog[open] #payment-amount").count() == 0,
+        sheet_text[:240].replace("\n", " | "),
+    )
+    if page.locator("dialog[open] #settle-submit").count():
+        page.locator("dialog[open] #settle-submit").click()
+        page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "Tất toán sends 0 ₫ with the handover to the payments route, under If-Match and a key",
+        len(writes) == 1
+        and writes[0]["path"] == f"{PICKUP_ORDER_ID}/payments"
+        and json.loads(writes[0]["body"] or "{}")
+        == {
+            "amount_vnd": 0,
+            "method": "TIEN_MAT",
+            "transfer_seen": False,
+            "bank_ref_last": None,
+            "collected_by_customer": True,
+        }
+        and writes[0]["if_match"] == '"14"'
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    check(
+        "after Tất toán the sheet says it is settled and nothing more was taken",
+        "Đã tất toán — không thu thêm tiền." in open_dialog_text(),
+        open_dialog_text()[:200],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.wait_for_timeout(400)
+    primary = page.locator(".action-bar--v2 button[data-step=TAKE_PAYMENT]")
+    if primary.count():
+        primary.click()
+        page.wait_for_timeout(500)
+    wide = page.evaluate("document.documentElement.scrollWidth")
+    check("at 390 px Tất toán fits without sideways scrolling", wide <= 390, wide)
+    page.keyboard.press("Escape")
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.wait_for_timeout(300)
+
+    # M3 / M7: the cancellation is refused for remedy money; the reason is the server's sentence.
+    state["storage"] = None
+    cancel_view = order_view(
+        "SELF_DROP_SELF_COLLECT",
+        balance="PAID",
+        collected=True,
+        steps=[
+            step("COMPLETE", True),
+            step(
+                "CANCEL",
+                requires=["custody_resolution"],
+                custody_resolutions=["SHOP_FAULT_NO_CHARGE"],
+            ),
+        ],
+    )
+    for code, said in (
+        (
+            "CANCEL_AFTER_MONEY_REMEDY",
+            "Không huỷ được: khách đã nhận khoản Giảm trừ do giao trễ 11.000 ₫ từ đơn này — huỷ "
+            "không thu tiền là trả hai lần. Giữ đơn, làm tiếp và báo chủ tiệm.",
+        ),
+        (
+            "CANCEL_WOULD_LOSE_SPENT_CREDIT",
+            "Không huỷ được: đơn đã dùng khoản Giảm trừ do giao trễ 11.000 ₫ của khách — huỷ thì "
+            "khoản đó mất. Giữ đơn, làm tiếp và báo chủ tiệm.",
+        ),
+    ):
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+        open_order(cancel_view)
+        state["order_writes"] = []
+        state["order_write_reply"] = (
+            422,
+            {"detail": {"outcome": "REQUIRE_HUMAN", "reason_codes": [code], "reason_vi": said}},
+        )
+        page.locator("button[data-more-steps]").click()
+        page.wait_for_timeout(300)
+        page.locator("dialog[open] button[data-step=CANCEL]").click()
+        page.wait_for_timeout(300)
+        page.locator("dialog[open] input[name=custody_resolution]").first.check()
+        page.locator("dialog[open] .sheet__actions button").first.click()
+        page.wait_for_timeout(200)
+        page.locator("dialog[open] .sheet__actions button").first.click()
+        page.wait_for_timeout(900)
+        notice = page.locator("dialog[open] .notice")
+        title = (
+            notice.locator(".notice__title").first.inner_text().strip()
+            if notice.count()
+            else "absent"
+        )
+        listed = notice.locator(".notice__reasons")
+        reasons = listed.first.inner_text() if notice.count() and listed.count() else ""
+        writes = state.get("order_writes") or []
+        check(
+            f"{code}: the refusal at Huỷ đơn is the server's Vietnamese sentence, not the code",
+            len(writes) == 1
+            and title == said
+            and "chủ tiệm quyết định" in reasons
+            and code not in title
+            and code not in reasons
+            and notice.locator("details.tech").count() == 1,
+            f"{title[:120]} | {reasons[:120]}",
+        )
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+    state["order_write_reply"] = None
+    state["order_view"] = None
+    state["storage"] = None
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

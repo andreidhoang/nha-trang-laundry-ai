@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 548
+  DESCRIPTIVE: 550
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 19
   SERVER_GATE: 15
-total: 589
+total: 591
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1627,10 +1627,10 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.NO_STORAGE_FEE_OWED:31dc56821231
+- slot_id: core/i18n.js#REASON_NOTE.NO_STORAGE_FEE_OWED:16e4658a55ea
   module: core/i18n.js
   key: REASON_NOTE.NO_STORAGE_FEE_OWED
-  text: Đơn này chưa có phí lưu kho nào để miễn (còn trong những ngày miễn phí).
+  text: Đơn này không còn phí lưu kho chưa trả để miễn (còn trong ngày miễn phí, hoặc khách đã trả).
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1804,6 +1804,24 @@ disclosures:
   module: core/i18n.js
   key: REASON_NOTE.INVOICE_CANCEL_NOTE_REQUIRED
   text: Lý do khác cần vài chữ ghi rõ (tối đa 200 ký tự).
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.CANCEL_AFTER_MONEY_REMEDY:0acdbecac047
+  module: core/i18n.js
+  key: REASON_NOTE.CANCEL_AFTER_MONEY_REMEDY
+  text: Chưa có quy định trừ khoản bồi thường vào tiền hoàn cho khách; chủ tiệm quyết định. Không có gì
+    được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.CANCEL_WOULD_LOSE_SPENT_CREDIT:74229d3c90cd
+  module: core/i18n.js
+  key: REASON_NOTE.CANCEL_WOULD_LOSE_SPENT_CREDIT
+  text: Chưa có quy định cấp lại khoản giảm trừ khách đã dùng cho đơn này; chủ tiệm quyết định. Không
+    có gì được ghi.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

@@ -113,6 +113,9 @@ export function feeText(fee, policy, balance) {
     return policy ? `Miễn phí tới hết ngày thứ ${policy.free_days}` : "Chưa tính phí";
   }
   if (status === "WAIVED") return "Đã miễn";
+  // MONEY-LIFECYCLE-009: the part of the fee the customer already paid is kept when the fee falls
+  // (a waiver, a hold, a rewash, a withdrawn policy) -- never un-owed. Nothing is left to pay on it.
+  if (status === "ALREADY_PAID") return `${money(fee.amount_vnd)} · khách đã trả, giữ nguyên`;
   if (status === "FIXED") {
     if (!fee.amount_vnd) return "Không có";
     return balance === "ON_ACCOUNT"
@@ -424,14 +427,16 @@ export function storageSection(spec) {
       ),
     );
   }
-  if (fee.status === "ACCRUING") {
+  // MONEY-LIFECYCLE-009 (A3): offered while the server says some of the fee is unpaid, and the
+  // sheet states what the waiver will do in the server's own figures.
+  if (fee.status === "ACCRUING" && storage.waiver_effect) {
     controls.push(
       gated(
         button({
           label: "Miễn phí lưu kho",
           id: "order-storage-waive",
           network: true,
-          onClick: () => openWaiver(spec, fee),
+          onClick: () => openWaiver(spec, fee, storage.waiver_effect),
         }),
         can(who, "STORAGE_FEE_WAIVE"),
       ),
@@ -489,10 +494,15 @@ export function storageSection(spec) {
  * Miễn phí lưu kho: `POST /orders/{id}/storage-fee-waiver`, with the order's version (`If-Match`),
  * because what the order owes changes.
  *
+ * `MONEY-LIFECYCLE-009` (A3): the sheet says, before the press and in the server's figures
+ * (`waiver_effect`), what the waiver takes off, what it keeps because the customer already paid
+ * it, and -- when nothing will be owed -- that the order is settled with it.
+ *
  * @param {Parameters<typeof storageSection>[0]} spec
  * @param {any} fee
+ * @param {any} effect a `WaiverEffectResponse`
  */
-function openWaiver(spec, fee) {
+function openWaiver(spec, fee, effect) {
   const id = encodeURIComponent(String(spec.order.order_id));
   const submission = new Submission("storage-waiver");
   let reason = "";
@@ -527,7 +537,11 @@ function openWaiver(spec, fee) {
           idempotencyKey: submission.key(),
         });
         made.close();
-        toast(`Đã miễn phí lưu kho · ${spec.title}`);
+        toast(
+          effect?.settles
+            ? `Đã miễn phí lưu kho — đơn đã tất toán · ${spec.title}`
+            : `Đã miễn phí lưu kho · ${spec.title}`,
+        );
         spec.onChanged();
       } catch (error) {
         show(alertHost, refusal(error, () => {
@@ -547,7 +561,19 @@ function openWaiver(spec, fee) {
       keyValues([
         ["Đơn", spec.title],
         ["Phí hiện tại", money(fee.amount_vnd)],
+        effect?.kept_vnd ? ["Khách đã trả phí (giữ nguyên)", money(effect.kept_vnd)] : null,
+        effect ? ["Miễn", money(effect.waived_vnd)] : null,
+        effect && !effect.settles
+          ? ["Còn lại sau khi miễn", money(effect.remaining_after_vnd)]
+          : null,
       ]),
+      effect?.settles
+        ? inlineAlert({
+            state: "ok",
+            title: "Khách đã trả đủ — đơn sẽ được tất toán.",
+            body: "Miễn xong là đơn đủ tiền; khi đưa đồ, bấm “Khách đã nhận đồ”.",
+          })
+        : null,
       h("p", { class: "hint" }, "Miễn rồi thì đơn này không tính phí lưu kho nữa. Lý do được ghi lại."),
       noteField({
         id: "waiver-reason",

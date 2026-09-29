@@ -10033,6 +10033,35 @@ with sync_playwright() as playwright:
         and page.locator("#order-storage-waive").count() == 0,
         storage_text[:200].replace("\n", " | "),
     )
+    held = dict(covered)
+    held["production"] = "ON_HOLD"
+    held["next_steps"] = [step("RESUME", primary=True)]
+    state["storage"] = storage_read(
+        awaiting=False, fee=3_000, status="ALREADY_PAID", already_paid=3_000
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    open_order(held)
+    page.wait_for_timeout(700)
+    held_text = (
+        page.locator("#order-storage").inner_text()
+        if page.locator("#order-storage").count()
+        else ""
+    )
+    check(
+        "on hold, no longer waiting, the Lưu kho line still says what the kept 3.000 ₫ is",
+        "khách đã trả, giữ nguyên" in held_text and "3.000" in held_text,
+        held_text[:160].replace("\n", " | ") or "no Lưu kho section",
+    )
+    state["storage"] = storage_read(
+        awaiting=True, fee=3_000, status="ALREADY_PAID", days=25, already_paid=3_000
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    open_order(covered)
+    page.wait_for_timeout(700)
+    money_text = page.locator(".order__money").inner_text()
+    primary = page.locator(".action-bar--v2 button[data-step=TAKE_PAYMENT]")
     check(
         "an order whose ledger covers everything offers 'Tất toán' and says why",
         primary.count() == 1

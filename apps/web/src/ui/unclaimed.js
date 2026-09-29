@@ -336,7 +336,10 @@ export function storageSection(spec) {
     storage?.awaiting_pickup ||
     disposal ||
     storage?.waiver ||
-    (fee.status === "FIXED" && fee.amount_vnd > 0);
+    (fee.status === "FIXED" && fee.amount_vnd > 0) ||
+    // MONEY-LIFECYCLE-009: a kept fee part is on the money card after the order stopped waiting
+    // (held, rewashed, cancelled); the line says what it is.
+    fee.status === "ALREADY_PAID";
   if (!relevant) return null;
   const who = principal();
   const alertHost = h("div");

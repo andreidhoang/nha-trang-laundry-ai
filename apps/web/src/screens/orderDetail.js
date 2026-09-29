@@ -207,6 +207,11 @@ const REASON_STEPS = {
 /** Steps that end the visit; offered straight away in a sheet's success state when primary. */
 const CLOSING = new Set(["HAND_OVER", "COMPLETE"]);
 
+/** COUNTER-UI-RACE-009 (C4): what a sheet says after its "tải lại" (`sheetRefusal`). */
+const RELOADED_IN_SHEET = "Đã tải lại đơn mới nhất — kiểm tra lại rồi bấm.";
+const STEP_GONE = "Đơn vừa đổi — việc đang làm không còn làm được. Xem trạng thái mới của đơn.";
+const RELOADED_CLOSED = "Đã tải lại đơn. Xem trạng thái mới trước khi bấm lại.";
+
 /**
  * `PAYMENT-001` / `DEC-035`: how the counter takes money. A policy statement bound to the decision
  * register (`console-disclosures-v1.yaml`, POLICY_BOUND); its text is the slot and must not be
@@ -252,6 +257,17 @@ const CREDIT_KIND_LABEL = {
   LATE_DELIVERY_CREDIT: "Giảm trừ do giao trễ",
   LOST_ITEM: "Mất đồ",
 };
+
+/**
+ * "Hẹn lại" is offered while the server calls the promise unfinished (`promise_state`); a finished
+ * or closed order reads MET / MISSED / null, and the server refuses a Hẹn lại there anyway.
+ *
+ * @param {any} order
+ * @returns {boolean}
+ */
+function promiseOpen(order) {
+  return ["ON_TRACK", "DUE_SOON", "LATE"].includes(String(order?.promise_state || ""));
+}
 
 /**
  * The recorded acquisition source, glossed through the scoped map `orders.js` writes it with. The
@@ -383,10 +399,10 @@ export function render_(context) {
       successState: (made, title, body, order) => successState(made, title, body, order),
       reread: () => reread(),
       refusal: (error) => refusal(error),
+      sheetRefusal: (error, where) => sheetRefusal(error, where),
       pressing: (control, work) => pressing(control, work),
       keyFor: (intent) => keyFor(intent),
       releaseKey: () => releaseKey(),
-      current: () => current,
     },
   });
 
@@ -623,7 +639,7 @@ export function render_(context) {
     const moved = order.promised_ready_at && order.promised_ready_at !== order.current_promise_at;
     // Offered only in the states the server calls unfinished; a finished or closed order reads
     // MET / MISSED / null, and the server refuses a Hẹn lại there anyway.
-    const open = ["ON_TRACK", "DUE_SOON", "LATE"].includes(String(order.promise_state || ""));
+    const open = promiseOpen(order);
     return [
       "Hẹn trả",
       h(
@@ -958,13 +974,14 @@ export function render_(context) {
    * way out is different: reload, never press again.
    *
    * @param {any} error
+   * @param {() => Promise<unknown>} [again] what the reload buttons do; the page re-read by default
    * @returns {HTMLElement}
    */
-  function refusal(error) {
+  function refusal(error, again = reread) {
     const reload = button({
       label: "Đơn vừa đổi — tải lại",
       icon: "refresh",
-      onClick: () => void reread(),
+      onClick: () => void again(),
     });
     if (error?.kind === "STALE" || error?.kind === "PRECONDITION_REQUIRED") {
       return errorNotice(error, {
@@ -979,15 +996,63 @@ export function render_(context) {
         title:
           "Chưa biết lệnh có tới máy chủ hay không. Đừng bấm lại — tải lại đơn để xem trạng thái thật.",
         actions: [
-          button({ label: "Tải lại đơn", icon: "refresh", onClick: () => void reread() }),
+          button({ label: "Tải lại đơn", icon: "refresh", onClick: () => void again() }),
         ],
       });
     }
     return errorNotice(error, {
       actions:
         error?.kind === "CONFLICT"
-          ? [button({ label: "Tải lại đơn", icon: "refresh", onClick: () => void reread() })]
+          ? [button({ label: "Tải lại đơn", icon: "refresh", onClick: () => void again() })]
           : [],
+    });
+  }
+
+  // --- COUNTER-UI-RACE-009 (C4): a refusal inside a sheet -------------------------------------
+
+  /**
+   * @param {any} order
+   * @param {string} step
+   * @returns {boolean} whether the server still offers `step` on this order
+   */
+  function offers(order, step) {
+    return (Array.isArray(order?.next_steps) ? order.next_steps : []).some(
+      (entry) => String(entry?.step) === step,
+    );
+  }
+
+  /**
+   * The refusal shown inside a sheet. Its "tải lại" re-reads the order and then:
+   *
+   *   - after a refusal that wrote nothing (a stale version, a missing one, a conflict), keeps the
+   *     sheet open on the fresh read -- `redraw(fresh)` puts the new figures where the old ones
+   *     were and makes the next press carry the version just read, while what the person typed or
+   *     picked stays -- or closes it when `redraw` answers `false` (the fresh order no longer
+   *     offers what the sheet does);
+   *   - after an unknown outcome (timeout, network), closes the sheet: the press may have landed,
+   *     so the person reads the page before pressing anything again.
+   *
+   * Before this, the reload refreshed the page behind the sheet and the sheet kept the order it
+   * was opened with, so every further press sent the old `If-Match` and was refused again.
+   *
+   * @param {any} error
+   * @param {{made: {node: HTMLElement, close: () => void}, alertHost: HTMLElement,
+   *   redraw?: (fresh: any) => boolean|Promise<boolean>}} where
+   * @returns {HTMLElement}
+   */
+  function sheetRefusal(error, where) {
+    const unknown = error?.kind === "TIMEOUT" || error?.kind === "NETWORK";
+    return refusal(error, async () => {
+      const fresh = await reread();
+      if (!fresh || !where.made.node.isConnected) return;
+      const kept = !unknown && (where.redraw ? await where.redraw(fresh) : true);
+      if (!where.made.node.isConnected) return;
+      if (!kept) {
+        where.made.close();
+        show(actionAlert, inlineAlert({ state: "info", title: unknown ? RELOADED_CLOSED : STEP_GONE }));
+        return;
+      }
+      show(where.alertHost, inlineAlert({ state: "info", title: RELOADED_IN_SHEET }));
     });
   }
 
@@ -1019,9 +1084,12 @@ export function render_(context) {
    * @param {{slot_approved?: boolean, custody_resolution?: string, rewash_reason?: string, rejection_reason?: string}} extra
    * @param {HTMLElement} alertHost where a refusal is shown
    * @param {HTMLButtonElement} [control]
+   * @param {{node: HTMLElement, close: () => void}} [made] the sheet the press is in, if any: a
+   *   refusal there reloads in place (`sheetRefusal`), and closes it when the step is gone
    * @returns {Promise<any|null>} the re-read order, or null when refused
    */
-  async function runComposite(entry, extra, alertHost, control) {
+  async function runComposite(entry, extra, alertHost, control, made) {
+    // The order as last read, at send time: a reload inside the sheet has already replaced it.
     const order = current;
     if (!order) return null;
     const step = String(entry.step);
@@ -1040,7 +1108,12 @@ export function render_(context) {
         toast(`${ORDER_STEP_DONE_VI[step] || stepVi(step)} · ${orderName(order)}`);
         result = await reread();
       } catch (error) {
-        show(alertHost, refusal(error));
+        show(
+          alertHost,
+          made
+            ? sheetRefusal(error, { made, alertHost, redraw: (fresh) => offers(fresh, step) })
+            : refusal(error),
+        );
       }
     });
     return result;
@@ -1118,6 +1191,7 @@ export function render_(context) {
                   {},
                   alertHost,
                   /** @type {HTMLButtonElement} */ (event.currentTarget),
+                  made,
                 );
                 if (done) made.close();
               },
@@ -1160,6 +1234,7 @@ export function render_(context) {
           { slot_approved: tick.checked, ...promise.extra() },
           alertHost,
           confirm,
+          made,
         );
         if (done) made.close();
       },
@@ -1207,8 +1282,9 @@ export function render_(context) {
    * opening hours) and refuses by name.
    */
   function openPromiseChange() {
-    const order = current;
-    if (!order) return;
+    // The order whose promise the sheet shows; a reload inside the sheet replaces it (C4).
+    let shown = current;
+    if (!shown) return;
     const alertHost = h("div");
     let reason = "";
     const picker = /** @type {HTMLInputElement} */ (
@@ -1216,7 +1292,7 @@ export function render_(context) {
         type: "datetime-local",
         id: "promise-change-at",
         step: "900",
-        value: currentPromiseInput(order),
+        value: currentPromiseInput(shown),
         onInput: () => sync(),
       })
     );
@@ -1254,15 +1330,27 @@ export function render_(context) {
             await request(`/internal/v1/orders/${id}/promise`, {
               method: "POST",
               body,
-              idempotencyKey: keyFor(`PROMISE|${order.row_version}|${JSON.stringify(body)}`),
-              ifMatch: order.row_version,
+              idempotencyKey: keyFor(`PROMISE|${shown.row_version}|${JSON.stringify(body)}`),
+              ifMatch: shown.row_version,
             });
             releaseKey();
             toast(`Đã hẹn lại · ${promiseTime(body.promise_at)}`);
             made.close();
             await reread();
           } catch (error) {
-            show(alertHost, refusal(error));
+            show(
+              alertHost,
+              sheetRefusal(error, {
+                made,
+                alertHost,
+                redraw: (fresh) => {
+                  if (!promiseOpen(fresh)) return false;
+                  shown = fresh;
+                  render(nowHost, promiseNow());
+                  return true;
+                },
+              }),
+            );
           }
         });
       },
@@ -1274,17 +1362,16 @@ export function render_(context) {
         (reason !== "OTHER" || Boolean(note.value.trim()));
       if (writeVerdict.allowed) save.disabled = !ready;
     }
+    const promiseNow = () =>
+      `Đang hẹn: ${promiseTime(shown.current_promise_at)}. Hẹn đầu vẫn được giữ để tính đúng hẹn.`;
+    const nowHost = h("p", { class: "hint", dataField: "promise-now" }, promiseNow());
     const made = openFresh({
       id: "order-promise-change",
       title: "Hẹn lại",
       body: h(
         "div",
         { class: "stack" },
-        h(
-          "p",
-          { class: "hint" },
-          `Đang hẹn: ${promiseTime(order.current_promise_at)}. Hẹn đầu vẫn được giữ để tính đúng hẹn.`,
-        ),
+        nowHost,
         h(
           "label",
           { class: "promise-field", for: "promise-change-at" },
@@ -1324,19 +1411,25 @@ export function render_(context) {
    * types another; the console parses the typed text and compares nothing. When the server says
    * the settling payment may also hand the goods over (`payment_may_hand_over`), "Khách lấy đồ
    * luôn" is offered, ticked, beside the full amount -- the old "Thu tiền" did both in one press.
+   *
+   * COUNTER-UI-RACE-009. The QR asks for exactly the amount the payment will record: the whole
+   * remaining, or -- while "một phần" is open -- the typed amount, which the server checks against
+   * what remains (no QR while nothing usable is typed) (C3). The sheet shows one order read
+   * (`shown`) and sends that read's version; "tải lại" after a stale refusal replaces it and
+   * redraws the figures and the QR in place, so the next press can land (C4).
    */
   function openPayment() {
-    const order = current;
-    if (!order) return;
+    let shown = current;
+    if (!shown) return;
     const alertHost = h("div");
-    const remaining = order.remaining_vnd;
     let editing = false;
     let typed = "";
     let method = "TIEN_MAT";
     let seen = false;
     let reference = "";
-    let handOver = order.payment_may_hand_over === true;
-    // VIETQR-001: read once, the first time Chuyển khoản is chosen; the amount field stays editable.
+    let handOver = shown.payment_may_hand_over === true;
+    // VIETQR-001: read when Chuyển khoản is shown, for exactly the amount the payment will record
+    // (COUNTER-UI-RACE-009, C3); the amount field stays editable.
     const transferQr = paymentQr(orderId);
 
     const field = moneyInput({
@@ -1349,6 +1442,7 @@ export function render_(context) {
       },
       onInput: (text) => {
         typed = text;
+        askQr();
       },
     });
     const amountHost = h("div", { class: "stack stack--tight" });
@@ -1365,7 +1459,7 @@ export function render_(context) {
               h("label", { for: "payment-amount", class: "field-label" }, "Khách trả lần này"),
               field.node,
               button({
-                label: `Thu đủ ${money(remaining)}`,
+                label: `Thu đủ ${money(shown.remaining_vnd)}`,
                 variant: "quiet",
                 id: "payment-full",
                 onClick: () => {
@@ -1388,10 +1482,20 @@ export function render_(context) {
             }),
       );
       drawHandOver();
+      askQr();
+    }
+
+    /**
+     * The amount the QR is for: the whole remaining (null), or while "một phần" is open the typed
+     * amount as the server will read it -- undefined, and no QR, while nothing usable is typed.
+     */
+    function askQr() {
+      const part = editing ? parseDong(typed) : null;
+      transferQr.ask(!editing ? null : part === null ? undefined : part);
     }
 
     function drawHandOver() {
-      if (editing || order?.payment_may_hand_over !== true) {
+      if (editing || shown?.payment_may_hand_over !== true) {
         render(handOverHost);
         return;
       }
@@ -1416,6 +1520,7 @@ export function render_(context) {
 
     function drawTransfer() {
       if (method !== "CHUYEN_KHOAN") {
+        transferQr.hide();
         render(transferHost);
         return;
       }
@@ -1465,7 +1570,7 @@ export function render_(context) {
     });
 
     async function send() {
-      const amount = editing ? parseDong(typed) : remaining;
+      const amount = editing ? parseDong(typed) : shown.remaining_vnd;
       if (amount === null || amount === undefined) {
         show(
           alertHost,
@@ -1484,7 +1589,7 @@ export function render_(context) {
         method,
         transfer_seen: transfer && seen,
         bank_ref_last: transfer && reference.trim() ? reference.trim() : null,
-        collected_by_customer: !editing && handOver && order?.payment_may_hand_over === true,
+        collected_by_customer: !editing && handOver && shown?.payment_may_hand_over === true,
       };
       render(alertHost);
       await pressing(submit, async () => {
@@ -1492,13 +1597,13 @@ export function render_(context) {
           const recorded = await request(`/internal/v1/orders/${id}/payments`, {
             method: "POST",
             body,
-            ifMatch: order?.row_version,
+            ifMatch: shown?.row_version,
             // A changed amount, method or tick is a new intent; the same press after a timeout
             // replays the first answer.
-            idempotencyKey: keyFor(`pay|${order?.row_version}|${JSON.stringify(body)}`),
+            idempotencyKey: keyFor(`pay|${shown?.row_version}|${JSON.stringify(body)}`),
           });
           releaseKey();
-          toast(`Đã thu ${money(recorded.amount_vnd)} · ${orderName(order)}`);
+          toast(`Đã thu ${money(recorded.amount_vnd)} · ${orderName(shown)}`);
           const view = await reread();
           successState(
             made,
@@ -1518,9 +1623,44 @@ export function render_(context) {
         } catch (error) {
           // A refusal is shown as the server gave it -- "trả lại tiền thừa cho khách" for an
           // amount above what remains -- and the key is kept so an unchanged resend replays.
-          show(alertHost, refusal(error));
+          show(
+            alertHost,
+            sheetRefusal(error, {
+              made,
+              alertHost,
+              redraw: (fresh) => {
+                if (!offers(fresh, "TAKE_PAYMENT")) return false;
+                shown = fresh;
+                drawHero();
+                drawAmount();
+                transferQr.reload();
+                return true;
+              },
+            }),
+          );
         }
       });
+    }
+
+    const heroHost = h("div", { dataField: "payment-hero" });
+    function drawHero() {
+      render(
+        heroHost,
+        moneyHero({
+          label: "Còn lại",
+          amount: money(shown.remaining_vnd, "Chưa có tổng"),
+          caption:
+            [
+              shown.paid_vnd && shown.owed_vnd !== null
+                ? `Tổng ${money(shown.owed_vnd)} · đã trả ${money(shown.paid_vnd)}`
+                : null,
+              // UNCLAIMED-001: what "Còn lại" includes, in the server's figure.
+              storageChargeLine(shown),
+            ]
+              .filter(Boolean)
+              .join(" · ") || null,
+        }),
+      );
     }
 
     const made = openFresh({
@@ -1529,20 +1669,7 @@ export function render_(context) {
       body: h(
         "div",
         { class: "stack" },
-        moneyHero({
-          label: "Còn lại",
-          amount: money(remaining, "Chưa có tổng"),
-          caption:
-            [
-              order.paid_vnd && order.owed_vnd !== null
-                ? `Tổng ${money(order.owed_vnd)} · đã trả ${money(order.paid_vnd)}`
-                : null,
-              // UNCLAIMED-001: what "Còn lại" includes, in the server's figure.
-              storageChargeLine(order),
-            ]
-              .filter(Boolean)
-              .join(" · ") || null,
-        }),
+        heroHost,
         amountHost,
         h(
           "div",
@@ -1574,14 +1701,16 @@ export function render_(context) {
       ),
       actions: gated(submit, writeVerdict),
     });
+    drawHero();
     drawAmount();
     drawTransfer();
   }
 
   /** Khách đã nhận đồ: the pickup of an order paid in advance at the counter (`DEC-032`). */
   function openCollect() {
-    const order = current;
-    if (!order) return;
+    // The order read the press is against; a reload inside the sheet replaces it (C4).
+    let shown = current;
+    if (!shown) return;
     const alertHost = h("div");
     const submit = button({
       label: stepVi("COLLECT"),
@@ -1595,15 +1724,26 @@ export function render_(context) {
             // No body: the name is the session's; the precondition is the version last read.
             await request(`/internal/v1/orders/${id}/collection`, {
               method: "POST",
-              ifMatch: order.row_version,
-              idempotencyKey: keyFor(`collect|${order.row_version}`),
+              ifMatch: shown.row_version,
+              idempotencyKey: keyFor(`collect|${shown.row_version}`),
             });
             releaseKey();
-            toast(`${ORDER_STEP_DONE_VI.COLLECT} · ${orderName(order)}`);
+            toast(`${ORDER_STEP_DONE_VI.COLLECT} · ${orderName(shown)}`);
             const view = await reread();
             successState(made, "Đã ghi nhận khách nhận đồ.", null, view);
           } catch (error) {
-            show(alertHost, refusal(error));
+            show(
+              alertHost,
+              sheetRefusal(error, {
+                made,
+                alertHost,
+                redraw: (fresh) => {
+                  if (!offers(fresh, "COLLECT")) return false;
+                  shown = fresh;
+                  return true;
+                },
+              }),
+            );
           }
         }),
     });
@@ -1627,8 +1767,8 @@ export function render_(context) {
    * @param {any} entry
    */
   function openLeg(entry) {
-    const order = current;
-    if (!order) return;
+    let shown = current;
+    if (!shown) return;
     const kind = String(entry.step) === "DELIVERY_PICKUP" ? "PICKUP" : "RETURN";
     const alertHost = h("div");
     // SHOP-CAPTURE-001: the trip's cost, optional, on the same press (DEC-038).
@@ -1648,11 +1788,11 @@ export function render_(context) {
             method: "POST",
             body: { leg_kind: kind, outcome, ...cost.fields },
             idempotencyKey: keyFor(
-              `leg|${kind}|${outcome}|${order.row_version}|${trip.intent()}`,
+              `leg|${kind}|${outcome}|${shown.row_version}|${trip.intent()}`,
             ),
           });
           releaseKey();
-          toast(`${ORDER_STEP_DONE_VI[String(entry.step)]} · ${orderName(order)}`);
+          toast(`${ORDER_STEP_DONE_VI[String(entry.step)]} · ${orderName(shown)}`);
           const view = await reread();
           successState(
             made,
@@ -1665,7 +1805,18 @@ export function render_(context) {
             view,
           );
         } catch (error) {
-          show(alertHost, refusal(error));
+          show(
+            alertHost,
+            sheetRefusal(error, {
+              made,
+              alertHost,
+              redraw: (fresh) => {
+                if (!offers(fresh, String(entry.step))) return false;
+                shown = fresh;
+                return true;
+              },
+            }),
+          );
         }
       });
     }
@@ -1751,6 +1902,7 @@ export function render_(context) {
                 machineId ? { machine_id: machineId } : {},
                 alertHost,
                 control,
+                made,
               );
               if (done) {
                 washMachines = null;
@@ -1781,6 +1933,7 @@ export function render_(context) {
             sheetsHost,
             title: orderName(order),
             onChanged: () => void reread(),
+            reread: () => reread(),
           })
         : null,
     );
@@ -1844,6 +1997,7 @@ export function render_(context) {
           needs ? { custody_resolution: custody } : {},
           alertHost,
           confirm,
+          made,
         );
         if (done) made.close();
       },
@@ -1923,6 +2077,7 @@ export function render_(context) {
         { [spec.field]: reason, ...(machine ? { machine_id: machine } : {}) },
         alertHost,
         confirm,
+        made,
       );
       if (done) {
         washMachines = null;

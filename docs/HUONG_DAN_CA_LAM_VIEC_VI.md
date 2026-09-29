@@ -102,7 +102,7 @@ phần còn lại), mỗi lần bằng **Tiền mặt** hoặc **Chuyển khoả
 |---|---|---|
 | 7a | Sau bước 7 (đã nhận đồ): bấm **Thu tiền** trong ô tiền của đơn. Trả đủ: để nguyên số **Còn lại**. Đặt cọc: bấm **Khách trả một phần (đặt cọc)** rồi gõ số khách trả. Chọn **Tiền mặt** hoặc **Chuyển khoản**, bấm **Ghi nhận đã thu** | Chi tiết đơn |
 | 7b | Khách chuyển khoản: mở app ngân hàng của tiệm, **thấy tiền vào rồi** mới tích **Đã thấy tiền vào tài khoản**. Ô mã giao dịch (vài số cuối) không bắt buộc | Chi tiết đơn |
-| 7c | Khi chủ tiệm đã công bố tài khoản ngân hàng (DEC-041): chọn **Chuyển khoản** là hiện **mã QR** đúng số còn lại, với **Số tiền** và **Nội dung** (ví dụ `NTL2809012`). Cho khách quét. *Kiểm tra app ngân hàng: đúng nội dung và số tiền rồi mới bấm Ghi nhận đã thu.* Khách trả một phần thì vẫn bấm **Khách trả một phần (đặt cọc)** và gõ số khách chuyển | Chi tiết đơn |
+| 7c | Khi chủ tiệm đã công bố tài khoản ngân hàng (DEC-041): chọn **Chuyển khoản** là hiện **mã QR** đúng số còn lại, với **Số tiền** và **Nội dung** (ví dụ `NTL2809012`). Cho khách quét. *Kiểm tra app ngân hàng: đúng nội dung và số tiền rồi mới bấm Ghi nhận đã thu.* Khách trả một phần thì vẫn bấm **Khách trả một phần (đặt cọc)** và gõ số khách chuyển — mã QR vẽ lại đúng số vừa gõ; chưa gõ, hoặc gõ lớn hơn số còn lại, thì không có mã QR | Chi tiết đơn |
 | 7d | Tiền chuyển tới sau, không biết của đơn nào: ở **Đơn hàng** gõ nội dung chuyển khoản (`NTL…`) vào ô tìm (điện thoại: bấm **Mã chuyển khoản** trước), bấm **Tìm**, mở đơn và thu như 7a | Đơn hàng |
 | 10a | Khách tới lấy: tìm phiếu, mở đơn. Còn nợ thì nút lớn là **Thu tiền** — thu **Còn lại** như bước 11. Đã trả đủ từ trước thì đưa đồ rồi bấm **Khách đã nhận đồ** (tên bạn được ghi), rồi **Giao đồ & đóng đơn** | Chi tiết đơn |
 
@@ -448,7 +448,7 @@ hạn thì bấm **Xin duyệt lại**. *Nhập mã thủ công* chỉ dùng cho
 |---|---|---|
 | **Đang ngoại tuyến** | Máy mất mạng. Không có lệnh nào được gửi đi | Kiểm tra mạng. Trong lúc đó ghi tay, nhập lại sau khi có mạng |
 | **Chưa biết lệnh có tới máy chủ hay không** | Lệnh có thể đã chạy | **Đừng bấm lại.** Tải lại đơn và xem trạng thái thật |
-| **Đơn này vừa được người khác đổi** | Người kia bấm trước | Bấm **Đơn vừa đổi — tải lại**, rồi làm theo nút mới |
+| **Đơn này vừa được người khác đổi** | Người kia bấm trước | Bấm **Đơn vừa đổi — tải lại**, rồi làm theo nút mới. Đang ở trong ô *Thu tiền*, *Hẹn lại*…: ô vẫn mở với số mới, chữ đã gõ vẫn còn — đọc lại số rồi bấm lại. Việc đó không còn làm được thì ô tự đóng |
 | **Máy chủ không ghi nhận khoản này** | Số tiền hoặc tình huống không được hỗ trợ | Đọc lý do ngay bên dưới — nó nói rõ phải làm gì |
 | **Chưa nhận đồ được** | Đơn còn thiếu điều kiện (thường là chưa tích *Tiệm làm kịp đơn này*) | Đọc từng dòng lý do ngay bên dưới, làm đúng việc đó rồi bấm lại |
 | Huỷ một đơn đã nhận đồ | Phải nói đồ và tiền đã xử lý thế nào | **Khác** → **Huỷ đơn**, chọn một cách xử lý, bấm hai lần |

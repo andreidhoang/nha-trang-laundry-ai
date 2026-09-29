@@ -77,6 +77,52 @@ export function roleVerdict(verdict, short) {
 /** The title of a refusal about one field: the fix is to correct it, never to work around it. */
 const FIELD_REFUSED = "Chưa lưu. Sửa ô được đánh dấu đỏ rồi bấm lưu lại.";
 
+/** COUNTER-UI-RACE-009 (C4): refusals that wrote nothing because the request moved meanwhile. */
+const STALE_KINDS = new Set(["STALE", "PRECONDITION_REQUIRED", "CONFLICT"]);
+
+/**
+ * The refusal in Ghi số hóa đơn / Huỷ yêu cầu when the request moved meanwhile (C4). "Tải lại"
+ * re-reads it: still open, the sheet stays on the fresh version (`adopt`) so the next press can
+ * land -- what was typed stays; closed meanwhile (issued or cancelled by someone else), the sheet
+ * closes and the row shows what happened. Without `spec.reread` the sheet closes and the caller
+ * re-reads its list.
+ *
+ * @param {unknown} error
+ * @param {{item: any, onDone: (updated: any) => void, reread?: () => Promise<any|null>}} spec
+ * @param {{node: HTMLElement, close: () => void}} made
+ * @param {HTMLElement} alertHost
+ * @param {(fresh: any) => void} adopt
+ * @returns {HTMLElement}
+ */
+function staleRefusal(error, spec, made, alertHost, adopt) {
+  return errorNotice(/** @type {any} */ (error), {
+    actions: [
+      button({
+        label: "Tải lại",
+        icon: "refresh",
+        onClick: async () => {
+          const fresh = spec.reread ? await spec.reread() : null;
+          if (!made.node.isConnected) return;
+          const same =
+            fresh &&
+            String(fresh.invoice_request_id) === String(spec.item.invoice_request_id) &&
+            fresh.status === "REQUESTED";
+          if (!same) {
+            made.close();
+            if (!spec.reread) spec.onDone(null);
+            return;
+          }
+          adopt(fresh);
+          show(
+            alertHost,
+            inlineAlert({ state: "info", title: "Đã tải lại yêu cầu — kiểm tra rồi bấm lại." }),
+          );
+        },
+      }),
+    ],
+  });
+}
+
 /** The tier-2 explanation behind every ⓘ about invoices: who issues, and what the amount is. */
 export const INVOICE_HOW = [
   "Tiệm chỉ ghi lại yêu cầu của khách. Kế toán xuất hóa đơn điện tử trên cổng của nhà cung cấp " +
@@ -391,10 +437,15 @@ export function requestSheet(spec) {
  * @param {string} spec.store
  * @param {any} spec.item the `InvoiceRequestResponse`
  * @param {(updated: any) => void} spec.onDone
+ * @param {() => Promise<any|null>} [spec.reread] re-read the request (C4, `staleRefusal`)
  * @returns {{node: HTMLDialogElement, open: () => void, close: () => void}}
  */
 export function issuedSheet(spec) {
-  const { item } = spec;
+  // The request version the press is against; a reload in the sheet replaces it (C4).
+  let item = spec.item;
+  const subjectLine = h("p", { class: "invoice-sheet__subject" });
+  const drawSubject = () => render(subjectLine, `${requestTitle(item)} · ${amountText(item.amount)}`);
+  drawSubject();
   const submission = new Submission("invoice-issued");
   let intent = "";
   const symbol = field({ id: "invoice-symbol", label: "Ký hiệu", maxlength: 12, placeholder: "Ví dụ 1C26TYY" });
@@ -446,7 +497,12 @@ export function issuedSheet(spec) {
         }
         show(
           alertHost,
-          errorNotice(/** @type {any} */ (error), marked ? { title: FIELD_REFUSED } : {}),
+          !marked && STALE_KINDS.has(/** @type {any} */ (error)?.kind)
+            ? staleRefusal(error, spec, made, alertHost, (fresh) => {
+                item = fresh;
+                drawSubject();
+              })
+            : errorNotice(/** @type {any} */ (error), marked ? { title: FIELD_REFUSED } : {}),
         );
       }
     });
@@ -458,7 +514,7 @@ export function issuedSheet(spec) {
     body: h(
       "div",
       { class: "stack" },
-      h("p", { class: "invoice-sheet__subject" }, `${requestTitle(item)} · ${amountText(item.amount)}`),
+      subjectLine,
       h("div", { class: "invoice-form invoice-form--three" }, symbol.node, number.node, day.node),
       h("p", { class: "hint" }, "Chép đúng ký hiệu, số và ngày trên hóa đơn kế toán đã xuất. Ghi rồi không sửa được."),
       alertHost,
@@ -476,10 +532,12 @@ export function issuedSheet(spec) {
  * @param {string} spec.store
  * @param {any} spec.item
  * @param {(updated: any) => void} spec.onDone
+ * @param {() => Promise<any|null>} [spec.reread] re-read the request (C4, `staleRefusal`)
  * @returns {{node: HTMLDialogElement, open: () => void, close: () => void}}
  */
 export function cancelSheet(spec) {
-  const { item } = spec;
+  // The request version the press is against; a reload in the sheet replaces it (C4).
+  let item = spec.item;
   const submission = new Submission("invoice-cancel");
   let intent = "";
   let reason = "";
@@ -517,7 +575,14 @@ export function cancelSheet(spec) {
         toast(`Đã huỷ yêu cầu ${item.request_code}`);
         spec.onDone(updated);
       } catch (error) {
-        show(alertHost, errorNotice(/** @type {any} */ (error)));
+        show(
+          alertHost,
+          STALE_KINDS.has(/** @type {any} */ (error)?.kind)
+            ? staleRefusal(error, spec, made, alertHost, (fresh) => {
+                item = fresh;
+              })
+            : errorNotice(/** @type {any} */ (error)),
+        );
       }
     });
   }
@@ -595,6 +660,8 @@ export function invoiceSection(spec) {
   const closeVerdict = can(who, "INVOICES_CLOSE");
   const body = h("div", { class: "invoice-row", id: "invoice-row" }, skeletonRows(1));
   const alertHost = h("div");
+  /** @type {any|null} the subject as last read */
+  let lastSubject = null;
 
   function mount(made) {
     render(spec.sheetsHost, made.node);
@@ -604,10 +671,18 @@ export function invoiceSection(spec) {
   async function load() {
     try {
       const subject = await request(spec.readPath);
+      lastSubject = subject;
       draw(subject);
     } catch (error) {
+      lastSubject = null;
       render(body, errorNotice(/** @type {any} */ (error), { onRetry: () => void load() }));
     }
+  }
+
+  /** C4: re-read the subject for a sheet's "Tải lại"; its live request, or null. */
+  async function freshLive() {
+    await load();
+    return lastSubject?.live || null;
   }
 
   /** @param {any} subject */
@@ -647,7 +722,14 @@ export function invoiceSection(spec) {
                     network: true,
                     id: "invoice-record-issued",
                     onClick: () =>
-                      mount(issuedSheet({ store: spec.store, item: live, onDone: () => void load() })),
+                      mount(
+                        issuedSheet({
+                          store: spec.store,
+                          item: live,
+                          onDone: () => void load(),
+                          reread: freshLive,
+                        }),
+                      ),
                   }),
                   roleVerdict(closeVerdict, CLOSE_SHORT),
                 ),
@@ -658,7 +740,14 @@ export function invoiceSection(spec) {
                     network: true,
                     id: "invoice-cancel",
                     onClick: () =>
-                      mount(cancelSheet({ store: spec.store, item: live, onDone: () => void load() })),
+                      mount(
+                        cancelSheet({
+                          store: spec.store,
+                          item: live,
+                          onDone: () => void load(),
+                          reread: freshLive,
+                        }),
+                      ),
                   }),
                   writeVerdict,
                 ),

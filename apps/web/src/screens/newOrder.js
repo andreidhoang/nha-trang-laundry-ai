@@ -200,6 +200,11 @@ export function render_(context) {
     quoteMode: null,
     /** Inputs changed since `quote` was priced: the receipt is no longer about them. */
     dirty: false,
+    /**
+     * COUNTER-UI-RACE-009 (C2): bumped by every edit. A press remembers it; the revision its answer
+     * brings is about the lines on screen only if no edit happened while it was in flight.
+     */
+    edits: 0,
     /** @type {any|null} a remedy credit applied to the current revision */
     credit: null,
     source: "UNKNOWN",
@@ -1056,7 +1061,8 @@ export function render_(context) {
         return;
       }
       flow.request = intake;
-      adoptRevision(detail, detail);
+      // The lines on screen are replaced by this revision's own, so it prices exactly them.
+      adoptRevision(detail, detail, flow.edits);
       flow.lines = (detail.lines || []).map((line) => ({
         serviceCode: line.service_code,
         unit: line.unit,
@@ -1568,8 +1574,10 @@ export function render_(context) {
    * being about what is on screen. Only the transition redraws anything — never a keystroke.
    */
   function invalidate() {
+    flow.edits += 1;
     quoteSub.reset();
-    render(priceAlert);
+    // A press in flight keeps its "Đang tính giá…" line; its answer then says the price is old.
+    if (!flow.busy) render(priceAlert);
     if (flow.quote && !flow.dirty) {
       flow.dirty = true;
       drawReceipt();
@@ -1636,6 +1644,8 @@ export function render_(context) {
         ? { quote_id: flow.quote.quote_id, expected_current_revision: flow.quote.revision }
         : {}),
     };
+    // The lines this payload was built from: any edit after this makes its answer an old price.
+    const pricedAt = flow.edits;
     flow.busy = true;
     setPricing(true);
     render(priceAlert, h("p", { class: "hint", role: "status" }, asBand ? "Đang ghi bản khoảng giá…" : "Đang tính giá…"));
@@ -1650,9 +1660,13 @@ export function render_(context) {
       flow.busy = false;
       render(priceAlert);
       flow.credit = null;
-      adoptRevision(created, null);
+      adoptRevision(created, null, pricedAt);
       flow.quoteMode = payload.fulfillment_mode;
-      toast(`Đã tính giá · bản sửa đổi ${created.revision}`);
+      toast(
+        flow.dirty
+          ? "Giá vừa tính là của số cũ — bấm “Tính lại”"
+          : `Đã tính giá · bản sửa đổi ${created.revision}`,
+      );
       drawReceipt();
       drawActions();
       void readLines(created);
@@ -1662,6 +1676,9 @@ export function render_(context) {
       const failure = /** @type {any} */ (error);
       // A lost answer is not a refusal: the revision may exist.
       const unknown = failure.kind === "TIMEOUT" || failure.kind === "NETWORK";
+      // C2: an edit while it was in flight replaced the key, so the next press is a new pricing of
+      // what is on screen -- not a replay, and the screen must not say it is.
+      const edited = flow.edits !== pricedAt;
       const bandable =
         !asBand &&
         failure.kind === "REQUIRE_HUMAN" &&
@@ -1674,8 +1691,11 @@ export function render_(context) {
           bandable ? bandOffer() : null,
           errorNotice(error, {
             title: unknown
-              ? "Chưa biết lệnh có tới máy chủ hay không, nên chưa biết giá đã được ghi hay chưa. " +
-                "Bấm lại “Tính giá” — lần bấm lại dùng cùng mã thao tác, nên máy chủ không ghi hai lần."
+              ? edited
+                ? "Chưa biết lần tính trước có tới máy chủ hay không, và bạn đã sửa trong lúc chờ. " +
+                  "Bấm “Tính giá” để tính cho số đang nhập."
+                : "Chưa biết lệnh có tới máy chủ hay không, nên chưa biết giá đã được ghi hay chưa. " +
+                  "Bấm lại “Tính giá” — lần bấm lại dùng cùng mã thao tác, nên máy chủ không ghi hai lần."
               : bandable
                 ? "Bộ tính giá không tự chọn số trong khoảng giá. Không có bản ghi nào được tạo."
                 : failure.kind === "REQUIRE_HUMAN"
@@ -1698,13 +1718,19 @@ export function render_(context) {
   /**
    * Hold the revision the server just returned as the one the next press revises or accepts.
    *
+   * It is always held -- it is the server's newest, and the next "Tính lại" must name it -- but
+   * it is the price of the lines on screen only when no edit happened after `pricedAt` (the edit
+   * count when the press that brought it was made). Otherwise it stays marked stale, so "Tiếp tục"
+   * is never offered for lines other than the ones it priced (C2).
+   *
    * @param {any} revision
    * @param {any|null} detail its read, when in hand
+   * @param {number} pricedAt `flow.edits` when the press that brought it was made
    */
-  function adoptRevision(revision, detail) {
+  function adoptRevision(revision, detail, pricedAt) {
     flow.quote = revision;
     flow.detail = detail;
-    flow.dirty = false;
+    flow.dirty = flow.edits !== pricedAt;
     if (detail?.fulfillment_mode) flow.quoteMode = detail.fulfillment_mode;
     // A new revision is a new thing to accept, and a new order body.
     orderSub.reset();
@@ -1836,6 +1862,9 @@ export function render_(context) {
       render(bandHost, skeleton(1));
       return;
     }
+    // Offered only while the receipt is about the lines on screen; an edit removes it, and the
+    // answer of a close already in flight is then held as an old price.
+    const pricedAt = flow.edits;
     render(
       bandHost,
       // A band is not one price, so there is nothing for a customer to agree to yet: the server
@@ -1859,7 +1888,7 @@ export function render_(context) {
         detail: flow.detail,
         onClosed: async (closed) => {
           toast(`Đã ghi giá vào bản sửa đổi ${closed.revision}`);
-          adoptRevision(closed, null);
+          adoptRevision(closed, null, pricedAt);
           drawReceipt();
           drawActions();
           void readLines(closed);
@@ -2099,6 +2128,7 @@ export function render_(context) {
   async function redeemCredit(creditId, control) {
     const revision = flow.quote;
     if (!revision || flow.busy) return;
+    const pricedAt = flow.edits;
     if (creditKeyFor !== creditId) {
       creditSub.reset();
       creditKeyFor = creditId;
@@ -2133,7 +2163,7 @@ export function render_(context) {
       const detail = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${encodeURIComponent(revision.quote_id)}?revision=${encodeURIComponent(String(applied.revision))}`,
       );
-      adoptRevision(detail, detail);
+      adoptRevision(detail, detail, pricedAt);
       flow.credit = applied;
       drawReceipt();
       drawActions();
@@ -2230,12 +2260,15 @@ export function render_(context) {
       },
     });
     sources.classList.add("segmented--grid");
+    // Shut while the press is in flight (C2): going back to edit the lines then would leave the
+    // order being made from a price for lines no longer on screen.
+    const back = backButton(() => go(2));
     const confirm = button({
       label: accepted ? "Tạo đơn" : "Khách đồng ý — tạo đơn",
       variant: "primary",
       network: true,
       id: "new-confirm",
-      onClick: () => void confirmOrder(confirm, alertHost),
+      onClick: () => void confirmOrder(confirm, alertHost, back),
     });
     const lines = flow.detail?.lines || [];
     return h(
@@ -2292,7 +2325,7 @@ export function render_(context) {
         accepted
           ? null
           : h("p", { class: "hint" }, "Bấm khi khách đã nghe giá và đồng ý. Tên bạn sẽ được ghi lại."),
-        backButton(() => go(2)),
+        back,
         gated(confirm, confirmVerdict),
       ),
     );
@@ -2305,11 +2338,14 @@ export function render_(context) {
    *
    * @param {HTMLButtonElement} control
    * @param {HTMLElement} alertHost
+   * @param {HTMLButtonElement} back "Quay lại", shut while the press is in flight
    */
-  async function confirmOrder(control, alertHost) {
+  async function confirmOrder(control, alertHost, back) {
     if (flow.busy || !flow.quote || !flow.request) return;
+    const pricedAt = flow.edits;
     flow.busy = true;
     control.disabled = true;
+    back.disabled = true;
     control.setAttribute("aria-busy", "true");
     /** @type {"accept"|"read"|"order"} */
     let phase = "accept";
@@ -2332,7 +2368,7 @@ export function render_(context) {
         );
         sub.reset();
         const lines = flow.detail;
-        adoptRevision(accepted, null);
+        adoptRevision(accepted, null, pricedAt);
         // The accepted revision carries the same lines as the one the customer was read.
         flow.detail = lines;
       }
@@ -2375,6 +2411,7 @@ export function render_(context) {
       location.hash = `#/orders/${encodeURIComponent(String(created.order_id))}`;
     } catch (error) {
       flow.busy = false;
+      back.disabled = false;
       control.removeAttribute("aria-busy");
       if (control.getAttribute("data-denied") !== "true") control.disabled = false;
       const failure = /** @type {any} */ (error);

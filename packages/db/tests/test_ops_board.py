@@ -345,7 +345,9 @@ def test_the_day_count_and_takings_versions_are_pinned_too() -> None:
     # v3 (`PAYMENT-001`, `DEC-035`): money in is the payment ledger, split by method, so a deposit
     # counts on the day it was taken; `0056` backfilled every settlement as its one payment, so no
     # past day moves. v2 was `c266d2f11377a64c`.
-    assert COLLECTED_TODAY_QUERY.label == "collected-today-v3:3e7eb2f9fcaade13"
+    # v4 (GOODS-AND-DRAWER-009, review M4): refunds split by method (`0067`) and the drawer --
+    # cash in minus cash handed back -- beside the all-method net. v3 was `3e7eb2f9fcaade13`.
+    assert COLLECTED_TODAY_QUERY.label == "collected-today-v4:b53071ddc5a6df73"
 
 
 def test_a_changed_rule_produces_a_different_digest_under_the_same_identifier() -> None:

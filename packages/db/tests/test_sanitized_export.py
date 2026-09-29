@@ -64,6 +64,7 @@ from nha_trang_laundry_domain.catalog import (
     IntakeStatus,
 )
 from nha_trang_laundry_domain.orders import IntakeReadiness
+from nha_trang_laundry_domain.payments import PaymentMethod
 from quote_test_data import accepted_quote
 
 #: The words a customer used, which must never reach a file. Distinctive on purpose: a substring
@@ -379,8 +380,10 @@ def test_the_export_query_version_is_pinned_to_the_rule_it_names() -> None:
     # so -- and an order on account is named as owed, not paid (`PAYMENT-002`). v3
     # (`7b7e01eef9314061`) read the quoted total alone and refused a fee-settled day as
     # inconsistent.
-    assert EXPORT_QUERY.identifier == "store-day-orders-export-v4"
-    assert EXPORT_QUERY.label == "store-day-orders-export-v4:c2ce1e9e6379d784"
+    # v5 (round 9, GOODS-AND-DRAWER-009): `refund_method` on every row, how each refund went
+    # back. v4 was `c2ce1e9e6379d784`.
+    assert EXPORT_QUERY.identifier == "store-day-orders-export-v5"
+    assert EXPORT_QUERY.label == "store-day-orders-export-v5:9deec5f37bb92379"
 
 
 # --- refusals -----------------------------------------------------------------------------------
@@ -1261,6 +1264,8 @@ def test_a_paid_order_cancelled_with_a_refund_shows_the_refund_in_the_export(
     move(
         commercial_target=CommercialOrderStatus.CANCELLED,
         custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        # GOODS-AND-DRAWER-009 (review M4): the money went back by transfer.
+        refund_method=PaymentMethod.CHUYEN_KHOAN,
     )
 
     created = _request_export(connection, shop, _local_date(shop.now))
@@ -1285,3 +1290,5 @@ def test_a_paid_order_cancelled_with_a_refund_shows_the_refund_in_the_export(
     assert row["paid_amount_vnd"] == "110000"
     assert row["refunded_amount_vnd"] == "110000"
     assert datetime.fromisoformat(row["refunded_at"]) == shop.now
+    # GOODS-AND-DRAWER-009: and how it went back, on the same row.
+    assert row["refund_method"] == "CHUYEN_KHOAN"

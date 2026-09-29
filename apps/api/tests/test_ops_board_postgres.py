@@ -271,7 +271,8 @@ def test_every_board_figure_carries_the_version_of_the_query_that_produced_it(
     assert board["query_version"] == sla_board_query_version(SLA_POLICY).label
     assert summary["query_version"].startswith("today-status-counts-v1:")
     # v2 since DEC-024 refunds travel beside the takings; the digest is pinned in test_ops_board.py.
-    assert takings["query_version"].startswith("collected-today-v3:")
+    # v4 since GOODS-AND-DRAWER-009 (review M4): the refunds by method and the drawer.
+    assert takings["query_version"].startswith("collected-today-v4:")
     # Invariant 2 at the wire: every number the route serves is a non-negative integer, and the
     # drawer's direction is a word. `CollectedTodayResponse` also declares `ge=0` on each.
     numeric = {key: value for key, value in takings.items() if isinstance(value, int)}
@@ -287,9 +288,18 @@ def test_every_board_figure_carries_the_version_of_the_query_that_produced_it(
         "cash_count",
         "transfer_vnd",
         "transfer_count",
+        # `collected-today-v4` (GOODS-AND-DRAWER-009): refunds by method, and the drawer.
+        "refunded_cash_vnd",
+        "refunded_cash_count",
+        "refunded_transfer_vnd",
+        "refunded_transfer_count",
+        "refunded_unknown_vnd",
+        "refunded_unknown_count",
+        "drawer_vnd",
     }
     assert all(value >= 0 for value in numeric.values())
     assert takings["net_direction"] in ("IN", "OUT")
+    assert takings["drawer_direction"] in ("IN", "OUT")
 
 
 def test_the_board_refuses_a_store_the_caller_is_not_assigned_to(
@@ -661,7 +671,7 @@ def test_an_export_window_approved_for_one_week_releases_that_week_and_no_other(
         "2026-09-07",
     )
     assert week_body["window_days"] == 7
-    assert week_body["query_version"].startswith("store-window-orders-export-v3:")
+    assert week_body["query_version"].startswith("store-window-orders-export-v4:")
     assert "từ 2026-09-01 đến hết 2026-09-07 (7 ngày" in week_body["statement_vi"]
     next_week = _post(
         client,
@@ -795,7 +805,8 @@ def test_a_one_day_export_request_answers_exactly_as_before(
         # `EXPORT-PAYMENTS-001` moved the one-day rule to v3 (the payment ledger's columns);
         # v2 (`3f884e227d6a2d05`) is retired, and an envelope bound to it is refused by name.
         # v4 since the round 7 wave 2 integration: `owed_vnd` includes the storage fee.
-        assert body["query_version"] == "store-day-orders-export-v4:c2ce1e9e6379d784"
+        # v5 since GOODS-AND-DRAWER-009: `refund_method` on every row.
+        assert body["query_version"] == "store-day-orders-export-v5:9deec5f37bb92379"
         assert body["shape_retired"] is False
         assert [item["column"] for item in body["money_sources"]] == [
             "expected_total_vnd",
@@ -806,6 +817,8 @@ def test_a_one_day_export_request_answers_exactly_as_before(
             "paid_transfer_vnd",
             "paid_vnd",
             "remaining_vnd",
+            # GOODS-AND-DRAWER-009: how the row's refund went back.
+            "refund_method",
         ]
         assert body["money_line_vi"].startswith("Tiền trong tệp:")
         assert body["statement_vi"].startswith(

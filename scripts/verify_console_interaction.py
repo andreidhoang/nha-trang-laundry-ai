@@ -503,6 +503,25 @@ STAFF_DIRECTORY = {
 }
 
 
+def goods_shot(page: object, name: str) -> None:
+    """GOODS-AND-DRAWER-009: with CONSOLE_SHOTS_DIR set, the screen at desk and phone size.
+
+    Evidence for a person to look at, not a check: nothing is asserted here, and without the
+    variable nothing happens.
+    """
+
+    shots = os.environ.get("CONSOLE_SHOTS_DIR")
+    if not shots:
+        return
+    os.makedirs(shots, exist_ok=True)
+    for label, width, height in (("desk", 1366, 900), ("phone", 390, 844)):
+        page.set_viewport_size({"width": width, "height": height})
+        page.wait_for_timeout(400)
+        page.screenshot(path=os.path.join(shots, f"r9b-{name}-{label}.png"), full_page=True)
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.wait_for_timeout(200)
+
+
 def check(name: str, ok: bool, detail: str = "") -> None:
     (PASS if ok else FAIL).append(name)
     print(f"{'  ok  ' if ok else ' FAIL '} {name}" + (f"  — {detail}" if detail else ""))
@@ -4287,6 +4306,7 @@ with sync_playwright() as playwright:
         "Chưa tính 1 lần hoàn chưa rõ cách hoàn (40.000" in refunds_text,
         refunds_text[:200],
     )
+    goods_shot(page, "today-drawer")
     state["settlements_today"] = None
 
     print()
@@ -6798,6 +6818,7 @@ with sync_playwright() as playwright:
         and page.locator("button[data-step=DELIVERY_RETURN]").count() == 0,
         money_text[:160],
     )
+    goods_shot(page, "order-pay-before-delivery")
     open_order(
         order_view(
             "SELF_DROP_SELF_COLLECT",
@@ -6845,6 +6866,7 @@ with sync_playwright() as playwright:
         and page.get_by_role("button", name="Đơn vừa đổi — tải lại").count() == 0,
         sheet_text[:200],
     )
+    goods_shot(page, "trip-refused-pay-first")
     state["order_write_reply"] = None
     state["order_view"] = unpaid_delivery
     page.locator("dialog[open] button[data-pay-first]").click()
@@ -6932,6 +6954,7 @@ with sync_playwright() as playwright:
         "the press opens only once both the custody answer and the method are chosen",
         shut_without_method and not confirm.is_disabled(),
     )
+    goods_shot(page, "cancel-refund-method")
     confirm.click()
     page.wait_for_timeout(300)
     page.locator("dialog[open] .sheet__actions button").first.click()
@@ -8851,6 +8874,7 @@ with sync_playwright() as playwright:
         "Chưa tính 1 lần hoàn chưa rõ cách hoàn (100.000" in drawer_row,
         drawer_row[:160],
     )
+    goods_shot(page, "report-drawer")
     check(
         "what came in and what went back are the server's own sums",
         "90.000" in money_tile and "240.000" in money_tile,

@@ -4881,3 +4881,28 @@ table.reminders th {
     width: auto;
   }
 }
+
+/* === CONSOLE-SHELL-009 ===========================================================================
+ * The console shell's own rules. Each names the finding of the 2026-09-29 review it answers. */
+
+/* C5: out of sight until it has focus, then plainly visible above everything, top left. */
+.skip-link {
+  background: var(--surface);
+  border: 2px solid var(--brand-700);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  color: var(--brand-800);
+  font-weight: var(--weight-bold);
+  left: var(--space-2);
+  min-height: var(--tap-min);
+  padding: var(--space-2) var(--space-4);
+  position: fixed;
+  top: var(--space-2);
+  transform: translateY(-200%);
+  z-index: var(--layer-toast);
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: none;
+}

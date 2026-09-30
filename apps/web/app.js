@@ -16,7 +16,7 @@
 
 import { count, shortId } from "./src/core/format.js";
 import { request } from "./src/core/api.js";
-import { h, render } from "./src/core/dom.js";
+import { focusContainer, h, render } from "./src/core/dom.js";
 import { enumVi } from "./src/core/i18n.js";
 import { NAV_ITEMS, navVerdict } from "./src/core/nav.js";
 import { can } from "./src/core/rbac.js";
@@ -33,6 +33,7 @@ const appbarActions = document.querySelector("#appbar-actions");
 const banners = document.querySelector("#banners");
 const navList = document.querySelector("#nav-list");
 const outlet = document.querySelector("#main");
+const skipLink = document.querySelector("#skip-link");
 /**
  * What `index.html` put in `<body>`: the skip control, the shell, `noscript`, the module script.
  * Anything else was added since -- a screen's sheet, the account sheet, the toast host -- and goes
@@ -771,6 +772,8 @@ function wipeWorkspace() {
 
 async function boot() {
   session.onSignOut(wipeWorkspace);
+  // C5: the skip control moves focus to the screen, and nothing else -- no route, no rebuild.
+  skipLink?.addEventListener("click", () => focusContainer(outlet));
   session.watchConnectivity();
 
   /** @type {string|null} null until an authenticated screen has been rendered at least once. */

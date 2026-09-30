@@ -31,7 +31,12 @@
     <title>Bảng vận hành</title>
   </head>
   <body>
-    <a class="sr-only" href="#main">Bỏ qua điều hướng</a>
+    <!--
+      A button, not `href="#main"`: this console routes on the hash, so that link opened a route
+      called "main" -- "Không có màn hình này" -- and threw away whatever was being typed. The button
+      moves focus to the screen and changes nothing else (app.js). Shown when it has focus.
+    -->
+    <button type="button" class="skip-link" id="skip-link">Tới nội dung chính</button>
 
     <div class="app">
       <header class="appbar">

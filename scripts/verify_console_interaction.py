@@ -9940,6 +9940,68 @@ with sync_playwright() as playwright:
 
     print()
     print("=" * 74)
+    print("CONSOLE-SHELL-009 C5. BỎ QUA ĐIỀU HƯỚNG — focus moves to the screen, nothing else")
+    print("=" * 74)
+
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    search = page.locator("#new-customer-search")
+    search.click()
+    page.keyboard.type("0905 12", delay=10)
+    page.wait_for_timeout(200)
+    # A keyboard user in the app bar, going back one stop: the control before the shell.
+    page.locator(".appbar__identity").focus()
+    page.keyboard.press("Shift+Tab")
+    first = page.evaluate(
+        """() => {
+            const node = document.activeElement;
+            const box = node.getBoundingClientRect();
+            return {id: node.id, tag: node.tagName, text: node.textContent.trim(),
+                    top: box.top, left: box.left, width: box.width, height: box.height,
+                    inView: box.top >= 0 && box.left >= 0 && box.bottom <= innerHeight};
+        }"""
+    )
+    shell_shot("stub-skip-link-focused-desk")
+    check(
+        "the stop before the app bar is the skip control, a button",
+        first["id"] == "skip-link" and first["tag"] == "BUTTON",
+        repr(first),
+    )
+    check(
+        "and it is visible while it has focus -- a real target, inside the viewport",
+        first["inView"] and first["width"] >= 60 and first["height"] >= 30,
+        repr(first),
+    )
+    # Pressed from the keyboard, where it now has focus (at 872ecd4: `<a href="#main">`).
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(400)
+    after = page.evaluate(
+        "() => ({active: document.activeElement?.id, hash: location.hash,"
+        " value: document.querySelector('#new-customer-search')?.value})"
+    )
+    check(
+        "pressing it moves focus to the screen",
+        after["active"] == "main",
+        repr(after),
+    )
+    check(
+        "the route is unchanged -- no 'Không có màn hình này'",
+        after["hash"] == "#/new" and "Không có màn hình này" not in shell_text(),
+        repr(after),
+    )
+    check("and what was typed is still there", after["value"] == "0905 12", repr(after))
+    page.keyboard.press("Tab")
+    check(
+        "the next Tab continues inside the screen, not back in the app bar",
+        bool(
+            page.evaluate("() => document.querySelector('main').contains(document.activeElement)")
+        ),
+        str(page.evaluate("() => document.activeElement?.outerText?.slice(0, 40)")),
+    )
+
+    print()
+    print("=" * 74)
     print("CONSOLE-SHELL-009 C1. THOÁT — out means the screen is cleared; not out means say so")
     print("=" * 74)
 

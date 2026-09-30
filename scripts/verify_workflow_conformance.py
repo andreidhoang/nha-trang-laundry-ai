@@ -9514,6 +9514,7 @@ def scenario_platform_bounds(console: Console) -> None:
             "each request names the person who sent it",
             sorted(owners.split(",")) == ["demo-approver", "demo-owner"],
             owners,
+        )
 
 
 # --- CONSOLE-COPY-A11Y-009: what the counter reads, against the real API ------------------------

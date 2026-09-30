@@ -205,13 +205,16 @@ bố thông báo bảo mật trước khi ghi yêu cầu hóa đơn”*.
 | H1 | Khách nói cần hóa đơn: mở đơn, ô **Hóa đơn** → **Khách cần hóa đơn**. Ghi **tên đơn vị**, **mã số thuế** (10 hoặc 12 số), **địa chỉ** (bắt buộc khi có mã số thuế), email nhận hóa đơn, người mua. Bấm **Lưu yêu cầu** | Chi tiết đơn |
 | H2 | Khách công nợ cần hóa đơn cả tháng: trang của khách → ô **Hóa đơn tháng …**, hoặc **Xem sao kê** của tháng đó → **Khách cần hóa đơn**. Tên đơn vị đã điền sẵn; đánh dấu **Lưu cho lần sau** để lần sau điền sẵn cả mã số thuế, địa chỉ | Khách hàng, Sao kê |
 | H3 | (Chủ tiệm / người duyệt) Cuối ngày hoặc cuối tháng: **Hóa đơn cần xuất** (trong **Thêm**) → **Tải danh sách cho kế toán**. Gửi tệp cho kế toán | Hóa đơn cần xuất |
-| H4 | (Chủ tiệm / người duyệt) Kế toán báo đã xuất: bấm **Ghi số hóa đơn** ở dòng đó, chép **ký hiệu**, **số**, **ngày** trên hóa đơn, bấm **Lưu số hóa đơn**. Ghi rồi không sửa được | Hóa đơn cần xuất |
+| H4 | (Chủ tiệm / người duyệt) Kế toán báo đã xuất: bấm **Ghi số hóa đơn** ở dòng đó, chép **ký hiệu**, **số**, **ngày** trên hóa đơn, bấm **Lưu số hóa đơn**. Ghi rồi không sửa được; số tiền trên hóa đơn giữ nguyên từ lúc này | Hóa đơn cần xuất |
+| H4b | (Chủ tiệm / người duyệt) Hóa đơn đã xuất có dòng vàng như *“Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán”*: tải lại danh sách cho kế toán (hóa đơn đó có trong tệp, cột **Cần báo kế toán**) và báo kế toán | Hóa đơn cần xuất, Chi tiết đơn |
 | H5 | Khách không cần nữa, hoặc ghi sai: **Huỷ yêu cầu**, chọn lý do, bấm hai lần. Ghi sai thì huỷ rồi ghi lại | Chi tiết đơn, Hóa đơn cần xuất |
 
 - Một đơn (hoặc một tháng công nợ) chỉ có **một yêu cầu đang mở**. Đơn đã nằm trong yêu cầu hóa đơn
-  tháng của khách thì không ghi riêng được nữa.
+  tháng của khách thì không ghi riêng được nữa. Đơn đã có yêu cầu riêng thì hóa đơn tháng không tính
+  đơn đó. Đơn ghi công nợ **sau khi** hóa đơn tháng đã xuất thì ghi yêu cầu riêng cho đơn đó.
 - Số tiền trong danh sách là **số tiệm đã tính cho khách** (gồm phí lưu kho nếu có), **chưa tách
-  thuế**. Loại hóa đơn và thuế suất do chủ tiệm và kế toán quyết; máy không tính thuế.
+  thuế**. Hóa đơn tháng tính mỗi đơn đủ số tiền, **gồm cả tiền khách trả trước** khi ghi công nợ.
+  Loại hóa đơn và thuế suất do chủ tiệm và kế toán quyết; máy không tính thuế.
 - **Không ghi số điện thoại khách** vào bất kỳ ô nào — máy sẽ từ chối.
 
 ### Món niêm yết theo khoảng giá (áo dài, vest, giày da, sofa, thảm…)

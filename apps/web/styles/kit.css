@@ -4881,3 +4881,21 @@ table.reminders th {
     width: auto;
   }
 }
+
+/* === INVOICE-TRUTH-009 (slice C, round 9) ===============================================================
+ * An issued invoice keeps its figure; what moved on its orders afterwards is said beside it in the
+ * warning tone (tier 1: the owner tells the bookkeeper). */
+
+.invoice-row__flag,
+.invoices__flag {
+  color: var(--warn-fg);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  margin: 0;
+}
+
+.invoices__flag {
+  display: block;
+  max-width: 22rem;
+  white-space: normal;
+}

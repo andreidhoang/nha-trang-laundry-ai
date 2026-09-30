@@ -15,6 +15,11 @@
  * server's, through `money()`), or keep anything on the device. The bookkeeper issues the invoice in
  * the provider's own portal; this records that the customer asked, and what was issued.
  *
+ * INVOICE-TRUTH-009: an issued request carries the figure it was issued for (`amount.fixed_at`),
+ * and what moved on its orders afterwards as `flags` — said here in tier 1 (`flagTexts`), never
+ * folded into the figure. An account month's figure is what each order cost the customer, a
+ * deposit taken before it went on the account included (`amount.deposit_vnd`).
+ *
  * @module ui/invoice
  */
 
@@ -84,7 +89,56 @@ export const INVOICE_HOW = [
     "đây (DEC-040).",
   "Số tiền là số tiệm đã tính cho khách (gồm phí lưu kho nếu có), chưa tách thuế. Loại hóa đơn và " +
     "thuế suất do chủ tiệm và kế toán quyết.",
+  "Hóa đơn tháng tính mỗi đơn đủ số tiền đơn đó, gồm cả tiền khách trả trước khi ghi công nợ. Đơn " +
+    "đã có yêu cầu riêng thì không tính vào tháng. Đã ghi số hóa đơn thì số tiền giữ nguyên; đơn " +
+    "hoàn tiền, huỷ hay đổi số tiền sau đó được báo ở đây và trong danh sách tải cho kế toán.",
 ];
+
+/**
+ * What moved on an issued request's orders after it was issued, as the counter and the bookkeeper
+ * read it (the server's `flags`; the download says the same words). Tier 1: it changes what the
+ * owner does now — tell the bookkeeper.
+ *
+ * @type {Record<string, (item: any) => string>}
+ */
+export const INVOICE_FLAG_VI = {
+  REFUNDED_AFTER_ISSUE: () => "Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán.",
+  CANCELLED_AFTER_ISSUE: () => "Đơn đã huỷ sau khi xuất hóa đơn — báo kế toán.",
+  AMOUNT_CHANGED_AFTER_ISSUE: (item) =>
+    `Số tiền của đơn nay là ${money(item?.live_total_vnd, "chưa có tổng")}, khác số trên hóa đơn — báo kế toán.`,
+  CHARGES_ADDED_AFTER_ISSUE: (item) =>
+    `${item?.uninvoiced_charge_count ?? 0} đơn ghi công nợ tháng này sau khi xuất hóa đơn — lập yêu cầu riêng cho từng đơn.`,
+};
+
+/**
+ * The flags of a request, each as its sentence. An unknown flag is said plainly, never dropped.
+ *
+ * @param {any} item an `InvoiceRequestResponse`
+ * @returns {string[]}
+ */
+export function flagTexts(item) {
+  const flags = Array.isArray(item?.flags) ? item.flags : [];
+  return flags.map((flag) =>
+    INVOICE_FLAG_VI[flag] ? INVOICE_FLAG_VI[flag](item) : "Đơn đã thay đổi sau khi xuất hóa đơn — báo kế toán.",
+  );
+}
+
+/**
+ * An account month's figure in words, when it needs them: the deposits it includes, and the orders
+ * left out because each has its own request.
+ *
+ * @param {any} amount an `InvoiceAmountResponse`
+ * @returns {string[]}
+ */
+export function monthNotes(amount) {
+  if (amount?.source !== "ACCOUNT_MONTH_ORDERS") return [];
+  const notes = [];
+  if (amount.deposit_vnd) notes.push(`Gồm ${money(amount.deposit_vnd)} khách trả trước khi ghi công nợ`);
+  if (amount.own_request_order_count) {
+    notes.push(`${amount.own_request_order_count} đơn đã có yêu cầu riêng, không tính vào tháng`);
+  }
+  return notes;
+}
 
 /**
  * A request as one short line: its code and the buyer's unit name.
@@ -365,6 +419,7 @@ export function requestSheet(spec) {
         spec.title,
         spec.subject?.amount ? ` · ${amountText(spec.subject.amount)}` : "",
       ),
+      monthNotes(spec.subject?.amount).map((text) => h("p", { class: "hint" }, text)),
       h("div", { class: "invoice-form" }, unit.node, tax.node, address.node, email.node, buyer.node),
       spec.subject?.profile_savable
         ? h(
@@ -461,6 +516,11 @@ export function issuedSheet(spec) {
       h("p", { class: "invoice-sheet__subject" }, `${requestTitle(item)} · ${amountText(item.amount)}`),
       h("div", { class: "invoice-form invoice-form--three" }, symbol.node, number.node, day.node),
       h("p", { class: "hint" }, "Chép đúng ký hiệu, số và ngày trên hóa đơn kế toán đã xuất. Ghi rồi không sửa được."),
+      h(
+        "p",
+        { class: "hint", dataField: "invoice-issued-fixed" },
+        `Số tiền ghi theo hóa đơn: ${amountText(item.amount)}. Lưu rồi số này giữ nguyên.`,
+      ),
       alertHost,
     ),
     actions: submit,
@@ -569,7 +629,7 @@ function refusalLine(refusal, subject) {
   }
   if (refusal === "INVOICE_REQUEST_EXISTS" && !subject?.live) {
     return subject?.subject_kind === "ACCOUNT_MONTH"
-      ? "Một đơn trong tháng đã có yêu cầu hóa đơn riêng."
+      ? "Mọi đơn trong tháng đã có yêu cầu hóa đơn riêng."
       : "Đơn này nằm trong yêu cầu hóa đơn tháng của khách.";
   }
   return null;
@@ -634,6 +694,16 @@ export function invoiceSection(spec) {
                     live.buyer?.tax_code ? `MST ${live.buyer.tax_code}` : "Không có mã số thuế",
                     `Ghi ${dateOnly(live.requested_at)}`,
                   ].join(" · "),
+            ),
+            live.status === "ISSUED"
+              ? h(
+                  "p",
+                  { class: "invoice-row__meta", dataField: "invoice-fixed-amount" },
+                  `Số trên hóa đơn: ${amountText(live.amount)}`,
+                )
+              : null,
+            flagTexts(live).map((text) =>
+              h("p", { class: "invoice-row__flag", dataField: "invoice-flag", role: "status" }, text),
             ),
           ),
           open
@@ -701,6 +771,9 @@ export function invoiceSection(spec) {
           "div",
           { class: "invoice-row__facts" },
           h("p", { class: "invoice-row__line" }, "Chưa có yêu cầu hóa đơn"),
+          monthNotes(subject.amount).map((text) =>
+            h("p", { class: "invoice-row__meta", dataField: "invoice-month-note" }, text),
+          ),
           cancelled ? h("p", { class: "invoice-row__meta" }, `${cancelled} yêu cầu đã huỷ`) : null,
         ),
         h("div", { class: "invoice-row__actions", dataField: "invoice-refusal" }, gated(press, verdict)),

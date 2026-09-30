@@ -974,12 +974,19 @@ def invoice_request(
         "closed_at": None,
         "row_version": 1 if status == "REQUESTED" else 2,
         "amount": {
-            "source": "ORDER_CHARGES" if kind == "ORDER" else "ACCOUNT_STATEMENT",
+            "source": "ORDER_CHARGES" if kind == "ORDER" else "ACCOUNT_MONTH_ORDERS",
             "total_vnd": 110_000 if kind == "ORDER" else 245_000,
             "storage_fee_vnd": None,
             "charge_count": None if kind == "ORDER" else 2,
             "month_ended": None if kind == "ORDER" else False,
+            # INVOICE-TRUTH-009: fixed once issued; a month's deposits and own-request orders.
+            "fixed_at": "2026-09-27T03:00:00+00:00" if status == "ISSUED" else None,
+            "deposit_vnd": None if kind == "ORDER" else 0,
+            "own_request_order_count": None if kind == "ORDER" else 0,
         },
+        "flags": [],
+        "live_total_vnd": None,
+        "uninvoiced_charge_count": None,
         "replayed": False,
     }
 
@@ -2550,7 +2557,8 @@ with sync_playwright() as playwright:
             from urllib.parse import parse_qs, urlsplit
 
             asked = parse_qs(urlsplit(url).query).get("status", ["REQUESTED"])[0]
-            body = invoice_list(asked)
+            # INVOICE-TRUTH-009: a section may answer a tab with its own list.
+            body = (state.get("invoice_lists") or {}).get(asked) or invoice_list(asked)
         elif route.request.method == "POST" and "/invoice-requests" in url:
             path = url.split("?")[0]
             state.setdefault("invoice_writes", []).append(
@@ -2572,11 +2580,12 @@ with sync_playwright() as playwright:
                             "filename": "yeu-cau-hoa-don-20260927-1000.csv",
                             "content_csv": "\ufeffPhiên bản truy vấn,v1\r\n",
                             "content_hash": "sha256:" + "0" * 64,
-                            "query_version": "invoice-requests-export-v1:0000000000000000",
-                            "request_count": 2,
+                            "query_version": "invoice-requests-export-v2:0000000000000000",
+                            "request_count": state.get("invoice_export_count", 2),
                             "row_count": 3,
                             "truncated": False,
                             "produced_at": "2026-09-27T03:00:00+00:00",
+                            "flagged_issued_count": state.get("invoice_export_flagged", 0),
                         }
                     ),
                 )
@@ -9889,6 +9898,127 @@ with sync_playwright() as playwright:
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
     state["order_view"] = None
     state["invoice_subject"] = None
+
+    # ============================================================================================
+    # 27b. INVOICE-TRUTH-009 (review M5, M6) -- an issued invoice shows the figure it was issued
+    #      for and, in tier 1, what moved on its order after it; Đã xuất says the same; the
+    #      download is offered for issued requests alone and says how many need the bookkeeper;
+    #      a month's row says the deposits it includes and the orders it leaves out.
+    # ============================================================================================
+    print()
+    print("=" * 74)
+    print("27b. HÓA ĐƠN ĐÃ XUẤT — the figure stays, what moved after it is said")
+    print("=" * 74)
+    flagged = invoice_request("abababab-1111-4000-8000-000000000034", status="ISSUED")
+    flagged.update(
+        {
+            "flags": ["REFUNDED_AFTER_ISSUE", "AMOUNT_CHANGED_AFTER_ISSUE"],
+            "live_total_vnd": 165_000,
+        }
+    )
+    state["order_view"] = order_view("SELF_DROP_SELF_COLLECT", balance="UNPAID", collected=False)
+    state["invoice_subject"] = invoice_subject(refusal="INVOICE_REQUEST_EXISTS", live=flagged)
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders/{PICKUP_ORDER_ID}", wait_until="networkidle")
+    page.wait_for_timeout(1400)
+    row_text = page.locator("#invoice-section").inner_text()
+    check(
+        "the order's issued invoice shows the figure it was issued for and each flag in tier 1",
+        "Số trên hóa đơn: 110.000" in row_text
+        and "Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán." in row_text
+        and "Số tiền của đơn nay là 165.000" in row_text
+        and "khác số trên hóa đơn — báo kế toán." in row_text
+        and page.locator("#invoice-section [data-field='invoice-flag']").count() == 2,
+        row_text[:300].replace("\n", " | "),
+    )
+    state["invoice_lists"] = {
+        "REQUESTED": {
+            **invoice_list("REQUESTED"),
+            "requests": [],
+            "total_count": 0,
+            "counts": {"REQUESTED": 0, "ISSUED": 1, "CANCELLED": 0},
+        },
+        "ISSUED": {
+            **invoice_list("ISSUED"),
+            "requests": [flagged],
+            "counts": {"REQUESTED": 0, "ISSUED": 1, "CANCELLED": 0},
+        },
+    }
+    state["invoice_export_count"] = 1
+    state["invoice_export_flagged"] = 1
+    state["invoice_writes"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/invoices", wait_until="networkidle")
+    page.wait_for_timeout(1400)
+    check(
+        "with nothing open but an issued request, the download is still offered to the owner",
+        page.locator("#invoices-download").is_enabled(),
+    )
+    page.locator("#invoices-download").click()
+    page.wait_for_timeout(900)
+    check(
+        "the download says how many issued invoices need the bookkeeper",
+        "1 hóa đơn đã xuất cần báo kế toán" in page.locator("main").inner_text(),
+        page.locator("main").inner_text()[-200:],
+    )
+    page.locator("#invoices-tabs [data-value='ISSUED']").click()
+    page.wait_for_timeout(900)
+    issued_row = page.locator("tr[data-invoice='abababab-1111-4000-8000-000000000034']")
+    issued_text = issued_row.inner_text() if issued_row.count() else ""
+    check(
+        "Đã xuất: the figure on the invoice, and under it what moved since",
+        "110.000" in issued_text
+        and "số trên hóa đơn" in issued_text
+        and "Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán." in issued_text,
+        issued_text[:300].replace("\n", " | "),
+    )
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.wait_for_timeout(500)
+    wide = page.evaluate("document.documentElement.scrollWidth")
+    check("at 390 px the flagged row still fits the screen", wide <= 390, wide)
+    page.set_viewport_size({"width": 1280, "height": 900})
+    state["invoice_lists"] = None
+    state["invoice_export_count"] = 2
+    state["invoice_export_flagged"] = 0
+
+    month_subject = invoice_subject()
+    month_subject.update(
+        {
+            "subject_kind": "ACCOUNT_MONTH",
+            "order_id": None,
+            "period_month": "2026-09",
+            "customer_id": ACCOUNT_CUSTOMER_ID,
+            "ticket_number": None,
+            "ticket_issued_on": None,
+            "amount": {
+                **invoice_request(kind="ACCOUNT_MONTH")["amount"],
+                "total_vnd": 220_000,
+                "deposit_vnd": 40_000,
+                "own_request_order_count": 1,
+            },
+        }
+    )
+    state["invoice_subject"] = month_subject
+    page.goto("about:blank")
+    page.goto(
+        f"http://localhost:{PORT}/#/customers/{ACCOUNT_CUSTOMER_ID}/statement/2026-09",
+        wait_until="networkidle",
+    )
+    page.wait_for_timeout(1600)
+    month_text = (
+        page.locator("#invoice-section").inner_text()
+        if page.locator("#invoice-section").count()
+        else ""
+    )
+    check(
+        "a month's Hóa đơn row says the deposits it includes and the orders it leaves out",
+        "Gồm 40.000" in month_text
+        and "khách trả trước khi ghi công nợ" in month_text
+        and "1 đơn đã có yêu cầu riêng, không tính vào tháng" in month_text,
+        month_text[:300].replace("\n", " | "),
+    )
+    state["invoice_subject"] = None
+    state["order_view"] = None
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

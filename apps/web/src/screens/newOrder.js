@@ -38,9 +38,11 @@
 
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
+import { ConsoleNotice, visibleMessage } from "../core/errors.js";
 import {
   UUID,
   ago,
+  calendarDay,
   dateOnly,
   matchesFilter,
   money,
@@ -146,7 +148,7 @@ const CREDIT_KIND = {
  * @returns {string}
  */
 function ticketDay(day) {
-  return day ? dateOnly(`${day}T12:00:00+07:00`) : "";
+  return day ? calendarDay(day, { weekday: false }) : "";
 }
 
 /**
@@ -1344,6 +1346,7 @@ export function render_(context) {
     const stepper = stepperInput({
       id: `${prefix}-qty`,
       label: serviceName(catalog, line.serviceCode),
+      name: `${line.unit === "KG" ? "Số kg" : "Số lượng"} · ${serviceName(catalog, line.serviceCode)}`,
       value: line.quantity,
       unit: unitShort(line.unit),
       decimal: line.unit === "KG",
@@ -2344,7 +2347,7 @@ export function render_(context) {
         );
         if (!read.customer_accepted_at) {
           // Never guessed: the order route needs the recorded instant, and the device clock is not it.
-          throw new Error(
+          throw new ConsoleNotice(
             "Máy chủ chưa trả thời điểm khách đồng ý của bản này, nên chưa tạo đơn. Bấm lại để đọc lại.",
           );
         }
@@ -2427,13 +2430,13 @@ export function render_(context) {
               phase === "read"
                 ? typeof failure.kind === "string"
                   ? "Chưa đọc lại được lời đồng ý vừa ghi, nên chưa tạo đơn. Bấm lại “Tạo đơn” để thử tiếp."
-                  : failure.message
+                  : visibleMessage(failure)
                 : unknown
                   ? "Chưa biết lệnh có tới máy chủ hay không, nên chưa biết đơn đã được tạo hay chưa. " +
                     "Bấm lại “Tạo đơn”: lần bấm lại dùng cùng mã thao tác, nên máy chủ không tạo hai đơn."
                   : failure.kind === "REQUIRE_HUMAN"
                     ? "Cần người quyết định trước khi tạo đơn. Không có đơn nào được tạo."
-                    : `Không tạo được đơn: ${failure.message || "máy chủ từ chối."} Không có đơn nào được tạo.`,
+                    : `Không tạo được đơn: ${visibleMessage(failure)} Không có đơn nào được tạo.`,
           }),
         ),
       );

@@ -84,11 +84,12 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
+import { visibleMessage } from "../core/errors.js";
 import {
   UNKNOWN,
   count,
+  calendarDay,
   countdown,
-  dateOnly,
   dateTime,
   money,
   moneyRange,
@@ -162,7 +163,7 @@ function countdownPill(expiresAt) {
  */
 function ticketText(read) {
   if (read?.ticket_number === null || read?.ticket_number === undefined) return null;
-  return `Phiếu ${read.ticket_number} · ${dateOnly(read.ticket_issued_on)}`;
+  return `Phiếu ${read.ticket_number} · ${calendarDay(read.ticket_issued_on, { weekday: false })}`;
 }
 
 /**
@@ -174,8 +175,7 @@ function ticketText(read) {
  * @returns {string}
  */
 function businessDay(value) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
-  return match ? `${match[3]}/${match[2]}/${match[1]}` : String(value ?? UNKNOWN);
+  return calendarDay(String(value ?? ""), { weekday: false, year: true });
 }
 
 /**
@@ -503,7 +503,7 @@ function decisionControls(item, onDecided, verdict, contentBlock = null, options
               ? "Không ghi được quyết định: máy chủ không trả lời được, nên chưa biết quyết định " +
                 "đã vào hay chưa. Tải lại hàng chờ — phiếu đã rời hàng chờ thì quyết định đã được " +
                 "ghi. Phiếu còn đó thì bấm lại; máy chủ không ghi một phiếu hai lần."
-              : `Không ghi được quyết định: ${error.message} Không có gì được ghi.`,
+              : `Không ghi được quyết định: ${visibleMessage(error)} Không có gì được ghi.`,
           actions: [
             h(
               "button",

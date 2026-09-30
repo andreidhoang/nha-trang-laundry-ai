@@ -15,6 +15,8 @@
  * @module core/errors
  */
 
+import { money } from "./format.js";
+
 /** @typedef {"OFFLINE"|"NETWORK"|"TIMEOUT"|"SESSION_ENDED"|"DENIED"|"MISSING"|"DISPOSED"|"CONFLICT"|"STALE"|"IDEMPOTENCY_CONFLICT"|"REQUIRE_HUMAN"|"NOT_SUPPORTED"|"INVALID"|"PRECONDITION_REQUIRED"|"TOO_LARGE"|"RATE_LIMITED"|"BUSY"|"UNAVAILABLE"|"PRICEBOOK_UNAVAILABLE"|"FAULT"} ErrorKind */
 
 /**
@@ -39,7 +41,7 @@ export class ApiError extends Error {
    * @param {string} [init.detail] the server's own string, kept verbatim for the details panel
    * @param {string[]} [init.reasonCodes] domain reason codes, never paraphrased
    * @param {string} [init.decision] the open business decision that owns a `NOT_SUPPORTED` refusal
-   * @param {{field: string, message: string}[]} [init.fieldErrors]
+   * @param {FieldError[]} [init.fieldErrors]
    * @param {number} [init.retryAfterSeconds]
    * @param {string} [init.correlationId]
    * @param {ConsentRefusal|null} [init.consent] who a refused service send was for (`DEC-033`)
@@ -407,19 +409,252 @@ function reasonCodesOf(detail) {
 }
 
 /**
- * FastAPI's own validation 422 is an array of `{type, loc, msg}`. Turn it into field errors that a
- * form can attach to inputs, keeping the server's message rather than inventing a friendlier one.
+ * What a staff member calls each field the API can refuse in a 422 (CONSOLE-COPY-A11Y-009, review
+ * C8). FastAPI's own validation names the field by its wire path (`body.lines.0.quantity`) and says
+ * what is wrong in English ("Input should be greater than 0"); both used to be the visible text of
+ * the notice. The label is what the counter reads; the path and the English stay under "Chi tiết
+ * kỹ thuật". Every key is a field name of this API's request bodies or query parameters -- a
+ * contract test holds the map to the OpenAPI document, so a renamed field cannot leave a label
+ * behind. A field not here is said as "Một ô nhập chưa hợp lệ", never by its path.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+export const FIELD_LABELS = Object.freeze({
+  // Tiếp nhận, báo giá, đơn
+  lines: "Các món",
+  service_code: "Dịch vụ",
+  quantity: "Khối lượng / số lượng",
+  quantity_basis: "Cách tính số lượng",
+  unit: "Đơn vị",
+  fulfillment_mode: "Cách giao nhận",
+  acquisition_source: "Khách biết tiệm qua",
+  delivery_address: "Địa chỉ giao",
+  planned_transport_weight_kg: "Khối lượng chở đi (kg)",
+  verified_distance_m: "Quãng đường đã đo (mét)",
+  km: "Số km",
+  vehicle: "Xe",
+  approved_manual_fee_vnd: "Phí giao đã thỏa thuận",
+  customer_acknowledged_manual_fee: "Khách đồng ý phí giao",
+  promise_at: "Ngày giờ trả",
+  promise_choice: "Giờ hẹn trả",
+  custom_at: "Ngày giờ trả",
+  garment_index: "Món đồ",
+  rewash_reason: "Lý do giặt lại",
+  slot_approved: "Tiệm làm kịp đơn này",
+  // Tiền
+  amount_vnd: "Số tiền",
+  paid_amount_vnd: "Số tiền đã trả",
+  cost_vnd: "Chi phí",
+  credit_limit_vnd: "Hạn mức công nợ",
+  method: "Cách trả",
+  transfer_seen: "Đã thấy tiền chuyển khoản",
+  bank_ref_last: "Số cuối mã giao dịch",
+  transfer_code: "Mã chuyển khoản",
+  collected_by_customer: "Khách nhận đồ luôn",
+  credit_id: "Khoản giảm trừ",
+  spent_on: "Ngày chi",
+  category: "Loại",
+  // Khách
+  display_name: "Tên",
+  phone: "Số điện thoại",
+  email: "Email",
+  marketing_consent: "Đồng ý nhận tin khuyến mãi",
+  service_consent: "Đồng ý lưu thông tin",
+  save_profile: "Lưu thông tin khách",
+  // Hoá đơn
+  buyer_name: "Tên người mua",
+  buyer_unit_name: "Tên đơn vị",
+  buyer_tax_code: "Mã số thuế",
+  buyer_address: "Địa chỉ",
+  buyer_email: "Email nhận hoá đơn",
+  invoice_number: "Số hoá đơn",
+  invoice_symbol: "Ký hiệu hoá đơn",
+  invoice_date: "Ngày hoá đơn",
+  // Chữ, lý do, quyết định
+  note: "Ghi chú",
+  reason: "Lý do",
+  reason_code: "Lý do",
+  rejection_reason: "Lý do từ chối",
+  evidence_summary: "Mô tả sự việc",
+  resolution: "Cách xử lý",
+  custody_resolution: "Đồ của khách xử lý thế nào",
+  decision: "Quyết định",
+  outcome: "Kết quả",
+  question: "Câu hỏi",
+  edited_text: "Nội dung tin nhắn",
+  channel: "Kênh",
+  sent_at: "Đã gửi lúc",
+  until: "Đến lúc",
+  attested_late_by_minutes: "Số phút trễ",
+  store_fault_attested: "Lỗi do tiệm",
+  // Nhân sự, máy
+  oidc_subject: "Định danh đăng nhập",
+  role: "Vai trò",
+  machine_id: "Máy",
+  // Ngày, trang
+  business_date: "Ngày",
+  business_date_to: "Đến ngày",
+  date: "Ngày",
+  from: "Từ ngày",
+  to: "Đến ngày",
+  month: "Tháng",
+  q: "Ô tìm kiếm",
+  ticket: "Số phiếu",
+  limit: "Số dòng mỗi lần đọc",
+});
+
+/** What the counter is told about a field this console has no label for. */
+export const UNNAMED_FIELD = "Một ô nhập chưa hợp lệ";
+
+/**
+ * FastAPI/Pydantic error `type` -> what is wrong, in Vietnamese. `ctx` supplies the bound the
+ * server checked against; the sentence never invents one.
+ *
+ * @type {Readonly<Record<string, (ctx: any, money: boolean) => string>>}
+ */
+const PROBLEM = Object.freeze({
+  missing: () => "chưa nhập",
+  greater_than: (ctx, isMoney) => `phải lớn hơn ${bound(ctx?.gt, isMoney)}`,
+  greater_than_equal: (ctx, isMoney) => `không được nhỏ hơn ${bound(ctx?.ge, isMoney)}`,
+  less_than: (ctx, isMoney) => `phải nhỏ hơn ${bound(ctx?.lt, isMoney)}`,
+  less_than_equal: (ctx, isMoney) => `không được lớn hơn ${bound(ctx?.le, isMoney)}`,
+  string_too_short: (ctx) => `cần ít nhất ${bound(ctx?.min_length, false)} ký tự`,
+  string_too_long: (ctx) => `dài quá ${bound(ctx?.max_length, false)} ký tự`,
+  too_short: (ctx) => `cần ít nhất ${bound(ctx?.min_length, false)} mục`,
+  too_long: (ctx) => `nhiều quá ${bound(ctx?.max_length, false)} mục`,
+  int_parsing: () => "phải là số nguyên",
+  int_type: () => "phải là số nguyên",
+  int_from_float: () => "phải là số nguyên",
+  float_parsing: () => "phải là một số",
+  decimal_parsing: () => "phải là một số",
+  string_type: () => "phải là chữ",
+  bool_parsing: () => "chỉ nhận có hoặc không",
+  bool_type: () => "chỉ nhận có hoặc không",
+  date_parsing: () => "không phải một ngày hợp lệ",
+  date_from_datetime_parsing: () => "không phải một ngày hợp lệ",
+  datetime_parsing: () => "không phải một thời điểm hợp lệ",
+  datetime_from_date_parsing: () => "không phải một thời điểm hợp lệ",
+  timezone_aware: () => "thiếu múi giờ",
+  uuid_parsing: () => "không phải một mã hợp lệ",
+  uuid_type: () => "không phải một mã hợp lệ",
+  enum: () => "không phải một lựa chọn có sẵn",
+  literal_error: () => "không phải một lựa chọn có sẵn",
+  string_pattern_mismatch: () => "không đúng định dạng",
+  extra_forbidden: () => "máy chủ không nhận ô này",
+});
+
+/**
+ * A bound from `ctx`, as the counter reads a number: money through `format.money` (never computed
+ * on), anything else as the server sent it.
+ *
+ * @param {unknown} value
+ * @param {boolean} isMoney
+ * @returns {string}
+ */
+function bound(value, isMoney) {
+  if (isMoney && Number.isInteger(value)) return money(/** @type {number} */ (value));
+  return String(value ?? "");
+}
+
+/**
+ * @typedef {object} FieldError
+ * @property {string} field the wire path, for "Chi tiết kỹ thuật" (`lines.0.quantity`)
+ * @property {string} label the Vietnamese name of the field, or "" when this console has none
+ * @property {string} text the one line a person reads ("Khối lượng / số lượng (dòng 1): phải lớn hơn 0")
+ * @property {string} raw the server's own message, verbatim, for "Chi tiết kỹ thuật"
+ */
+
+/**
+ * The Vietnamese line for one FastAPI validation item.
+ *
+ * The label is taken from the last named part of `loc`; the first list index in it, when there is
+ * one, becomes "dòng N" (the counter numbers from 1). An unlabelled field, or an item with no
+ * field at all, is "Một ô nhập chưa hợp lệ" -- the path is not a name a person knows.
+ *
+ * @param {unknown} item `{type, loc, msg, ctx}`
+ * @returns {FieldError}
+ */
+export function fieldError(item) {
+  const record = /** @type {any} */ (item) || {};
+  const location = Array.isArray(record.loc) ? record.loc : [];
+  const parts = location.filter(
+    (/** @type {unknown} */ part, /** @type {number} */ index) =>
+      !(index === 0 && ["body", "query", "path", "header", "cookie"].includes(String(part))),
+  );
+  const named = parts.filter((/** @type {unknown} */ part) => typeof part === "string");
+  const name = named.length ? String(named[named.length - 1]) : "";
+  const label = Object.prototype.hasOwnProperty.call(FIELD_LABELS, name) ? FIELD_LABELS[name] : "";
+  const index = parts.find((/** @type {unknown} */ part) => Number.isInteger(part));
+  const problem = PROBLEM[String(record.type || "")];
+  const what = problem ? problem(record.ctx, name.endsWith("_vnd")) : "chưa hợp lệ";
+  const where = label && Number.isInteger(index) ? `${label} (dòng ${Number(index) + 1})` : label;
+  return {
+    field: parts.map(String).join(".") || "—",
+    label,
+    text: label ? `${where}: ${what}` : UNNAMED_FIELD,
+    raw: String(record.msg || ""),
+  };
+}
+
+/**
+ * FastAPI's own validation 422 is an array of `{type, loc, msg, ctx}`: one `FieldError` each.
  *
  * @param {unknown} detail
- * @returns {{field: string, message: string}[]}
+ * @returns {FieldError[]}
  */
 function fieldErrorsOf(detail) {
   if (!Array.isArray(detail)) return [];
-  return detail.map((item) => {
-    const location = Array.isArray(item?.loc) ? item.loc : [];
-    const named = location.filter((part) => typeof part === "string" && part !== "body");
-    return { field: named.join(".") || "—", message: String(item?.msg || "không hợp lệ") };
-  });
+  return detail.map(fieldError);
+}
+
+/**
+ * An error the console raises itself, with a sentence written for the operator in Vietnamese. It
+ * is the one kind of non-server error whose message may be shown as it is.
+ */
+export class ConsoleNotice extends Error {
+  /** @param {string} message */
+  constructor(message) {
+    super(message);
+    this.name = "ConsoleNotice";
+  }
+}
+
+/** What a person reads when the console itself failed (a bug, not a refusal). */
+export const UNEXPECTED =
+  "Bảng vận hành gặp lỗi ngoài dự kiến. Nếu lỗi lặp lại, báo chủ tiệm.";
+
+/**
+ * The sentence an operator may see for any caught error (CONSOLE-COPY-A11Y-009, review C8).
+ *
+ * An `ApiError`'s message was written here, in Vietnamese, for its kind. A `ConsoleNotice` was
+ * written by the screen that raised it. Anything else -- a `TypeError` from a bug, a browser's own
+ * error -- carries English meant for an engineer, so the person at the counter reads `UNEXPECTED`
+ * and the engineer's text goes under "Chi tiết kỹ thuật" (`technicalText`).
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function visibleMessage(error) {
+  const known = /** @type {any} */ (error);
+  if (known && typeof known.kind === "string" && typeof known.message === "string") {
+    return known.message;
+  }
+  if (error instanceof ConsoleNotice) return error.message;
+  return UNEXPECTED;
+}
+
+/**
+ * The engineer's text of an error that is not the console's own sentence, or "".
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function technicalText(error) {
+  const known = /** @type {any} */ (error);
+  if (known && typeof known.kind === "string") return "";
+  if (error instanceof ConsoleNotice) return "";
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return error === undefined || error === null ? "" : String(error);
 }
 
 /**

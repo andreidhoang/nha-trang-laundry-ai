@@ -24,7 +24,7 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { duration, money, promiseTime } from "../core/format.js";
+import { calendarDay, duration, money, promiseTime } from "../core/format.js";
 import { LATE_REASON_VI } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -62,15 +62,13 @@ export function lateText(minutes) {
 }
 
 /**
- * "27/9": the ticket's day as the counter says it. The server sends `YYYY-MM-DD`; this only picks
- * the day and the month out of it.
+ * "27/09": the ticket's day, in the one day convention (`format.js`).
  *
  * @param {string} day
  * @returns {string}
  */
 function shortDay(day) {
-  const [, month, date] = String(day).split("-");
-  return month && date ? `${Number(date)}/${Number(month)}` : String(day);
+  return calendarDay(day, { weekday: false });
 }
 
 /**

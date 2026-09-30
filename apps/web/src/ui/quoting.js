@@ -31,6 +31,7 @@
 import { Submission, request } from "../core/api.js";
 import { BAND, bandReadiness, bandVerdict } from "../core/bands.js";
 import { h, render } from "../core/dom.js";
+import { visibleMessage } from "../core/errors.js";
 import {
   UNKNOWN,
   countdown,
@@ -40,7 +41,6 @@ import {
   quantity as quantityText,
   shortHash,
   shortId,
-  timeOnly,
 } from "../core/format.js";
 import { PRICE_STATE, enumVi, warningFor } from "../core/i18n.js";
 import {
@@ -160,15 +160,9 @@ export function unitShort(unit) {
   return UNIT_SHORT[unit] || enumVi(unit).toLowerCase();
 }
 
-/**
- * "17:54" — the counter's clock, in the pinned business timezone, without seconds.
- *
- * @param {string|null|undefined} value
- * @returns {string}
- */
-export function clock(value) {
-  return timeOnly(value).slice(0, 5);
-}
+// "17:54" — the counter's clock. One convention for every time on screen lives in `format.js`
+// (CONSOLE-COPY-A11Y-009); this re-export keeps the screens that import it from here unchanged.
+export { clock } from "../core/format.js";
 
 /**
  * The finality as a pill, in the mandated words (`ƯỚC TÍNH`, `KHOẢNG GIÁ`, `ĐÃ DUYỆT`). An unknown
@@ -606,14 +600,14 @@ export function acceptFailure(error) {
   }
   if (error?.kind === "OFFLINE") {
     return {
-      title: `${error.message} Có mạng lại thì bấm lại “Khách đồng ý — tạo đơn”.`,
+      title: `${visibleMessage(error)} Có mạng lại thì bấm lại “Khách đồng ý — tạo đơn”.`,
       final: false,
       reprice: false,
       blocked: "",
     };
   }
   return {
-    title: `Chưa chốt được: ${error?.message || "máy chủ từ chối."} Không có gì được ghi.`,
+    title: `Chưa chốt được: ${visibleMessage(error)} Không có gì được ghi.`,
     final: false,
     reprice: false,
     blocked: "",

@@ -15,6 +15,7 @@
  */
 
 import { request, whenSessionEnds } from "./api.js";
+import { visibleMessage } from "./errors.js";
 
 const STORE_KEY = "staff_store_id";
 
@@ -113,7 +114,7 @@ export async function refresh() {
       // set "ended" and differ only in `lastError`, so a wifi blip on a shop tablet -- the most
       // ordinary failure this deployment has -- presented as a sign-out.
       state.status = "unreachable";
-      state.lastError = error?.message || String(error);
+      state.lastError = visibleMessage(error);
     }
   }
   notify();

@@ -10,7 +10,7 @@
  * @module core/accounts
  */
 
-import { businessDate } from "./format.js";
+import { businessDate, monthLabel, shiftMonth as shiftMonthOf } from "./format.js";
 
 /**
  * The sentence for each account refusal code. Each says what to do at the counter now.
@@ -86,9 +86,7 @@ export function accountRefusalText(error) {
  * @returns {string}
  */
 export function monthName(month) {
-  const match = /^(\d{4})-(\d{2})$/.exec(String(month || ""));
-  if (!match) return "—";
-  return `Tháng ${Number(match[2])}/${match[1]}`;
+  return monthLabel(month);
 }
 
 /**
@@ -99,9 +97,7 @@ export function monthName(month) {
  * @returns {string}
  */
 export function shiftMonth(month, delta) {
-  const [year, number] = String(month).split("-").map(Number);
-  const index = year * 12 + (number - 1) + delta;
-  return `${String(Math.floor(index / 12)).padStart(4, "0")}-${String((index % 12) + 1).padStart(2, "0")}`;
+  return shiftMonthOf(month, delta);
 }
 
 /**

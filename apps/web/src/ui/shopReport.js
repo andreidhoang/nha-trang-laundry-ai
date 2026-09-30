@@ -16,7 +16,7 @@
  */
 
 import { h } from "../core/dom.js";
-import { UNKNOWN, integer, money, percent } from "../core/format.js";
+import { UNKNOWN, integer, money, monthLabel, percent } from "../core/format.js";
 import { EXPENSE_CATEGORY_VI } from "../core/i18n.js";
 import { infoButton, list, listRow, section, statusPill } from "./kit.js";
 
@@ -40,15 +40,6 @@ const WORDS = {
     "công của chủ tiệm (FR-RPT-002). Chi phí chuyến ghi trên đơn không bị trừ ở đây, vì xăng mua " +
     "theo bình cũng ghi trong sổ mục Xăng xe; tiền thuê xe ngoài hãy ghi vào sổ.",
 };
-
-/**
- * @param {string} month `YYYY-MM`
- * @returns {string}
- */
-function monthLabel(month) {
-  const [year, number] = String(month).split("-");
-  return `Tháng ${Number.parseInt(number, 10)}/${year}`;
-}
 
 /**
  * A tile in the report's `kpi` markup.

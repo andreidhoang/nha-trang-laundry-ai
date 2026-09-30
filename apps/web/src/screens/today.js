@@ -30,7 +30,8 @@
 
 import { isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { TIMEZONE, UNKNOWN, count, money } from "../core/format.js";
+import { visibleMessage } from "../core/errors.js";
+import { TIMEZONE, UNKNOWN, businessDate, calendarDay, count, money, shopHour } from "../core/format.js";
 import { PAYMENT_METHOD_VI, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { snapshot } from "../core/session.js";
@@ -286,21 +287,11 @@ function refusal(verdict) {
  * @returns {{greeting: string, date: string}}
  */
 function greeting(now = new Date()) {
-  const hour = Number(
-    new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, hour: "2-digit", hourCycle: "h23" })
-      .format(now)
-      .slice(0, 2),
-  );
-  const date = new Intl.DateTimeFormat("vi-VN", {
-    timeZone: TIMEZONE,
-    weekday: "long",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(now);
+  const hour = shopHour(now);
   const part =
     hour < 11 ? "buổi sáng" : hour < 13 ? "buổi trưa" : hour < 18 ? "buổi chiều" : "buổi tối";
-  return { greeting: `Chào ${part}`, date: date.charAt(0).toUpperCase() + date.slice(1) };
+  // "Thứ Tư 30/09" -- the one day convention (`format.js`), not the engine's own long form.
+  return { greeting: `Chào ${part}`, date: calendarDay(businessDate(now), { now }) };
 }
 
 /**
@@ -539,7 +530,7 @@ export function render_() {
           href: `#${tile.href}`,
           leading: tile.icon,
           title: tile.title,
-          meta: h("span", { class: "row-item__reason" }, `Không tải được: ${error.message}`),
+          meta: h("span", { class: "row-item__reason" }, `Không tải được: ${visibleMessage(error)}`),
           trailing: UNKNOWN,
           data: { queue: tile.id, failed: "true" },
         }),

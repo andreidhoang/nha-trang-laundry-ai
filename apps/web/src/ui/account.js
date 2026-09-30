@@ -65,7 +65,7 @@ const TERMS_NOTE =
  * @returns {string}
  */
 function dayText(day) {
-  return calendarDay(day, { weekday: false }) + (day ? `/${String(day).slice(0, 4)}` : "");
+  return calendarDay(day, { weekday: false, year: true });
 }
 
 /**

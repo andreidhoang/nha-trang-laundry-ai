@@ -40,9 +40,19 @@
  */
 
 import { Submission, isTruncated, request } from "../core/api.js";
-import { consentRefusalText } from "../core/errors.js";
+import { consentRefusalText, visibleMessage } from "../core/errors.js";
 import { h, render } from "../core/dom.js";
-import { UNKNOWN, UUID, dateTime, integer, shortHash, shortId } from "../core/format.js";
+import {
+  UNKNOWN,
+  UUID,
+  dateTime,
+  integer,
+  parseInstant,
+  shopInstantFromInput,
+  shopLocalInput,
+  shortHash,
+  shortId,
+} from "../core/format.js";
 import { ENUM_GLOSS, enumLabel, enumVi } from "../core/i18n.js";
 import { newOrderForContact } from "../ui/handoff.js";
 import {
@@ -217,19 +227,26 @@ function suppressionLabel(value) {
 }
 
 /**
- * The value a `datetime-local` field shows for this instant, in this device's clock — what "Vừa
- * gửi xong" fills in. Built from the parts, because `toISOString` would write UTC into a field
- * the device reads as local time.
+ * The value a `datetime-local` field shows for now, on the shop's clock — what "Vừa gửi xong"
+ * fills in. The field is read back on the same clock (`sentInstant`), so a phone set to another
+ * zone neither shifts the time it proposes nor the time it sends (CONSOLE-COPY-A11Y-009: every
+ * date on this console goes through `format.js`).
  *
  * @returns {string}
  */
 function localNow() {
-  const now = new Date();
-  const two = (n) => String(n).padStart(2, "0");
-  return (
-    `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}` +
-    `T${two(now.getHours())}:${two(now.getMinutes())}`
-  );
+  return shopLocalInput(new Date().toISOString());
+}
+
+/**
+ * What the operator picked in the "đã gửi lúc" field, read as shop time, or null when it is not a
+ * time. The echo beside the field says "Giờ Việt Nam", and this is the reading that makes it true.
+ *
+ * @param {string} value
+ * @returns {Date|null}
+ */
+function sentInstant(value) {
+  return parseInstant(shopInstantFromInput(value));
 }
 
 /**
@@ -389,8 +406,8 @@ export function manualSendPanel({
       return "Phiên bản dòng phong bì phải là số nguyên từ 1 trở lên; ngay sau khi khoá nó là 1.";
     }
     if (!attest.sentAt) return "Chưa nhập thời điểm đã gửi.";
-    const parsed = new Date(attest.sentAt);
-    if (Number.isNaN(parsed.getTime())) return "Không đọc được thời điểm đã gửi.";
+    const parsed = sentInstant(attest.sentAt);
+    if (!parsed) return "Không đọc được thời điểm đã gửi.";
     if (parsed.getTime() > Date.now()) {
       return "Thời điểm đã gửi nằm ở tương lai. Máy chủ từ chối, không làm tròn.";
     }
@@ -1351,10 +1368,10 @@ export function manualSendPanel({
           body: {
             observed_resource_version: Number.parseInt(attest.resourceVersion, 10),
             exact_rendered_hash: attest.renderedHash,
-            // `datetime-local` has no offset. `Date` reads it in this device's timezone and
-            // `toISOString` writes it back with one, which is what the server requires: a naive
-            // timestamp is refused outright.
-            sent_at: new Date(attest.sentAt).toISOString(),
+            // `datetime-local` has no offset. It is read on the shop's clock (`sentInstant`) and
+            // written back with one, which is what the server requires: a naive timestamp is
+            // refused outright.
+            sent_at: sentInstant(attest.sentAt)?.toISOString(),
           },
           idempotencyKey: attestSubmission.key(),
           ifMatch: Number.parseInt(attest.rowVersion, 10),
@@ -1418,8 +1435,8 @@ export function manualSendPanel({
         sentAtEcho.textContent = "";
         return;
       }
-      const parsed = new Date(attest.sentAt);
-      if (Number.isNaN(parsed.getTime())) {
+      const parsed = sentInstant(attest.sentAt);
+      if (!parsed) {
         sentAtEcho.textContent = "Không đọc được thời điểm này.";
         return;
       }
@@ -1959,7 +1976,7 @@ export function manualSendPanel({
         error.kind === "DENIED"
           ? "Máy chủ từ chối: chỉ chủ tiệm hoặc người duyệt của cửa hàng này, đã xác thực hai " +
               "bước, mới gỡ chặn được. Không có gì được ghi."
-          : error.message,
+          : visibleMessage(error),
       );
       render(serviceErrorHost, errorNotice(error));
       revealError(serviceErrorHost);

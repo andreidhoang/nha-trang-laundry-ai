@@ -42,7 +42,16 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { TIMEZONE, UNKNOWN, dateTime, integer, shortHash } from "../core/format.js";
+import {
+  UNKNOWN,
+  addDays,
+  businessDate,
+  calendarDay,
+  dateTime,
+  integer,
+  shiftMonth,
+  shortHash,
+} from "../core/format.js";
 import { REASON_NOTE } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId, subscribe } from "../core/session.js";
@@ -125,30 +134,7 @@ function progressKey(me, store) {
  * @returns {string}
  */
 export function shopToday(now = new Date()) {
-  /** @type {Record<string, string>} */
-  const parts = {};
-  for (const part of new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now)) {
-    parts[part.type] = part.value;
-  }
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
-
-/**
- * A calendar date moved by whole days. Pure calendar arithmetic on the date, no clock and no zone:
- * `YYYY-MM-DD` in, `YYYY-MM-DD` out.
- *
- * @param {string} iso
- * @param {number} days
- * @returns {string}
- */
-function shiftDays(iso, days) {
-  const [year, month, day] = iso.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+  return businessDate(now);
 }
 
 /**
@@ -160,26 +146,24 @@ function shiftDays(iso, days) {
  */
 export function presetWindow(preset, today) {
   if (preset === "today") return { from: today, to: today };
-  if (preset === "7d") return { from: shiftDays(today, -6), to: today };
-  if (preset === "30d") return { from: shiftDays(today, -29), to: today };
+  if (preset === "7d") return { from: addDays(today, -6), to: today };
+  if (preset === "30d") return { from: addDays(today, -29), to: today };
   if (preset === "last-month") {
-    const [year, month] = today.split("-").map(Number);
-    const first = new Date(Date.UTC(year, month - 2, 1)).toISOString().slice(0, 10);
-    const last = new Date(Date.UTC(year, month - 1, 0)).toISOString().slice(0, 10);
-    return { from: first, to: last };
+    const month = today.slice(0, 7);
+    return { from: `${shiftMonth(month, -1)}-01`, to: addDays(`${month}-01`, -1) };
   }
   return null;
 }
 
 /**
- * `YYYY-MM-DD` as the day a person reads: `16/09/2026`.
+ * `YYYY-MM-DD` as the day a person reads: `16/09/2026`. An export window is a record that leaves
+ * the shop, so it always carries its year (`format.js`).
  *
  * @param {unknown} value
  * @returns {string}
  */
 function dayVi(value) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
-  return match ? `${match[3]}/${match[2]}/${match[1]}` : String(value ?? UNKNOWN);
+  return calendarDay(String(value ?? ""), { weekday: false, year: true });
 }
 
 /**

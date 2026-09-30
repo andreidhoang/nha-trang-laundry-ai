@@ -32,7 +32,17 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { UNKNOWN, UUID, ago, dateOnly, dateTime, matchesFilter, money, shortId } from "../core/format.js";
+import {
+  UNKNOWN,
+  UUID,
+  ago,
+  calendarDay,
+  dateOnly,
+  dateTime,
+  matchesFilter,
+  money,
+  shortId,
+} from "../core/format.js";
 import { enumLabel, enumVi } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { navigate } from "../core/router.js";
@@ -259,7 +269,7 @@ function createSheet(spec) {
   /** @param {any} order an `OrderViewResponse` */
   function describe(order) {
     const number = Number.isInteger(order.ticket_number) ? `Phiếu ${order.ticket_number}` : "Đơn của khách qua kênh";
-    const day = order.ticket_issued_on ? dateOnly(`${order.ticket_issued_on}T12:00:00+07:00`) : dateOnly(order.created_at);
+    const day = order.ticket_issued_on ? calendarDay(order.ticket_issued_on, { weekday: false }) : dateOnly(order.created_at);
     return {
       orderId: String(order.order_id),
       title: `${number} · ${day}`,

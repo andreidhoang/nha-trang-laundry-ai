@@ -17,7 +17,7 @@
 import { request } from "../core/api.js";
 import { customerTitle, maskedPhone, telHref } from "../core/customers.js";
 import { h, render } from "../core/dom.js";
-import { dateOnly, money } from "../core/format.js";
+import { calendarDay, money } from "../core/format.js";
 import { CONTACT_OUTCOME_VI } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -149,7 +149,7 @@ export function render_() {
     const tel = telHref(item.phone);
     const title = rowTitle(item);
     // The title is the customer's name, or the ticket; the meta line never repeats the title.
-    const day = item.ticket_issued_on ? `Nhận ${dateOnly(item.ticket_issued_on)}` : null;
+    const day = item.ticket_issued_on ? `Nhận ${calendarDay(item.ticket_issued_on, { weekday: false })}` : null;
     const label = [title === orderName(item) ? null : orderName(item), day]
       .filter(Boolean)
       .join(" · ");

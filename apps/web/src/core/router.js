@@ -13,7 +13,8 @@
  * @module core/router
  */
 
-import { focusContainer } from "./dom.js";
+import { focusContainer, h } from "./dom.js";
+import { technicalText, visibleMessage } from "./errors.js";
 
 /**
  * @typedef {object} Route
@@ -176,23 +177,43 @@ export async function render() {
  * A screen that failed to build at all. Distinct from a screen that rendered a server refusal —
  * this one means the console itself is broken, and says so rather than blaming the server.
  *
+ * The error's own text is an engineer's (`TypeError: Cannot read properties of undefined…`), so it
+ * sits in the collapsed "Chi tiết kỹ thuật" and the visible sentence is Vietnamese
+ * (CONSOLE-COPY-A11Y-009, review C8). A server refusal that escaped a screen keeps its own
+ * Vietnamese sentence, which `visibleMessage` returns.
+ *
  * @param {unknown} error
  * @returns {HTMLElement}
  */
 function renderCrash(error) {
-  const section = document.createElement("section");
-  section.className = "screen";
-  const notice = document.createElement("div");
-  notice.className = "notice";
-  notice.dataset.state = "danger";
-  const title = document.createElement("p");
-  title.className = "notice__title";
-  title.textContent = "Màn hình này không dựng được";
-  const body = document.createElement("p");
-  body.textContent = error instanceof Error ? error.message : String(error);
-  notice.append(title, body);
-  section.append(notice);
-  return section;
+  const engineering = technicalText(error);
+  return h(
+    "section",
+    { class: "screen" },
+    h(
+      "div",
+      { class: "notice", dataState: "danger", role: "alert", dataCrash: "true" },
+      h("p", { class: "notice__title" }, "Màn hình này không dựng được"),
+      h("p", null, visibleMessage(error)),
+      engineering
+        ? h(
+            "details",
+            { class: "tech notice__tech", dataTech: "error" },
+            h("summary", null, "Chi tiết kỹ thuật"),
+            h(
+              "dl",
+              { class: "tech__list" },
+              h(
+                "div",
+                { class: "tech__row" },
+                h("dt", null, "Lỗi của bảng vận hành"),
+                h("dd", { class: "mono" }, engineering),
+              ),
+            ),
+          )
+        : null,
+    ),
+  );
 }
 
 /**

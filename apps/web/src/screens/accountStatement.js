@@ -44,7 +44,7 @@ import { accountMonthQrPath, qrAbsent, qrCard, readQr } from "../ui/vietqr.js";
  * @returns {string}
  */
 function dayText(day) {
-  return day ? `${calendarDay(day, { weekday: false })}/${String(day).slice(0, 4)}` : "—";
+  return calendarDay(day, { weekday: false, year: true });
 }
 
 /**
@@ -136,7 +136,7 @@ export function render_(context) {
     // The statement read names no store; the page reads it for the selected one.
     const storeName = snapshot().storeNames?.[String(store)] || null;
     const frozenLine = read.frozen
-      ? `Đã chốt ngày ${dateOnly(read.frozen.frozen_at)}.`
+      ? `Đã chốt ngày ${dateOnly(read.frozen.frozen_at, { year: true })}.`
       : read.month_ended
         ? "Tháng đã hết, chưa chốt — số liệu tính tới lúc đọc."
         : "Tháng chưa hết — số liệu tính tới lúc đọc.";
@@ -167,7 +167,7 @@ export function render_(context) {
         charges.length
           ? charges.map((item) =>
               row(
-                `${dateOnly(item.charged_at)} · ${
+                `${dateOnly(item.charged_at, { year: true })} · ${
                   Number.isInteger(item.ticket_number)
                     ? `Phiếu ${item.ticket_number}`
                     : `Đơn ${String(item.order_id).slice(0, 8).toUpperCase()}`
@@ -188,7 +188,7 @@ export function render_(context) {
         payments.length
           ? payments.map((item) =>
               row(
-                `${dateTime(item.recorded_at)} · ${PAYMENT_METHOD_VI[item.method] || item.method}`,
+                `${dateTime(item.recorded_at, { year: true })} · ${PAYMENT_METHOD_VI[item.method] || item.method}`,
                 money(item.amount_vnd),
                 "payment",
               ),

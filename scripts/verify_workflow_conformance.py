@@ -4123,14 +4123,18 @@ _TET_FIXTURE = "2027-02-05,2027-02-06,2027-02-07,2027-02-08,2027-02-09,2027-02-1
 
 
 def _promise_text(value: str) -> str:
-    """ "13:00 thứ Sáu 26/9" -- the instant in Asia/Ho_Chi_Minh (UTC+7 all year)."""
+    """ "13:00 thứ Bảy 26/09" -- the instant in Asia/Ho_Chi_Minh (UTC+7 all year).
+
+    `format.promiseTime`'s convention (CONSOLE-COPY-A11Y-009, C9): two-digit day and month, and
+    the year only when it is not the shop's current one ("13:00 thứ Bảy 02/01/2027").
+    """
 
     from datetime import datetime, timedelta, timezone
 
-    moment = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
-        timezone(timedelta(hours=7))
-    )
-    return f"{moment:%H:%M} {_WEEKDAY_VI[moment.weekday()]} {moment.day}/{moment.month}"
+    shop = timezone(timedelta(hours=7))
+    moment = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(shop)
+    day = f"{moment:%d/%m}" if moment.year == datetime.now(shop).year else f"{moment:%d/%m/%Y}"
+    return f"{moment:%H:%M} {_WEEKDAY_VI[moment.weekday()]} {day}"
 
 
 def _publish_turnaround(*extra: str) -> subprocess.CompletedProcess[str]:
@@ -9126,6 +9130,199 @@ def scenario_late_delivery(console: Console) -> None:
     console.sign_in("demo-owner")
 
 
+# --- CONSOLE-COPY-A11Y-009: what the counter reads, against the real API ------------------------
+
+#: What a person reading a notice must never see outside "Chi tiết kỹ thuật" (review C8).
+_ENGINEERING_WORDS = (
+    "Input should",
+    "Extra inputs",
+    "Field required",
+    "amount_vnd",
+    "frobnicate",
+    "body.",
+)
+
+
+def _visible_notices(console: Console, scope: str) -> str:
+    """The notices in `scope` without their collapsed drawers: what a person actually reads."""
+    return str(
+        console.page.evaluate(
+            """(scope) => [...document.querySelectorAll(scope + " .notice")].map((node) => {
+                const copy = node.cloneNode(true);
+                copy.querySelectorAll("details").forEach((d) => d.remove());
+                return copy.textContent;
+              }).join("\\n")""",
+            scope,
+        )
+    )
+
+
+def _unnamed_fields(console: Console, scope: str) -> list[str]:
+    """Rendered inputs, selects and textareas in `scope` with no accessible name (review C10)."""
+    return list(
+        console.page.evaluate(
+            """(scope) => {
+              const missing = [];
+              for (const root of document.querySelectorAll(scope)) {
+                for (const el of root.querySelectorAll("input, select, textarea")) {
+                  if (el.type === "hidden" || el.getClientRects().length === 0) continue;
+                  const byLabel = [...(el.labels || [])].some((l) => l.textContent.trim());
+                  const byAria = (el.getAttribute("aria-label") || "").trim();
+                  const byRef = (el.getAttribute("aria-labelledby") || "").split(/\\s+/)
+                    .filter(Boolean)
+                    .some((id) => (document.getElementById(id)?.textContent || "").trim());
+                  if (!byLabel && !byAria && !byRef) {
+                    missing.push(el.id || el.outerHTML.slice(0, 80));
+                  }
+                }
+              }
+              return missing;
+            }""",
+            scope,
+        )
+    )
+
+
+def scenario_copy_a11y(console: Console) -> None:
+    """`CONSOLE-COPY-A11Y-009` (review C8, C9, C10) on a real order: every input on Nhận đồ and Thu
+    tiền has a name; the API's own 422 is read in Vietnamese with its English kept in the drawer;
+    and every time on the order page, the board and the SLA board is written one way.
+    """
+
+    head("C9", "CHỮ, GIỜ VÀ TÊN Ô — tiếng Việt trước mắt, một cách viết giờ, ô nào cũng có tên")
+    console.sign_in("demo-operations")
+
+    # C10 on Nhận đồ, as the counter fills it: a walk-in, a weighed bag.
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "5.5")
+    console.page.wait_for_timeout(300)
+    qty = console.page.locator("#new-line-0-qty")
+    ok(
+        "C10: the weight field on Nhận đồ is named for a screen reader, not only its buttons",
+        (qty.get_attribute("aria-label") or "").startswith("Số kg · "),
+        qty.get_attribute("aria-label"),
+    )
+    missing = _unnamed_fields(console, "main")
+    ok("C10: every rendered input on Nhận đồ has a label or an aria-label", missing == [], missing)
+
+    order = console.build_order(kg="7", stop="active")
+    order_id = order["order_id"]
+
+    def read() -> dict:
+        return console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}
+
+    before = read()
+
+    # C10 on Thu tiền: the deposit field, then the transfer's attestation and reference.
+    console.open_order(order_id)
+    control = console.step_control("TAKE_PAYMENT")
+    if control is None:
+        ok("the order offers Thu tiền", False, console.primary_step())
+        return
+    control.click()
+    console.page.wait_for_timeout(600)
+    console.page.locator("#payment-edit").click()
+    touched("orderDetail.payment-edit")
+    console.page.wait_for_timeout(200)
+    missing = _unnamed_fields(console, "dialog[open]")
+    console.page.locator("#payment-method button[data-value=CHUYEN_KHOAN]").click()
+    touched("orderDetail.payment-method")
+    console.page.wait_for_timeout(300)
+    missing += _unnamed_fields(console, "dialog[open]")
+    ok(
+        "C10: every input on Thu tiền has a name (amount; transfer seen; reference)",
+        missing == [] and console.page.locator("dialog[open] #payment-bank-ref").count() == 1,
+        missing,
+    )
+    console.page.locator("#payment-method button[data-value=TIEN_MAT]").click()
+    console.page.wait_for_timeout(200)
+
+    # C8: the API's own validation answer. The sheet cannot produce one -- it refuses a bad amount
+    # before sending -- so the request leaves the browser as the sheet built it and is altered on
+    # the wire (a negative amount, and a field the API does not have); the 422 is the real API's.
+    console.type_into("#payment-amount", "10.000", "orderDetail.payment-amount")
+    answered: list[int] = []
+
+    def alter(route: Any) -> None:
+        body = json.loads(route.request.post_data or "{}")
+        body["amount_vnd"] = -5000
+        body["frobnicate"] = 1
+        response = route.fetch(post_data=json.dumps(body))
+        answered.append(response.status)
+        route.fulfill(response=response)
+
+    pattern = f"**/internal/v1/orders/{order_id}/payments"
+    console.page.route(pattern, alter)
+    console.page.locator("dialog[open] #payment-submit").click()
+    touched("orderDetail.payment-submit")
+    console.page.wait_for_timeout(1500)
+    console.page.unroute(pattern, alter)
+    seen = _visible_notices(console, "dialog[open]")
+    ok(
+        "C8: the real API answered the altered payment with its own 422",
+        answered == [422],
+        answered,
+    )
+    ok(
+        "C8: the refused amount is named in Vietnamese, with the bound the server checked",
+        "Số tiền: không được nhỏ hơn 0" in seen and "Một ô nhập chưa hợp lệ" in seen,
+        seen[:240],
+    )
+    leaked = [word for word in _ENGINEERING_WORDS if word in seen]
+    ok("C8: none of the server's English or field paths is in the sheet's text", not leaked, leaked)
+    drawer = str(
+        console.page.evaluate(
+            """() => [...document.querySelectorAll("dialog[open] .notice details")]
+                .map((d) => d.textContent).join(" | ")"""
+        )
+    )
+    ok(
+        "C8: the server's own words are kept, verbatim, under Chi tiết kỹ thuật",
+        "amount_vnd — Input should be greater than or equal to 0" in drawer
+        and "frobnicate — Extra inputs are not permitted" in drawer,
+        drawer[:240],
+    )
+    after = read()
+    ok(
+        "and nothing was recorded (server figures)",
+        after.get("paid_vnd") == before.get("paid_vnd") and after.get("balance") == "UNPAID",
+        {k: after.get(k) for k in ("paid_vnd", "balance")},
+    )
+    console.page.keyboard.press("Escape")
+    console.page.wait_for_timeout(300)
+
+    # C9: every moment on these screens is HH:MM DD/MM[/YYYY] -- never seconds, never "26-09".
+    wrong_shapes = re.compile(r"\b\d{1,2}:\d{2}:\d{2}\b|\b\d{2}:\d{2} \d{2}-\d{2}\b")
+    for route, name in (
+        (f"#/orders/{order_id}", "Chi tiết đơn"),
+        ("#/orders", "Đơn hàng"),
+        ("#/sla-board", "Bảng trễ hạn"),
+    ):
+        console.open(route, settle=1500)
+        text = console.text()
+        bad = wrong_shapes.findall(text)
+        ok(f"C9: {name} writes every time as HH:MM DD/MM, never with seconds", not bad, bad[:3])
+        stamps = re.findall(r"Cập nhật lúc [0-9:]+", text)
+        if stamps:
+            ok(
+                f"C9: {name}'s 'Cập nhật lúc' is hours and minutes",
+                all(re.fullmatch(r"Cập nhật lúc \d{2}:\d{2}", stamp) for stamp in stamps),
+                stamps,
+            )
+    promised = str(read().get("current_promise_at") or "")
+    if promised:
+        console.open_order(order_id)
+        ok(
+            "C9: the order's promise reads as format.js writes it (13:00 thứ Bảy 26/09)",
+            _promise_text(promised) in console.text(),
+            _promise_text(promised),
+        )
+    else:
+        note(
+            "no promise on this order (its ladder ran on the routes); the promise scenario pins it"
+        )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -9138,6 +9335,8 @@ SCENARIOS = {
     "prepaid": scenario_prepaid,
     "pickup_only": scenario_pickup_only,
     "busy": scenario_busy,
+    # CONSOLE-COPY-A11Y-009 (review C8, C9, C10). Needs nothing published and leaves nothing behind.
+    "copy_a11y": scenario_copy_a11y,
     # LATE-CREDIT-002 (DEC-042). Before remedy: it proves the refusal on a shop that has not
     # published the remedy policy, then publishes it with the owner's script; everything after it
     # that needs the remedy figures finds them published.

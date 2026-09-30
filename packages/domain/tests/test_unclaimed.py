@@ -42,7 +42,6 @@ from nha_trang_laundry_domain.unclaimed import (
     OrderStorageFee,
     StorageClock,
     StorageFeeStatus,
-    StoragePause,
     StoragePolicy,
     StoragePolicyError,
     awaiting_pickup,
@@ -155,9 +154,9 @@ def test_the_quoted_total_must_be_whole_dong() -> None:
 
 def fee_for(**overrides: object) -> OrderStorageFee:
     arguments: dict[str, object] = {
-        # DEC-047: whether the count runs, and the hold bookkeeping; waiting and never held.
+        # DEC-047: whether the count runs, and the holds of finished laundry; waiting, never held.
         "clock": StorageClock.RUNNING,
-        "pause": StoragePause(paused_at=None, paused_days=0),
+        "holds": (),
         "ready_at": READY,
         "as_of": day(25),
         "quoted_total_vnd": 120_000,

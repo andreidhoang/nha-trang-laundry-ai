@@ -7337,11 +7337,14 @@ def scenario_money_lifecycle(console: Console) -> None:
     )
     _age_ready(held_id, 25)
     said = console.step(held_id, "HOLD")
+    # HARNESS STEP, as `_age_ready`: ten days on hold. The hold row's guard admits only its end,
+    # so it is set aside for this one statement, as a restore would.
+    _age_ready(held_id, 10)
     sql(
-        "update orders set production_ready_at = production_ready_at - make_interval(days => 10), "
-        "production_accepted_at = production_accepted_at - make_interval(days => 10), "
-        "storage_paused_at = storage_paused_at - make_interval(days => 10), "
-        f"row_version = row_version + 1 where id = '{held_id}'"
+        "begin; alter table order_storage_holds disable trigger order_storage_holds_protected; "
+        "update order_storage_holds set held_at = held_at - make_interval(days => 10) "
+        f"where order_id = '{held_id}' and resumed_at is null; "
+        "alter table order_storage_holds enable trigger order_storage_holds_protected; commit;"
     )
     storage = console.call("GET", f"/internal/v1/orders/{held_id}/storage").get("body") or {}
     fee = storage.get("storage_fee") or {}
@@ -7383,7 +7386,12 @@ def scenario_money_lifecycle(console: Console) -> None:
     ok(
         "resumed, the count continues from day 25 (the ten days on hold do not count)",
         (after.get("owed_vnd"), after.get("remaining_vnd")) == (total + 25_000, 25_000)
-        and stored(held_id, "storage_paused_days::text") == "10",
+        and sql(
+            "select ((resumed_at at time zone 'Asia/Ho_Chi_Minh')::date - "
+            "(held_at at time zone 'Asia/Ho_Chi_Minh')::date)::text "
+            f"from order_storage_holds where order_id = '{held_id}'"
+        )
+        == "10",
         f"{resumed[:80]} || {json.dumps(after)[:160]}",
     )
 

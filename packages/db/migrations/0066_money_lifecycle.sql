@@ -1,5 +1,13 @@
--- MONEY-LIFECYCLE-009 (M1, DEC-035 x DEC-036): a storage fee the customer already paid part of
--- stays owed-for when the fee later falls.
+-- MONEY-LIFECYCLE-009 (round 9): money that moved is never un-owed, never paid twice, never lost.
+--
+--   1. M1 (DEC-035 x DEC-036): a storage fee the customer already paid part of stays owed-for when
+--      the fee later falls (`order_storage_fees.basis`).
+--   2. DEC-047: a hold pauses the storage fee; it never erases it (`order_storage_holds`).
+--   3. DEC-045 / DEC-046 (M3, M7): a cancellation without charge voids an unspent credit issued
+--      from the order, nets a spent one from the refund, and reissues a credit the bill spent
+--      (`remedy_credits.voided_*`, `reissue_of`; `order_refunds.netted_remedy_vnd`).
+--
+-- Part 1: a storage fee the customer already paid part of stays owed-for when the fee later falls.
 --
 -- `0060` fixes the storage fee only when the payment that settles the order is taken, and records
 -- the accrual that produced it (`days_waiting`, `chargeable_days`, the policy version). Until then
@@ -60,30 +68,58 @@ COMMENT ON COLUMN order_storage_fees.basis IS
 -- laundry on hold (production ON_HOLD, resuming to READY_AT_STORE) made the accrued fee vanish: an
 -- operator could hold the order, take only the quoted total and settle it -- getting round the
 -- approver-only waiver (DEC-036). The fee accrued up to a hold now stays owed, the days on hold do
--- not count, and RESUME continues the count where it stopped (`unclaimed.counted_days`):
+-- not count, and RESUME continues the count where it stopped (`unclaimed.counted_days`).
 --
---   storage_paused_at    when the current hold of finished laundry began; NULL when not held.
---   storage_paused_days  the shop-local days of every hold lifted since the laundry was last ready.
---
--- Both are written by the same UPDATE that moves production (`unclaimed.storage_pause_after_move`):
--- a hold of finished laundry sets the first, lifting it adds the hold's days to the second, and a
--- new or cleared ready stamp (rework) resets both -- a rewash still restarts the free days.
-ALTER TABLE orders
-    ADD COLUMN storage_paused_at TIMESTAMPTZ NULL,
-    ADD COLUMN storage_paused_days INTEGER NOT NULL DEFAULT 0
-        CONSTRAINT orders_storage_paused_days_check CHECK (storage_paused_days >= 0),
-    ADD CONSTRAINT orders_storage_pause_only_on_hold CHECK (
-        storage_paused_at IS NULL OR production_status = 'ON_HOLD'
-    );
+-- One row per hold of finished laundry: begun by the transition that holds it (`hold_move` START)
+-- and ended, once, by the one that lifts it (END), in the same transaction as the move. Nothing
+-- else writes it. A rewash needs no write: holds that began before the laundry was last ready do
+-- not count. Ordinary production moves never touch this table.
+CREATE TABLE order_storage_holds (
+    id UUID PRIMARY KEY,
+    order_id UUID NOT NULL REFERENCES orders(id),
+    store_id UUID NOT NULL REFERENCES stores(id),
+    held_at TIMESTAMPTZ NOT NULL,
+    resumed_at TIMESTAMPTZ NULL,
+    CONSTRAINT order_storage_holds_resumed_after_held CHECK (
+        resumed_at IS NULL OR resumed_at >= held_at
+    )
+);
+
+CREATE UNIQUE INDEX order_storage_holds_one_open
+    ON order_storage_holds (order_id) WHERE resumed_at IS NULL;
+CREATE INDEX order_storage_holds_order_idx ON order_storage_holds (order_id, held_at);
+
+-- The one update a hold admits is its end, once; it is never deleted.
+CREATE FUNCTION protect_order_storage_hold() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'a storage hold is a record; it is never deleted';
+    END IF;
+    IF NEW.id IS DISTINCT FROM OLD.id
+       OR NEW.order_id IS DISTINCT FROM OLD.order_id
+       OR NEW.store_id IS DISTINCT FROM OLD.store_id
+       OR NEW.held_at IS DISTINCT FROM OLD.held_at
+       OR OLD.resumed_at IS NOT NULL
+       OR NEW.resumed_at IS NULL THEN
+        RAISE EXCEPTION 'the only update to a storage hold is its end, once';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER order_storage_holds_protected
+    BEFORE UPDATE OR DELETE ON order_storage_holds
+    FOR EACH ROW EXECUTE FUNCTION protect_order_storage_hold();
 
 -- An order already on hold from the shelf when this migration runs: its hold began at the event
--- that put it there (every transition writes one). The update advances the row version, because
--- what the order owes changed: a payment sheet opened before it is refused STALE_VERSION. Closed
--- orders are not touched (the projection guard forbids it, and nothing accrues on them). An order
--- with no such event keeps NULL, which reads as before this migration -- the customer's side.
-UPDATE orders o
-SET storage_paused_at = held.occurred_at, row_version = o.row_version + 1
-FROM (
+-- that put it there (every transition writes one). Closed orders are left alone (nothing accrues
+-- on them). An order with no such event gets no row, which reads as before this migration -- the
+-- customer's side. No order row is touched.
+INSERT INTO order_storage_holds (id, order_id, store_id, held_at)
+SELECT gen_random_uuid(), o.id, o.store_id, held.occurred_at
+FROM orders o
+JOIN (
     SELECT e.aggregate_id AS order_id, max(e.occurred_at) AS occurred_at
     FROM domain_events e
     WHERE e.aggregate_type = 'ORDER'
@@ -91,19 +127,16 @@ FROM (
       AND e.payload ->> 'dimension' = 'production'
       AND e.payload ->> 'target' = 'ON_HOLD'
     GROUP BY e.aggregate_id
-) held
-WHERE held.order_id = o.id
-  AND o.production_status = 'ON_HOLD'
+) held ON held.order_id = o.id
+WHERE o.production_status = 'ON_HOLD'
   AND o.production_resume_status = 'READY_AT_STORE'
   AND o.production_ready_at IS NOT NULL
+  AND held.occurred_at >= o.production_ready_at
   AND o.commercial_status NOT IN ('CANCELLED', 'COMPLETED');
 
-COMMENT ON COLUMN orders.storage_paused_at IS
-    'DEC-047: when the current hold of finished laundry began (the storage fee is frozen there); '
-    'NULL when not on such a hold.';
-COMMENT ON COLUMN orders.storage_paused_days IS
-    'DEC-047: shop-local days of the holds lifted since the laundry was last ready; they do not '
-    'count toward the storage fee. Reset by a new ready stamp (a rewash restarts the free days).';
+COMMENT ON TABLE order_storage_holds IS
+    'DEC-047: each hold of finished laundry; the storage fee is frozen while one is open and the '
+    'days of the lifted ones do not count. Holds before the last ready time (a rewash) do not count.';
 
 -- ================================================================================================
 -- DEC-045 (M3) and DEC-046 (M7), 2026-09-30, delegated: a cancellation without charge never

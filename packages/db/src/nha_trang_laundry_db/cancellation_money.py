@@ -94,6 +94,30 @@ _SPENT_SQL: Final = """
 """
 
 
+#: Whether any remedy credit touches the order at all -- issued from it, or spent on its bill -- by
+#: `0042`'s own columns. Nearly every cancellation answers no, and then nothing else is read.
+_TOUCHED_SQL: Final = """
+    SELECT EXISTS (
+        SELECT 1 FROM orders o
+        JOIN remedy_credits c
+          ON c.issued_from_order_id = o.id
+          OR (
+              c.redeemed_quote_id = o.current_quote_id
+              AND c.redeemed_quote_revision = o.current_quote_revision
+          )
+        WHERE o.id = %s
+    )
+"""
+
+
+def credits_touch_order(cursor: Any, order_id: UUID) -> bool:
+    """Whether any remedy credit was issued from the order or spent on its bill."""
+
+    cursor.execute(_TOUCHED_SQL, (order_id,))
+    row = cursor.fetchone()
+    return bool(row and row[0])
+
+
 def _locked(row: Sequence[object]) -> _LockedCredit:
     state = CreditState.VOIDED if row[4] else CreditState.SPENT if row[3] else CreditState.UNSPENT
     return _LockedCredit(
@@ -124,6 +148,17 @@ def plan_cancellation_money(
 
     suffix = " FOR UPDATE OF c" if lock else ""
     with connection.cursor() as cursor:
+        if not credits_touch_order(cursor, order_id):
+            return LockedCancellationMoney(
+                plan=cancellation_money_plan(
+                    resolution=resolution,
+                    refundable_vnd=refundable_vnd,
+                    issued_from_order=(),
+                    spent_on_order=(),
+                ),
+                credits={},
+                order_contact_id=None,
+            )
         cursor.execute(_ISSUED_SQL + suffix, (order_id,))
         issued = [_locked(row) for row in cursor.fetchall()]
         cursor.execute(_SPENT_SQL + suffix, (order_id,))
@@ -335,6 +370,9 @@ def read_order_cancellation_money(
     not a recomputation.
     """
 
+    if not credits_touch_order(cursor, order_id):
+        # A netting or a move needs a credit from the order or on its bill; none, nothing to say.
+        return None
     if commercial == "CANCELLED":
         cursor.execute(
             """
@@ -421,6 +459,7 @@ __all__ = [
     "CancellationMoneyError",
     "CancellationMoneyView",
     "LockedCancellationMoney",
+    "credits_touch_order",
     "plan_cancellation_money",
     "plan_document",
     "read_order_cancellation_money",

@@ -31,7 +31,7 @@ from nha_trang_laundry_domain.unclaimed import (
     STORAGE_POLICY_CONFIG_TYPE,
     OrderStorageFee,
     StorageClock,
-    StoragePause,
+    StorageHold,
     StoragePolicy,
     StoragePolicyError,
     order_storage_fee,
@@ -134,6 +134,19 @@ def published_from_document(
     )
 
 
+#: `DEC-047`: the order's holds of finished laundry since it was last ready, oldest first, as one
+#: JSON array of `[held_at, resumed_at]` -- what `unclaimed.counted_days` counts the fee's days
+#: from. Served by `order_storage_holds_order_idx`; `[]` for nearly every order.
+STORAGE_HOLDS_SQL: Final = """
+    (
+        SELECT coalesce(
+            jsonb_agg(jsonb_build_array(h.held_at, h.resumed_at) ORDER BY h.held_at), '[]'::jsonb
+        )
+        FROM order_storage_holds h
+        WHERE h.order_id = o.id AND h.held_at >= o.production_ready_at
+    )
+"""
+
 #: The latest published storage policy as one JSON value, for reads that want it beside each row.
 #: Uncorrelated, so PostgreSQL evaluates it once per statement (an InitPlan), not once per order.
 _POLICY_DOCUMENT_SQL: Final = f"""
@@ -150,13 +163,13 @@ _POLICY_DOCUMENT_SQL: Final = f"""
 
 #: `UNCLAIMED-001`'s three columns on the order read, appended after the payment columns: the fee a
 #: settling payment fixed (null when none), whether the fee was waived, and the policy in force --
-#: then `DEC-047`'s two: when the current hold began and the days of the holds lifted.
+#: then `DEC-047`'s holds of finished laundry (`STORAGE_HOLDS_SQL`).
 STORAGE_VIEW_COLUMNS: Final = f"""
     , (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = o.id)
         AS storage_fee_fixed_vnd
     , EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id) AS storage_fee_waived
     , {_POLICY_DOCUMENT_SQL} AS storage_policy
-    , o.storage_paused_at, o.storage_paused_days
+    , {STORAGE_HOLDS_SQL} AS storage_holds
 """
 
 
@@ -181,13 +194,22 @@ def read_published_storage_policy(cursor: Any) -> PublishedStoragePolicy | None:
     return None if row is None else policy_from_column(row[0])
 
 
-def pause_from_columns(paused_at: object, paused_days: object) -> StoragePause:
-    """`DEC-047`'s two order columns (`0066`) as the domain's hold bookkeeping."""
+def holds_from_column(value: object) -> tuple[StorageHold, ...]:
+    """`STORAGE_HOLDS_SQL`'s JSON array as the domain's holds (`DEC-047`)."""
 
-    return StoragePause(
-        paused_at=paused_at if isinstance(paused_at, datetime) else None,
-        paused_days=int(str(paused_days)),
-    )
+    if not isinstance(value, list):
+        return ()
+    holds: list[StorageHold] = []
+    for item in value:
+        if not isinstance(item, list) or len(item) != 2 or item[0] is None:
+            raise ValueError("a stored storage hold is malformed")
+        holds.append(
+            StorageHold(
+                held_at=datetime.fromisoformat(str(item[0])),
+                resumed_at=None if item[1] is None else datetime.fromisoformat(str(item[1])),
+            )
+        )
+    return tuple(holds)
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +247,10 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
         + """,
                (SELECT coalesce(sum(p.amount_vnd), 0) FROM order_payments p
                  WHERE p.order_id = o.id),
-               o.production_resume_status, o.storage_paused_at, o.storage_paused_days
+               o.production_resume_status,
+        """
+        + STORAGE_HOLDS_SQL
+        + """
         FROM orders o
         JOIN quote_revisions r
           ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
@@ -258,7 +283,7 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
         settled=bool(row[6]),
         fixed_vnd=None if row[7] is None else int(str(row[7])),
         paid_vnd=paid,
-        pause=pause_from_columns(row[12], row[13]),
+        holds=holds_from_column(row[12]),
     )
     return LockedStorageFee(
         fee=fee,
@@ -339,13 +364,14 @@ def _require_active_owner(cursor: Any, actor_id: UUID) -> None:
 
 
 __all__ = [
+    "STORAGE_HOLDS_SQL",
     "STORAGE_POLICY_UNPUBLISHED",
     "STORAGE_VIEW_COLUMNS",
     "LockedStorageFee",
     "PublishedStoragePolicy",
     "StoragePolicyAuthorizationError",
+    "holds_from_column",
     "insert_fixed_storage_fee",
-    "pause_from_columns",
     "policy_from_column",
     "publish_storage_policy",
     "published_from_document",

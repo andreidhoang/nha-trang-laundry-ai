@@ -664,11 +664,23 @@ def _age_hold(connection: Any, order_id: UUID, days: int) -> None:
             UPDATE orders
             SET production_ready_at = production_ready_at - make_interval(days => %s),
                 production_accepted_at = production_accepted_at - make_interval(days => %s),
-                storage_paused_at = storage_paused_at - make_interval(days => %s),
                 row_version = row_version + 1
             WHERE id = %s
             """,
-            (days, days, days, order_id),
+            (days, days, order_id),
+        )
+        # The hold row is append-only (its one update is its end), so the harness moves it with
+        # the guard set aside for this one statement, as a restore would.
+        cursor.execute(
+            "ALTER TABLE order_storage_holds DISABLE TRIGGER order_storage_holds_protected"
+        )
+        cursor.execute(
+            "UPDATE order_storage_holds SET held_at = held_at - make_interval(days => %s) "
+            "WHERE order_id = %s AND resumed_at IS NULL",
+            (days, order_id),
+        )
+        cursor.execute(
+            "ALTER TABLE order_storage_holds ENABLE TRIGGER order_storage_holds_protected"
         )
 
 
@@ -701,9 +713,9 @@ def test_a_hold_pauses_the_fee_and_holding_then_paying_the_quoted_total_does_not
         assert held.owed_vnd == TOTAL_VND + FEE_DAY_25
         assert _rows(
             connection,
-            "SELECT storage_paused_at IS NOT NULL, storage_paused_days FROM orders WHERE id = %s",
+            "SELECT resumed_at IS NULL FROM order_storage_holds WHERE order_id = %s",
             order_id,
-        ) == [(True, 0)]
+        ) == [(True,)]
         _age_hold(connection, order_id, 10)  # ten days on hold: day 35 on the shelf
         storage = _fee(connection, order_id, staff)
         assert (storage.fee.status, storage.fee.amount_vnd) == (
@@ -722,11 +734,14 @@ def test_a_hold_pauses_the_fee_and_holding_then_paying_the_quoted_total_does_not
             TOTAL_VND,
             "PARTIALLY_PAID",
         )
+        # The hold is ended by RESUME: ten shop days, from the hold's day to today.
         assert _rows(
             connection,
-            "SELECT storage_paused_at IS NULL, storage_paused_days FROM orders WHERE id = %s",
+            "SELECT (resumed_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date "
+            "- (held_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date FROM order_storage_holds "
+            "WHERE order_id = %s",
             order_id,
-        ) == [(True, 10)]
+        ) == [(10,)]
         # The board and the waiting list read the same resumed figure.
         assert _board(connection, shop, staff)[order_id].remaining_vnd == FEE_DAY_25
         assert _waiting(connection, shop, staff)[order_id].remaining_vnd == FEE_DAY_25
@@ -805,11 +820,14 @@ def test_a_hold_does_not_protect_the_unpaid_fee_from_the_events_that_do_lower_it
         if fall == "rewash_ready_again":
             _do(connection, order_id, staff, OrderStep.RESUME)
             _apply(connection, "rewash_ready_again", order_id, staff, shop)
+            # The hold ended at RESUME and began before the new ready time: it no longer counts.
             assert _rows(
                 connection,
-                "SELECT storage_paused_at, storage_paused_days FROM orders WHERE id = %s",
+                "SELECT h.resumed_at IS NOT NULL, h.held_at < o.production_ready_at "
+                "FROM order_storage_holds h JOIN orders o ON o.id = h.order_id "
+                "WHERE h.order_id = %s",
                 order_id,
-            ) == [(None, 0)]
+            ) == [(True, True)]
         elif fall == "policy_withdrawn":
             publish_storage_policy(
                 connection, actor_id=shop.owner.staff_user_id, payload=withdrawal_document()
@@ -826,13 +844,43 @@ def test_a_hold_does_not_protect_the_unpaid_fee_from_the_events_that_do_lower_it
         connection.commit()
 
 
-def test_the_pause_columns_admit_only_a_held_order(connection: psycopg.Connection[Any]) -> None:
-    """`0066`: a pause start on an order that is not on hold is refused by the schema."""
+def test_a_hold_record_admits_one_open_hold_and_only_its_end(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """`0066`: one open hold per order; the one update a hold admits is its end, once."""
 
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-            "WHERE conname = 'orders_storage_pause_only_on_hold'"
+    now = datetime.now(UTC)
+    shop = _Shop(connection, now)
+    staff = _operator(connection, shop.store_id)
+    try:
+        order_id = _ready_for(connection, shop, staff, None)
+        _do(connection, order_id, staff, OrderStep.HOLD)
+        [(hold_id,)] = _rows(
+            connection, "SELECT id FROM order_storage_holds WHERE order_id = %s", order_id
         )
-        row = cursor.fetchone()
-    assert row is not None and "ON_HOLD" in row[0]
+        with pytest.raises(psycopg.errors.UniqueViolation), connection.transaction():
+            connection.execute(
+                "INSERT INTO order_storage_holds (id, order_id, store_id, held_at) "
+                "VALUES (%s, %s, %s, now())",
+                (uuid4(), order_id, shop.store_id),
+            )
+        with pytest.raises(psycopg.errors.RaiseException), connection.transaction():
+            connection.execute(
+                "UPDATE order_storage_holds SET held_at = now() WHERE id = %s", (hold_id,)
+            )
+        with pytest.raises(psycopg.errors.RaiseException), connection.transaction():
+            connection.execute("DELETE FROM order_storage_holds WHERE id = %s", (hold_id,))
+        _do(connection, order_id, staff, OrderStep.RESUME)
+        with pytest.raises(psycopg.errors.RaiseException), connection.transaction():
+            connection.execute(
+                "UPDATE order_storage_holds SET resumed_at = now() WHERE id = %s", (hold_id,)
+            )
+        # A hold of laundry still being washed writes no hold record at all.
+        washing = _ready_for(connection, shop, staff, None)
+        _do(connection, washing, staff, OrderStep.REWASH, rewash_reason=RewashReason.NOT_CLEAN)
+        _do(connection, washing, staff, OrderStep.HOLD)
+        assert _rows(
+            connection, "SELECT count(*) FROM order_storage_holds WHERE order_id = %s", washing
+        ) == [(0,)]
+    finally:
+        connection.rollback()

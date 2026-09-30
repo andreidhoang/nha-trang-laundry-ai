@@ -48,10 +48,10 @@ from nha_trang_laundry_domain.payments import (
 from nha_trang_laundry_domain.promise import PromiseChoice
 from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
 from nha_trang_laundry_domain.unclaimed import (
-    StoragePause,
+    HoldMove,
+    hold_move,
     order_storage_fee,
     storage_clock,
-    storage_pause_after_move,
 )
 from nha_trang_laundry_domain.vietqr import OrderIdTransferCode, TicketTransferCode
 
@@ -77,7 +77,11 @@ from nha_trang_laundry_db.promise_policy import (
 from nha_trang_laundry_db.quotes import PRICED_FULFILLMENT_MODE_SQL
 from nha_trang_laundry_db.remedies import RemedyStateError, spend_reserved_remedy_credits
 from nha_trang_laundry_db.shop_capture import apply_cycle_effect, require_cycle_machine
-from nha_trang_laundry_db.storage_fees import STORAGE_VIEW_COLUMNS, policy_from_column
+from nha_trang_laundry_db.storage_fees import (
+    STORAGE_VIEW_COLUMNS,
+    holds_from_column,
+    policy_from_column,
+)
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -403,7 +407,7 @@ _VIEW_PROMISED_READY_AT: Final = 27
 #: `PAYMENT-001`: the payment ledger's sum and rows, after the customer's three (35 and 36).
 _VIEW_PAID_VND: Final = 35
 #: `UNCLAIMED-001`: the fixed storage fee, the waiver flag and the storage policy (37 to 39), and
-#: `DEC-047`'s hold bookkeeping (40, 41).
+#: `DEC-047`'s holds of finished laundry (40).
 _VIEW_STORAGE_FEE_FIXED: Final = 37
 #: `CUSTOMER-001` (columns 32-34, after the promise's five): the customer the order was taken for,
 #: read live. The name is personal data an erasure removes, so it is never copied into a stored
@@ -474,8 +478,7 @@ _LOCK_ORDER_FOR_TRANSITION_SQL: Final = """
     SELECT store_id, commercial_status, intake_status, production_status,
            fulfillment_mode, balance_status,
            required_delivery_legs_succeeded, self_collection_recorded,
-           production_accepted_at, production_resume_status, row_version,
-           storage_paused_at, storage_paused_days
+           production_accepted_at, production_resume_status, row_version
     FROM orders
     WHERE id = %s
     FOR UPDATE
@@ -1147,33 +1150,37 @@ class OrderRepository:
             resume_to=next_state.production_resume_status,
             moment=occurred_at,
         )
-        # DEC-047: a hold of finished laundry pauses the storage fee; lifting it resumes the count;
-        # a new or cleared ready stamp restarts it. Only a production move touches it.
-        pause = StoragePause(paused_at=_optional_datetime(row[11]), paused_days=int(str(row[12])))
-        if command.production_target is not None:
-            pause = storage_pause_after_move(
-                pause,
+        # DEC-047: a hold of finished laundry pauses the storage fee (a hold row begins); lifting
+        # it ends the row and the count continues. Only these two production moves write it.
+        storage_hold = (
+            hold_move(
                 before=current.production,
                 after=next_state.production,
                 resume_to=next_state.production_resume_status,
-                ready_restamped=ready_now is not None,
-                ready_kept=ready_keep,
-                moment=occurred_at,
             )
+            if command.production_target is not None
+            else None
+        )
 
         def mutation(cursor: Any) -> None:
             # The refund row first: `order_refund_consistency` refuses to let the order read
             # REFUNDED unless one exists, and the deferred check on `order_refunds` refuses to
             # commit one beside an order that is not cancelled. Either write alone fails.
             if refund is not None:
+                # DEC-045: `netted_remedy_vnd` is named only when something is netted (0 is the
+                # column's default), so a refund with nothing to net writes what it always wrote.
+                netted = refund.netted_remedy_vnd
                 cursor.execute(
                     """
                     INSERT INTO order_refunds (
                         id, order_id, store_id, settlement_id, refunded_amount_vnd,
                         direction, custody_resolution, attested_by_staff_id, refunded_at,
-                        created_at, netted_remedy_vnd
-                    ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s, %s)
-                    """,
+                        created_at"""
+                    + (", netted_remedy_vnd" if netted else "")
+                    + """
+                    ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s"""
+                    + (", %s" if netted else "")
+                    + ")",
                     (
                         refund.refund_id,
                         command.order_id,
@@ -1184,7 +1191,7 @@ class OrderRepository:
                         command.principal.staff_user_id,
                         occurred_at,
                         occurred_at,
-                        refund.netted_remedy_vnd,
+                        *((netted,) if netted else ()),
                     ),
                 )
             cursor.execute(
@@ -1197,8 +1204,7 @@ class OrderRepository:
                         %s, CASE WHEN %s THEN production_ready_at ELSE NULL END
                     ),
                     production_released_at = COALESCE(production_released_at, %s),
-                    closed_at = COALESCE(closed_at, %s), row_version = row_version + 1,
-                    storage_paused_at = %s, storage_paused_days = %s
+                    closed_at = COALESCE(closed_at, %s), row_version = row_version + 1
                 WHERE id = %s AND row_version = %s
                 RETURNING id
                 """,
@@ -1217,14 +1223,28 @@ class OrderRepository:
                     ready_keep,
                     released_now,
                     closed_at,
-                    pause.paused_at,
-                    pause.paused_days,
                     command.order_id,
                     command.expected_row_version,
                 ),
             )
             if cursor.fetchone() is None:
                 raise OrderStateError("STALE_VERSION: order transition lost concurrency race")
+            if storage_hold is HoldMove.START:
+                cursor.execute(
+                    """
+                    INSERT INTO order_storage_holds (id, order_id, store_id, held_at)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (uuid4(), command.order_id, _uuid(row[0]), occurred_at),
+                )
+            elif storage_hold is HoldMove.END:
+                cursor.execute(
+                    """
+                    UPDATE order_storage_holds SET resumed_at = %s
+                    WHERE order_id = %s AND resumed_at IS NULL
+                    """,
+                    (occurred_at, command.order_id),
+                )
             # A cancelled order ends its intake request with it. Without this the request stays
             # `SUBMITTED` in "Tiếp nhận gần đây" and reads as live intake for a customer who
             # has gone home -- the console cannot tell the difference, because until
@@ -1893,11 +1913,8 @@ def _storage_fee_of_row(row: tuple[object, ...], facts: StepFacts, as_of: dateti
         fixed_vnd=None if fixed is None else int(str(fixed)),
         # MONEY-LIFECYCLE-009: never below the part of the fee the ledger already holds.
         paid_vnd=int(str(row[_VIEW_PAID_VND])),
-        # DEC-047: a hold pauses the fee where it stood (`STORAGE_VIEW_COLUMNS`' last two).
-        pause=StoragePause(
-            paused_at=_optional_datetime(row[_VIEW_STORAGE_FEE_FIXED + 3]),
-            paused_days=int(str(row[_VIEW_STORAGE_FEE_FIXED + 4])),
-        ),
+        # DEC-047: a hold pauses the fee where it stood (`STORAGE_VIEW_COLUMNS`' last).
+        holds=holds_from_column(row[_VIEW_STORAGE_FEE_FIXED + 3]),
     ).amount_vnd
 
 

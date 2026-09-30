@@ -285,7 +285,7 @@ happened. Every money remedy in this system is such a credit; none pays cash out
 `DEC-047` (2026-09-30, delegated). A hold of finished laundry (**Tạm dừng**, production `ON_HOLD`
 resuming to `READY_AT_STORE`) pauses the storage fee where it stood — status `PAUSED`, the fee
 accrued up to the hold still owed — and the days on hold do not count: **Tiếp tục** continues the
-count (`orders.storage_paused_at`/`storage_paused_days`, `0066`). Holding an order and taking only
+count (`order_storage_holds`, `0066`: one row per hold, ended by Tiếp tục). Holding an order and taking only
 the quoted total therefore leaves the fee owed; only the approver's waiver takes it off. A rewash
 still restarts the free days, a withdrawn policy stops accrual, and in every case a fee part
 already paid stays owed-for.

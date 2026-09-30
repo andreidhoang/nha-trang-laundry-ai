@@ -123,7 +123,7 @@ from .approvals import ApprovalBinding, read_approval_binding
 from .idempotency import IdempotencyRepository, IdempotentCommand
 from .identity import StaffPrincipal, StaffRole
 from .query_version import query_version
-from .storage_fees import pause_from_columns, read_published_storage_policy
+from .storage_fees import holds_from_column, read_published_storage_policy
 from .store_access import require_store_membership
 from .transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -322,7 +322,7 @@ EXPORT_DAY_BOUNDARY = "orders.created_at"
 #:
 #: `EXPORT-PAYMENTS-001`: the payment ledger is summed here, by method, in one LATERAL aggregate per
 #: order (an aggregate without GROUP BY always returns its one row), and the order's current quote
-#: revision is joined for what is owed. The last thirteen selected values are not cells:
+#: revision is joined for what is owed. The last twelve selected values are not cells:
 #: `_money_rows` hands them to `export_money.exported_money` -- with the storage fee
 #: `unclaimed.order_storage_fee` computes from the fee's facts (the hold bookkeeping of `DEC-047`
 #: among them) and the leading cells' production status, ready time and settlement -- and the
@@ -338,7 +338,15 @@ _EXPORT_SQL = """
            o.fulfillment_mode, o.self_collection_recorded,
            (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = o.id),
            EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id),
-           o.production_resume_status, o.storage_paused_at, o.storage_paused_days,
+           o.production_resume_status,
+           (
+               SELECT coalesce(
+                   jsonb_agg(jsonb_build_array(h.held_at, h.resumed_at) ORDER BY h.held_at),
+                   '[]'::jsonb
+               )
+               FROM order_storage_holds h
+               WHERE h.order_id = o.id AND h.held_at >= o.production_ready_at
+           ),
            rf.netted_remedy_vnd
     FROM orders o
     LEFT JOIN order_settlements s ON s.order_id = o.id
@@ -403,7 +411,15 @@ _EXPORT_WINDOW_SQL = """
            o.fulfillment_mode, o.self_collection_recorded,
            (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = o.id),
            EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id),
-           o.production_resume_status, o.storage_paused_at, o.storage_paused_days,
+           o.production_resume_status,
+           (
+               SELECT coalesce(
+                   jsonb_agg(jsonb_build_array(h.held_at, h.resumed_at) ORDER BY h.held_at),
+                   '[]'::jsonb
+               )
+               FROM order_storage_holds h
+               WHERE h.order_id = o.id AND h.held_at >= o.production_ready_at
+           ),
            rf.netted_remedy_vnd
     FROM orders o
     LEFT JOIN order_settlements s ON s.order_id = o.id
@@ -1627,7 +1643,7 @@ def _csv_bytes(rows: list[tuple[Any, ...]], *, header: tuple[object, ...]) -> st
     return buffer.getvalue()
 
 
-#: How many values `_EXPORT_SQL` selects before the thirteen that follow them: the fifteen cells
+#: How many values `_EXPORT_SQL` selects before the twelve that follow them: the fifteen cells
 #: the file has always carried, in `EXPORT_COLUMNS` order.
 _LEADING_CELLS = 15
 
@@ -1660,8 +1676,7 @@ def _money_rows(
             fixed,
             waived,
             resume_to,
-            paused_at,
-            paused_days,
+            holds,
             netted,
         ) = row[_LEADING_CELLS:]
         commercial = CommercialOrderStatus(str(leading[2]))
@@ -1690,7 +1705,7 @@ def _money_rows(
             # MONEY-LIFECYCLE-009: never below the part of the fee the ledger already holds.
             paid_vnd=int(paid),
             # DEC-047: held where it stood while the order is on hold.
-            pause=pause_from_columns(paused_at, paused_days),
+            holds=holds_from_column(holds),
         )
         try:
             money = exported_money(

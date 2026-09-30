@@ -13,11 +13,12 @@
   the *n*-th calendar day after the ready day, so the ready day itself is day 0.
 * **A hold pauses the fee; it never erases it** (`DEC-047`, 2026-09-30). Laundry put on hold
   (`HOLD`, production `ON_HOLD` resuming to `READY_AT_STORE`) keeps the fee it had accrued up to
-  the hold; the days on hold do not count; `RESUME` continues the count where it stopped. The days
-  that count are therefore the shop-local days from the ready day, less the days of every completed
-  hold (`paused_days`), and frozen at the start of the current hold (`paused_at`). A rewash (the
-  shop's fault) still restarts the free days, and a withdrawn policy stops accrual -- in every case
-  the part of the fee already paid stays owed-for (`fee_already_paid`).
+  the hold; the days on hold do not count; `RESUME` continues the count where it stopped. Each hold
+  of finished laundry is an interval (`StorageHold`, migration `0066`'s `order_storage_holds`); the
+  days that count are the shop-local days from the ready day, less the days of each hold lifted
+  since, frozen at the start of the current one (`counted_days`). A rewash (the shop's fault) still
+  restarts the free days -- holds before the new ready time do not count -- and a withdrawn policy
+  stops accrual; in every case the part of the fee already paid stays owed-for (`fee_already_paid`).
 * **Disposal (thanh lý).** From day `disposal_from_day`, and only when at least
   `disposal_min_attempts` contact attempts are recorded on at least `disposal_min_attempt_days`
   different shop days since the laundry was ready.
@@ -33,7 +34,7 @@ Pure: no clock, no database, no environment. The instant a figure is computed fo
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
@@ -321,65 +322,72 @@ def storage_clock(
 
 
 @dataclass(frozen=True, slots=True)
-class StoragePause:
-    """The hold bookkeeping an order row carries (`DEC-047`, migration `0066`).
+class StorageHold:
+    """One hold of finished laundry (`DEC-047`): when it began, and when it was lifted (`None`
+    while it lasts). Recorded by `order_storage_holds` (`0066`)."""
 
-    `paused_at` is when the current hold of finished laundry began (`None` when not held);
-    `paused_days` the shop-local days of every hold since the laundry was last ready, lifted since.
+    held_at: datetime
+    resumed_at: datetime | None
+
+
+class HoldMove(StrEnum):
+    """What one production move does to the storage fee's hold record (`DEC-047`)."""
+
+    #: Finished laundry put on hold: a hold begins.
+    START = "START"
+    #: The hold of finished laundry lifted, back to the shelf: the hold ends.
+    END = "END"
+
+
+def hold_move(
+    *, before: ProductionStatus, after: ProductionStatus, resume_to: ProductionStatus | None
+) -> HoldMove | None:
+    """`START` for a hold of finished laundry, `END` for its lifting, else `None`. Pure.
+
+    A hold of laundry still being washed is not a pause of a fee -- nothing accrues then -- and a
+    rewash needs no record: holds that began before the laundry was last ready do not count.
     """
 
-    paused_at: datetime | None
-    paused_days: int
-
-
-def storage_pause_after_move(
-    pause: StoragePause,
-    *,
-    before: ProductionStatus,
-    after: ProductionStatus,
-    resume_to: ProductionStatus | None,
-    ready_restamped: bool,
-    ready_kept: bool,
-    moment: datetime,
-) -> StoragePause:
-    """The pause bookkeeping after one production move (`DEC-047`). Pure.
-
-    * A new ready stamp (the laundry finished again, after a rewash) restarts the free days, and
-      with them the hold count: nothing of an earlier completion's holds carries over.
-    * A cleared ready stamp (rework) clears it too: no fee accrues while the laundry is not done.
-    * Finished laundry put on hold starts a pause at `moment`.
-    * Lifting that hold adds the hold's shop-local days (hold day to resume day) to `paused_days`.
-    """
-
-    if ready_restamped or not ready_kept:
-        return StoragePause(paused_at=None, paused_days=0)
     if (
         after is ProductionStatus.ON_HOLD
         and before is ProductionStatus.READY_AT_STORE
         and resume_to is ProductionStatus.READY_AT_STORE
     ):
-        return StoragePause(paused_at=moment, paused_days=pause.paused_days)
+        return HoldMove.START
     if before is ProductionStatus.ON_HOLD and after is ProductionStatus.READY_AT_STORE:
-        if pause.paused_at is None:
-            return pause
-        return StoragePause(
-            paused_at=None,
-            paused_days=pause.paused_days + days_waiting(pause.paused_at, moment),
-        )
-    return pause
+        return HoldMove.END
+    return None
 
 
 def counted_days(
-    ready_at: datetime, as_of: datetime, *, paused_at: datetime | None, paused_days: int
+    ready_at: datetime,
+    as_of: datetime,
+    *,
+    holds: Sequence[StorageHold] = (),
+    paused: bool = False,
 ) -> int:
-    """The days the storage fee counts (`DEC-047`): shop-local days from the ready day to `as_of`,
-    frozen at the current hold's start, less the days of the holds already lifted. Never negative.
+    """The days the storage fee counts (`DEC-047`). Never negative.
+
+    Shop-local days from the ready day to `as_of`, less, for each hold since the laundry was last
+    ready, the shop-local days from the hold's day to the day it was lifted. While `paused`, the
+    count is frozen at the start of the hold still open. Holds before `ready_at` (a rewash since)
+    do not count.
     """
 
-    if not isinstance(paused_days, int) or isinstance(paused_days, bool) or paused_days < 0:
-        raise ValueError("paused days are a non-negative whole number")
-    end = as_of if paused_at is None or as_of < paused_at else paused_at
-    return max(0, days_waiting(ready_at, end) - paused_days)
+    since = sorted(
+        (hold for hold in holds if hold.held_at >= ready_at), key=lambda hold: hold.held_at
+    )
+    end = as_of
+    if paused:
+        open_holds = [hold.held_at for hold in since if hold.resumed_at is None]
+        if open_holds:
+            end = min(as_of, open_holds[-1])
+    lifted = sum(
+        days_waiting(hold.held_at, min(hold.resumed_at, end))
+        for hold in since
+        if hold.resumed_at is not None and hold.held_at < end
+    )
+    return max(0, days_waiting(ready_at, end) - lifted)
 
 
 # --- the fee --------------------------------------------------------------------------------------
@@ -407,8 +415,8 @@ def storage_fee(
     ready_at: datetime,
     as_of: datetime,
     quoted_total_vnd: int,
-    paused_at: datetime | None = None,
-    paused_days: int = 0,
+    holds: Sequence[StorageHold] = (),
+    paused: bool = False,
 ) -> StorageFee:
     """`DEC-036`: free through day `free_days`; then a fee per started day, capped.
 
@@ -422,7 +430,7 @@ def storage_fee(
         or not 0 <= quoted_total_vnd <= MAX_SETTLEMENT_VND
     ):
         raise ValueError("the quoted total must be a non-negative whole number of đồng")
-    waited = counted_days(ready_at, as_of, paused_at=paused_at, paused_days=paused_days)
+    waited = counted_days(ready_at, as_of, holds=holds, paused=paused)
     chargeable = max(0, waited - policy.free_days)
     uncapped = chargeable * policy.fee_per_started_day_vnd
     cap = quoted_total_vnd * policy.fee_cap_percent // 100
@@ -516,7 +524,7 @@ def order_storage_fee(
     settled: bool,
     fixed_vnd: int | None,
     paid_vnd: int,
-    pause: StoragePause,
+    holds: Sequence[StorageHold],
 ) -> OrderStorageFee:
     """The storage fee one order owes at `as_of`, from its stored facts.
 
@@ -528,8 +536,8 @@ def order_storage_fee(
     than the part of it the ledger already covers (`fee_already_paid`, status `ALREADY_PAID`), so
     what the order owes is never below what it has been paid (`MONEY-LIFECYCLE-009`, M1).
 
-    `clock` is `storage_clock`'s answer for the order; `pause` its hold bookkeeping (`DEC-047`):
-    while `PAUSED`, the fee is what had accrued when the hold began (status `PAUSED`).
+    `clock` is `storage_clock`'s answer for the order; `holds` its holds of finished laundry
+    (`DEC-047`): while `PAUSED`, the fee is what had accrued when the hold began (status `PAUSED`).
     """
 
     if fixed_vnd is not None:
@@ -543,7 +551,7 @@ def order_storage_fee(
         as_of=as_of,
         quoted_total_vnd=quoted_total_vnd,
         waived=waived,
-        pause=pause,
+        holds=holds,
     )
     already = fee_already_paid(paid_vnd=paid_vnd, quoted_total_vnd=quoted_total_vnd)
     if already > owed_now.amount_vnd:
@@ -561,7 +569,7 @@ def _unfixed_storage_fee(
     as_of: datetime,
     quoted_total_vnd: int | None,
     waived: bool,
-    pause: StoragePause,
+    holds: Sequence[StorageHold],
 ) -> OrderStorageFee:
     """What the published policy charges an order whose fee is not fixed, before what was paid."""
 
@@ -569,7 +577,10 @@ def _unfixed_storage_fee(
         return OrderStorageFee(StorageFeeStatus.WAIVED, 0)
     if policy is None:
         return OrderStorageFee(StorageFeeStatus.POLICY_UNPUBLISHED, 0)
-    paused = clock is StorageClock.PAUSED and pause.paused_at is not None
+    paused = clock is StorageClock.PAUSED and any(
+        hold.resumed_at is None and ready_at is not None and hold.held_at >= ready_at
+        for hold in holds
+    )
     if (clock is not StorageClock.RUNNING and not paused) or ready_at is None:
         return OrderStorageFee(StorageFeeStatus.NOT_WAITING, 0)
     if quoted_total_vnd is None:
@@ -579,8 +590,8 @@ def _unfixed_storage_fee(
         ready_at=ready_at,
         as_of=as_of,
         quoted_total_vnd=quoted_total_vnd,
-        paused_at=pause.paused_at if paused else None,
-        paused_days=pause.paused_days,
+        holds=holds,
+        paused=paused,
     )
     if fee.amount_vnd == 0:
         return OrderStorageFee(StorageFeeStatus.FREE_PERIOD, 0, fee)
@@ -753,12 +764,13 @@ __all__ = [
     "DisposalMoney",
     "DisposalRefusal",
     "DisposalVerdict",
+    "HoldMove",
     "NoteRefusal",
     "OrderStorageFee",
     "StorageClock",
     "StorageFee",
     "StorageFeeStatus",
-    "StoragePause",
+    "StorageHold",
     "StoragePolicy",
     "StoragePolicyError",
     "WaiverEffect",
@@ -770,13 +782,13 @@ __all__ = [
     "disposal_rule_vi",
     "disposal_verdict",
     "fee_already_paid",
+    "hold_move",
     "order_storage_fee",
     "parse_storage_policy",
     "receipt_line_vi",
     "shop_date",
     "storage_clock",
     "storage_fee",
-    "storage_pause_after_move",
     "validate_storage_document",
     "waiver_effect",
     "withdrawal_document",

@@ -38,15 +38,16 @@ from nha_trang_laundry_domain.payments import (
 )
 from nha_trang_laundry_domain.settlement import QuotedTotal
 from nha_trang_laundry_domain.unclaimed import (
+    HoldMove,
     OrderStorageFee,
     StorageClock,
     StorageFeeStatus,
-    StoragePause,
+    StorageHold,
     StoragePolicy,
     counted_days,
     fee_already_paid,
+    hold_move,
     order_storage_fee,
-    storage_pause_after_move,
     waiver_effect,
 )
 
@@ -63,7 +64,6 @@ READY = (datetime(2026, 9, 1, 10, 0) - VN).replace(tzinfo=UTC)
 QUOTED = 100_000
 #: Day 25: five started days past the free twenty, 5.000 ₫ each.
 FEE_DAY_25 = 25_000
-NO_PAUSE = StoragePause(paused_at=None, paused_days=0)
 
 
 def day(n: int) -> datetime:
@@ -73,7 +73,7 @@ def day(n: int) -> datetime:
 def fee(**overrides: object) -> OrderStorageFee:
     arguments: dict[str, object] = {
         "clock": StorageClock.RUNNING,
-        "pause": NO_PAUSE,
+        "holds": (),
         "ready_at": READY,
         "as_of": day(25),
         "quoted_total_vnd": QUOTED,
@@ -166,7 +166,7 @@ def test_resume_continues_the_accrual_and_the_paid_part_never_exceeds_it() -> No
     held = fee(
         paid_vnd=QUOTED + 3_000,
         clock=StorageClock.PAUSED,
-        pause=StoragePause(paused_at=day(25), paused_days=0),
+        holds=(StorageHold(held_at=day(25), resumed_at=None),),
         as_of=day(40),
     )
     assert (held.status, held.amount_vnd, held.already_paid_vnd) == (
@@ -175,9 +175,7 @@ def test_resume_continues_the_accrual_and_the_paid_part_never_exceeds_it() -> No
         3_000,
     )
     # Resumed on day 40 (15 days on hold), read on day 41: one day more than at the hold.
-    resumed = fee(
-        paid_vnd=QUOTED + 3_000, pause=StoragePause(paused_at=None, paused_days=15), as_of=day(41)
-    )
+    resumed = fee(paid_vnd=QUOTED + 3_000, holds=(StorageHold(day(25), day(40)),), as_of=day(41))
     assert (resumed.status, resumed.amount_vnd) == (StorageFeeStatus.ACCRUING, 30_000)
     assert resumed.already_paid_vnd == 3_000
 
@@ -207,7 +205,7 @@ def test_property_owed_is_never_below_paid_before_the_fee_is_fixed(
         paid_vnd=paid,
         as_of=day(n),
         clock=clock,
-        pause=StoragePause(paused_at=None if held_on is None else day(held_on), paused_days=0),
+        holds=() if held_on is None else (StorageHold(held_at=day(held_on), resumed_at=None),),
         waived=waived,
         policy=POLICY if published else None,
     )
@@ -335,7 +333,7 @@ def test_zero_dong_is_still_refused_while_money_is_owed_and_money_is_refused_whe
 def _held(held_on: int, as_of: int, *, paid: int = 0, lifted_days: int = 0) -> OrderStorageFee:
     return fee(
         clock=StorageClock.PAUSED,
-        pause=StoragePause(paused_at=day(held_on), paused_days=lifted_days),
+        holds=(StorageHold(held_at=day(held_on), resumed_at=None),),
         as_of=day(as_of),
         paid_vnd=paid,
     )
@@ -391,47 +389,38 @@ def test_holding_then_paying_the_quoted_total_does_not_settle_the_fee() -> None:
 def test_resume_continues_the_count_where_the_hold_stopped_it(
     held_on: int, resumed_on: int, as_of: int, status: StorageFeeStatus, amount: int
 ) -> None:
-    lifted = storage_pause_after_move(
-        StoragePause(paused_at=day(held_on), paused_days=0),
-        before=ProductionStatus.ON_HOLD,
-        after=ProductionStatus.READY_AT_STORE,
-        resume_to=None,
-        ready_restamped=False,
-        ready_kept=True,
-        moment=day(resumed_on),
-    )
-    assert lifted == StoragePause(paused_at=None, paused_days=resumed_on - held_on)
-    running = fee(pause=lifted, as_of=day(as_of))
+    running = fee(holds=(StorageHold(day(held_on), day(resumed_on)),), as_of=day(as_of))
     assert (running.status, running.amount_vnd) == (status, amount)
 
 
-def test_the_pause_bookkeeping_follows_each_production_move() -> None:
-    start = StoragePause(paused_at=None, paused_days=3)
-    move = {
-        "before": ProductionStatus.READY_AT_STORE,
-        "after": ProductionStatus.ON_HOLD,
-        "resume_to": ProductionStatus.READY_AT_STORE,
-        "ready_restamped": False,
-        "ready_kept": True,
-        "moment": day(25),
-    }
-    assert storage_pause_after_move(start, **move) == StoragePause(day(25), 3)  # type: ignore[arg-type]
+def test_two_holds_both_lifted_both_skip_their_days() -> None:
+    # Held days 22-24 and 26-30: 2 + 4 days on hold; on day 35, 29 days counted.
+    holds = (StorageHold(day(22), day(24)), StorageHold(day(26), day(30)))
+    assert counted_days(READY, day(35), holds=holds) == 29
+    # A second hold still open freezes the count at its start: day 26 less 2 = 24.
+    open_second = (StorageHold(day(22), day(24)), StorageHold(day(26), None))
+    assert counted_days(READY, day(35), holds=open_second, paused=True) == 24
+
+
+def test_only_these_two_moves_write_a_hold() -> None:
+    p = ProductionStatus
+    assert hold_move(before=p.READY_AT_STORE, after=p.ON_HOLD, resume_to=p.READY_AT_STORE) is (
+        HoldMove.START
+    )
+    assert hold_move(before=p.ON_HOLD, after=p.READY_AT_STORE, resume_to=None) is HoldMove.END
     # A hold of laundry still being washed is not a pause of a fee (nothing accrues then).
-    washing = {
-        **move,
-        "before": ProductionStatus.IN_PROCESS,
-        "resume_to": ProductionStatus.IN_PROCESS,
-    }
-    assert storage_pause_after_move(start, **washing) == start  # type: ignore[arg-type]
-    # A rewash restarts the free days, and the hold count with them.
-    rewashed = {**move, "after": ProductionStatus.READY_AT_STORE, "ready_restamped": True}
-    assert storage_pause_after_move(StoragePause(day(25), 3), **rewashed) == NO_PAUSE  # type: ignore[arg-type]
-    # Rework clears the ready stamp: nothing accrues, nothing is paused.
-    rework = {**move, "after": ProductionStatus.EXCEPTION, "ready_kept": False}
-    assert storage_pause_after_move(StoragePause(day(25), 3), **rework) == NO_PAUSE  # type: ignore[arg-type]
-    # Lifting a hold with no recorded start (legacy) changes nothing.
-    lifted = {**move, "before": ProductionStatus.ON_HOLD, "after": ProductionStatus.READY_AT_STORE}
-    assert storage_pause_after_move(start, **lifted) == start  # type: ignore[arg-type]
+    assert hold_move(before=p.IN_PROCESS, after=p.ON_HOLD, resume_to=p.IN_PROCESS) is None
+    assert hold_move(before=p.ON_HOLD, after=p.IN_PROCESS, resume_to=None) is None
+    # A rewash or any other move writes nothing: holds before the new ready time do not count.
+    assert hold_move(before=p.READY_AT_STORE, after=p.EXCEPTION, resume_to=None) is None
+    assert hold_move(before=p.QUALITY_CHECK, after=p.READY_AT_STORE, resume_to=None) is None
+
+
+def test_holds_before_the_last_ready_time_do_not_count() -> None:
+    """A rewash restarts the free days: a hold of the earlier completion is gone with them."""
+
+    earlier = (StorageHold(day(-5), day(-1)),)
+    assert counted_days(READY, day(25), holds=earlier) == 25
 
 
 def test_a_rewash_restarts_the_free_days_but_a_paid_part_stays_owed_for() -> None:
@@ -441,10 +430,10 @@ def test_a_rewash_restarts_the_free_days_but_a_paid_part_stays_owed_for() -> Non
 
 def test_a_pause_is_ignored_unless_the_order_is_paused() -> None:
     # A stale start on an order that is not on hold any more does not freeze anything.
-    running = fee(pause=StoragePause(paused_at=day(22), paused_days=0), as_of=day(25))
+    running = fee(holds=(StorageHold(day(22), None),), as_of=day(25))
     assert running.amount_vnd == FEE_DAY_25
-    # A paused order with no recorded start reads as before DEC-047: the customer's side.
-    unknown = fee(clock=StorageClock.PAUSED, pause=NO_PAUSE)
+    # A paused order with no recorded hold reads as before DEC-047: the customer's side.
+    unknown = fee(clock=StorageClock.PAUSED, holds=())
     assert unknown.status is StorageFeeStatus.NOT_WAITING
 
 
@@ -458,13 +447,15 @@ def test_property_a_paused_count_never_moves_and_never_exceeds_the_days_on_the_s
     ready: int, held: int, later: int, lifted: int
 ) -> None:
     ready_at, held_at = day(ready), day(ready + held)
-    frozen = counted_days(ready_at, held_at, paused_at=held_at, paused_days=lifted)
-    assert frozen == counted_days(
-        ready_at, day(ready + held + later), paused_at=held_at, paused_days=lifted
-    )
+    earlier = (StorageHold(ready_at, day(ready + lifted)),) if lifted <= held else ()
+    holds = (*earlier, StorageHold(held_at, None))
+    frozen = counted_days(ready_at, held_at, holds=holds, paused=True)
+    assert frozen == counted_days(ready_at, day(ready + held + later), holds=holds, paused=True)
     assert 0 <= frozen <= held
-    running = counted_days(ready_at, day(ready + held + later), paused_at=None, paused_days=lifted)
-    assert running <= held + later
+    lifted_now = (*earlier, StorageHold(held_at, day(ready + held + later)))
+    resumed = counted_days(ready_at, day(ready + held + later), holds=lifted_now)
+    assert resumed == frozen  # the resume day counts as the hold day
+    assert counted_days(ready_at, day(ready + held + later + 1), holds=lifted_now) == frozen + 1
 
 
 def test_the_clock_pauses_only_for_finished_laundry_held_for_the_customer() -> None:

@@ -90,10 +90,11 @@ from nha_trang_laundry_db.personal_data import open_phone
 from nha_trang_laundry_db.query_version import QueryVersion, query_version
 from nha_trang_laundry_db.settlement import collected_by_for_shape
 from nha_trang_laundry_db.storage_fees import (
+    STORAGE_HOLDS_SQL,
     STORAGE_POLICY_UNPUBLISHED,
     PublishedStoragePolicy,
+    holds_from_column,
     insert_fixed_storage_fee,
-    pause_from_columns,
     read_published_storage_policy,
     storage_fee_for_order,
 )
@@ -442,7 +443,7 @@ class UnclaimedRepository:
                        ORDER BY a.attempted_at DESC, a.id DESC LIMIT 1
                    ),
                    o.commercial_status, o.production_status, o.fulfillment_mode,
-                   o.self_collection_recorded, o.storage_paused_at, o.storage_paused_days
+                   o.self_collection_recorded, {STORAGE_HOLDS_SQL}
             FROM orders o
             JOIN quote_revisions r
               ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
@@ -483,7 +484,7 @@ class UnclaimedRepository:
                 settled=bool(row[12]),
                 fixed_vnd=None if row[13] is None else int(str(row[13])),
                 paid_vnd=paid,
-                pause=pause_from_columns(row[23], row[24]),
+                holds=holds_from_column(row[23]),
             )
             times = tuple(datetime.fromisoformat(str(value)) for value in (row[17] or []))
             last = row[18] if isinstance(row[18], dict) else None

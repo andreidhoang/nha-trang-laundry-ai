@@ -109,6 +109,13 @@ export function feeText(fee, policy, balance) {
       ? `${money(fee.amount_vnd)} · ${fee.chargeable_days} ngày × ${money(fee.fee_per_started_day_vnd)}`
       : money(fee.amount_vnd);
   }
+  // DEC-047: laundry on hold keeps the fee it had accrued when the hold began; the days on hold do
+  // not count, and "Tiếp tục" continues the count. Only the approver's waiver takes it off.
+  if (status === "PAUSED") {
+    return Number.isInteger(fee.chargeable_days) && Number.isInteger(fee.fee_per_started_day_vnd)
+      ? `${money(fee.amount_vnd)} · ${fee.chargeable_days} ngày × ${money(fee.fee_per_started_day_vnd)} · dừng tính khi giữ đơn`
+      : `${money(fee.amount_vnd)} · dừng tính khi giữ đơn`;
+  }
   if (status === "FREE_PERIOD") {
     return policy ? `Miễn phí tới hết ngày thứ ${policy.free_days}` : "Chưa tính phí";
   }
@@ -338,8 +345,9 @@ export function storageSection(spec) {
     storage?.waiver ||
     (fee.status === "FIXED" && fee.amount_vnd > 0) ||
     // MONEY-LIFECYCLE-009: a kept fee part is on the money card after the order stopped waiting
-    // (held, rewashed, cancelled); the line says what it is.
-    fee.status === "ALREADY_PAID";
+    // (rewashed, cancelled); the line says what it is. DEC-047: a held order's paused fee too.
+    fee.status === "ALREADY_PAID" ||
+    fee.status === "PAUSED";
   if (!relevant) return null;
   const who = principal();
   const alertHost = h("div");
@@ -432,7 +440,7 @@ export function storageSection(spec) {
   }
   // MONEY-LIFECYCLE-009 (A3): offered while the server says some of the fee is unpaid, and the
   // sheet states what the waiver will do in the server's own figures.
-  if (fee.status === "ACCRUING" && storage.waiver_effect) {
+  if ((fee.status === "ACCRUING" || fee.status === "PAUSED") && storage.waiver_effect) {
     controls.push(
       gated(
         button({

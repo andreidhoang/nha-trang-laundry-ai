@@ -2171,6 +2171,8 @@ EXPORT_REQUEST_CONTENT = {
         "paid_transfer_vnd",
         "paid_vnd",
         "remaining_vnd",
+        # MONEY-LIFECYCLE-009 (DEC-045): the part of a refund netted for a spent remedy credit.
+        "refund_netted_remedy_vnd",
     ],
     "excludes": [
         "customer_incident_evidence.summary",
@@ -2180,7 +2182,7 @@ EXPORT_REQUEST_CONTENT = {
         "orders.customer_id",
         "order_payments.bank_ref_last",
     ],
-    "query_version": "store-day-orders-export-v4:c2ce1e9e6379d784",
+    "query_version": "store-day-orders-export-v5:1a1030bc2889b0be",
     "statement_vi": (
         "Xuất bản sao hồ sơ của chính cửa hàng cho ngày 2026-09-16 (theo giờ Việt Nam): mã đơn, "
         "trạng thái, mốc thời gian và tiền của những đơn MỞ trong ngày đó. Tiền đã trả lấy từ sổ "
@@ -2201,7 +2203,7 @@ EXPORT_REQUEST_CONTENT = {
         "Tiền trong tệp: đã trả (tiền mặt, chuyển khoản) theo sổ thu từng lần, còn lại, đã hoàn — "
         "tính tới lúc xuất."
     ),
-    "bound_query_version": "store-day-orders-export-v4:c2ce1e9e6379d784",
+    "bound_query_version": "store-day-orders-export-v5:1a1030bc2889b0be",
     "bound_shape_retired": False,
 }
 
@@ -3280,7 +3282,7 @@ with sync_playwright() as playwright:
             return
         elif "/orders/" in url and "/remedy-credits" in url:
             state.setdefault("credit_reads", []).append(url)
-            body = ORDER_CREDITS
+            body = state.get("order_credits") or ORDER_CREDITS
         elif (
             "/internal/v1/sessions/" in url
             and url.split("?")[0].endswith("/revoke")
@@ -9912,11 +9914,12 @@ with sync_playwright() as playwright:
     #     sheet says before the press what it keeps and that the order will be settled; a fee the
     #     customer already paid reads "khách đã trả, giữ nguyên" with no waiver to press; an order
     #     whose ledger covers everything reads "Tất toán" and settles at 0 ₫ (with the handover);
-    #     a cancellation refused for remedy money names the credit in Vietnamese at the control,
-    #     never the raw code.
+    #     DEC-047: a held order's fee is paused where it stood, not erased; DEC-045/046: the
+    #     refund sheet states, before the press, what the cancellation does to the remedy credits
+    #     (void, net, reissue); the order page, the credit rows and the receipt state what it did.
     # ============================================================================================
     print()
-    print("[28] Tiền đã trả không bị xoá: Miễn phí báo tất toán, Tất toán 0 ₫, Huỷ bị từ chối")
+    print("[28] Tiền đã trả không bị xoá: Miễn phí báo tất toán, Tất toán 0 ₫, giữ đơn, huỷ đơn")
     SESSION_OK["roles"] = ["OPS_APPROVER"]
     part_paid = order_view(
         "SELF_DROP_SELF_COLLECT",
@@ -10033,12 +10036,25 @@ with sync_playwright() as playwright:
         and page.locator("#order-storage-waive").count() == 0,
         storage_text[:200].replace("\n", " | "),
     )
-    held = dict(covered)
+    # DEC-047: on hold the fee is paused where it stood (25.000 ₫, 3.000 ₫ of it paid) -- not
+    # erased to the paid part -- and only the approver's waiver takes the rest off.
+    held = dict(part_paid)
     held["production"] = "ON_HOLD"
     held["next_steps"] = [step("RESUME", primary=True)]
     state["storage"] = storage_read(
-        awaiting=False, fee=3_000, status="ALREADY_PAID", already_paid=3_000
+        awaiting=False,
+        fee=25_000,
+        status="PAUSED",
+        already_paid=3_000,
+        waiver_effect={
+            "waived_vnd": 22_000,
+            "kept_vnd": 3_000,
+            "owed_after_vnd": 113_000,
+            "remaining_after_vnd": 0,
+            "settles": True,
+        },
     )
+    SESSION_OK["roles"] = ["OPS_APPROVER"]
     page.goto("about:blank")
     page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
     open_order(held)
@@ -10049,10 +10065,14 @@ with sync_playwright() as playwright:
         else ""
     )
     check(
-        "on hold, no longer waiting, the Lưu kho line still says what the kept 3.000 ₫ is",
-        "khách đã trả, giữ nguyên" in held_text and "3.000" in held_text,
+        "on hold, the Lưu kho line says the 25.000 ₫ fee is paused, and the approver may waive it",
+        "dừng tính khi giữ đơn" in held_text
+        and "25.000" in held_text
+        and "khách đã trả, giữ nguyên" not in held_text
+        and page.locator("#order-storage-waive").count() == 1,
         held_text[:160].replace("\n", " | ") or "no Lưu kho section",
     )
+    SESSION_OK["roles"] = ["OPERATOR"]
     state["storage"] = storage_read(
         awaiting=True, fee=3_000, status="ALREADY_PAID", days=25, already_paid=3_000
     )
@@ -10174,8 +10194,15 @@ with sync_playwright() as playwright:
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
 
-    # M3 / M7: the cancellation is refused for remedy money; the reason is the server's sentence.
+    # DEC-045 / DEC-046: the refund sheet states what the cancellation does to the remedy credits,
+    # in the server's words, before the press; the order page, the credit rows and the receipt
+    # state what it did.
     state["storage"] = None
+    netting = [
+        "Khoản Giảm trừ do giao trễ 11.000 ₫ khách chưa dùng được huỷ cùng đơn.",
+        "Trừ khoản Bồi thường món bị hỏng 80.000 ₫ khách đã dùng: hoàn 30.000 ₫ thay vì 110.000 ₫.",
+        "Cấp lại cho khách khoản Giảm trừ do giao trễ 13.200 ₫ đã dùng cho đơn này.",
+    ]
     cancel_view = order_view(
         "SELF_DROP_SELF_COLLECT",
         balance="PAID",
@@ -10189,56 +10216,113 @@ with sync_playwright() as playwright:
             ),
         ],
     )
-    for code, said in (
-        (
-            "CANCEL_AFTER_MONEY_REMEDY",
-            "Không huỷ được: khách đã nhận khoản Giảm trừ do giao trễ 11.000 ₫ từ đơn này — huỷ "
-            "không thu tiền là trả hai lần. Giữ đơn, làm tiếp và báo chủ tiệm.",
-        ),
-        (
-            "CANCEL_WOULD_LOSE_SPENT_CREDIT",
-            "Không huỷ được: đơn đã dùng khoản Giảm trừ do giao trễ 11.000 ₫ của khách — huỷ thì "
-            "khoản đó mất. Giữ đơn, làm tiếp và báo chủ tiệm.",
-        ),
-    ):
-        page.goto("about:blank")
-        page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
-        open_order(cancel_view)
-        state["order_writes"] = []
-        state["order_write_reply"] = (
-            422,
-            {"detail": {"outcome": "REQUIRE_HUMAN", "reason_codes": [code], "reason_vi": said}},
-        )
-        page.locator("button[data-more-steps]").click()
-        page.wait_for_timeout(300)
-        page.locator("dialog[open] button[data-step=CANCEL]").click()
-        page.wait_for_timeout(300)
-        page.locator("dialog[open] input[name=custody_resolution]").first.check()
-        page.locator("dialog[open] .sheet__actions button").first.click()
-        page.wait_for_timeout(200)
-        page.locator("dialog[open] .sheet__actions button").first.click()
-        page.wait_for_timeout(900)
-        notice = page.locator("dialog[open] .notice")
-        title = (
-            notice.locator(".notice__title").first.inner_text().strip()
-            if notice.count()
-            else "absent"
-        )
-        listed = notice.locator(".notice__reasons")
-        reasons = listed.first.inner_text() if notice.count() and listed.count() else ""
-        writes = state.get("order_writes") or []
-        check(
-            f"{code}: the refusal at Huỷ đơn is the server's Vietnamese sentence, not the code",
-            len(writes) == 1
-            and title == said
-            and "chủ tiệm quyết định" in reasons
-            and code not in title
-            and code not in reasons
-            and notice.locator("details.tech").count() == 1,
-            f"{title[:120]} | {reasons[:120]}",
-        )
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(300)
+    cancel_view["cancellation_money"] = {
+        "stage": "PREVIEW",
+        "refundable_vnd": 110_000,
+        "netted_vnd": 80_000,
+        "refund_vnd": 30_000,
+        "voided_vnd": 11_000,
+        "reissued_vnd": 13_200,
+        "lines_vi": netting,
+    }
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    open_order(cancel_view)
+    state["order_writes"] = []
+    page.locator("button[data-more-steps]").click()
+    page.wait_for_timeout(300)
+    page.locator("dialog[open] button[data-step=CANCEL]").click()
+    page.wait_for_timeout(400)
+    sheet_text = open_dialog_text()
+    check(
+        "Huỷ đơn states before the press what happens to each credit and the refund, verbatim",
+        all(line in sheet_text for line in netting)
+        and "Tiền hoàn cho khách: 30.000 ₫ (đã trừ 80.000 ₫)" in sheet_text.replace("\xa0", " ")
+        and not state["order_writes"],
+        sheet_text[:300].replace("\n", " | "),
+    )
+    cancelled = dict(cancel_view)
+    cancelled["commercial"] = "CANCELLED"
+    cancelled["balance"] = "REFUNDED"
+    cancelled["next_steps"] = []
+    cancelled["cancellation_money"] = {
+        "stage": "DONE",
+        "refundable_vnd": 110_000,
+        "netted_vnd": 80_000,
+        "refund_vnd": 30_000,
+        "voided_vnd": 11_000,
+        "reissued_vnd": 13_200,
+        "lines_vi": [
+            "Khoản Giảm trừ do giao trễ 11.000 ₫ khách chưa dùng đã được huỷ cùng đơn.",
+            "Đã trừ 80.000 ₫ (khoản khách đã dùng ở đơn khác): hoàn 30.000 ₫ thay vì 110.000 ₫.",
+            "Đã cấp lại cho khách khoản Giảm trừ do giao trễ 13.200 ₫.",
+        ],
+    }
+    state["order_write_reply"] = (200, cancelled)
+    page.locator("dialog[open] input[name=custody_resolution]").first.check()
+    page.locator("dialog[open] .sheet__actions button").first.click()
+    page.wait_for_timeout(200)
+    page.locator("dialog[open] .sheet__actions button").first.click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "the cancellation is one press to the steps route, with the resolution and nothing else",
+        len(writes) == 1
+        and json.loads(writes[0]["body"] or "{}").get("custody_resolution")
+        == "SHOP_FAULT_NO_CHARGE",
+        repr(writes)[:200],
+    )
+    page.keyboard.press("Escape")
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    open_order(cancelled)
+    page.wait_for_timeout(600)
+    money_text = page.locator(".order__money").inner_text()
+    check(
+        "after it, the money card states what the cancellation did to each credit",
+        all(line in money_text for line in cancelled["cancellation_money"]["lines_vi"])
+        and "Đã hoàn cho khách: 30.000 ₫ (đã trừ 80.000 ₫)" in money_text.replace("\xa0", " "),
+        money_text[:300].replace("\n", " | "),
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    state["order_view"] = cancelled
+    page.evaluate(f"location.hash = '#/orders/{PICKUP_ORDER_ID}/receipt'")
+    page.wait_for_timeout(1500)
+    paper_text = (
+        page.locator("#receipt-paper").inner_text()
+        if page.locator("#receipt-paper").count()
+        else ""
+    )
+    check(
+        "the receipt prints what went back, what was netted, and each credit's line",
+        "Đã hoàn" in paper_text
+        and "30.000" in paper_text
+        and "Trừ khoản khách đã dùng" in paper_text
+        and "80.000" in paper_text
+        and "Đã cấp lại cho khách khoản Giảm trừ do giao trễ 13.200 ₫." in paper_text,
+        paper_text[:300].replace("\n", " | "),
+    )
+    # The order's credit rows: a voided credit reads "Đã huỷ cùng đơn", with no code to copy.
+    voided_credits = json.loads(json.dumps(ORDER_CREDITS))
+    voided_credits["credits"][0]["status"] = "VOIDED"
+    voided_credits["credits"][0]["voided_at"] = "2026-09-29T04:00:00+00:00"
+    state["order_credits"] = voided_credits
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.evaluate(f"location.hash = '#/orders/{ORDER_VIEW_ID}'")
+    page.wait_for_timeout(1200)
+    voided_row = page.locator(f"#order-remedy-credits li[data-credit-id='{UNUSED_CREDIT_ID}']")
+    row_text = voided_row.inner_text() if voided_row.count() else ""
+    check(
+        "a credit voided with its order reads 'Đã huỷ cùng đơn' and offers no code to copy",
+        "Đã huỷ cùng đơn" in row_text
+        and voided_row.get_attribute("data-credit-status") == "VOIDED"
+        and voided_row.locator(".credit-row__code").count() == 0,
+        row_text[:160].replace("\n", " | ") or "no row",
+    )
+    state["order_credits"] = None
     state["order_write_reply"] = None
     state["order_view"] = None
     state["storage"] = None

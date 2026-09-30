@@ -69,6 +69,7 @@ import {
   stepVi,
 } from "../core/i18n.js";
 import { modeBadge, orderProgress, orderStatus } from "../core/orderStatus.js";
+import { cancellationMoneyBlock } from "../ui/remedyMoney.js";
 import { can } from "../core/rbac.js";
 import { navigate } from "../core/router.js";
 import { principal, storeId } from "../core/session.js";
@@ -297,6 +298,10 @@ function acquisitionSourceText(value) {
 function creditItem(credit) {
   const id = String(credit.credit_id || "");
   const unused = credit.status === "UNUSED";
+  // MONEY-LIFECYCLE-009: voided with the cancellation of this order (DEC-045), or a credit issued
+  // again because an order that spent the earlier one was cancelled without charge (DEC-046).
+  const voided = credit.status === "VOIDED";
+  const again = credit.reissue_of ? " · cấp lại" : "";
   return h(
     "li",
     { class: "rows__item credit-row", dataCreditId: id, dataCreditStatus: String(credit.status) },
@@ -307,15 +312,17 @@ function creditItem(credit) {
       statusPill(
         unused
           ? { state: "ok", text: "Chưa dùng", token: "UNUSED" }
-          : { state: "neutral", text: "Đã dùng", token: String(credit.status || UNKNOWN) },
+          : voided
+            ? { state: "neutral", text: "Đã huỷ cùng đơn", token: "VOIDED" }
+            : { state: "neutral", text: "Đã dùng", token: String(credit.status || UNKNOWN) },
       ),
     ),
     h(
       "p",
       { class: "credit-row__meta" },
-      `${CREDIT_KIND_LABEL[credit.kind] || String(credit.kind || UNKNOWN)} · ` +
+      `${CREDIT_KIND_LABEL[credit.kind] || String(credit.kind || UNKNOWN)}${again} · ` +
         `phát hành ${dateTime(credit.issued_at)}` +
-        (unused ? "" : ` · dùng ${dateTime(credit.redeemed_at)}`),
+        (unused ? "" : voided ? ` · huỷ ${dateTime(credit.voided_at)}` : ` · dùng ${dateTime(credit.redeemed_at)}`),
     ),
     unused
       ? h("div", { class: "credit-row__code" }, copyable({ value: id }))
@@ -628,6 +635,8 @@ export function render_(context) {
       }),
       split,
       ledger,
+      // MONEY-LIFECYCLE-009 (DEC-045/046): what the cancellation did to the remedy credits.
+      cancellationMoneyBlock(order, "DONE"),
       take ? stepControl(take) : null,
     );
   }
@@ -2001,6 +2010,8 @@ export function render_(context) {
               ),
             )
           : h("p", null, "Khách đổi ý trước khi tiệm làm gì với đồ: đơn được huỷ ngay."),
+        // MONEY-LIFECYCLE-009 (DEC-045/046): stated before the press, in the server's words.
+        cancellationMoneyBlock(current, "PREVIEW"),
         alertHost,
       ),
       actions: gated(confirm, writeVerdict),
@@ -2085,6 +2096,8 @@ export function render_(context) {
         }),
         h("p", { class: "hint" }, spec.note),
         machineHost,
+        // Không nhận đồ ends the order without charge: the same statement as Huỷ đơn.
+        DESTRUCTIVE.has(step) ? cancellationMoneyBlock(current, "PREVIEW") : null,
         alertHost,
       ),
       actions: gated(confirm, writeVerdict),

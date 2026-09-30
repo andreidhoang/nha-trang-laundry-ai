@@ -5553,7 +5553,7 @@ def scenario_export_payments(console: Console) -> None:
     ok(
         "a one-day request today is answered in the live shape, not the retired one",
         created["status"] == 201
-        and str(body.get("query_version", "")).startswith("store-day-orders-export-v4:")
+        and str(body.get("query_version", "")).startswith("store-day-orders-export-v5:")
         and body.get("rendered_hash") not in ("", retired_hash)
         and body.get("shape_retired") is False,
         {k: body.get(k) for k in ("query_version", "shape_retired")},
@@ -5708,7 +5708,7 @@ def scenario_export_payments(console: Console) -> None:
     ok(
         "a one-day file, its header naming the v3 rule and when the money stood so",
         header.get("business_date_from") == header.get("business_date_to") == today.isoformat()
-        and header.get("export_query_version", "").startswith("store-day-orders-export-v4:")
+        and header.get("export_query_version", "").startswith("store-day-orders-export-v5:")
         and bool(header.get("produced_at")),
         header,
     )
@@ -7005,26 +7005,20 @@ def _money_reads_agree(console: Console, order_id: str, what: str) -> None:
     )
 
 
-def _dialog_reason_codes(console: Console) -> set[str]:
-    """The reason codes on the refusal inside the open sheet (`data-reason-codes`), which the
-    notice keeps out of its visible words and inside "Chi tiết kỹ thuật"."""
+def _vnd_text(amount: int) -> str:
+    """`70000` -> `70.000 ₫`, as the server's sentences write it (a plain space)."""
 
-    try:
-        values = console.page.eval_on_selector_all(
-            "dialog[open] [data-reason-codes], main [data-reason-codes]",
-            "(els) => els.map((e) => e.dataset.reasonCodes)",
-        )
-    except Exception:
-        return set()
-    return {code for value in values for code in str(value or "").split()}
+    return f"{amount:,}".replace(",", ".") + " ₫"
 
 
 def scenario_money_lifecycle(console: Console) -> None:
     """MONEY-LIFECYCLE-009 (round 9). M1: a customer paid part of a storage fee, then the fee
     fell -- waived by an approver (the waiver sheet says it settles, and it does), or the laundry
     was rewashed and its free days restarted (the page offers "Tất toán": 0 ₫ settles, the bag goes
-    home). Every read of the store keeps answering. M3/M7: a cancellation that would pay a remedy
-    twice, or lose a credit the bill spent, is refused at Huỷ đơn, in Vietnamese, naming it."""
+    home). Every read of the store keeps answering. DEC-045/046 (M3/M7): a cancellation without
+    charge voids an unspent credit from the order, nets a spent one from the refund, and gives back
+    a credit the bill spent -- each stated on the sheet before the press. DEC-047: a hold pauses
+    the storage fee; holding and taking only the quoted total does not settle it."""
 
     head("ML", "TIỀN ĐÃ TRẢ KHÔNG BỊ XOÁ — part of the storage fee paid, then waived")
     if not READS_DATABASE or not arguments.database_url:
@@ -7163,7 +7157,7 @@ def scenario_money_lifecycle(console: Console) -> None:
         closed[:160],
     )
 
-    head("ML3", "HUỶ BỊ TỪ CHỐI — a remedy already paid out, a credit already spent")
+    head("ML3", "HUỶ KHÔNG THU TIỀN — one credit voided, one netted, one given back (DEC-045/046)")
     remedy_in_force = sql(
         "select count(*) from configuration_versions "
         "where config_type = 'REMEDY_POLICY' and lifecycle = 'PUBLISHED'"
@@ -7195,35 +7189,37 @@ def scenario_money_lifecycle(console: Console) -> None:
         if_match=console.current_version(suits_id, 0),
     )
     ok("the suits are paid for and handed back", released["status"] == 200, released["text"][:160])
+    paid = int(
+        sql(f"select coalesce(sum(amount_vnd), 0) from order_payments where order_id='{suits_id}'")
+        or 0
+    )
     opened = console.call(
         "POST",
         f"/internal/v1/stores/{STORE}/incidents",
-        {"order_id": suits_id, "evidence_summary": "Áo vest thứ nhất bị sờn cổ sau khi ủi"},
+        {"order_id": suits_id, "evidence_summary": "Hai áo vest bị sờn cổ sau khi ủi"},
     )
     incident = str((opened.get("body") or {}).get("incident_id") or "")
-    console.open(f"#/incidents/{incident}", settle=2000)
-    _propose_remedy(console, kind="DAMAGE_COMPENSATION", amount="40000", garment="1")
-    carry_out = console.page.locator("button[data-remedy-execute]")
-    if carry_out.count():
-        carry_out.first.click()
-        touched("remedy.execute")
-        console.page.wait_for_timeout(2200)
+    # Both claims first: carrying out the last open claim closes the complaint (its form goes).
+    for garment, amount in (("1", "40000"), ("2", "30000")):
+        console.open(f"#/incidents/{incident}", settle=2000)
+        _propose_remedy(console, kind="DAMAGE_COMPENSATION", amount=amount, garment=garment)
+    for _claim in range(2):
+        console.open(f"#/incidents/{incident}", settle=2000)
+        carry_out = console.page.locator("button[data-remedy-execute]")
+        if carry_out.count():
+            carry_out.first.click()
+            touched("remedy.execute")
+            console.page.wait_for_timeout(2200)
     credits = (
         console.call("GET", f"/internal/v1/stores/{STORE}/orders/{suits_id}/remedy-credits")["body"]
         or {}
     ).get("credits") or []
-    credit_id = str(credits[0]["credit_id"]) if credits else ""
-    ok("a 40.000 ₫ credit is issued for the first suit", bool(credit_id), json.dumps(credits)[:160])
-    said = console.step(suits_id, "CANCEL", custody="SHOP_FAULT_NO_CHARGE")
+    by_amount = {int(item["amount_vnd"]): str(item["credit_id"]) for item in credits}
+    spent_credit, kept_credit = by_amount.get(40_000, ""), by_amount.get(30_000, "")
     ok(
-        "Huỷ đơn 'lỗi tiệm, không thu tiền' is refused at the control, naming the credit, in "
-        "Vietnamese -- no refund on top of the credit",
-        "Không huỷ được: khách đã nhận khoản Bồi thường món bị hỏng 40.000 ₫ từ đơn này" in said
-        and "CANCEL_AFTER_MONEY_REMEDY" in _dialog_reason_codes(console)
-        and "CANCEL_AFTER_MONEY_REMEDY" not in console.notices()
-        and stored(suits_id, "commercial_status || '|' || balance_status") == "ACTIVE|PAID"
-        and sql(f"select count(*) from order_refunds where order_id='{suits_id}'") == "0",
-        said[:240],
+        "two credits are issued for two suits: 40.000 ₫ and 30.000 ₫",
+        bool(spent_credit) and bool(kept_credit),
+        json.dumps(credits)[:200],
     )
 
     console.walk_in()
@@ -7231,7 +7227,7 @@ def scenario_money_lifecycle(console: Console) -> None:
     console.price()
     console.page.locator("#new-credit-open").click()
     touched("newOrder.credit-open")
-    row = console.page.locator(f"#new-credit-list [data-credit-id='{credit_id}']")
+    row = console.page.locator(f"#new-credit-list [data-credit-id='{spent_credit}']")
     with contextlib.suppress(Exception):
         row.wait_for(state="visible", timeout=8000)
     if row.count():
@@ -7241,20 +7237,154 @@ def scenario_money_lifecycle(console: Console) -> None:
     done = console.confirm()
     spent_id = str(((done.get("order") or {}).get("body") or {}).get("order_id") or "")
     ok(
-        "the credit is spent on the customer's next bag",
+        "the 40.000 ₫ credit is spent on the customer's next bag",
         bool(spent_id)
-        and sql(f"select redeemed_at is not null from remedy_credits where id='{credit_id}'")
+        and sql(f"select redeemed_at is not null from remedy_credits where id='{spent_credit}'")
         == "t",
         (done.get("order") or {}).get("text", "")[:160],
     )
-    before = stored(spent_id, "commercial_status || '|' || row_version")
+
+    # The suits are cancelled "lỗi tiệm, không thu tiền": the sheet says, before the press, that
+    # the unspent 30.000 ₫ is voided and the spent 40.000 ₫ is taken off the refund.
+    refund = paid - 40_000
+    console.open_order(suits_id)
+    control = console.step_control("CANCEL")
+    sheet = ""
+    if control is not None:
+        control.click()
+        console.page.wait_for_timeout(600)
+        console.page.locator("dialog[open] input[value=SHOP_FAULT_NO_CHARGE]").check()
+        touched("orderDetail.cancel-custody")
+        sheet = console.dialog_text()
+    ok(
+        "Huỷ đơn states before the press: 30.000 ₫ voided, 40.000 ₫ taken off the refund",
+        "Khoản Bồi thường món bị hỏng 30.000 ₫ khách chưa dùng được huỷ cùng đơn." in sheet
+        and f"Trừ khoản Bồi thường món bị hỏng 40.000 ₫ khách đã dùng: hoàn {_vnd_text(refund)} "
+        f"thay vì {_vnd_text(paid)}."
+        in sheet,
+        sheet[:300].replace("\n", " | "),
+    )
+    confirm = console.page.locator("dialog[open] .sheet__actions button").first
+    if confirm.count() and not confirm.is_disabled():
+        confirm.click()
+        console.page.wait_for_timeout(200)
+        confirm.click()
+        touched("orderDetail.cancel-confirm")
+        console.page.wait_for_timeout(2200)
+    ok(
+        "the suits are cancelled and refunded less the spent credit; the unspent one is voided",
+        stored(suits_id, "commercial_status || '|' || balance_status") == "CANCELLED|REFUNDED"
+        and sql(
+            "select refunded_amount_vnd || '|' || netted_remedy_vnd from order_refunds "
+            f"where order_id='{suits_id}'"
+        )
+        == f"{refund}|40000"
+        and sql(f"select voided_with_order_id from remedy_credits where id='{kept_credit}'")
+        == suits_id
+        and sql(f"select voided_at is null from remedy_credits where id='{spent_credit}'") == "t",
+        sql(
+            "select refunded_amount_vnd, netted_remedy_vnd from order_refunds "
+            f"where order_id='{suits_id}'"
+        ),
+    )
+    console.open_order(suits_id)
+    money_text = console.page.locator(".order__money").inner_text()
+    ok(
+        "the order page states what the cancellation did, in the server's words",
+        "Khoản Bồi thường món bị hỏng 30.000 ₫ khách chưa dùng đã được huỷ cùng đơn." in money_text
+        and "Đã trừ 40.000 ₫ (khoản khách đã dùng ở đơn khác)" in money_text,
+        money_text[:300].replace("\n", " | "),
+    )
+
+    # The customer's next bag never arrives: cancelling it gives the 40.000 ₫ credit back.
+    console.open_order(spent_id)
+    control = console.step_control("CANCEL")
+    sheet = ""
+    if control is not None:
+        control.click()
+        console.page.wait_for_timeout(600)
+        sheet = console.dialog_text()
+        console.page.keyboard.press("Escape")
+        console.page.wait_for_timeout(300)
     said = console.step(spent_id, "CANCEL")
     ok(
-        "cancelling that bag is refused at the control too: the credit it spent would be lost",
-        "Không huỷ được: đơn đã dùng khoản Bồi thường món bị hỏng 40.000 ₫ của khách" in said
-        and "CANCEL_WOULD_LOSE_SPENT_CREDIT" in _dialog_reason_codes(console)
-        and stored(spent_id, "commercial_status || '|' || row_version") == before,
-        said[:240],
+        "a bag that spent a credit is cancelled, and the sheet said the credit comes back",
+        "Cấp lại cho khách khoản Bồi thường món bị hỏng 40.000 ₫ đã dùng cho đơn này." in sheet
+        and stored(spent_id, "commercial_status") == "CANCELLED",
+        f"{sheet[:160]} || {said[:120]}".replace("\n", " | "),
+    )
+    ok(
+        "a new 40.000 ₫ credit stands for the spent one, unspent, linked to it and to the order",
+        sql(
+            "select amount_vnd || '|' || (redeemed_at is null) || '|' || reissued_for_order_id "
+            f"from remedy_credits where reissue_of='{spent_credit}'"
+        )
+        == f"40000|true|{spent_id}",
+        sql(f"select id, amount_vnd from remedy_credits where reissue_of='{spent_credit}'"),
+    )
+
+    head(
+        "ML4",
+        "GIỮ ĐƠN — a hold pauses the storage fee; holding and taking the total does not settle",
+    )
+    order = console.build_order(kg="7", stop="ready")
+    held_id = order["order_id"]
+    total = int(
+        (console.call("GET", f"/internal/v1/orders/{held_id}").get("body") or {}).get(
+            "payable_total_vnd"
+        )
+        or 0
+    )
+    _age_ready(held_id, 25)
+    said = console.step(held_id, "HOLD")
+    sql(
+        "update orders set production_ready_at = production_ready_at - make_interval(days => 10), "
+        "production_accepted_at = production_accepted_at - make_interval(days => 10), "
+        "storage_paused_at = storage_paused_at - make_interval(days => 10), "
+        f"row_version = row_version + 1 where id = '{held_id}'"
+    )
+    storage = console.call("GET", f"/internal/v1/orders/{held_id}/storage").get("body") or {}
+    fee = storage.get("storage_fee") or {}
+    ok(
+        "held ten days after 25 on the shelf: the fee stays 25.000 ₫, paused, not erased",
+        (fee.get("status"), fee.get("amount_vnd")) == ("PAUSED", 25_000)
+        and (console.call("GET", f"/internal/v1/orders/{held_id}").get("body") or {}).get(
+            "owed_vnd"
+        )
+        == total + 25_000,
+        f"{said[:80]} || {json.dumps(fee)[:160]}",
+    )
+    console.open_order(held_id)
+    storage_text = (
+        console.page.locator("#order-storage").inner_text()
+        if console.page.locator("#order-storage").count()
+        else ""
+    )
+    ok(
+        "the order page's Lưu kho says the fee is paused while the order is held",
+        "dừng tính khi giữ đơn" in storage_text and "25.000" in storage_text,
+        storage_text[:200].replace("\n", " | "),
+    )
+    taken = console.call(
+        "POST",
+        f"/internal/v1/orders/{held_id}/payments",
+        {"amount_vnd": total, "method": "TIEN_MAT"},
+        if_match=console.current_version(held_id, 0),
+    )
+    body = taken.get("body") or {}
+    ok(
+        "taking only the quoted total leaves the fee owed: partly paid, 25.000 ₫ remaining",
+        taken["status"] == 201
+        and (body.get("balance_status"), body.get("remaining_vnd")) == ("PARTIALLY_PAID", 25_000),
+        taken["text"][:200],
+    )
+    resumed = console.step(held_id, "RESUME")
+    after = console.call("GET", f"/internal/v1/orders/{held_id}").get("body") or {}
+    ok(
+        "resumed, the count continues from day 25 (the ten days on hold do not count)",
+        (after.get("owed_vnd"), after.get("remaining_vnd")) == (total + 25_000, 25_000)
+        and stored(held_id, "storage_paused_days::text") == "10",
+        f"{resumed[:80]} || {json.dumps(after)[:160]}",
     )
 
 

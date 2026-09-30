@@ -11,7 +11,7 @@
  *     taken, and a short reference. A store minted before the registry has no name, and then the
  *     receipt has no name line — it never invents one.
  *   - **The promised-ready time, when the order has one** (`PROMISE-001`, `DEC-037`, replacing
- *     R4's line): "Hẹn trả: 13:00 thứ Sáu 26/9" — the time the server stored at Nhận đồ under the
+ *     R4's line): "Hẹn trả: 13:00 thứ Sáu 26/09" — the time the server stored at Nhận đồ under the
  *     owner's published turnaround rules, or the later one a Hẹn lại set. An order taken before the
  *     owner published those rules has none, and the receipt says "Tiệm sẽ báo khi đồ sẵn sàng"
  *     (R4) where the shop can reach the customer (a phone on their record, or the chat the order
@@ -44,7 +44,7 @@ import { h, render } from "../core/dom.js";
 import {
   UNKNOWN,
   UUID,
-  dateOnly,
+  calendarDay,
   dateTime,
   money,
   moneyRange,
@@ -211,8 +211,9 @@ function receiptModel(order, detail, catalog, storage = null, qr = null) {
     customer: order.customer_name ? String(order.customer_name) : null,
     ticket: orderName(order),
     // Numbers restart every morning, so the paper carries the ticket's business day beside it.
-    day: numbered ? dateOnly(order.ticket_issued_on) : null,
-    taken: dateTime(order.created_at),
+    // Paper leaves the shop, so both carry the year (`format.js`).
+    day: numbered ? calendarDay(order.ticket_issued_on, { weekday: false, year: true }) : null,
+    taken: dateTime(order.created_at, { year: true }),
     reference: shortReference(order.order_id),
     lines: detail
       ? (detail.lines || []).map((line) => ({

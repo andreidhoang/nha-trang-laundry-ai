@@ -11,7 +11,8 @@
 import { isTruncated } from "../core/api.js";
 import { BAND, bandVerdict } from "../core/bands.js";
 import { field, h, render } from "../core/dom.js";
-import { UNKNOWN, count, money, moneyRange, parseQuantity, timeOnly } from "../core/format.js";
+import { technicalText, visibleMessage } from "../core/errors.js";
+import { UNKNOWN, count, money, moneyRange, parseQuantity, updatedAt } from "../core/format.js";
 import { PRICE_STATE, REASON_NOTE, enumLabel, enumVi, warningFor } from "../core/i18n.js";
 
 /**
@@ -711,6 +712,13 @@ export function skeleton(rows = 3) {
 export function errorNotice(error, options = {}) {
   const api = /** @type {import("../core/errors.js").ApiError} */ (error);
   const isApi = typeof api?.kind === "string";
+  // CONSOLE-COPY-A11Y-009 (C8): a field the server refused is named in Vietnamese, once each; its
+  // wire path and the server's English go in the drawer below with the rest of the evidence.
+  const fields = isApi ? api.fieldErrors : [];
+  const fieldLines = [...new Set(fields.map((item) => item.text))];
+  // An error that is not the server's and not the console's own sentence is a bug: the person
+  // reads `UNEXPECTED`, the engineer's text is in the drawer.
+  const engineering = technicalText(error);
   // `DISPOSED` is the one kind that is neither. A 410 says the record is intact and only its text
   // was disposed of on the published schedule -- nothing is broken, so `danger` would be false, and
   // nobody owes an answer, so `warn` would be false too.
@@ -733,6 +741,8 @@ export function errorNotice(error, options = {}) {
     // The server's own words, verbatim -- English prose, or the raw JSON envelope of a 422 -- kept
     // for whoever greps the log, and never the first thing a counter reads.
     isApi && api.detail && api.detail !== error.message ? ["Máy chủ trả lời", api.detail] : null,
+    ...fields.map((item) => ["Ô bị từ chối", `${item.field} — ${item.raw}`]),
+    engineering ? ["Lỗi của bảng vận hành", engineering] : null,
   ].filter(Boolean);
 
   return h(
@@ -745,7 +755,7 @@ export function errorNotice(error, options = {}) {
       dataCorrelationId: isApi && api.correlationId ? api.correlationId : null,
       dataDecision: isApi && api.decision ? api.decision : null,
     },
-    h("p", { class: "notice__title" }, options.title || error.message),
+    h("p", { class: "notice__title" }, options.title || visibleMessage(error)),
     notes.length ? h("ul", { class: "notice__reasons" }, notes.map((note) => h("li", null, note))) : null,
     // A `NOT_SUPPORTED` refusal names the owner decision behind it. This line used to say "Quyết
     // định còn bỏ ngỏ" -- still open -- for every value the server sends, and every one of them
@@ -754,13 +764,11 @@ export function errorNotice(error, options = {}) {
     isApi && api.decision
       ? h("p", null, "Đây là quy định của chủ tiệm; quầy không tự đổi được.")
       : null,
-    isApi && api.fieldErrors.length
+    fieldLines.length
       ? h(
           "ul",
-          null,
-          api.fieldErrors.map((item) =>
-            h("li", null, h("span", { class: "mono" }, item.field), ` — ${item.message}`),
-          ),
+          { class: "notice__fields" },
+          fieldLines.map((line) => h("li", null, line)),
         )
       : null,
     // `BUSY` carries the server's `Retry-After` too (`API-INTEGRITY-003`), and "vài giây" is
@@ -999,7 +1007,7 @@ export function toolbar(spec) {
  * @param {Date} [at]
  */
 export function markUpdated(stamp, at = new Date()) {
-  stamp.textContent = `Cập nhật lúc ${timeOnly(at.toISOString())}`;
+  stamp.textContent = updatedAt(at);
 }
 
 /**

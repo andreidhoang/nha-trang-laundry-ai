@@ -149,7 +149,7 @@ export function amountText(amount) {
  * @returns {string}
  */
 function dayText(day) {
-  return day ? `${calendarDay(day, { weekday: false })}/${String(day).slice(0, 4)}` : "—";
+  return calendarDay(day, { weekday: false, year: true });
 }
 
 /**

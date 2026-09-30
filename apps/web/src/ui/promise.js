@@ -70,7 +70,7 @@ export function promisePill(state, options = {}) {
 }
 
 /**
- * "Hẹn 13:00 thứ Sáu 26/9" for a list row, or null for an order without a promise.
+ * "Hẹn 13:00 26/09" for a list row, or null for an order without a promise.
  *
  * @param {any} order an `OrderViewResponse`
  * @returns {HTMLElement|null}

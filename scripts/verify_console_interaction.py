@@ -4789,10 +4789,15 @@ with sync_playwright() as playwright:
         "the expired programme is named on the result, not just its reason code",
         "PROMO_WET30_DRY40_20260717_20260831" in content,
     )
+    # "00:00 01/09" this year; the spelling is `format.dateTime`'s (CONSOLE-COPY-A11Y-009, C9).
+    window_end = page.evaluate(
+        "async (v) => (await import('./src/core/format.js')).dateTime(v)",
+        "2026-09-01T00:00:00+07:00",
+    )
     check(
         "with the end of its window on screen, so the zero has a date behind it",
-        "01/09/2026" in content,
-        "expected the programme's exclusive end bound rendered on the quote result",
+        window_end.startswith("00:00 01/09") and window_end in content and "31/08" not in content,
+        f"expected {window_end!r}, the programme's exclusive end bound, on the quote result",
     )
     check(
         "and the bound is stated as exclusive rather than quietly turned into 'the last day'",
@@ -6263,7 +6268,7 @@ with sync_playwright() as playwright:
     check(
         "a blanket's Nhận đồ shows the promise before the press, with 48 giờ already chosen",
         "Hẹn trả:" in line
-        and "17:00 Chủ nhật 27/9" in line
+        and "17:00 Chủ nhật 27/09" in line
         and chosen.count() == 1
         and chosen.first.get_attribute("value") == "H48",
         line,
@@ -6273,7 +6278,7 @@ with sync_playwright() as playwright:
     line = page.locator("#receive-promise-line").inner_text()
     check(
         "choosing 24 giờ shows the server's time for it, not a time the browser worked out",
-        "17:00 thứ Bảy 26/9" in line,
+        "17:00 thứ Bảy 26/09" in line,
         line,
     )
     # Round 8 review: a sheet left open into the next minute asks the server again, so the time
@@ -6298,7 +6303,7 @@ with sync_playwright() as playwright:
     check(
         "the open sheet re-reads the promise when a new minute starts and keeps 24 giờ chosen",
         len(state.get("promise_reads") or []) == reads_before + 1
-        and "17:01 thứ Bảy 26/9" in line
+        and "17:01 thứ Bảy 26/09" in line
         and chosen.count() == 1
         and chosen.first.get_attribute("value") == "H24",
         f"{line} reads={len(state.get('promise_reads') or []) - reads_before}",
@@ -6376,7 +6381,7 @@ with sync_playwright() as playwright:
     writes = state.get("order_writes") or []
     check(
         "ordinary laundry shows the rule's time and, left alone, sends no choice at all",
-        "13:00 thứ Bảy 26/9" in line
+        "13:00 thứ Bảy 26/09" in line
         and len(writes) == 1
         and json.loads(writes[0]["body"] or "{}") == {"step": "RECEIVE", "slot_approved": True},
         f"{line} {writes!r}",
@@ -6406,9 +6411,9 @@ with sync_playwright() as playwright:
     promise_text = promise_row.inner_text() if promise_row.count() else ""
     check(
         "the order page shows the promise the customer was told, a LATE pill and the first promise",
-        "15:00 thứ Bảy 26/9" in promise_text
+        "15:00 thứ Bảy 26/09" in promise_text
         and "Trễ hẹn" in promise_text
-        and "Hẹn đầu: 13:00 thứ Bảy 26/9" in promise_text,
+        and "Hẹn đầu: 13:00 thứ Bảy 26/09" in promise_text,
         promise_text,
     )
     page.locator("#promise-change").click()
@@ -6447,7 +6452,7 @@ with sync_playwright() as playwright:
     listed_text = listed.first.inner_text() if listed.count() else ""
     check(
         "the order list shows the promise and the LATE pill on the row",
-        "Hẹn 15:00 26/9" in listed_text and "Trễ hẹn" in listed_text,
+        "Hẹn 15:00 26/09" in listed_text and "Trễ hẹn" in listed_text,
         listed_text[:160],
     )
 
@@ -8205,8 +8210,12 @@ with sync_playwright() as playwright:
     page.reload()
     page.wait_for_timeout(1500)
     check(
-        "an order with a promise prints 'Hẹn trả: 13:00 thứ Bảy 26/9' in place of R4's sentence",
-        paper.locator("[data-field=closing]").inner_text().strip() == "Hẹn trả: 13:00 thứ Bảy 26/9",
+        "an order with a promise prints 'Hẹn trả: 13:00 thứ Bảy 26/09' in place of R4's sentence",
+        # The fixture is in 2026; from 2027 the paper adds the year ("26/09/2026", format.js C9).
+        paper.locator("[data-field=closing]")
+        .inner_text()
+        .strip()
+        .startswith("Hẹn trả: 13:00 thứ Bảy 26/09"),
         paper.locator("[data-field=closing]").inner_text(),
     )
     state["receipt_order"] = None
@@ -9123,12 +9132,23 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(900)
     text = rendered_text()
     fault = page.locator(f"button[data-late-fault='{LATE_ORDER_ID}']")
+    # One convention for times (CONSOLE-COPY-A11Y-009, C9): "17:00 28/09", with the year only
+    # when the fixture's year is not the current one -- so the expected text is written by the same
+    # `format.promiseTime` the screen uses, and its spelling is pinned in section 28.
+    promised, delivered = page.evaluate(
+        """async (values) => {
+          const f = await import('./src/core/format.js');
+          return values.map((value) => f.promiseTime(value, { short: true }));
+        }""",
+        ["2026-09-28T10:00:00+00:00", "2026-09-28T13:10:00+00:00"],
+    )
     check(
         "each row shows the ticket, hẹn → giao, the server's lateness and the failed attempt",
         page.locator("#late-list [data-late]").count() == 2
         and "Phiếu 12" in text
         and "Trễ 3 giờ 10 phút" in text
-        and "Hẹn 17:00 28/9 → giao 20:10 28/9" in text
+        and f"Hẹn {promised} → giao {delivered}" in text
+        and promised.startswith("17:00 28/09")
         and "Giao 14:05 không gặp khách" in text,
         text[:300].replace("\n", " | "),
     )
@@ -10469,6 +10489,354 @@ with sync_playwright() as playwright:
     page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
     page.wait_for_timeout(700)
 
+    print()
+    print("=" * 74)
+    print("28. CHỮ, GIỜ VÀ TÊN Ô — tiếng Việt trước mắt, một cách viết giờ, ô nào cũng có tên")
+    print("=" * 74)
+
+    # CONSOLE-COPY-A11Y-009 (review C8, C9, C10). Each check below failed on 872ecd4.
+
+    def visible_notice_text(selector: str) -> str:
+        """A notice's text without its collapsed "Chi tiết kỹ thuật" drawer: what a person reads."""
+        return str(
+            page.evaluate(
+                """(selector) => {
+                  const nodes = [...document.querySelectorAll(selector)];
+                  return nodes.map((node) => {
+                    const copy = node.cloneNode(true);
+                    copy.querySelectorAll("details").forEach((d) => d.remove());
+                    return copy.textContent;
+                  }).join("\\n");
+                }""",
+                selector,
+            )
+        )
+
+    def drawer_text(selector: str) -> str:
+        return str(
+            page.evaluate(
+                """(selector) => [...document.querySelectorAll(selector + " details")]
+                  .map((d) => d.textContent).join("\\n")""",
+                selector,
+            )
+        )
+
+    #: English and wire paths a counter must never read outside the drawer.
+    engineering_words = [
+        "Input should",
+        "Extra inputs",
+        "Field required",
+        "lines.0",
+        "body.",
+        "quantity",
+        "amount_vnd",
+        "frobnicate",
+        "TypeError",
+        "Cannot read",
+        "undefined",
+    ]
+
+    def unnamed_fields(scope: str) -> list[str]:
+        """Every input, select and textarea in `scope` with no accessible name (C10).
+
+        A name is a `<label for>` or wrapping `<label>` with text, `aria-label`, or
+        `aria-labelledby` pointing at text -- what a screen reader announces. An input that is not
+        rendered (a `hidden` form, `type=hidden`) is not announced at all, so it is not counted.
+        """
+        return list(
+            page.evaluate(
+                """(scope) => {
+                  const roots = [...document.querySelectorAll(scope)];
+                  const missing = [];
+                  for (const root of roots) {
+                    for (const el of root.querySelectorAll("input, select, textarea")) {
+                      // Not rendered is not in the accessibility tree: nothing to announce.
+                      if (el.type === "hidden" || el.getClientRects().length === 0) continue;
+                      const byLabel = [...(el.labels || [])].some((l) => l.textContent.trim());
+                      const byAria = (el.getAttribute("aria-label") || "").trim();
+                      const byRef = (el.getAttribute("aria-labelledby") || "")
+                        .split(/\\s+/).filter(Boolean)
+                        .some((id) => (document.getElementById(id)?.textContent || "").trim());
+                      if (!byLabel && !byAria && !byRef) {
+                        missing.push(el.id || el.name || el.outerHTML.slice(0, 80));
+                      }
+                    }
+                  }
+                  return missing;
+                }""",
+                scope,
+            )
+        )
+
+    # --- C8: a FastAPI 422 on a real form -------------------------------------------------------
+    validation_422 = [
+        {
+            "type": "greater_than",
+            "loc": ["body", "lines", 0, "quantity"],
+            "msg": "Input should be greater than 0",
+            "input": "0",
+            "ctx": {"gt": "0"},
+        },
+        {
+            "type": "extra_forbidden",
+            "loc": ["body", "frobnicate"],
+            "msg": "Extra inputs are not permitted",
+            "input": 1,
+        },
+    ]
+
+    def refuse_quote(route: Route) -> None:
+        if route.request.method != "POST":
+            route.fallback()
+            return
+        route.fulfill(
+            status=422,
+            content_type="application/json",
+            body=json.dumps({"detail": validation_422}),
+        )
+
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    page.locator("#new-walk-in").click()
+    page.wait_for_timeout(1200)
+    page.locator("#new-add-line").click()
+    page.wait_for_timeout(400)
+    page.locator("#new-picker [data-code='STD_WASH_DRY_LT6']").click()
+    page.wait_for_timeout(400)
+    page.locator("#new-line-0-qty").fill("5.5")
+    page.wait_for_timeout(200)
+
+    # C10 first, on the screen as the counter uses it: the weight has a name of its own.
+    check(
+        "C10: the kg stepper's field has its own accessible name, not only its minus and plus",
+        page.locator("#new-line-0-qty").get_attribute("aria-label") == "Số kg · Giặt sấy dưới 6kg",
+        repr(page.locator("#new-line-0-qty").get_attribute("aria-label")),
+    )
+    missing = unnamed_fields("main")
+    check(
+        "C10: every input, select and textarea on Nhận đồ has a label or an aria-label",
+        missing == [],
+        repr(missing),
+    )
+
+    page.route("**/internal/v1/stores/*/quotes", refuse_quote)
+    page.locator("#new-price").click()
+    page.wait_for_timeout(1000)
+    page.unroute("**/internal/v1/stores/*/quotes", refuse_quote)
+    seen = visible_notice_text("main .notice")
+    check(
+        "C8: a 422 names the refused field in Vietnamese, with the line it is on",
+        "Khối lượng / số lượng (dòng 1): phải lớn hơn 0" in seen,
+        seen[:300],
+    )
+    check(
+        "C8: a field this console has no name for says 'Một ô nhập chưa hợp lệ', not its path",
+        "Một ô nhập chưa hợp lệ" in seen,
+        seen[:300],
+    )
+    leaked = [word for word in engineering_words if word in seen]
+    check("C8: no English and no wire path outside 'Chi tiết kỹ thuật'", leaked == [], repr(leaked))
+    kept = drawer_text("main .notice")
+    check(
+        "C8: the server's own words and the paths are kept, verbatim, in the drawer",
+        "lines.0.quantity — Input should be greater than 0" in kept
+        and "frobnicate — Extra inputs are not permitted" in kept,
+        kept[:300],
+    )
+
+    # --- C10 and C8 on Thu tiền -----------------------------------------------------------------
+    open_order(
+        order_view(
+            "PICKUP_ONLY",
+            balance="UNPAID",
+            collected=False,
+            steps=[step("TAKE_PAYMENT", True, requires=["amount_vnd", "method"])],
+            hand_over=True,
+        )
+    )
+    page.locator(".action-bar--v2 button[data-step=TAKE_PAYMENT]").click()
+    page.wait_for_timeout(400)
+    page.locator("#payment-edit").click()
+    page.wait_for_timeout(200)
+    missing = unnamed_fields("dialog[open]")
+    page.locator("#payment-method button[data-value=CHUYEN_KHOAN]").click()
+    page.wait_for_timeout(300)
+    missing += unnamed_fields("dialog[open]")
+    check(
+        "C10: every input on Thu tiền (amount, handover; transfer seen, reference) has a name",
+        missing == []
+        and page.locator("dialog[open] #payment-amount").count() == 1
+        and page.locator("dialog[open] #payment-bank-ref").count() == 1,
+        repr(missing),
+    )
+    page.locator("#payment-method button[data-value=TIEN_MAT]").click()
+    page.wait_for_timeout(200)
+    page.locator("#payment-amount").fill("120.000")
+    page.wait_for_timeout(150)
+
+    def refuse_payment(route: Route) -> None:
+        route.fulfill(
+            status=422,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "detail": [
+                        {
+                            "type": "less_than_equal",
+                            "loc": ["body", "amount_vnd"],
+                            "msg": "Input should be less than or equal to 110000",
+                            "input": 120000,
+                            "ctx": {"le": 110000},
+                        }
+                    ]
+                }
+            ),
+        )
+
+    page.route(f"**/internal/v1/orders/{PICKUP_ORDER_ID}/payments", refuse_payment)
+    page.locator("dialog[open] #payment-submit").click()
+    page.wait_for_timeout(900)
+    page.unroute(f"**/internal/v1/orders/{PICKUP_ORDER_ID}/payments", refuse_payment)
+    seen = visible_notice_text("dialog[open] .notice")
+    expected_bound = page.evaluate(
+        "async () => (await import('./src/core/format.js')).money(110000)"
+    )
+    check(
+        "C8: a money bound is read as money, through format.money",
+        f"Số tiền: không được lớn hơn {expected_bound}" in seen,
+        seen[:300],
+    )
+    leaked = [word for word in [*engineering_words, "110000"] if word in seen]
+    check(
+        "C8: and nothing of the server's English is in the sheet's text", leaked == [], repr(leaked)
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # --- C8: a screen that crashes, and an error that is not the server's ------------------------
+    page.evaluate(
+        """async () => {
+          const router = await import('./src/core/router.js');
+          const route = router.registered().find((r) => r.path === '/gaps');
+          route.__render = route.render;
+          route.render = () => {
+            throw new TypeError("Cannot read properties of undefined (reading 'items')");
+          };
+          location.hash = '#/gaps';
+        }"""
+    )
+    page.wait_for_timeout(600)
+    seen = visible_notice_text("main .notice")
+    check(
+        "C8: the crash screen says what happened in Vietnamese",
+        "Màn hình này không dựng được" in seen and "Bảng vận hành gặp lỗi ngoài dự kiến" in seen,
+        seen[:200],
+    )
+    leaked = [word for word in engineering_words if word in seen]
+    check("C8: and the JavaScript message is not on it", bool(seen) and leaked == [], repr(leaked))
+    check(
+        "C8: the JavaScript message is kept under 'Chi tiết kỹ thuật' for whoever fixes it",
+        "TypeError: Cannot read properties of undefined (reading 'items')"
+        in drawer_text("main .notice"),
+    )
+    page.evaluate(
+        """async () => {
+          const router = await import('./src/core/router.js');
+          const route = router.registered().find((r) => r.path === '/gaps');
+          route.render = route.__render;
+          delete route.__render;
+        }"""
+    )
+    notice = page.evaluate(
+        """async () => {
+          const { errorNotice } = await import('./src/ui/components.js');
+          const node = errorNotice(new TypeError("x.map is not a function"));
+          node.id = 'c8-probe';
+          document.querySelector('main').append(node);
+          const copy = node.cloneNode(true);
+          copy.querySelectorAll('details').forEach((d) => d.remove());
+          const shown = copy.textContent;
+          const drawer = node.querySelector('details')?.textContent || '';
+          node.remove();
+          return { shown, drawer };
+        }"""
+    )
+    check(
+        "C8: an error that is not the server's reads as the console's fault, in Vietnamese",
+        "Bảng vận hành gặp lỗi ngoài dự kiến" in notice["shown"]
+        and "is not a function" not in notice["shown"]
+        and "TypeError: x.map is not a function" in notice["drawer"],
+        repr(notice),
+    )
+
+    # --- C9: one way to write a time, pinned in the browser that renders it ----------------------
+    pinned = page.evaluate(
+        """async () => {
+          const f = await import('./src/core/format.js');
+          const now = new Date('2026-09-30T03:00:00Z');
+          const pins = {};
+          const pin = (name, run) => {
+            try { pins[name] = run(); } catch (error) { pins[name] = `ERROR ${error.message}`; }
+          };
+          for (const [name, run] of Object.entries({
+            clock: () => f.clock('2026-09-26T08:05:33Z'),
+            moment: () => f.dateTime('2026-09-26T08:05:33Z', { now }),
+            otherYear: () => f.dateTime('2025-12-31T16:59:00Z', { now }),
+            newYearInShop: () => f.dateTime('2025-12-31T17:30:00Z', { now }),
+            paper: () => f.dateTime('2026-09-26T08:05:33Z', { now, year: true }),
+            day: () => f.dateOnly('2026-09-26T08:05:33Z', { now }),
+            label: () => f.calendarDay('2026-09-26', { now }),
+            sunday: () => f.calendarDay('2026-09-27', { now }),
+            bare: () => f.calendarDay('2026-09-26', { now, weekday: false }),
+            promise: () => f.promiseTime('2026-09-26T06:00:00Z', { now }),
+            promiseRow: () => f.promiseTime('2026-09-26T06:00:00Z', { now, short: true }),
+            promiseNextYear: () => f.promiseTime('2027-01-02T06:00:00Z', { now }),
+            updated: () => f.updatedAt(new Date('2026-09-26T08:05:33Z')),
+            month: () => f.monthLabel('2026-09'),
+          })) pin(name, run);
+          return pins;
+        }"""
+    )
+    check(
+        "C9: every time is HH:MM DD/MM on the shop's clock, the year only when not this one",
+        pinned
+        == {
+            "clock": "15:05",
+            "moment": "15:05 26/09",
+            "otherYear": "23:59 31/12/2025",
+            "newYearInShop": "00:30 01/01",
+            "paper": "15:05 26/09/2026",
+            "day": "26/09",
+            "label": "Thứ Bảy 26/09",
+            "sunday": "Chủ nhật 27/09",
+            "bare": "26/09",
+            "promise": "13:00 thứ Bảy 26/09",
+            "promiseRow": "13:00 26/09",
+            "promiseNextYear": "13:00 thứ Bảy 02/01/2027",
+            "updated": "Cập nhật lúc 15:05",
+            "month": "Tháng 9/2026",
+        },
+        repr(pinned),
+    )
+    page.goto(f"http://localhost:{PORT}/#/sla-board", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    board = page.locator("main").inner_text()
+    mark = page.evaluate(
+        "async (v) => (await import('./src/core/format.js')).dateTime(v)",
+        "2026-09-09T12:00:00+00:00",
+    )
+    check(
+        "C9: the SLA board's internal mark is written like every other moment",
+        f"Mốc nội bộ {mark}" in board and not re.search(r"\d{2}:\d{2} \d{2}-\d{2}", board),
+        board[:300],
+    )
+    stamp = re.findall(r"Cập nhật lúc [0-9:]+", rendered_text())
+    check(
+        "C9: 'Cập nhật lúc' says hours and minutes, never seconds",
+        bool(stamp) and all(re.fullmatch(r"Cập nhật lúc \d{2}:\d{2}", item) for item in stamp),
+        repr(stamp),
+    )
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))
     browser.close()

@@ -23,7 +23,16 @@
 
 import { Submission, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { businessDate, calendarDay, dateTime, integer, money, parseDong } from "../core/format.js";
+import {
+  businessDate,
+  calendarDay,
+  dateTime,
+  integer,
+  money,
+  monthLabel,
+  parseDong,
+  shiftMonth,
+} from "../core/format.js";
 import { EXPENSE_CATEGORY_VI } from "../core/i18n.js";
 import { can } from "../core/rbac.js";
 import { principal, storeId } from "../core/session.js";
@@ -81,27 +90,8 @@ function monthOf(day) {
   return day.slice(0, 7);
 }
 
-/**
- * @param {string} month `YYYY-MM`
- * @param {number} step -1 or +1
- * @returns {string}
- */
-function shiftMonth(month, step) {
-  const [year, number] = month.split("-").map((part) => Number.parseInt(part, 10));
-  const index = year * 12 + (number - 1) + step;
-  const shiftedYear = Math.floor(index / 12);
-  const shiftedMonth = (index % 12) + 1;
-  return `${shiftedYear}-${String(shiftedMonth).padStart(2, "0")}`;
-}
-
-/**
- * @param {string} month `YYYY-MM`
- * @returns {string} "Tháng 9/2026"
- */
-export function monthLabel(month) {
-  const [year, number] = month.split("-");
-  return `Tháng ${Number.parseInt(number, 10)}/${year}`;
-}
+// "Tháng 9/2026" -- `monthLabel` is `format.js`'s, re-exported for anything that imported it here.
+export { monthLabel };
 
 /**
  * @param {import("../core/router.js").RouteContext} [context]

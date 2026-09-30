@@ -15,6 +15,37 @@
  *   - A non-integer amount is a contract violation, not a rounding opportunity. It is shown raw
  *     with a visible marker so the operator distrusts it, instead of being quietly coerced.
  *
+ * ## Dates and times: one convention (CONSOLE-COPY-A11Y-009, review C9)
+ *
+ * The same moment used to read four ways on four screens -- "15:05 26-09" on the SLA board,
+ * "15:05 26/09/2026" from `dateTime`, "15:05 thứ Bảy 26/9" as a promise and "Cập nhật lúc
+ * 15:05:33" on a list. A counter comparing two of them had to translate first. Now there is one
+ * way, and every screen reaches it through this module (a contract test refuses `Intl`,
+ * `toLocale*`, `Date` getters and date padding anywhere else in the console):
+ *
+ *   - Always the shop's clock (`Asia/Ho_Chi_Minh`), whatever zone the phone is set to.
+ *   - 24-hour time, hours and minutes, never seconds: "15:05".
+ *   - Time before the day; the day as two-digit day and month with "/": "26/09".
+ *   - The year only when it is not the shop's current year ("26/09/2025"), or when the text is a
+ *     record that leaves the screen -- a printed receipt, a statement, an export window, an
+ *     invoice -- where `{year: true}` always prints it ("26/09/2026").
+ *   - Weekdays in the counter's words: "thứ Bảy" inside a phrase, "Thứ Bảy" when the day stands
+ *     alone as a label; Sunday is "Chủ nhật".
+ *
+ *   | what                         | reads                     | function                     |
+ *   | ---------------------------- | ------------------------- | ---------------------------- |
+ *   | a time                       | 15:05                     | `clock`                      |
+ *   | a moment                     | 15:05 26/09               | `dateTime`                   |
+ *   | a moment, another year       | 15:05 26/09/2025          | `dateTime`                   |
+ *   | a moment on paper            | 15:05 26/09/2026          | `dateTime(v, {year: true})`  |
+ *   | the day of a moment          | 26/09                     | `dateOnly`                   |
+ *   | a calendar day (YYYY-MM-DD)  | Thứ Bảy 26/09 · 26/09     | `calendarDay`                |
+ *   | a promised-ready time        | 15:05 thứ Bảy 26/09       | `promiseTime`                |
+ *   | the same, in a list row      | 15:05 26/09               | `promiseTime(v, {short})`    |
+ *   | when a list was read         | Cập nhật lúc 15:05        | `updatedAt`                  |
+ *   | how long ago                 | 12 phút trước             | `ago`                        |
+ *   | a month (YYYY-MM)            | Tháng 9/2026              | `monthLabel`                 |
+ *
  * @module core/format
  */
 
@@ -34,29 +65,6 @@ const VND = new Intl.NumberFormat("vi-VN", {
   style: "currency",
   currency: "VND",
   maximumFractionDigits: 0,
-});
-
-const DATE_TIME = new Intl.DateTimeFormat("vi-VN", {
-  timeZone: TIMEZONE,
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-const TIME_ONLY = new Intl.DateTimeFormat("vi-VN", {
-  timeZone: TIMEZONE,
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-});
-
-const DATE_ONLY = new Intl.DateTimeFormat("vi-VN", {
-  timeZone: TIMEZONE,
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
 });
 
 /** What to show where a number would be if the server has not decided one. */
@@ -196,31 +204,113 @@ export function parseInstant(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+const SHOP_PARTS = new Intl.DateTimeFormat("en-US", {
+  timeZone: TIMEZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  weekday: "short",
+  hourCycle: "h23",
+});
+
+/** Vietnamese weekday names, Sunday first, as they sit inside a phrase ("thứ Sáu"). */
+const WEEKDAY_VI = ["Chủ nhật", "thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy"];
+const WEEKDAY_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 /**
- * @param {string|null|undefined} value
- * @returns {string}
+ * An instant's shop-local parts (Asia/Ho_Chi_Minh), whatever the device's own zone. Day, month,
+ * hour and minute are two digits each.
+ *
+ * @param {Date} moment
+ * @returns {{year: string, month: string, day: string, hour: string, minute: string, weekday: number}}
  */
-export function dateTime(value) {
-  const parsed = parseInstant(value);
-  return parsed ? DATE_TIME.format(parsed) : UNKNOWN;
+function shopParts(moment) {
+  /** @type {Record<string, string>} */
+  const parts = {};
+  for (const part of SHOP_PARTS.formatToParts(moment)) parts[part.type] = part.value;
+  const two = (/** @type {string} */ text) => String(text ?? "").padStart(2, "0");
+  return {
+    year: parts.year,
+    month: two(parts.month),
+    day: two(parts.day),
+    // `h23` is asked for; an engine that still says "24" at midnight is corrected, not trusted.
+    hour: parts.hour === "24" ? "00" : two(parts.hour),
+    minute: two(parts.minute),
+    weekday: WEEKDAY_EN.indexOf(parts.weekday),
+  };
 }
 
 /**
- * @param {string|null|undefined} value
+ * @typedef {object} DateOptions
+ * @property {boolean} [year] always print the year (paper, statements, export windows)
+ * @property {Date} [now] the clock the "current year" is read from; the device's by default
+ */
+
+/**
+ * "26/09", or "26/09/2025" when the year is not the shop's current one (or `year` is asked for).
+ *
+ * @param {string} year
+ * @param {string} month two digits
+ * @param {string} day two digits
+ * @param {DateOptions} options
  * @returns {string}
  */
-export function timeOnly(value) {
-  const parsed = parseInstant(value);
-  return parsed ? TIME_ONLY.format(parsed) : UNKNOWN;
+function dayMonth(year, month, day, options) {
+  const thisYear = businessDate(options.now || new Date()).slice(0, 4);
+  return options.year === true || year !== thisYear ? `${day}/${month}/${year}` : `${day}/${month}`;
 }
 
 /**
+ * "15:05" -- a time on the shop's clock, hours and minutes.
+ *
  * @param {string|null|undefined} value
  * @returns {string}
  */
-export function dateOnly(value) {
+export function clock(value) {
   const parsed = parseInstant(value);
-  return parsed ? DATE_ONLY.format(parsed) : UNKNOWN;
+  if (!parsed) return UNKNOWN;
+  const p = shopParts(parsed);
+  return `${p.hour}:${p.minute}`;
+}
+
+/**
+ * "15:05 26/09" -- a moment; "15:05 26/09/2025" in another year, or always with `{year: true}`.
+ *
+ * @param {string|null|undefined} value
+ * @param {DateOptions} [options]
+ * @returns {string}
+ */
+export function dateTime(value, options = {}) {
+  const parsed = parseInstant(value);
+  if (!parsed) return UNKNOWN;
+  const p = shopParts(parsed);
+  return `${p.hour}:${p.minute} ${dayMonth(p.year, p.month, p.day, options)}`;
+}
+
+/**
+ * "26/09" -- the shop's day of a moment; with the year as `dateTime` prints it.
+ *
+ * @param {string|null|undefined} value
+ * @param {DateOptions} [options]
+ * @returns {string}
+ */
+export function dateOnly(value, options = {}) {
+  const parsed = parseInstant(value);
+  if (!parsed) return UNKNOWN;
+  const p = shopParts(parsed);
+  return dayMonth(p.year, p.month, p.day, options);
+}
+
+/**
+ * "Cập nhật lúc 15:05" -- when the rows on screen were read (every list's freshness line).
+ *
+ * @param {Date} [at]
+ * @returns {string}
+ */
+export function updatedAt(at = new Date()) {
+  return `Cập nhật lúc ${clock(at.toISOString())}`;
 }
 
 /**
@@ -531,81 +621,81 @@ export function addDays(day, days) {
   return new Date(Date.UTC(year, month - 1, date + days)).toISOString().slice(0, 10);
 }
 
-const CALENDAR_DAY = new Intl.DateTimeFormat("vi-VN", {
-  timeZone: "UTC",
-  weekday: "short",
-  day: "2-digit",
-  month: "2-digit",
-});
-
 /**
- * A calendar day the server named (`YYYY-MM-DD`) for a list row: "T2, 22/09". Read in UTC because
- * the value is a date, not an instant — shifting it by the device's offset would move it a day.
+ * A calendar day the server named (`YYYY-MM-DD`) as a label: "Thứ Bảy 26/09", or "26/09" with
+ * `{weekday: false}`; the year as `dateTime` prints it. Read as a date, not an instant -- shifting
+ * it by any clock's offset would move it a day.
  *
  * @param {string|null|undefined} day
- * @param {{weekday?: boolean}} [options]
+ * @param {DateOptions & {weekday?: boolean}} [options]
  * @returns {string}
  */
 export function calendarDay(day, options = {}) {
-  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(String(day))) return UNKNOWN;
-  const [year, month, date] = String(day).split("-");
-  // `vi-VN` without a weekday prints "22-09"; the counter writes a day as "22/09".
-  if (options.weekday === false) return `${date}/${month}`;
-  return CALENDAR_DAY.format(new Date(Date.UTC(Number(year), Number(month) - 1, Number(date))));
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day ?? ""));
+  if (!match) return UNKNOWN;
+  const [, year, month, date] = match;
+  const text = dayMonth(year, month, date, options);
+  if (options.weekday === false) return text;
+  const weekday = WEEKDAY_VI[new Date(Date.UTC(Number(year), Number(month) - 1, Number(date))).getUTCDay()];
+  return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${text}`;
+}
+
+/**
+ * "Tháng 9/2026" -- a month the server named (`YYYY-MM`), as the counter says it.
+ *
+ * @param {string|null|undefined} month
+ * @returns {string}
+ */
+export function monthLabel(month) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(month ?? ""));
+  return match ? `Tháng ${Number(match[2])}/${match[1]}` : UNKNOWN;
+}
+
+/**
+ * A `YYYY-MM` month moved by whole months (calendar arithmetic on the month, not money).
+ *
+ * @param {string} month
+ * @param {number} delta
+ * @returns {string}
+ */
+export function shiftMonth(month, delta) {
+  const [year, number] = String(month).split("-").map(Number);
+  const index = year * 12 + (number - 1) + delta;
+  return `${String(Math.floor(index / 12)).padStart(4, "0")}-${String((index % 12) + 1).padStart(2, "0")}`;
+}
+
+/**
+ * The shop's hour now (0-23), in `Asia/Ho_Chi_Minh` whatever the phone's own zone.
+ *
+ * @param {Date} [now]
+ * @returns {number}
+ */
+export function shopHour(now = new Date()) {
+  return Number(shopParts(now).hour);
 }
 
 // --- PROMISE-001: the promised-ready time, as the counter says it ----------------------------
 
-const SHOP_PARTS = new Intl.DateTimeFormat("en-US", {
-  timeZone: TIMEZONE,
-  year: "numeric",
-  month: "numeric",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  weekday: "short",
-  hourCycle: "h23",
-});
-
-/** Vietnamese weekday names, Sunday first, the way the counter says them ("thứ Sáu"). */
-const WEEKDAY_VI = ["Chủ nhật", "thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy"];
-const WEEKDAY_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
 /**
- * An instant's shop-local parts (Asia/Ho_Chi_Minh), whatever the device's own zone.
+ * A promised-ready time as it is said and printed: "13:00 thứ Bảy 26/09" (`DEC-037`). The server
+ * decided the instant; this only writes it in the shop's zone, with the year when it is not this
+ * one.
  *
- * @param {Date} moment
- * @returns {{year: string, month: string, day: string, hour: string, minute: string, weekday: number}}
- */
-function shopParts(moment) {
-  /** @type {Record<string, string>} */
-  const parts = {};
-  for (const part of SHOP_PARTS.formatToParts(moment)) parts[part.type] = part.value;
-  return {
-    year: parts.year,
-    month: parts.month,
-    day: parts.day,
-    hour: parts.hour,
-    minute: parts.minute,
-    weekday: WEEKDAY_EN.indexOf(parts.weekday),
-  };
-}
-
-/**
- * A promised-ready time as it is said and printed: "13:00 thứ Sáu 26/9" (`DEC-037`). The server
- * decided the instant; this only writes it in the shop's zone.
- *
- * `short` drops the weekday ("13:00 26/9") for a list row, where the full form wraps at 390 px.
+ * `short` drops the weekday ("13:00 26/09") for a list row, where the full form wraps at 390 px.
  *
  * @param {string|null|undefined} value
- * @param {{short?: boolean}} [options]
+ * @param {DateOptions & {short?: boolean}} [options]
  * @returns {string}
  */
 export function promiseTime(value, options = {}) {
   const parsed = parseInstant(value);
   if (!parsed) return UNKNOWN;
   const p = shopParts(parsed);
-  return [`${p.hour}:${p.minute}`, options.short ? "" : WEEKDAY_VI[p.weekday], `${p.day}/${p.month}`]
+  return [
+    `${p.hour}:${p.minute}`,
+    options.short ? "" : WEEKDAY_VI[p.weekday],
+    dayMonth(p.year, p.month, p.day, options),
+  ]
     .filter(Boolean)
     .join(" ");
 }
@@ -621,20 +711,21 @@ export function shopLocalInput(value) {
   const parsed = parseInstant(value);
   if (!parsed) return "";
   const p = shopParts(parsed);
-  const pad = (/** @type {string} */ text) => text.padStart(2, "0");
-  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}`;
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
 }
 
 /**
  * What a person picked in a `datetime-local` input, read as shop time and sent with its offset
- * ("2026-09-26T13:00:00+07:00"). Asia/Ho_Chi_Minh keeps one offset all year. Empty when the input
- * is empty or malformed, so nothing half-typed is ever sent.
+ * ("2026-09-26T13:00:00+07:00"). Asia/Ho_Chi_Minh keeps one offset all year. A picker that carries
+ * seconds keeps them. Empty when the input is empty or malformed, so nothing half-typed is ever
+ * sent.
  *
  * @param {string} value
  * @returns {string}
  */
 export function shopInstantFromInput(value) {
   const text = String(value || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) return "";
-  return `${text}:00+07:00`;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) return `${text}:00+07:00`;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(text)) return `${text}+07:00`;
+  return "";
 }

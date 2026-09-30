@@ -43,7 +43,7 @@
 
 import { MAX_LIMIT, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { dateOnly, dateTime, money } from "../core/format.js";
+import { calendarDay, dateTime, money } from "../core/format.js";
 import { enumVi } from "../core/i18n.js";
 import { inGroup, modeBadge, orderStatus, timeAgo } from "../core/orderStatus.js";
 import { can } from "../core/rbac.js";
@@ -62,7 +62,7 @@ import {
   show,
   statusPill,
 } from "../ui/kit.js";
-// PROMISE-001: "Hẹn 13:00 thứ Sáu 26/9" and the LATE pill on a row.
+// PROMISE-001: "Hẹn 13:00 26/09" and the LATE pill on a row.
 import { promiseMeta } from "../ui/promise.js";
 
 const LIST_LIMIT = 100;
@@ -121,7 +121,7 @@ const SEGMENTS = [
  */
 export function ticketLabel(item) {
   if (item?.ticket_number === null || item?.ticket_number === undefined) return null;
-  return `Phiếu ${item.ticket_number} · ${dateOnly(item.ticket_issued_on)}`;
+  return `Phiếu ${item.ticket_number} · ${calendarDay(item.ticket_issued_on, { weekday: false })}`;
 }
 
 /**
@@ -418,7 +418,7 @@ export function render_(context) {
       show(lookupHost, inlineAlert({ state: "warn", title: "Nhập số phiếu, ví dụ 17." }));
       return;
     }
-    const day = lookup.date ? `ngày ${dateOnly(lookup.date)}` : "hôm nay";
+    const day = lookup.date ? `ngày ${calendarDay(lookup.date, { weekday: false })}` : "hôm nay";
     const query = new URLSearchParams({ ticket: number, limit: "20" });
     if (lookup.date) query.set("ticket_date", lookup.date);
     // A slower earlier answer must not overwrite a later one when staff retype quickly.
@@ -585,7 +585,7 @@ export function render_(context) {
     },
   });
   function drawDateChip() {
-    render(dateChip, icon("clock"), h("span", null, lookup.date ? dateOnly(lookup.date) : "Hôm nay"));
+    render(dateChip, icon("clock"), h("span", null, lookup.date ? calendarDay(lookup.date, { weekday: false }) : "Hôm nay"));
   }
   drawDateChip();
   const dateRow = h(

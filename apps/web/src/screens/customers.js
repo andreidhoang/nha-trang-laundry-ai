@@ -28,7 +28,7 @@ import {
   zaloHref,
 } from "../core/customers.js";
 import { h, render } from "../core/dom.js";
-import { UUID, dateOnly, dateTime, money } from "../core/format.js";
+import { UUID, calendarDay, dateOnly, dateTime, money } from "../core/format.js";
 import { enumVi } from "../core/i18n.js";
 import { orderStatus } from "../core/orderStatus.js";
 import { can } from "../core/rbac.js";
@@ -71,7 +71,7 @@ const CREDIT_KIND = {
 
 /** @param {string|null|undefined} day */
 function ticketDay(day) {
-  return day ? dateOnly(`${day}T12:00:00+07:00`) : "";
+  return day ? calendarDay(day, { weekday: false }) : "";
 }
 
 // =============================================================================================

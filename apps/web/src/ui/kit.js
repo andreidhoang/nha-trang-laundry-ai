@@ -539,7 +539,8 @@ export function searchField(spec) {
  *
  * @param {object} spec
  * @param {string} spec.id
- * @param {string} spec.label
+ * @param {string} spec.label what the − and + step ("Bớt …", "Thêm …")
+ * @param {string} [spec.name] the field's accessible name; `label` when absent
  * @param {string} [spec.value]
  * @param {string} [spec.unit] shown after the field ("kg", "cái")
  * @param {boolean} [spec.decimal] allow one decimal (kg); otherwise whole units
@@ -556,6 +557,9 @@ export function stepperInput(spec) {
       inputmode: spec.decimal ? "decimal" : "numeric",
       autocomplete: "off",
       value: spec.value ?? "",
+      // CONSOLE-COPY-A11Y-009 (C10): the field's own name. The − and + beside it were named and
+      // the number between them was not, so a screen reader read "edit text, 5.5".
+      "aria-label": spec.name || spec.label,
       "aria-describedby": spec.describedBy || null,
       onInput: (event) => spec.onChange?.(event.target.value),
     })

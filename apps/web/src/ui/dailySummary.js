@@ -19,26 +19,13 @@
 
 import { request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
-import { TIMEZONE } from "../core/format.js";
+import { shopHour } from "../core/format.js";
 import { errorNotice } from "./components.js";
 import { button, infoButton, skeletonRows, techDetails, toast } from "./kit.js";
 
 /** The shop-local hour from which the card reads the summary by itself. */
 export const EVENING_HOUR = 18;
 
-/**
- * The shop's hour now, in `Asia/Ho_Chi_Minh` whatever the phone's own time zone.
- *
- * @param {Date} [now]
- * @returns {number}
- */
-export function shopHour(now = new Date()) {
-  return Number(
-    new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, hour: "2-digit", hourCycle: "h23" })
-      .format(now)
-      .slice(0, 2),
-  );
-}
 
 /**
  * The ⓘ beside the title (tier 2): what the summary is, and what it is not.

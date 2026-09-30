@@ -33,7 +33,6 @@
 import { request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import {
-  TIMEZONE,
   UNKNOWN,
   dateTime,
   duration,
@@ -161,24 +160,6 @@ function orderLabel(item) {
     : `Đơn ${String(item.order_id || UNKNOWN).slice(0, 8)}`;
 }
 
-/** "01:22 26/09": the mark to the minute, with its day, in the shop's time zone. */
-const MARK = new Intl.DateTimeFormat("vi-VN", {
-  timeZone: TIMEZONE,
-  hour: "2-digit",
-  minute: "2-digit",
-  day: "2-digit",
-  month: "2-digit",
-});
-
-/**
- * @param {string|null|undefined} value
- * @returns {string}
- */
-function markTime(value) {
-  const parsed = parseInstant(value);
-  return parsed ? MARK.format(parsed) : UNKNOWN;
-}
-
 /**
  * One order on the board: the row that opens it, and its record one tap below.
  *
@@ -197,7 +178,7 @@ function riskRow(item) {
     item.internal_risk_due_at
       ? byPromise(item)
         ? `Hẹn ${promiseTime(item.internal_risk_due_at, { short: true })}`
-        : `Mốc nội bộ ${markTime(item.internal_risk_due_at)}`
+        : `Mốc nội bộ ${dateTime(item.internal_risk_due_at)}`
       : null,
     enumVi(item.production_status),
   ]

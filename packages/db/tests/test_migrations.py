@@ -78,6 +78,8 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0063", "invoice_requests"),
         ("0064", "late_delivery_decisions"),
         ("0065", "reminder_steps"),
+        # Round 9 slice H (OPS-OBSERVABILITY-009, review P7); 0066-0069 are reserved for A, B, C, G.
+        ("0070", "event_aggregate_id_indexes"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

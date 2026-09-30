@@ -13,7 +13,7 @@ set -eu
 
 identity="${BACKUP_IDENTITY_FILE:?BACKUP_IDENTITY_FILE is required (the age private key, supplied at drill time)}"
 repository="${BACKUP_REPOSITORY_PREFIX:?BACKUP_REPOSITORY_PREFIX is required}"
-target_time="${RECOVERY_TARGET_TIME:?RECOVERY_TARGET_TIME is required, e.g. 2026-09-03 14:05:00+07}"
+target_time="${RECOVERY_TARGET_TIME:?RECOVERY_TARGET_TIME is required, e.g. 2026-09-03 14:05:00+07, or latest}"
 data_directory="${PGDATA:?PGDATA is required and must be empty}"
 
 if [ -n "$(ls -A "$data_directory" 2>/dev/null)" ]; then
@@ -70,6 +70,8 @@ _refuse_target() {
     exit 6
 }
 _target_stamp() {
+    # `latest`: every backup is at or before the end of the archive (see `recover_to_end` below).
+    case "$target_time" in latest|LATEST) printf '99999999999999\n'; return 0 ;; esac
     _dt=$(printf '%s' "$target_time" | sed -E 's/([+-][0-9]{2}:?[0-9]{2}?|Z)$//' | sed -E 's/\.[0-9]+$//')
     _off=$(printf '%s' "$target_time" | sed -nE 's/.*([+-][0-9]{2}:?[0-9]{2}?|Z)$/\1/p')
     case "$_dt" in
@@ -123,6 +125,16 @@ _target_stamp() {
 }
 target_stamp=$(_target_stamp)
 
+# **`RECOVERY_TARGET_TIME=latest`: everything the archive holds** (OPS-OBSERVABILITY-009). The
+# commonest restore -- the host is gone, bring all of it back -- could not be expressed. A time
+# target is only "reached" when recovery meets a commit *after* it, and a quiet shop has none after
+# its last order: the round-9 drill replayed every segment and then stopped with `FATAL: recovery
+# ended before configured recovery target was reached`, twice -- once just after the last commit,
+# once at exactly the last archived time, the rule the runbook gave. With no target at all,
+# PostgreSQL replays to the end of the archive and promotes.
+recover_to_end=no
+case "$target_time" in latest|LATEST) recover_to_end=yes ;; esac
+
 # **Newest at or before the target, not newest overall.** A base backup taken *after* the recovery
 # target cannot be recovered from -- PostgreSQL stops with `could not locate required checkpoint
 # record`, hours into the drill -- and that is the ordinary case rather than an edge one. Backups
@@ -164,6 +176,16 @@ unset IFS
     exit 7
 }
 
+# **The directory PostgreSQL will be started on, made the way it insists on.** Found by the first
+# real drill (OPS-OBSERVABILITY-009): this script succeeded and the server then refused with
+# `FATAL: data directory ... has invalid permissions`. The runbook says to make an empty directory,
+# `mkdir` makes it 0755, and PostgreSQL starts only on 0700 (or 0750). A PGDATA that did not exist
+# yet passed the emptiness check above and then failed every candidate at `tar -C`, reporting that
+# no backup could be restored. Both were improvisation on the stopwatch. Done here, after every
+# refusal, so a refused restore still changes nothing.
+mkdir -p "$data_directory"
+chmod 0700 "$data_directory"
+
 # One line at a time, not `for candidate in $candidates`: that word-splits, so a repository prefix
 # or an object name containing a space would be torn into fragments and every fetch would miss.
 # A space in these paths is expected rather than exotic -- the identity arrives on removable media
@@ -202,11 +224,17 @@ echo "restored from $restored to $target_time"
 # `restore_command` fetches and decrypts one segment at a time, so the private key is needed for
 # the whole of recovery and not only for the base backup. The inner double quotes are what make a
 # path with a space work; the outer single quotes are PostgreSQL's.
+if [ "$recover_to_end" = yes ]; then
+cat > "$data_directory/postgresql.auto.conf" <<CONF
+restore_command = '"${fetch_command}" "${repository}/wal/%f.gz.age" | age -d -i "${identity}" | gzip -dc > %p'
+CONF
+else
 cat > "$data_directory/postgresql.auto.conf" <<CONF
 restore_command = '"${fetch_command}" "${repository}/wal/%f.gz.age" | age -d -i "${identity}" | gzip -dc > %p'
 recovery_target_time = '${target_time}'
 recovery_target_action = 'promote'
 CONF
+fi
 touch "$data_directory/recovery.signal"
 
 echo "data directory prepared. Start PostgreSQL against it and wait for promotion, then run:"

@@ -78,6 +78,7 @@ from nha_trang_laundry_db.orders import (
     StoredOrder,
     TicketReference,
 )
+from nha_trang_laundry_db.outbox import INTERNAL_EVENT_TYPES
 from nha_trang_laundry_db.payments import PaymentCommand, PaymentRepository, StoredPayment
 from nha_trang_laundry_db.promotions import read_published_promotion_program
 from nha_trang_laundry_db.quotes import (
@@ -3111,17 +3112,21 @@ class OperationsService:
             self._connection_factory(self._database_url) as connection,
             connection.cursor() as cursor,
         ):
+            # OPS-OBSERVABILITY-009 (review P6): "pending" is work the internal worker will take.
+            # Every other outbox row is the record of a mutation with no consumer, and counting
+            # it made an idle, healthy shop's figure grow with every order and never fall.
             cursor.execute(
                 """
                 SELECT
-                  count(*) FILTER (WHERE status = 'PENDING'),
+                  count(*) FILTER (WHERE status = 'PENDING' AND event_type = ANY(%s)),
                   count(*) FILTER (WHERE status = 'PROCESSING'),
                   count(*) FILTER (
                     WHERE status = 'PROCESSING' AND lease_expires_at < CURRENT_TIMESTAMP
                   ),
                   count(*) FILTER (WHERE status = 'DEAD')
                 FROM outbox_events
-                """
+                """,
+                (sorted(INTERNAL_EVENT_TYPES),),
             )
             outbox = cursor.fetchone()
             cursor.execute(

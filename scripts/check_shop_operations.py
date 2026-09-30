@@ -49,8 +49,10 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 from zoneinfo import ZoneInfo
 
 import psycopg
@@ -320,12 +322,193 @@ def check_console_reachable(
     )
 
 
+# --- OPS-OBSERVABILITY-009: what the application itself is doing ---------------------------------
+#
+# Every check above looks at infrastructure. None looked at the application, so payments could
+# answer 500 all afternoon and nobody would be told (review finding P2). This one reads the API's
+# own structured log -- the lines `SafeStructuredLogger` writes, kept by Docker's json-file driver
+# on the shop host -- and counts three things.
+#
+# **The defaults, in one place.** `docs/runbooks/shop-pilot.md` §6 prints this table and a test
+# holds the two together. A count at or above its figure, inside the window, fails the check.
+#
+#   server_errors                 1   a 5xx other than 503. The console tells staff "Máy chủ gặp
+#                                     lỗi. Đừng thử lại": the outcome is unknown and somebody has
+#                                     to reconcile it, so one is enough.
+#   database_refusals             5   `database.request_refused` (the designed 503: busy or
+#                                     unreachable database, nothing written, the console retries).
+#                                     One is a normal collision; five in a window is a database in
+#                                     trouble. Counted here and never again as a server error.
+#   browser_boundary_rejections  10   `auth.browser_boundary` (origin or CSRF refused). A tab left
+#                                     open across a deploy can produce a few; ten is somebody or
+#                                     something forging requests.
+#
+# **The window is the scheduler's interval** (five minutes, `deploy/shop-till/install.sh`), so one
+# incident alerts once rather than on every run that can still see it. **Liveness uses a longer
+# look-back:** the console check asks `/readyz` every five minutes, so a healthy API always has a
+# line in the last fifteen, and none at all means the stream is not reaching this check -- which
+# is not the same as nothing having failed.
+APP_SIGNAL_THRESHOLDS: Mapping[str, int] = MappingProxyType(
+    {"server_errors": 1, "database_refusals": 5, "browser_boundary_rejections": 10}
+)
+APP_SIGNAL_WINDOW_SECONDS = 5 * 60
+APP_LIVENESS_WINDOW_SECONDS = 15 * 60
+#: Lines written up to this far after `now` are accepted as clock skew between the container and
+#: the host; beyond it a line is from the future and cannot be counted in any window.
+APP_CLOCK_SKEW_SECONDS = 60
+
+
+@dataclass(frozen=True)
+class ApplicationSignalCounts:
+    server_errors: int
+    database_refusals: int
+    browser_boundary_rejections: int
+    api_lines_in_liveness_window: int
+    unreadable_lines: int
+
+
+@dataclass(frozen=True)
+class _ApiEvent:
+    event: str
+    fields: dict[str, object]
+    occurred_at: datetime
+
+
+class _Unreadable:
+    """A line that should have been an event and could not be read as one."""
+
+
+_UNREADABLE = _Unreadable()
+
+
+def _api_event(line: str) -> _ApiEvent | _Unreadable | None:
+    """The API event on this line; `None` for a blank line or another component's event."""
+
+    text = line.strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return _UNREADABLE
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("event"), str):
+        return _UNREADABLE
+    if parsed.get("component") != "api":
+        return None
+    try:
+        occurred = datetime.fromisoformat(str(parsed.get("occurred_at")))
+    except ValueError:
+        return _UNREADABLE
+    if occurred.tzinfo is None:
+        return _UNREADABLE
+    fields = parsed.get("fields")
+    return _ApiEvent(parsed["event"], fields if isinstance(fields, dict) else {}, occurred)
+
+
+def count_application_signals(lines: Iterable[str], *, now: datetime) -> ApplicationSignalCounts:
+    """Count the three signals in the window ending at `now`. Pure: the caller supplies `now`."""
+
+    signal_start = now - timedelta(seconds=APP_SIGNAL_WINDOW_SECONDS)
+    liveness_start = now - timedelta(seconds=APP_LIVENESS_WINDOW_SECONDS)
+    latest = now + timedelta(seconds=APP_CLOCK_SKEW_SECONDS)
+    server_errors = refusals = rejections = alive = unreadable = 0
+    for line in lines:
+        event = _api_event(line)
+        if isinstance(event, _Unreadable):
+            unreadable += 1
+            continue
+        if event is None or event.occurred_at > latest or event.occurred_at < liveness_start:
+            continue
+        alive += 1
+        if event.occurred_at < signal_start:
+            continue
+        if event.event == "http.request.completed":
+            status_code = event.fields.get("status_code")
+            if isinstance(status_code, int) and status_code >= 500 and status_code != 503:
+                server_errors += 1
+        elif event.event == "database.request_refused":
+            refusals += 1
+        elif event.event == "auth.browser_boundary":
+            rejections += 1
+    return ApplicationSignalCounts(server_errors, refusals, rejections, alive, unreadable)
+
+
+def check_application_signals(lines: Iterable[str], *, now: datetime) -> CheckResult:
+    counts = count_application_signals(lines, now=now)
+    observed = {
+        "server_errors": counts.server_errors,
+        "database_refusals": counts.database_refusals,
+        "browser_boundary_rejections": counts.browser_boundary_rejections,
+    }
+    fields: dict[str, object] = {
+        **observed,
+        "api_lines": counts.api_lines_in_liveness_window,
+        "window_s": APP_SIGNAL_WINDOW_SECONDS,
+    }
+    if counts.api_lines_in_liveness_window == 0:
+        return CheckResult(
+            "application_signals",
+            passed=False,
+            detail=(
+                f"no API log line in the last {APP_LIVENESS_WINDOW_SECONDS // 60} minutes: the "
+                "log stream is not reaching this check, so nothing about the application is known"
+            ),
+            fields=fields,
+        )
+    over = [
+        f"{name} {observed[name]} (alert at {threshold})"
+        for name, threshold in APP_SIGNAL_THRESHOLDS.items()
+        if observed[name] >= threshold
+    ]
+    summary = "; ".join(over) or ", ".join(f"{name} {count}" for name, count in observed.items())
+    return CheckResult(
+        "application_signals",
+        passed=not over,
+        detail=f"in the last {APP_SIGNAL_WINDOW_SECONDS // 60} minutes: {summary}",
+        fields=fields,
+    )
+
+
+def read_application_log(source: str, *, compose_file: str) -> list[str]:
+    """The API's log lines for the liveness window.
+
+    `compose` reads the `api` service through `docker compose logs`, which is where the shop host
+    keeps them (json-file, rotated by the compose `logging` options). Anything else is a file path,
+    for a host that ships the stream elsewhere, and for a drill.
+    """
+
+    if source == "compose":
+        result = subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-f",
+                compose_file,
+                "logs",
+                "--no-color",
+                "--no-log-prefix",
+                "--since",
+                f"{APP_LIVENESS_WINDOW_SECONDS}s",
+                "api",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"could not read the api log: {(result.stderr or result.stdout).strip()[:120]}"
+            )
+        return result.stdout.splitlines()
+    return _Path(source).read_text(encoding="utf-8", errors="replace").splitlines()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--check",
         action="append",
-        choices=["wal", "base", "volume", "flags", "console", "all"],
+        choices=["wal", "base", "volume", "flags", "console", "app", "all"],
         help="repeatable; defaults to every check that is configured",
     )
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL"))
@@ -356,6 +539,14 @@ def main() -> int:
         default=os.environ.get("R1_RECOVERY_MODE"),
         help="who owns point-in-time recovery; undeclared makes the WAL check refuse to guess",
     )
+    parser.add_argument(
+        "--app-logs",
+        default=os.environ.get("R1_APP_LOGS"),
+        help=(
+            "where the API's structured log is: `compose` reads the api service through "
+            "`docker compose -f <--compose-file> logs`; anything else is a file path"
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="one JSON object, for a wrapper")
     parser.add_argument(
         "--emit-alert",
@@ -383,6 +574,7 @@ def main() -> int:
         ("base", "base_backup_age", arguments.base_backup_marker, "--base-backup-marker"),
         ("flags", "capability_flags", arguments.compose_file, "--compose-file"),
         ("console", "console_reachable", arguments.console_url, "--console-url"),
+        ("app", "application_signals", arguments.app_logs, "--app-logs"),
     ]
 
     runners = {
@@ -394,6 +586,10 @@ def main() -> int:
         "flags": lambda: check_capability_flags(str(arguments.compose_file)),
         "console": lambda: check_console_reachable(
             str(arguments.console_url), ca_file=arguments.console_ca_file
+        ),
+        "app": lambda: check_application_signals(
+            read_application_log(str(arguments.app_logs), compose_file=arguments.compose_file),
+            now=datetime.now(UTC),
         ),
     }
 
@@ -433,7 +629,8 @@ def main() -> int:
     if not results:
         raise SystemExit(
             "No check could run. Each one needs its input: --database-url, --volume-path, "
-            "--console-url. A check that silently does not run is worse than one that fails."
+            "--console-url, --app-logs. A check that silently does not run is worse than one "
+            "that fails."
         )
 
     configure_structured_logging()

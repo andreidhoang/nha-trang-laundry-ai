@@ -25,14 +25,33 @@ from .migrations import discover_migrations
 #: version 4. `CHANNEL_SEND` carries an attempt number. Including any of them made the drill
 #: unpassable on any real database, which is a check that fails safe into being useless: an
 #: operator who cannot pass a drill stops running drills.
+#:
+#: `ORDER` left the list in OPS-OBSERVABILITY-009, found by the first real drill: recording a
+#: payment (`ORDER_PAYMENT`) or a delivery leg (`DELIVERY_LEG`) bumps `orders.row_version` and
+#: writes its event under its own aggregate, so any order that took a payment and then moved on
+#: "has a gap" -- and the validator refused the live database the drill had been restored from. An
+#: order gets the check its writers do promise instead (`ORDER_LEDGER_MISMATCHES_SQL`).
 CONTIGUOUSLY_VERSIONED_AGGREGATES: tuple[str, ...] = (
     "AGENT_DRAFT",
     "APPROVAL",
     "MANUAL_SEND",
-    "ORDER",
     "ORDER_REQUEST",
     "STAFF_STORE_ASSIGNMENT",
 )
+
+#: What every ORDER writer does promise: its event carries the version it gave the order row, in
+#: the same transaction. So no ORDER event may claim a version beyond its row, and none may exist
+#: without its row -- a restore that kept one half of a transaction would show here.
+ORDER_LEDGER_MISMATCHES_SQL = """
+    SELECT count(*) FROM (
+        SELECT e.aggregate_id
+          FROM domain_events e
+          LEFT JOIN orders o ON o.id = e.aggregate_id
+         WHERE e.aggregate_type = 'ORDER'
+         GROUP BY e.aggregate_id, o.row_version, o.id
+        HAVING o.id IS NULL OR max(e.aggregate_version) > o.row_version
+    ) AS mismatches
+"""
 
 
 class RecoveryValidationError(ValueError):
@@ -243,6 +262,8 @@ def validate_restored_database(
             ),
         )
         timeline = cursor.fetchone()
+        cursor.execute(ORDER_LEDGER_MISMATCHES_SQL)
+        order_mismatches = cursor.fetchone()
         audit_timeline_verified = (
             timeline is not None
             and int(timeline[0]) > 0
@@ -250,6 +271,8 @@ def validate_restored_database(
             and int(timeline[2]) == 0
             and timeline[3] is not None
             and timeline[3] >= evidence.selected_recovery_point_at
+            and order_mismatches is not None
+            and int(order_mismatches[0]) == 0
         )
         cursor.execute(
             """

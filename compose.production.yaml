@@ -7,6 +7,20 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+# `OPS-OBSERVABILITY-009`. The API's log is also the source `check_shop_operations.py --check app`
+# reads, and the only record of what the application did, so it keeps fourteen busy days. Measured
+# on a full daily walk: at most 553 bytes per request as json-file stores it. A busy day is 100
+# orders x 72 requests (the walk's own ratio, 503 requests for 7 orders) + three consoles polling
+# once a minute for 14 hours + `/readyz` every five minutes = 10,008 requests = 5.5 MB. Docker
+# drops the oldest file when it rotates, so the guaranteed history is (max-file - 1) x max-size =
+# 4 x 20 MiB = 80 MiB = 15 days. Still under the 100 MiB per-service bound
+# `test_ops_hardening_contract.py` holds for the disk the database lives on.
+x-api-logging: &api-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 x-runtime-hardening: &runtime-hardening
   logging: *default-logging
   init: true
@@ -63,6 +77,7 @@ services:
 
   api:
     <<: *runtime-hardening
+    logging: *api-logging
     image: ${STAGING_API_IMAGE:-nha-trang-laundry-api:local}
     build:
       context: .

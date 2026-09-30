@@ -9126,6 +9126,53 @@ def scenario_late_delivery(console: Console) -> None:
     console.sign_in("demo-owner")
 
 
+def scenario_queue_pending(console: Console) -> None:
+    """`OPS-OBSERVABILITY-009` (review P6): "Chờ nhận" on Hệ thống is work the worker will take.
+
+    Every mutation writes an outbox row; only the internal allowlist is ever claimed. After a full
+    run the shop has written dozens of record-only rows (payments, reports, reminders...), and the
+    queue summary used to count every one of them as pending work that never drained.
+    """
+
+    head("H9", "HỆ THỐNG — pending outbox work is only what the internal worker can claim (P6)")
+    console.sign_in("demo-owner")
+    read = console.call("GET", "/internal/v1/queue-recovery")
+    if not ok("the queue summary answers the owner", read["status"] == 200, read["text"][:160]):
+        return
+    pending = int((read["body"] or {}).get("pending_internal", -1))
+    if not READS_DATABASE:
+        note("skipped: the database comparison needs --database-url")
+        return
+    import workspace_env  # noqa: F401  # puts the workspace packages on sys.path
+    from nha_trang_laundry_db.outbox import INTERNAL_EVENT_TYPES
+
+    allowlist = "ARRAY[" + ",".join(f"'{name}'" for name in sorted(INTERNAL_EVENT_TYPES)) + "]"
+    claimable = sql(
+        "SELECT count(*) FROM outbox_events WHERE status = 'PENDING' "
+        f"AND event_type = ANY({allowlist})"
+    )
+    record_only = sql(
+        "SELECT count(*) FROM outbox_events WHERE status = 'PENDING' "
+        f"AND NOT (event_type = ANY({allowlist}))"
+    )
+    ok(
+        "the pending figure is exactly the claimable internal rows in the database",
+        claimable.isdigit() and pending == int(claimable),
+        f"api {pending}, claimable {claimable}",
+    )
+    ok(
+        "and the shop's record-only rows exist and are not counted as pending work",
+        record_only.isdigit() and int(record_only) > 0,
+        f"record-only PENDING rows {record_only}",
+    )
+    console.open("#/system", settle=1800)
+    ok(
+        "the Hệ thống screen opens on the same summary",
+        "Chờ nhận" in console.text(),
+        console.said()[:160],
+    )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -9187,6 +9234,8 @@ SCENARIOS = {
     # invoice refusal while the notice is unpublished; this one proves the feature, and publishes
     # the notice itself only with --only on a fresh stack (after proving the refusal).
     "invoice_requests": scenario_invoice_requests,
+    # OPS-OBSERVABILITY-009 (review P6). Last: it reads the outbox every scenario above wrote to.
+    "queue_pending": scenario_queue_pending,
 }
 
 

@@ -135,11 +135,13 @@ def test_the_continuity_check_speaks_only_where_contiguity_is_promised() -> None
     The list is the contract, so this test names what must be in it and what must not.
     """
 
+    # OPS-OBSERVABILITY-009: `ORDER` is out. Payments and delivery legs bump the order's row version
+    # under their own aggregate, so the first real drill failed on the live database it restored;
+    # `test_restore_validation_real_ledger.py` holds the ORDER check that replaced it.
     assert set(CONTIGUOUSLY_VERSIONED_AGGREGATES) == {
         "AGENT_DRAFT",
         "APPROVAL",
         "MANUAL_SEND",
-        "ORDER",
         "ORDER_REQUEST",
         "STAFF_STORE_ASSIGNMENT",
     }

@@ -60,6 +60,10 @@ STORE = "11111111-2222-4333-8444-555555555555"
 PASS: list[str] = []
 FAIL: list[str] = []
 
+#: CONSOLE-SHELL-009 (C7): the build number the stub's `/staff/sw.js` carries. The section that
+#: proves the "Có bản mới" banner bumps it -- what a deploy does to the worker's bytes.
+SHELL_BUILD = {"n": 1}
+
 #: `INCIDENT-INTAKE-001`. Two rows, because the interesting one is the second: an incident whose
 #: description has been disposed of under `INCIDENT_EVIDENCE` at 365 days, or which the agent path
 #: opened with no summary at all. It must read as an expected retention state, not as a gap.
@@ -2447,6 +2451,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:
+        # CONSOLE-SHELL-009 (C7): the console under `/staff/`, the way the API serves it, so a real
+        # service worker can install there, wait, and take over -- only once the section that needs
+        # it asks, so every earlier section runs exactly as before (its `/staff/sw.js` is a 404).
+        if self.path.startswith("/staff/") and globals().get("state", {}).get("serve_staff"):
+            if self.path.split("?")[0] == "/staff/sw.js":
+                worker = (WEB / "sw.js").read_text(encoding="utf-8")
+                payload = f"{worker}\n// stub build {SHELL_BUILD['n']}\n".encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/javascript; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            self.path = self.path[len("/staff") :]
         if "/assistant/turns/" in self.path and self.path.endswith("/stream"):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -10090,6 +10109,77 @@ with sync_playwright() as playwright:
         f"{len(state['approval_reads'])} reads",
     )
     clock_context.close()
+
+    print()
+    print("=" * 74)
+    print("CONSOLE-SHELL-009 C7. CÓ BẢN MỚI — a deploy is offered, never forced")
+    print("=" * 74)
+
+    state["serve_staff"] = True
+    SHELL_BUILD["n"] = 1
+    shell_context = browser.new_context(viewport={"width": 1280, "height": 900})
+    shell_context.add_cookies(
+        [{"name": "staff_csrf", "value": "c" * 40, "url": f"http://localhost:{PORT}"}]
+    )
+    fresh = shell_context.new_page()
+    fresh.on("pageerror", lambda e: errors.append(f"/staff/: {e}"))
+    fresh.route("**/internal/**", route_api)
+    fresh.goto(f"http://localhost:{PORT}/staff/#/new", wait_until="networkidle")
+    for _ in range(40):
+        if fresh.evaluate("() => Boolean(navigator.serviceWorker.controller)"):
+            break
+        fresh.wait_for_timeout(250)
+    check(
+        "the first visit installs the worker, which takes the page with nothing to offer",
+        fresh.evaluate("() => Boolean(navigator.serviceWorker.controller)")
+        and fresh.locator("[data-update-ready]").count() == 0,
+    )
+    fresh.locator("#new-customer-search").click()
+    fresh.keyboard.type("0382", delay=10)
+    fresh.evaluate("() => { window.__sameDocument = true; }")
+    SHELL_BUILD["n"] = 2
+    # The console's own check -- run when the tab is looked at again -- finds the new build.
+    fresh.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+    for _ in range(60):
+        if fresh.locator("[data-update-ready]").count():
+            break
+        fresh.wait_for_timeout(250)
+    banner = fresh.locator("[data-update-ready]")
+    shell_shot("stub-update-ready-desk", fresh)
+    check(
+        "a new build waits and the console says so: 'Có bản mới' with 'Tải lại'",
+        banner.count() == 1
+        and "Có bản mới" in banner.first.inner_text()
+        and banner.locator("button", has_text="Tải lại").count() == 1,
+        banner.first.inner_text() if banner.count() else "no banner",
+    )
+    check(
+        "the new worker is waiting, not in charge",
+        fresh.evaluate(
+            "() => navigator.serviceWorker.getRegistration().then((r) => Boolean(r && r.waiting))"
+        ),
+    )
+    fresh.wait_for_timeout(2500)
+    check(
+        "nothing reloads by itself: the page and what was typed are still there",
+        fresh.evaluate("() => window.__sameDocument === true")
+        and fresh.locator("#new-customer-search").input_value() == "0382",
+    )
+    if banner.count():
+        with fresh.expect_navigation(timeout=10_000):
+            banner.locator("button", has_text="Tải lại").click()
+    fresh.wait_for_timeout(1200)
+    check(
+        "'Tải lại' hands over to the new build and reloads once, into it",
+        not fresh.evaluate("() => window.__sameDocument === true")
+        and fresh.evaluate(
+            "() => navigator.serviceWorker.getRegistration()"
+            ".then((r) => Boolean(r && r.active && !r.waiting))"
+        )
+        and fresh.locator("[data-update-ready]").count() == 0,
+    )
+    shell_context.close()
+    state["serve_staff"] = False
 
     print()
     print("=" * 74)

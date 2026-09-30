@@ -4916,3 +4916,9 @@ table.reminders th {
   top: 0.4rem;
   width: 0.6rem;
 }
+
+/* C7: "Có bản mới — Tải lại" is information, not an alarm. */
+.banner[data-state="info"] {
+  background: var(--info-bg);
+  color: var(--info-fg);
+}

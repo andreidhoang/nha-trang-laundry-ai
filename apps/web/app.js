@@ -431,6 +431,23 @@ function renderBanners() {
     );
   }
 
+  // C7: a new build is installed and waiting. Never applied by itself: reloading throws away
+  // whatever is being typed, so the person chooses the moment.
+  if (updateWaiting) {
+    children.push(
+      h(
+        "div",
+        { class: "banner", dataState: "info", role: "status", dataUpdateReady: "true" },
+        "Có bản mới — xong việc đang nhập thì bấm Tải lại.",
+        h(
+          "button",
+          { type: "button", dataUpdateApply: "true", onClick: applyUpdate },
+          "Tải lại",
+        ),
+      ),
+    );
+  }
+
   if (state.status === "unreachable") {
     children.push(
       h(
@@ -781,6 +798,62 @@ function wipeWorkspace() {
   if (currentPath() !== "/") router.replace("/");
 }
 
+// --- C7: a new build, offered and never forced ------------------------------------------------
+
+/**
+ * How often an open console asks whether a new build exists. A browser checks for a new service
+ * worker when it navigates, and a hash-routed console never navigates, so without this a tablet
+ * left open all day would learn of a deploy only when somebody reloaded it.
+ */
+const UPDATE_CHECK_MS = 30 * 60_000;
+/** @type {ServiceWorker|null} a new build's worker, installed and waiting for the person's press */
+let updateWaiting = null;
+/** Set only by "Tải lại": the one case in which a change of worker reloads the page. */
+let reloadRequested = false;
+
+/**
+ * Watch this registration for a new build (CONSOLE-SHELL-009, C7).
+ *
+ * The worker no longer takes over by itself (`sw.js` waits), because a worker that switched under
+ * a running page served the next lazily fetched file from the new build to old code. The waiting
+ * worker is offered instead, as a quiet banner; nothing reloads until the person presses it, since
+ * a reload discards whatever is being typed. On the first install there is no controller yet, so
+ * nothing is offered: there is no old code to replace.
+ *
+ * @param {ServiceWorkerRegistration} registration
+ */
+function watchForUpdate(registration) {
+  const offer = (/** @type {ServiceWorker|null} */ worker) => {
+    if (!worker || !navigator.serviceWorker.controller) return;
+    updateWaiting = worker;
+    renderBanners();
+  };
+  offer(registration.waiting);
+  registration.addEventListener("updatefound", () => {
+    const incoming = registration.installing;
+    incoming?.addEventListener("statechange", () => {
+      if (incoming.state === "installed") offer(incoming);
+    });
+  });
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadRequested) location.reload();
+  });
+  const check = () => {
+    if (!document.hidden) registration.update().catch(() => {});
+  };
+  document.addEventListener("visibilitychange", check);
+  setInterval(check, UPDATE_CHECK_MS);
+}
+
+/** "Tải lại": let the waiting worker take over, then reload into the new build -- once. */
+function applyUpdate() {
+  reloadRequested = true;
+  updateWaiting?.postMessage("SKIP_WAITING");
+  // A worker that went redundant in the meantime never fires `controllerchange`; the press still
+  // means "reload now", and the network-first shell then serves the new build from the server.
+  setTimeout(() => location.reload(), 4000);
+}
+
 async function boot() {
   session.onSignOut(wipeWorkspace);
   // C5: the skip control moves focus to the screen, and nothing else -- no route, no rebuild.
@@ -847,9 +920,12 @@ async function boot() {
   // The service worker caches the application shell and nothing else. Registered last so that a
   // failure to register never blocks sign-in.
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/staff/sw.js").catch(() => {
-      /* An unregistered worker costs offline shell loading and nothing else. */
-    });
+    navigator.serviceWorker
+      .register("/staff/sw.js")
+      .then(watchForUpdate)
+      .catch(() => {
+        /* An unregistered worker costs offline shell loading and nothing else. */
+      });
   }
 }
 

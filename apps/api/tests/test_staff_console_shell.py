@@ -9,6 +9,9 @@ to the tests that existed:
   succeed left the last customer's order on the screen. `session.signOut()` is run here under Node
   against a stubbed `fetch`, for every answer the server can give, and the idle-expiry path -- which
   must keep the screen -- is run beside it.
+- **C7.** `/staff/*` had no `Cache-Control`, and the service worker fetched the shell in the default
+  cache mode and took over running pages by itself: after a deploy one tablet could run modules
+  from two builds. The header is asserted on what the API serves, and the worker on its source.
 
 The browser halves are in `scripts/verify_console_interaction.py` (its CONSOLE-SHELL-009
 sections), because they need a real browser.
@@ -18,12 +21,15 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
+from nha_trang_laundry_api.main import app
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 WEB = ROOT / "apps" / "web"
@@ -243,3 +249,89 @@ console.log(JSON.stringify(view(null)));
     assert result["principal"] == "u-1" and result["status"] == "active"
     assert result["stateSignedOut"] is False
     assert result["storeId"] == "11111111-2222-4333-8444-555555555555"
+
+
+# --- C7: no mixed builds after a deploy -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/staff/",
+        "/staff/app.js",
+        "/staff/sw.js",
+        "/staff/src/core/nav.js",
+        "/staff/src/screens/orderDetail.js",
+        "/staff/styles/kit.css",
+        "/staff/manifest.webmanifest",
+        "/staff/icon.svg",
+    ],
+)
+def test_the_console_shell_is_served_for_revalidation(path: str) -> None:
+    response = TestClient(app).get(path)
+
+    assert response.status_code == 200, path
+    assert response.headers.get("cache-control") == "no-cache", path
+
+
+def test_a_revalidated_shell_file_answers_304_and_keeps_the_policy() -> None:
+    client = TestClient(app)
+    first = client.get("/staff/app.js")
+    etag = first.headers.get("etag")
+    assert etag, "StaticFiles sends an ETag; revalidation depends on it"
+
+    again = client.get("/staff/app.js", headers={"If-None-Match": etag})
+
+    assert again.status_code == 304
+    assert again.headers.get("cache-control") == "no-cache"
+
+
+def test_api_answers_are_still_never_stored() -> None:
+    response = TestClient(app).get("/internal/v1/session")
+
+    assert response.headers.get("cache-control") == "no-store"
+
+
+def _worker() -> str:
+    return (WEB / "sw.js").read_text(encoding="utf-8")
+
+
+def _listener(source: str, event: str) -> str:
+    match = re.search(
+        r'self\.addEventListener\("' + event + r'", \(event\) => \{(.*?)\n\}\);', source, re.S
+    )
+    assert match, f"the worker has no {event} listener"
+    return match.group(1)
+
+
+def test_the_worker_revalidates_every_shell_file_it_serves() -> None:
+    fetch = _listener(_worker(), "fetch")
+    code = "\n".join(line for line in fetch.splitlines() if not line.strip().startswith("//"))
+
+    assert 'fetch(event.request, { cache: "no-cache" })' in code
+    assert "fetch(event.request)" not in code
+
+
+def test_a_new_worker_waits_for_the_person_and_never_takes_over_by_itself() -> None:
+    source = _worker()
+    install = _listener(source, "install")
+    install_code = "\n".join(
+        line for line in install.splitlines() if not line.strip().startswith("//")
+    )
+
+    assert "skipWaiting" not in install_code, "a worker that activates itself mixes two builds"
+    message = _listener(source, "message")
+    assert 'event.data === "SKIP_WAITING"' in message and "self.skipWaiting()" in message
+    code = "\n".join(line for line in source.splitlines() if not line.strip().startswith("//"))
+    assert code.count("skipWaiting()") == 1
+
+
+def test_the_console_offers_the_new_build_and_reloads_only_when_pressed() -> None:
+    shell = (WEB / "app.js").read_text(encoding="utf-8")
+
+    assert "Có bản mới" in shell and "Tải lại" in shell
+    assert 'postMessage("SKIP_WAITING")' in shell
+    # Every reload in the shell is behind the person's press.
+    reloads = [line.strip() for line in shell.splitlines() if "location.reload()" in line]
+    assert reloads, "the press must reload into the new build"
+    assert all("reloadRequested" in line or "setTimeout" in line for line in reloads), reloads

@@ -711,6 +711,9 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         # received, which the guide tells the counter how to finish.
         "Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại",
         "Chưa đăng nhập",
+        # CONSOLE-SHELL-009 (C7): a new build waiting for the person's press.
+        "Có bản mới",
+        "Tải lại",
     ]
 
     absent_from_guide = [phrase for phrase in quoted if phrase not in guide]

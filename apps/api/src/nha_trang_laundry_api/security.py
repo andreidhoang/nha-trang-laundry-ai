@@ -96,6 +96,13 @@ class BrowserSecurityMiddleware:
                 response_headers["Cross-Origin-Resource-Policy"] = "same-origin"
                 if path.startswith("/internal/"):
                     response_headers["Cache-Control"] = "no-store"
+                elif path == "/staff" or path.startswith("/staff/"):
+                    # CONSOLE-SHELL-009 (C7). With no header the browser was free to keep the
+                    # console's modules by heuristic, so after a deploy one tablet could run some
+                    # files from the new build and some from the old. `no-cache` keeps them
+                    # cacheable but revalidated on every use: a 304 when nothing changed, the new
+                    # bytes the moment something did.
+                    response_headers["Cache-Control"] = "no-cache"
                 if scope.get("scheme") == "https":
                     response_headers["Strict-Transport-Security"] = (
                         "max-age=31536000; includeSubDomains"

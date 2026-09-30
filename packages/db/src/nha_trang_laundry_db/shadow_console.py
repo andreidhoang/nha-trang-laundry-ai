@@ -345,6 +345,69 @@ class AuditEntry:
     transition_reason: str | None = None
 
 
+#: The order history read (`audit_timeline`). A module constant so `test_event_aggregate_indexes.py`
+#: can `EXPLAIN` exactly this statement: `0070` indexes `audit_events` and `domain_events` on
+#: `aggregate_id` for it, because the older indexes lead with `aggregate_type`, which this does not
+#: filter on (review finding P7).
+AUDIT_TIMELINE_SQL = """
+    SELECT a.occurred_at, a.action, a.actor_type, a.actor_id, a.aggregate_type,
+           a.aggregate_id, d.payload ->> 'dimension', d.payload ->> 'target',
+           d.payload ->> 'step',
+           COALESCE(d.payload ->> 'rewash_reason', d.payload ->> 'rejection_reason')
+    FROM audit_events a
+    -- The audit row says only "a transition happened"; its domain event (same
+    -- aggregate, correlation and instant) says which axis moved and to what, so the
+    -- order's history can read "Đang giặt" instead of nine identical lines.
+    LEFT JOIN LATERAL (
+        SELECT e.payload FROM domain_events e
+         WHERE a.action = 'ORDER_STATE_TRANSITION'
+           AND e.event_type = 'ORDER_STATE_TRANSITIONED'
+           AND e.aggregate_id = a.aggregate_id
+           AND e.correlation_id = a.correlation_id
+           AND e.occurred_at = a.occurred_at
+         LIMIT 1
+    ) d ON TRUE
+    WHERE a.aggregate_id = %(aggregate)s
+      AND EXISTS (
+          SELECT 1 FROM orders t
+           WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+          UNION ALL
+          SELECT 1 FROM quotes t
+           WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+          UNION ALL
+          SELECT 1 FROM order_requests t
+           WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+          UNION ALL
+          SELECT 1 FROM counter_tickets t
+           WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+          UNION ALL
+          SELECT 1 FROM order_settlements t
+           WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+          UNION ALL
+          SELECT 1 FROM delivery_legs t
+           WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+          UNION ALL
+          SELECT 1 FROM quote_acceptances t
+           WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+          UNION ALL
+          SELECT 1 FROM customer_incidents t
+           WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+          UNION ALL
+          SELECT 1 FROM agent_runs t
+           WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+          UNION ALL
+          -- Added 2026-08-31. Omitting it made this filter refuse the caller's OWN
+          -- store's approval trail: an owner reading an approval they had just decided
+          -- saw nothing. A scoping fix that blinds the people it is meant to serve is
+          -- a defect in the same way the leak was.
+          SELECT 1 FROM approval_requests t
+           WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
+      )
+    ORDER BY a.occurred_at, a.id
+    LIMIT %(limit)s
+"""
+
+
 class ShadowConsoleRepository:
     """Every method is store-scoped and membership-checked; none of them sends anything."""
 
@@ -1154,63 +1217,7 @@ class ShadowConsoleRepository:
             # resolves to nothing and the timeline is empty, which is also what a caller sees for an
             # identifier that does not exist -- so probing still teaches nobody which stores exist.
             cursor.execute(
-                """
-                SELECT a.occurred_at, a.action, a.actor_type, a.actor_id, a.aggregate_type,
-                       a.aggregate_id, d.payload ->> 'dimension', d.payload ->> 'target',
-                       d.payload ->> 'step',
-                       COALESCE(d.payload ->> 'rewash_reason', d.payload ->> 'rejection_reason')
-                FROM audit_events a
-                -- The audit row says only "a transition happened"; its domain event (same
-                -- aggregate, correlation and instant) says which axis moved and to what, so the
-                -- order's history can read "Đang giặt" instead of nine identical lines.
-                LEFT JOIN LATERAL (
-                    SELECT e.payload FROM domain_events e
-                     WHERE a.action = 'ORDER_STATE_TRANSITION'
-                       AND e.event_type = 'ORDER_STATE_TRANSITIONED'
-                       AND e.aggregate_id = a.aggregate_id
-                       AND e.correlation_id = a.correlation_id
-                       AND e.occurred_at = a.occurred_at
-                     LIMIT 1
-                ) d ON TRUE
-                WHERE a.aggregate_id = %(aggregate)s
-                  AND EXISTS (
-                      SELECT 1 FROM orders t
-                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
-                      UNION ALL
-                      SELECT 1 FROM quotes t
-                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
-                      UNION ALL
-                      SELECT 1 FROM order_requests t
-                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
-                      UNION ALL
-                      SELECT 1 FROM counter_tickets t
-                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
-                      UNION ALL
-                      SELECT 1 FROM order_settlements t
-                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
-                      UNION ALL
-                      SELECT 1 FROM delivery_legs t
-                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
-                      UNION ALL
-                      SELECT 1 FROM quote_acceptances t
-                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
-                      UNION ALL
-                      SELECT 1 FROM customer_incidents t
-                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
-                      UNION ALL
-                      SELECT 1 FROM agent_runs t
-                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
-                      UNION ALL
-                      -- Added 2026-08-31. Omitting it made this filter refuse the caller's OWN
-                      -- store's approval trail: an owner reading an approval they had just decided
-                      -- saw nothing. A scoping fix that blinds the people it is meant to serve is
-                      -- a defect in the same way the leak was.
-                      SELECT 1 FROM approval_requests t
-                       WHERE t.id = %(aggregate)s AND t.store_id = %(store)s
-                  )
-                ORDER BY a.occurred_at, a.id
-                LIMIT %(limit)s
-                """,
+                AUDIT_TIMELINE_SQL,
                 {"aggregate": aggregate_id, "store": store_id, "limit": limit},
             )
             return tuple(

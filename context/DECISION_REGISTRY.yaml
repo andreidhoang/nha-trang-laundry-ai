@@ -1408,3 +1408,93 @@ decisions:
       number-grounding verifier and template fallback.
     reversal: >-
       Omit the block.
+  - id: DEC-045
+    title: A no-charge cancellation never compensates twice
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    opened_at: '2026-09-30'
+    question: >-
+      A refunding cancellation of an order with an executed money remedy could refund in full and leave the remedy credit live.
+    resolved_at: '2026-09-30'
+    decision_record: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    decided_under: >-
+      Delegated, not signed: the owner wrote "make the best decision and finish" on 2026-09-30.
+    resolution: >-
+      An unspent credit issued from the order is voided in the same transaction; a spent credit or remedy money already paid out is netted from the refund (never below 0), shown on the refund sheet, receipt and export.
+    reversal: >-
+      Refuse such cancellations (fail-closed).
+  - id: DEC-046
+    title: A credit spent on an order cancelled without charge is reissued
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    opened_at: '2026-09-30'
+    question: >-
+      A customer who used a credit on an order the shop then cancelled without charge lost the credit.
+    resolved_at: '2026-09-30'
+    decision_record: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    decided_under: >-
+      Delegated, not signed: the owner wrote "make the best decision and finish" on 2026-09-30.
+    resolution: >-
+      A new credit of the same face value to the same customer, linked by audit to the refund and the original credit; DEC-045 applies first when one order both spent and generated a credit.
+    reversal: >-
+      Refuse such cancellations (fail-closed).
+  - id: DEC-047
+    title: A hold pauses the storage fee and never erases it
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    opened_at: '2026-09-30'
+    question: >-
+      A hold made an accrued storage fee disappear, bypassing the approver-only waiver.
+    resolved_at: '2026-09-30'
+    decision_record: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    decided_under: >-
+      Delegated, not signed: the owner wrote "make the best decision and finish" on 2026-09-30.
+    resolution: >-
+      Fee accrued before a hold stays owed; held days do not accrue; resume continues. A rewash restarts free days and a withdrawn policy stops accrual, but a fee part already paid stays owed-for.
+    reversal: >-
+      Compute the fee only while the order is waiting (previous behaviour).
+  - id: DEC-048
+    title: Refunds of unknown method stay out of the drawer figure
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    opened_at: '2026-09-30'
+    question: >-
+      Refunds recorded before refund methods existed have no method, so the drawer cannot net them truthfully.
+    resolved_at: '2026-09-30'
+    decision_record: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    decided_under: >-
+      Delegated, not signed: the owner wrote "make the best decision and finish" on 2026-09-30.
+    resolution: >-
+      Excluded from the drawer figure with their count and total shown, and the figure marked incomplete while any are excluded; a failed return trip of unpaid goods stays refused.
+    reversal: >-
+      An owner-only audited attestation of each legacy refund's method.
+  - id: DEC-049
+    title: End-of-day cash count
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    opened_at: '2026-09-30'
+    question: >-
+      No open/close cash count existed, so the drawer figure was never reconciled.
+    resolved_at: '2026-09-30'
+    decision_record: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    decided_under: >-
+      Delegated, not signed: the owner wrote "make the best decision and finish" on 2026-09-30.
+    resolution: >-
+      Staff record the opening float and closing count; expected = float + cash taken - cash refunded - expenses marked paid from the drawer; the difference is recorded and shown to the owner; nothing happens automatically.
+    reversal: >-
+      Hide the screen; records stay.

@@ -602,3 +602,81 @@ def test_an_order_with_no_credit_on_its_bill_still_cancels_without_charge(
     assert answer.status_code == 200, answer.text
     assert (answer.json()["commercial"], answer.json()["balance"]) == ("CANCELLED", "REFUNDED")
     assert _refund(connection, order.order_id) == (50_000, 0)
+
+
+# --- idempotency: a replayed cancellation moves no credit twice --------------------------------
+
+
+def _remedy_money_rows(connection: Any) -> tuple[int, int, int, int]:
+    """Credits, voided credits, refunds, and credit void/reissue events -- the whole database."""
+
+    return (
+        int(_one(connection, "SELECT count(*) FROM remedy_credits")[0]),
+        int(_one(connection, "SELECT count(*) FROM remedy_credits WHERE voided_at IS NOT NULL")[0]),
+        int(_one(connection, "SELECT count(*) FROM order_refunds")[0]),
+        int(
+            _one(
+                connection,
+                "SELECT count(*) FROM domain_events WHERE event_type IN "
+                "('REMEDY_CREDIT_VOIDED', 'REMEDY_CREDIT_REISSUED')",
+            )[0]
+        ),
+    )
+
+
+@pytest.mark.parametrize("move", ["void", "net", "reissue"])
+def test_a_replayed_cancellation_returns_its_answer_and_moves_no_credit_again(
+    connection: Any, service: OperationsService, client: TestClient, move: str
+) -> None:
+    """Same key and payload: the prior answer, and no second void, netting or reissue. The same
+    key with a changed payload is a conflict, never a second cancellation."""
+
+    store_id, staff, order_id, credit_id = _remedied(connection, RemedyKind.DAMAGE_COMPENSATION)
+    assert credit_id is not None
+    if move == "net":
+        _spend_on_new_order(service, connection, store_id, staff, credit_id)
+    if move == "reissue":
+        order_id = _spend_on_new_order(service, connection, store_id, staff, credit_id).order_id
+    _as(staff)
+    body: dict[str, object] = (
+        {"step": "CANCEL", **SHOP_FAULT} if move != "reissue" else {"step": "CANCEL"}
+    )
+    version = int(_read(client, order_id)["row_version"])
+    before = _remedy_money_rows(connection)
+    key = f"cancel-{uuid4().hex}"
+    path = f"/internal/v1/orders/{order_id}/steps"
+
+    first = _post(client, path, body, key=key, if_match=version)
+    assert first.status_code == 200, first.text
+    after = _remedy_money_rows(connection)
+    expected = {
+        # One credit voided, one refund, one event.
+        "void": (before[0], before[1] + 1, before[2] + 1, before[3] + 1),
+        # Nothing voided or issued; one refund carrying the netting; no credit event.
+        "net": (before[0], before[1], before[2] + 1, before[3]),
+        # One new credit, nothing paid so no refund, one event.
+        "reissue": (before[0] + 1, before[1], before[2], before[3] + 1),
+    }[move]
+    assert after == expected
+    refund_rows = _refund(connection, order_id) if move != "reissue" else None
+    if move == "net":
+        assert refund_rows == (SETTLED - DAMAGE_CREDIT, DAMAGE_CREDIT)
+
+    again = _post(client, path, body, key=key, if_match=version)
+    assert again.status_code == 200, again.text
+    assert (first.json()["replayed"], again.json()["replayed"]) == (False, True)
+    assert {**again.json(), "replayed": False} == first.json()
+    assert _remedy_money_rows(connection) == after
+    if refund_rows is not None:
+        assert _refund(connection, order_id) == refund_rows
+
+    changed = _post(
+        client,
+        path,
+        {"step": "CANCEL", "custody_resolution": "RETURNED_UNWASHED_REFUNDED"},
+        key=key,
+        if_match=version,
+    )
+    assert changed.status_code == 409, changed.text
+    assert changed.json()["detail"] == "IDEMPOTENCY_CONFLICT"
+    assert _remedy_money_rows(connection) == after

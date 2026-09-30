@@ -327,6 +327,10 @@ DECLARED_CONTROLS = (
     "reminders.call",
     "reminders.done",
     "reminders.outcome",
+    # CONSOLE-SHELL-009 (C6): the "Khác" group (closed at the bottom of a desk sidebar, a section
+    # of Thêm on a phone) and Thêm's closed "Cần quyền khác".
+    "shell.nav-fold",
+    "more.denied-open",
 )
 
 PASS: list[str] = []
@@ -417,6 +421,35 @@ class Console:
                 ".then((r) => r.status)"
             )
         )
+
+    def nav(self, label: str, path: str) -> bool:
+        """Reach a destination the way a person does, and say whether a link was pressed.
+
+        On a desk: the sidebar link, or -- for the system screens, the two V2 lists and "Việc chưa
+        hỗ trợ" -- the sidebar's closed "Khác" group, opened first (CONSOLE-SHELL-009). On a phone:
+        the tab, or "Thêm" and then its row. Six scenarios carried their own copy of this and none
+        knew about the closed group, which a desk-size run then met as a timeout.
+        """
+        link = self.page.locator("nav a", has_text=label).first
+        if link.count() and not link.is_visible():
+            fold = self.page.locator("nav details.nav__fold > summary")
+            if fold.count() and fold.first.is_visible():
+                fold.first.click()
+                self.page.wait_for_timeout(300)
+                touched("shell.nav-fold")
+        if not (link.count() and link.is_visible()):
+            more = self.page.locator("nav a", has_text="Thêm").first
+            if more.count() and more.is_visible():
+                more.click()
+                self.page.wait_for_timeout(700)
+            link = self.page.locator(f"main a[data-nav='{path}']").first
+            # On a phone the "Khác" group is a section of Thêm: reaching its row is using it.
+            if self.page.locator(f"main ul[aria-label='Khác'] a[data-nav='{path}']").count():
+                touched("shell.nav-fold")
+        if link.count() and link.is_visible():
+            link.click()
+            return True
+        return False
 
     def text(self) -> str:
         try:
@@ -4033,13 +4066,7 @@ def scenario_report(console: Console) -> None:
     ok("and the link opens it", console.page.url.endswith("#/reports"), console.page.url)
     # And from the navigation, the way every destination is reached.
     console.open("#/orders")
-    nav = console.page.locator("nav a", has_text="Báo cáo").first
-    if not (nav.count() and nav.is_visible()):
-        console.page.locator("nav a", has_text="Thêm").first.click()
-        console.page.wait_for_timeout(700)
-        nav = console.page.locator("main a[data-nav='/reports']").first
-    if nav.count():
-        nav.click()
+    if console.nav("Báo cáo", "/reports"):
         console.page.wait_for_timeout(1500)
         touched("shell.nav.reports")
     ok("the navigation reaches Báo cáo", console.page.url.endswith("#/reports"), console.page.url)
@@ -4147,9 +4174,15 @@ def scenario_report(console: Console) -> None:
     )
     console.open("#/more")
     denied = console.page.locator("[data-nav-denied='/reports']")
+    # CONSOLE-SHELL-009 (C6): a shut destination waits under Thêm's closed "Cần quyền khác".
+    group = console.page.locator("details[data-nav-denied-group] > summary")
+    if group.count():
+        group.first.click()
+        console.page.wait_for_timeout(300)
+        touched("more.denied-open")
     ok(
-        "and Thêm still lists Báo cáo, disabled, naming who may open it",
-        denied.count() == 1 and "Chỉ" in denied.first.inner_text(),
+        "and Thêm still lists Báo cáo under Cần quyền khác, disabled, naming who may open it",
+        denied.count() == 1 and denied.first.is_visible() and "Chỉ" in denied.first.inner_text(),
         denied.first.inner_text()[:100] if denied.count() else "absent",
     )
     console.open("#/")
@@ -4584,13 +4617,7 @@ def _summary(console: Console, day: str) -> dict[str, Any]:
 def _nav_to(console: Console, label: str, path: str) -> None:
     """Reach a destination the way a person does: the sidebar link, or Thêm then its row."""
     console.open("#/orders")
-    link = console.page.locator("nav a", has_text=label).first
-    if not (link.count() and link.is_visible()):
-        console.page.locator("nav a", has_text="Thêm").first.click()
-        console.page.wait_for_timeout(700)
-        link = console.page.locator(f"main a[data-nav='{path}']").first
-    if link.count():
-        link.click()
+    if console.nav(label, path):
         console.page.wait_for_timeout(1400)
 
 
@@ -5223,14 +5250,8 @@ def scenario_customers(console: Console) -> None:
 
     head("16d", "LỊCH SỬ — the customer's page: Gọi, Zalo, open orders first")
     console.open("#/", settle=1400)
-    link = console.page.locator("nav a", has_text="Khách hàng").first
-    if link.count() and not link.is_visible():
-        # On a phone it is under "Thêm", the way a person reaches it there.
-        console.page.locator("nav a", has_text="Thêm").first.click()
-        console.page.wait_for_timeout(700)
-        link = console.page.locator("main a[data-nav='/customers']").first
-    if link.count():
-        link.click()
+    # On a phone it is under "Thêm", the way a person reaches it there.
+    if console.nav("Khách hàng", "/customers"):
         touched("shell.nav.customers")
         console.page.wait_for_timeout(1800)
     ok(
@@ -6531,13 +6552,7 @@ def _open_pickup(console: Console) -> None:
     """Đồ chờ lấy, reached the way a person reaches it: the sidebar, or "Thêm" on a phone."""
 
     console.open("#/", settle=1400)
-    link = console.page.locator("nav a", has_text="Đồ chờ lấy").first
-    if link.count() and not link.is_visible():
-        console.page.locator("nav a", has_text="Thêm").first.click()
-        console.page.wait_for_timeout(700)
-        link = console.page.locator("main a[data-nav='/pickup']").first
-    if link.count():
-        link.click()
+    if console.nav("Đồ chờ lấy", "/pickup"):
         touched("shell.nav.pickup")
         console.page.wait_for_timeout(1800)
     else:
@@ -8871,13 +8886,7 @@ def _open_late(console: Console) -> None:
     """Giao trễ cần xử lý, reached as a person reaches it: the sidebar, or "Thêm" on a phone."""
 
     console.open("#/", settle=1400)
-    link = console.page.locator("nav a", has_text="Giao trễ").first
-    if link.count() and not link.is_visible():
-        console.page.locator("nav a", has_text="Thêm").first.click()
-        console.page.wait_for_timeout(700)
-        link = console.page.locator("main a[data-nav='/late-deliveries']").first
-    if link.count():
-        link.click()
+    if console.nav("Giao trễ", "/late-deliveries"):
         touched("shell.nav.late-deliveries")
         console.page.wait_for_timeout(1800)
     else:
@@ -9289,15 +9298,10 @@ def main() -> int:
             ("Báo giá", "quotes", "#/quotes"),
             ("Đơn hàng", "orders", "#/orders"),
         ):
-            link = console.page.locator("nav a", has_text=label).first
-            if link.count() and not link.is_visible():
-                # On a phone only five destinations are tabs; the rest are reached the way a
-                # person reaches them there: the "Thêm" tab, then the row on #/more.
-                console.page.locator("nav a", has_text="Thêm").first.click()
-                console.page.wait_for_timeout(700)
-                link = console.page.locator(f"main a[data-nav='{hash_path[1:]}']").first
-            if link.count():
-                link.click()
+            # On a phone only five destinations are tabs; the rest are reached the way a person
+            # reaches them there -- "Thêm", then the row. On a desk, Tiếp nhận and Báo giá are in
+            # the sidebar's closed "Khác" group (CONSOLE-SHELL-009).
+            if console.nav(label, hash_path[1:]):
                 console.page.wait_for_timeout(900)
                 touched(f"shell.nav.{route}")
                 ok(

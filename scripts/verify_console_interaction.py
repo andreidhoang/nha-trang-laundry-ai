@@ -8638,15 +8638,20 @@ with sync_playwright() as playwright:
     )
 
     # An operator: the entry stays in Thêm, shut, with who may open it; the screen asks nothing.
+    # CONSOLE-SHELL-009 (C6): shut entries wait under Thêm's closed "Cần quyền khác", so the
+    # operator opens it first -- and the row must then be visible, not merely present.
     SESSION_OK["roles"] = ["OPERATOR"]
     state["report_reads"] = []
     page.goto("about:blank")
     page.goto(f"http://localhost:{PORT}/#/more", wait_until="networkidle")
     page.wait_for_timeout(900)
+    if page.locator("details[data-nav-denied-group] > summary").count():
+        page.locator("details[data-nav-denied-group] > summary").click()
+        page.wait_for_timeout(200)
     denied = page.locator("[data-nav-denied='/reports']")
     check(
         "an operator still sees Báo cáo under Thêm, disabled, naming who may open it",
-        denied.count() == 1 and "Chỉ" in denied.first.inner_text(),
+        denied.count() == 1 and denied.first.is_visible() and "Chỉ" in denied.first.inner_text(),
     )
     page.goto(f"http://localhost:{PORT}/#/reports", wait_until="networkidle")
     page.wait_for_timeout(900)
@@ -9232,9 +9237,14 @@ with sync_playwright() as playwright:
     page.goto("about:blank")
     page.goto(f"http://localhost:{PORT}/#/late-deliveries", wait_until="networkidle")
     page.wait_for_timeout(700)
+    # "Who may" is the guard screen's own sentence. Until CONSOLE-SHELL-009 this check also passed
+    # on the navigation's shut "Giao trễ" row ("Chỉ …"); the navigation lists only what a role can
+    # open now (C6), so the check reads the refusal the screen itself prints.
     check(
         "an auditor is refused the screen with who may, and nothing is asked of the server",
-        page.locator("[data-late]").count() == 0 and "Chỉ" in rendered_text(),
+        page.locator("[data-late]").count() == 0
+        and "KHÔNG ĐỦ QUYỀN" in rendered_text()
+        and "Vai trò được phép" in rendered_text(),
         rendered_text()[:160],
     )
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
@@ -10021,6 +10031,128 @@ with sync_playwright() as playwright:
         ),
         str(page.evaluate("() => document.activeElement?.outerText?.slice(0, 40)")),
     )
+
+    print()
+    print("=" * 74)
+    print("CONSOLE-SHELL-009 C6. ĐIỀU HƯỚNG — what each role is shown, and nothing shut")
+    print("=" * 74)
+
+    SESSION_OK["roles"] = ["OPERATOR"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    desk = visible_nav()
+    check(
+        "an operator at a desk meets at most 14 destinations",
+        len(desk) <= 14,
+        f"{len(desk)}: {desk}",
+    )
+    check(
+        "none of them shut: the navigation has no disabled row",
+        page.locator("nav.nav [aria-disabled='true']").count() == 0
+        and page.locator("nav.nav .nav__reason").count() == 0,
+    )
+    shut = ["/approvals", "/reports", "/expenses", "/staff", "/exports", "/system"]
+    check(
+        "the destinations an operator cannot open are not in the navigation",
+        not [path for path in shut if page.locator(f"nav.nav a[href='#{path}']").count()],
+    )
+    check(
+        "the counter's own work is in the open part of the list",
+        all(path in desk for path in ("/", "/new", "/orders", "/customers", "/pickup")),
+        repr(desk),
+    )
+    fold = page.locator("nav.nav details.nav__fold")
+    check(
+        "system, admin and 'Việc chưa hỗ trợ' wait in one closed group at the bottom",
+        fold.count() == 1
+        and not fold.first.evaluate("(node) => node.open")
+        and not page.locator("nav.nav a[href='#/gaps']").first.is_visible(),
+    )
+    if page.locator("nav.nav details.nav__fold > summary").count():
+        page.locator("nav.nav details.nav__fold > summary").click()
+        page.wait_for_timeout(200)
+        shell_shot("stub-operator-desk-nav-fold-open")
+    check(
+        "one press opens it: Tiếp nhận, Báo giá, Máy, Việc chưa hỗ trợ, Tất cả màn hình",
+        all(
+            page.locator(f"nav.nav details.nav__fold a[href='#{path}']").first.is_visible()
+            for path in ("/order-requests", "/quotes", "/machines", "/gaps", "/more")
+        ),
+    )
+    check(
+        "Đồ chờ lấy and Nhắc khách lấy đồ are one destination",
+        page.locator("nav.nav a[href='#/pickup']").count() == 1
+        and page.locator("nav.nav a[href='#/reminders']").count() == 0,
+    )
+    page.goto(f"http://localhost:{PORT}/#/reminders", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    check(
+        "on Nhắc khách lấy đồ, the navigation marks Đồ chờ lấy as where you are",
+        page.locator("nav.nav a[href='#/pickup']").first.get_attribute("aria-current") == "page",
+    )
+    switch = page.locator("#shelf-switch")
+    check(
+        "and a switch at the top moves between the two halves",
+        switch.count() == 1
+        and switch.locator("a[aria-current='page']").first.get_attribute("href") == "#/reminders",
+    )
+    if switch.count():
+        switch.locator("a[href='#/pickup']").click()
+        page.wait_for_timeout(900)
+    check(
+        "the switch opens Đồ chờ lấy",
+        page.url.endswith("#/pickup")
+        and page.locator("#shelf-switch a[aria-current='page']").first.get_attribute("href")
+        == "#/pickup",
+        page.url,
+    )
+    page.goto(f"http://localhost:{PORT}/#/reports", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    check(
+        "a deep link to a shut screen still opens the denial screen with its reason",
+        "KHÔNG ĐỦ QUYỀN" in shell_text() and "Kế toán" in shell_text(),
+    )
+    page.goto(f"http://localhost:{PORT}/#/more", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    denied = page.locator("[data-nav-denied='/reports']")
+    check(
+        "Thêm lists the operator's own destinations with no shut row in view",
+        denied.count() == 1
+        and not denied.first.is_visible()
+        and page.locator("main a[data-nav='/customers']").first.is_visible(),
+    )
+    if page.locator("details[data-nav-denied-group] > summary").count():
+        page.locator("details[data-nav-denied-group] > summary").click()
+        page.wait_for_timeout(200)
+        shell_shot("stub-operator-desk-more-denied-open")
+    check(
+        "and 'Cần quyền khác' opens to every shut one, disabled, naming who may open it",
+        denied.first.is_visible()
+        and "Chỉ" in denied.first.inner_text()
+        and page.locator("[data-nav-denied='/approvals']").count() == 1,
+    )
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    tabs = visible_nav()
+    shell_shot("stub-operator-phone-today")
+    check(
+        "an operator's phone tab bar: Hôm nay, Đơn hàng, Nhận đồ, Đồ chờ lấy, Thêm -- none shut",
+        sorted(tabs) == sorted(["/", "/orders", "/new", "/pickup", "/more"])
+        and page.locator("nav.nav .nav__item--tab-4 a").first.get_attribute("href") == "#/pickup",
+        repr(tabs),
+    )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    shell_shot("stub-owner-phone-today")
+    check(
+        "the owner's tab 4 is Duyệt",
+        page.locator("nav.nav .nav__item--tab-4 a").first.get_attribute("href") == "#/approvals",
+    )
+    page.set_viewport_size({"width": 1280, "height": 900})
 
     print()
     print("=" * 74)

@@ -4917,6 +4917,96 @@ table.reminders th {
   width: 0.6rem;
 }
 
+/* C6: the sidebar's closed group. Its summary is a nav row like any other. */
+.nav__fold > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.nav__fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.nav__fold > summary::after {
+  color: var(--text-muted);
+  content: "›";
+  font-size: 1.2em;
+  margin-left: auto;
+  transition: transform var(--motion-fast) var(--easing);
+}
+
+.nav__fold[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+.nav__fold-list {
+  display: grid;
+  gap: 2px;
+  padding-left: var(--space-3);
+}
+
+/* C6: Đồ chờ lấy | Nhắc khách lấy đồ -- two places, so links, styled as the segmented control. */
+.shelf-switch {
+  margin-bottom: var(--space-3);
+}
+
+.shelf-switch a.segmented__option {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.shelf-switch a.segmented__option[aria-current="page"] {
+  background: var(--surface);
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--border);
+  color: var(--text);
+  font-weight: var(--weight-bold);
+}
+
+/* C6: on Thêm, the shut destinations, closed until asked for. */
+details.more-denied {
+  margin-top: var(--space-4);
+}
+
+.more-denied__summary {
+  align-items: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  gap: var(--space-1);
+  list-style: none;
+  min-height: var(--tap-min);
+}
+
+.more-denied__summary::-webkit-details-marker {
+  display: none;
+}
+
+.more-denied__summary::after {
+  content: "›";
+  font-size: 1.2em;
+  transition: transform var(--motion-fast) var(--easing);
+}
+
+details.more-denied[open] > .more-denied__summary::after {
+  transform: rotate(90deg);
+}
+
+/* C6: with nothing to open (nobody signed in) the navigation is hidden, and on a desk its column
+ * goes with it rather than standing empty beside the signed-out screen. */
+@media (min-width: 64rem) {
+  .app:has(> .nav[hidden]) {
+    grid-template-areas:
+      "header"
+      "banner"
+      "main";
+    grid-template-columns: 1fr;
+  }
+}
+
 /* C7: "Có bản mới — Tải lại" is information, not an alarm. */
 .banner[data-state="info"] {
   background: var(--info-bg);

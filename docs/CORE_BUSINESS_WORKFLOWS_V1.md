@@ -377,7 +377,8 @@ published matrix:
 
 The owner's report (`#/reports`) is read by `OWNER_ADMIN`, `OPS_APPROVER`, `ACCOUNTANT` and
 `AUDITOR`, with a second factor and the store assignment; `OPERATOR` is refused — the counter keeps
-today's takings on Hôm nay (`DEC-014`) — and sees the entry under Thêm disabled, with who may open it.
+today's takings on Hôm nay (`DEC-014`) — and finds the entry under Thêm → *Cần quyền khác*,
+disabled, with who may open it (`CONSOLE-SHELL-009`: the navigation lists only what a role can open).
 
 Most operational routes additionally require a second factor. A control the role may not use is
 shown **disabled with the reason**, never hidden: a hidden control teaches staff the capability does

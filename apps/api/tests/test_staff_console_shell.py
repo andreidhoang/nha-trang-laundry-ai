@@ -9,6 +9,9 @@ to the tests that existed:
   succeed left the last customer's order on the screen. `session.signOut()` is run here under Node
   against a stubbed `fetch`, for every answer the server can give, and the idle-expiry path -- which
   must keep the screen -- is run beside it.
+- **C6.** 24 destinations, half of them shut, for a new member of staff. `navPlan` is executed for
+  every role: what it shows, what it does not, what goes in the closed group, and which screen is
+  the fourth tab.
 - **C7.** `/staff/*` had no `Cache-Control`, and the service worker fetched the shell in the default
   cache mode and took over running pages by itself: after a deploy one tablet could run modules
   from two builds. The header is asserted on what the API serves, and the worker on its source.
@@ -249,6 +252,147 @@ console.log(JSON.stringify(view(null)));
     assert result["principal"] == "u-1" and result["status"] == "active"
     assert result["stateSignedOut"] is False
     assert result["storeId"] == "11111111-2222-4333-8444-555555555555"
+
+
+# --- C6: what the navigation shows each role ------------------------------------------------------
+
+_ROLES = {
+    "OWNER_ADMIN": {"roles": ["OWNER_ADMIN"], "mfaVerified": True},
+    "OPS_APPROVER": {"roles": ["OPS_APPROVER"], "mfaVerified": True},
+    "OPERATOR": {"roles": ["OPERATOR"], "mfaVerified": True},
+    "OPERATOR_NO_MFA": {"roles": ["OPERATOR"], "mfaVerified": False},
+    "AUDITOR": {"roles": ["AUDITOR"], "mfaVerified": True},
+    "ACCOUNTANT": {"roles": ["ACCOUNTANT"], "mfaVerified": True},
+    "DRIVER": {"roles": ["DRIVER"], "mfaVerified": True},
+}
+
+
+def _plans() -> dict[str, Any]:
+    return _run(
+        f"""
+import {{ NAV_ITEMS, navPlan, navOwns, navVerdict }} from "./src/core/nav.js";
+const roles = {json.dumps(_ROLES)};
+const out = {{ items: NAV_ITEMS.map((item) => ({{ path: item.path, also: item.also || [],
+  fold: Boolean(item.fold), phoneOnly: Boolean(item.phoneOnly),
+  deskOnly: Boolean(item.deskOnly) }})) }};
+out.plans = {{}};
+for (const [name, who] of Object.entries(roles)) {{
+  const principal = {{ staffUserId: "u", sessionId: null, ...who }};
+  const plan = navPlan(principal);
+  out.plans[name] = {{
+    shown: plan.shown.map((entry) => ({{ path: entry.item.path, tab: entry.tab,
+      fold: Boolean(entry.item.fold), phoneOnly: Boolean(entry.item.phoneOnly),
+      deskOnly: Boolean(entry.item.deskOnly),
+      allowed: navVerdict(principal, entry.item).allowed }})),
+    denied: plan.denied.map((entry) => ({{ path: entry.item.path, short: entry.verdict.short || "",
+      reason: entry.verdict.reason }})),
+  }};
+}}
+out.nobody = navPlan(null);
+out.reminders = NAV_ITEMS.filter((item) => navOwns(item, "/reminders")).map((item) => item.path);
+out.orderPage = NAV_ITEMS.filter((item) => navOwns(item, "/orders/abc")).map((item) => item.path);
+console.log(JSON.stringify(out));
+"""
+    )
+
+
+def _desk_top_level(plan: dict[str, Any]) -> list[str]:
+    """What a desk sidebar shows without opening anything: entries, plus the closed group's row."""
+    rows = [e["path"] for e in plan["shown"] if not e["phoneOnly"] and not e["fold"]]
+    return rows + (["(Khác)"] if any(e["fold"] for e in plan["shown"]) else [])
+
+
+@needs_node
+def test_the_navigation_shows_only_what_each_role_can_open() -> None:
+    result = _plans()
+    for name, plan in result["plans"].items():
+        shown = {entry["path"] for entry in plan["shown"]}
+        denied = {entry["path"] for entry in plan["denied"]}
+        assert all(entry["allowed"] for entry in plan["shown"]), name
+        assert not shown & denied, (name, shown & denied)
+        # A shut destination is never silently absent: it is on `#/more` with whom to ask.
+        for entry in plan["denied"]:
+            assert entry["short"] and entry["reason"], (name, entry)
+    assert result["nobody"] == {"shown": [], "denied": []}
+
+
+@needs_node
+def test_an_operator_at_a_desk_meets_at_most_fourteen_destinations() -> None:
+    result = _plans()
+    operator = _desk_top_level(result["plans"]["OPERATOR"])
+
+    assert len(operator) <= 14, operator
+    for shut in ("/approvals", "/reports", "/expenses", "/staff", "/exports", "/system"):
+        assert shut not in operator, shut
+    # The counter's own work is in the open part of the list, not the closed group.
+    for daily in ("/", "/new", "/orders", "/customers", "/pickup", "/incidents"):
+        assert daily in operator, daily
+    # And it was the 24-destination list the review measured.
+    everyone = {item["path"] for item in result["items"] if not item["phoneOnly"]}
+    assert len(everyone) > 14
+
+
+@needs_node
+def test_system_and_admin_screens_are_in_the_closed_group() -> None:
+    owner = _plans()["plans"]["OWNER_ADMIN"]
+    folded = {entry["path"] for entry in owner["shown"] if entry["fold"]}
+
+    assert {"/system", "/staff", "/exports", "/gaps", "/machines"} <= folded
+    # The two V2 lists stay reachable, under "Khác" (spec V2 §5.2).
+    assert {"/order-requests", "/quotes"} <= folded
+    # On a desk, "Tất cả màn hình" there is the way to `#/more` and every shut destination.
+    assert any(e["path"] == "/more" and e["deskOnly"] for e in owner["shown"])
+
+
+@needs_node
+@pytest.mark.parametrize(
+    ("role", "four"),
+    [
+        ("OWNER_ADMIN", "/approvals"),
+        ("OPS_APPROVER", "/approvals"),
+        ("OPERATOR", "/pickup"),
+        ("AUDITOR", "/reports"),
+        ("ACCOUNTANT", "/reports"),
+        ("OPERATOR_NO_MFA", None),
+        ("DRIVER", None),
+    ],
+)
+def test_phone_tab_four_is_the_roles_own_permitted_screen(role: str, four: str | None) -> None:
+    plan = _plans()["plans"][role]
+    tabs = {entry["tab"]: entry["path"] for entry in plan["shown"] if entry["tab"]}
+
+    assert tabs.get(4) == four, tabs
+    # Never a shut tab, and "Thêm" is always the last one.
+    assert tabs.get(5) == "/more"
+    assert len(set(tabs.values())) == len(tabs)
+
+
+@needs_node
+def test_pickup_and_its_reminders_are_one_destination() -> None:
+    result = _plans()
+
+    assert result["reminders"] == ["/pickup"]
+    assert not any(item["path"] == "/reminders" for item in result["items"])
+    assert result["orderPage"] == ["/orders"]
+
+
+def test_every_screen_stays_reachable_from_the_navigation_or_its_owner() -> None:
+    """Merging and folding moved entries; it removed no route and no way to reach one."""
+
+    nav = (WEB / "src" / "core" / "nav.js").read_text(encoding="utf-8")
+    reachable = set(re.findall(r"""\bpath:\s*"([^"]+)",""", nav))
+    for also in re.findall(r"also:\s*\[([^\]]*)\]", nav):
+        reachable.update(re.findall(r'"([^"]+)"', also))
+
+    routes: set[str] = set()
+    for source in sorted((WEB / "src" / "screens").glob("*.js")):
+        if source.name == "index.js":
+            continue
+        text = source.read_text(encoding="utf-8")
+        routes.update(re.findall(r"""^\s*path:\s*["']([^"':]+)["'],""", text, re.M))
+    top_level = {route for route in routes if ":" not in route}
+
+    assert top_level - reachable == set(), top_level - reachable
 
 
 # --- C7: no mixed builds after a deploy -----------------------------------------------------------

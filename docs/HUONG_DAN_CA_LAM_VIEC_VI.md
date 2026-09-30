@@ -143,8 +143,8 @@ trước khi mở công nợ”* — mọi đơn trả tại quầy như thườ
 ### Đồ chờ lấy — khách chưa tới lấy (DEC-036)
 
 Điều khoản của tiệm: **lấy đồ trong 20 ngày; sau đó tính phí lưu kho; sau 60 ngày tiệm có thể
-thanh lý.** Màn hình **Đồ chờ lấy** (trong **Thêm**, hoặc bấm dòng **Đồ chờ lấy** ở **Hôm nay**)
-liệt kê mọi đơn đã giặt xong mà khách chưa lấy, đơn chờ lâu nhất ở trên, với số ngày chờ, số lần
+thanh lý.** Màn hình **Đồ chờ lấy** (trên điện thoại của nhân viên quầy là nút thứ tư ở thanh
+dưới; chủ tiệm và người duyệt tìm trong **Thêm**; hoặc bấm dòng **Đồ chờ lấy** ở **Hôm nay**) liệt kê mọi đơn đã giặt xong mà khách chưa lấy, đơn chờ lâu nhất ở trên, với số ngày chờ, số lần
 đã liên hệ và phí lưu kho tới giờ.
 
 | | Làm gì | Ở màn hình |
@@ -175,7 +175,7 @@ Máy chọn **ai cần nhắc** và **nhắc gì**; người ở quầy gửi b�
 Lịch nhắc tính theo ngày lịch từ ngày đồ xong: **ngày 0** (báo đồ đã xong), **ngày 3**, **ngày 7**,
 **ngày 14**, và **ngày cuối trước khi tính phí lưu kho** (chỉ khi chủ tiệm đã công bố phí). Mỗi đơn
 chỉ hiện lần nhắc mới nhất; từ ngày tính phí, đơn nằm ở **Đồ chờ lấy**. Mở bằng dòng **Nhắc khách
-lấy đồ** ở **Hôm nay** (hoặc trong **Thêm**).
+lấy đồ** ở **Hôm nay**, hoặc mở **Đồ chờ lấy** rồi bấm **Nhắc khách lấy đồ** ở thanh chọn trên cùng.
 
 | | Làm gì | Ở màn hình |
 |---|---|---|
@@ -260,7 +260,8 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
    **Báo cáo** cạnh ô tiền trên **Hôm nay**, hoặc vào **Thêm → Báo cáo**. Mỗi ô ghi cả hai số
    (ví dụ **3 / 5 đơn tạo**); **Đúng hẹn** đo theo giờ hẹn **đầu tiên** với khách (hẹn lại không
    làm số đẹp hơn); đơn nhận trước khi chủ tiệm công bố quy tắc hẹn trả thì đo theo mốc nội bộ 8
-   giờ, và ô ghi rõ có bao nhiêu đơn như vậy. Nhân viên quầy thấy mục này bị khoá, có ghi lý do.
+   giờ, và ô ghi rõ có bao nhiêu đơn như vậy. Nhân viên quầy không thấy mục này trong danh sách; nó
+   nằm ở **Thêm → Cần quyền khác**, bị khoá, có ghi ai mở được.
 5. Chủ tiệm (hoặc kế toán) ghi mọi khoản chi vào **Thêm → Sổ thu chi**: bấm **Ghi khoản chi**, chọn
    mục (điện, nước, hoá chất, túi nhãn, lương, mặt bằng, sửa chữa, xăng xe, khác), gõ số tiền, bấm
    **Ghi vào sổ**. Ghi sai thì mở dòng đó, bấm **Huỷ dòng này** hai lần rồi ghi lại dòng đúng.

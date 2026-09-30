@@ -18,7 +18,7 @@ import { shortId } from "./src/core/format.js";
 import { request } from "./src/core/api.js";
 import { focusContainer, h, render } from "./src/core/dom.js";
 import { enumVi } from "./src/core/i18n.js";
-import { NAV_ITEMS, navVerdict } from "./src/core/nav.js";
+import { FOLD_GROUP, navOwns, navPlan } from "./src/core/nav.js";
 import { can } from "./src/core/rbac.js";
 import * as router from "./src/core/router.js";
 import * as session from "./src/core/session.js";
@@ -85,86 +85,139 @@ async function pollApprovals() {
 }
 
 /**
- * Whether a path is "under" a nav entry: an order page belongs to Đơn hàng, and every destination
- * reached from "Thêm" lights the Thêm tab on a phone.
+ * Whether a path is "under" a nav entry for this person: an order page belongs to Đơn hàng,
+ * "Nhắc khách lấy đồ" to Đồ chờ lấy, and every destination that is not one of this person's tabs
+ * lights the Thêm tab on a phone.
  *
- * @param {(typeof NAV_ITEMS)[number]} item
+ * @param {import("./src/core/nav.js").NavEntry} entry
+ * @param {import("./src/core/nav.js").NavEntry[]} shown
  * @param {string} path
  */
-function isActive(item, path) {
-  if (item.path === "/") return path === "/";
-  if (path === item.path || path.startsWith(`${item.path}/`)) return true;
+function isActive(entry, shown, path) {
+  const { item } = entry;
   if (item.phoneOnly) {
-    const owner = NAV_ITEMS.find(
-      (other) => !other.phoneOnly && other.path !== "/" && (path === other.path || path.startsWith(`${other.path}/`)),
-    );
+    if (path === item.path) return true;
+    const owner = shown.find((other) => !other.item.phoneOnly && navOwns(other.item, path));
     return Boolean(owner && !owner.tab);
   }
-  return false;
+  // "Tất cả màn hình" is `#/more` on a desk: lit only there.
+  if (item.deskOnly) return path === item.path;
+  return navOwns(item, path);
 }
 
 /**
- * One nav destination. A capability this role lacks is shown and marked, never removed — hiding it
- * teaches staff the feature does not exist; marking it teaches them whom to ask. The short form
- * ("Chỉ Chủ / quản trị, Người duyệt vận hành") rides in a `nav__reason` span that CSS reveals where
- * there is room for it (the desktop sidebar), as `#/more` shows it; the full reason is the `title`,
- * and the guard screen this link opens prints it -- a `title` alone is unreachable on touch.
+ * One nav destination. Only destinations this person can open are rendered (C6); a shut one is
+ * listed with whom to ask on `#/more`, and its route still opens the guard screen with the reason.
  *
- * @param {(typeof NAV_ITEMS)[number]} item
- * @param {import("./src/core/nav.js").NavVerdict} verdict
+ * @param {import("./src/core/nav.js").NavEntry} entry
+ * @param {import("./src/core/nav.js").NavEntry[]} shown
  * @returns {HTMLElement}
  */
-function navLink(item, verdict) {
-  const active = isActive(item, currentPath());
+function navLink(entry, shown) {
+  const { item } = entry;
+  const active = isActive(entry, shown, currentPath());
+  const badge = item.path === "/approvals" && approvalsWaiting;
   return h(
     "a",
     {
       class: ["nav__link", item.primary && "nav__link--primary"],
       href: `#${item.path}`,
       "aria-current": active ? "page" : null,
-      "aria-disabled": verdict.allowed ? null : "true",
-      title: verdict.allowed ? item.label : `${item.label} — ${verdict.reason}`,
+      title: item.hint ? `${item.label} — ${item.hint}` : item.label,
+      dataNavLink: item.path,
     },
     item.primary ? h("span", { class: "nav__plus" }, icon(item.icon)) : icon(item.icon),
     h("span", null, item.label),
-    item.path === "/approvals" && approvalsWaiting
+    badge
       ? h(
           "span",
           { class: "nav__badge nav__badge--dot", dataApprovalsWaiting: "true" },
           h("span", { class: "sr-only" }, "Có việc chờ duyệt"),
         )
       : null,
-    verdict.allowed ? null : h("span", { class: "nav__reason" }, verdict.short || verdict.reason),
   );
 }
 
+/**
+ * @param {import("./src/core/nav.js").NavEntry} entry
+ * @param {import("./src/core/nav.js").NavEntry[]} shown
+ * @returns {HTMLElement}
+ */
+function navItem(entry, shown) {
+  return h(
+    "li",
+    {
+      class: [
+        "nav__item",
+        entry.tab && "nav__item--tab",
+        entry.tab && `nav__item--tab-${entry.tab}`,
+        entry.item.phoneOnly && "nav__item--phone-only",
+      ],
+    },
+    navLink(entry, shown),
+  );
+}
+
+/**
+ * Whether the sidebar's closed "Khác" group is open. In memory only (UX spec §2 invariant 3): a
+ * preference for this page's lifetime, never written to the device. Opened by a press, and kept
+ * open while the screen on show is one of its entries so the active entry is never hidden.
+ */
+let foldOpen = false;
+
 function renderNav() {
-  const principal = session.principal();
+  const { shown } = navPlan(session.principal());
+  const path = currentPath();
   const children = [];
+  const folded = [];
   let lastGroup = null;
 
-  for (const item of NAV_ITEMS) {
+  for (const entry of shown) {
+    if (entry.item.fold) {
+      folded.push(entry);
+      continue;
+    }
+    const { item } = entry;
     if (item.group && item.group !== lastGroup && !item.primary) {
       lastGroup = item.group;
       children.push(h("li", { class: "nav__group", "aria-hidden": "true" }, item.group));
     }
-    const verdict = navVerdict(principal, item);
-    children.push(
-      h(
-        "li",
-        {
-          class: [
-            "nav__item",
-            item.tab && "nav__item--tab",
-            item.tab && `nav__item--tab-${item.tab}`,
-            item.phoneOnly && "nav__item--phone-only",
-          ],
+    children.push(navItem(entry, shown));
+  }
+
+  if (folded.length) {
+    const initiallyOpen = foldOpen || folded.some((entry) => isActive(entry, shown, path));
+    const details = h(
+      "details",
+      {
+        class: "nav__fold",
+        open: initiallyOpen,
+        // Only a person's press is remembered; the open this render set is not a preference.
+        onToggle: (event) => {
+          if (event.currentTarget.open !== initiallyOpen) foldOpen = event.currentTarget.open;
         },
-        navLink(item, verdict),
+      },
+      h(
+        "summary",
+        { class: "nav__link nav__fold-summary", dataNavFold: "true" },
+        icon("more"),
+        h("span", null, FOLD_GROUP),
+      ),
+      h(
+        "ul",
+        { class: "nav__fold-list", "aria-label": FOLD_GROUP },
+        folded.map((entry) => navItem(entry, shown)),
       ),
     );
+    // A sidebar-only group: on a phone these are the "Khác" section of Thêm.
+    children.push(h("li", { class: "nav__item nav__sidebar-only" }, details));
   }
+
   render(navList, children);
+  // Nobody signed in, or a session that has ended: nothing to open, so no empty sidebar or bar.
+  // Kept (empty) while the session is still being read, so the page does not jump when it fills.
+  const bar = navList.closest(".nav");
+  if (bar) bar.hidden = children.length === 0 && session.snapshot().status !== "unknown";
   publishNavHeight();
 }
 
@@ -794,6 +847,7 @@ function wipeWorkspace() {
   accountDevices = null;
   approvalsWaiting = false;
   signOutFailure = null;
+  foldOpen = false;
   outlet.replaceChildren();
   if (currentPath() !== "/") router.replace("/");
 }

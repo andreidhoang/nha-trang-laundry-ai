@@ -714,6 +714,10 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         # CONSOLE-SHELL-009 (C7): a new build waiting for the person's press.
         "Có bản mới",
         "Tải lại",
+        # CONSOLE-SHELL-009 (C6): where a counter finds a screen their role cannot open, and the
+        # switch that makes Nhắc khách lấy đồ the other half of Đồ chờ lấy.
+        "Cần quyền khác",
+        "Nhắc khách lấy đồ",
     ]
 
     absent_from_guide = [phrase for phrase in quoted if phrase not in guide]

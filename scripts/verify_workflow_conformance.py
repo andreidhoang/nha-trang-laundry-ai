@@ -331,6 +331,10 @@ DECLARED_CONTROLS = (
     # of Thêm on a phone) and Thêm's closed "Cần quyền khác".
     "shell.nav-fold",
     "more.denied-open",
+    # CONSOLE-SHELL-009 (shell scenario): the skip control, and the switch between Đồ chờ lấy and
+    # Nhắc khách lấy đồ.
+    "shell.skip-link",
+    "pickup.shelf-switch",
 )
 
 PASS: list[str] = []
@@ -1945,6 +1949,185 @@ def scenario_resilience(console: Console) -> None:
         "",
     )
     console.sign_in("demo-owner")
+
+
+def scenario_shell(console: Console) -> None:
+    """CONSOLE-SHELL-009: the shell against the real API -- "Thoát" when the network is down and
+    when it is not (C1), the skip control (C5), what an operator's navigation shows (C6), what a
+    deploy can and cannot mix (C7), and the approvals badge (C11)."""
+
+    phone = viewport()["width"] < 1024
+
+    head("SH1", "THOÁT KHI MẤT MẠNG — not signed out, and the console says so")
+    console.sign_in("demo-owner")
+    order = console.build_order(stop="created")
+    console.open_order(order["order_id"])
+    console.context.set_offline(True)
+    console.page.wait_for_timeout(600)
+    console.page.locator("button", has_text="Thoát").first.click()
+    console.page.wait_for_timeout(800)
+    failed = console.page.locator("[data-sign-out-failed]")
+    ok(
+        "offline, Thoát says 'Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại'",
+        failed.count() == 1 and "Chưa đăng xuất được" in failed.first.inner_text(),
+        failed.first.inner_text() if failed.count() else "no notice",
+    )
+    ok(
+        "and the person is still signed in, the order still on screen",
+        console.page.locator(".appbar__account").count() == 1
+        and order["order_id"] in console.page.evaluate("() => document.body.textContent"),
+    )
+    console.context.set_offline(False)
+    console.page.wait_for_timeout(1200)
+    ok(
+        "the server agrees: the session is alive, and it is still the same person's",
+        console.session_status() == 200,
+    )
+    console.page.locator("button", has_text="Thoát").first.click()
+    console.page.wait_for_timeout(1200)
+    ok(
+        "back online, the next press signs out and clears the page at once",
+        console.page.locator("main h1").first.inner_text() == "Chưa đăng nhập"
+        and order["order_id"] not in console.page.evaluate("() => document.body.textContent"),
+    )
+    ok(
+        "and the server session is gone",
+        console.session_status() == 401,
+    )
+
+    head("SH2", "BỎ QUA ĐIỀU HƯỚNG — the skip control keeps the route and what was typed")
+    console.sign_in("demo-operations")
+    console.open("#/new")
+    console.type_into("#new-customer-search", "0909", "newOrder.customer-search")
+    console.page.locator(".appbar__identity").focus()
+    console.page.keyboard.press("Shift+Tab")
+    skip = console.page.evaluate(
+        "() => { const n = document.activeElement; const b = n.getBoundingClientRect();"
+        " return {id: n.id, visible: b.width > 40 && b.height > 30 && b.top >= 0}; }"
+    )
+    ok(
+        "the stop before the app bar is the skip control, visible",
+        skip["id"] == "skip-link" and skip["visible"],
+        skip,
+    )
+    console.page.keyboard.press("Enter")
+    console.page.wait_for_timeout(400)
+    touched("shell.skip-link")
+    after = console.page.evaluate(
+        "() => ({active: document.activeElement?.id, hash: location.hash,"
+        " value: document.querySelector('#new-customer-search')?.value})"
+    )
+    ok(
+        "it moves focus to the screen; the route and the typed number stay",
+        after == {"active": "main", "hash": "#/new", "value": "0909"},
+        after,
+    )
+
+    head("SH3", "ĐIỀU HƯỚNG CỦA NHÂN VIÊN QUẦY — only what they can open")
+    console.open("#/")
+    shown = console.page.evaluate(
+        """() => [...document.querySelectorAll('nav.nav a.nav__link, nav.nav summary')]
+            .filter((node) => node.checkVisibility({visibilityProperty: true}))
+            .map((node) => node.getAttribute('href') || '(Khác)')"""
+    )
+    if phone:
+        ok(
+            "the operator's tab bar: Hôm nay, Đơn hàng, Nhận đồ, Đồ chờ lấy, Thêm",
+            sorted(shown) == sorted(["#/", "#/orders", "#/new", "#/pickup", "#/more"]),
+            shown,
+        )
+    else:
+        ok("at a desk the operator meets at most 14 destinations", len(shown) <= 14, shown)
+    ok(
+        "and none of them shut",
+        console.page.locator("nav.nav [aria-disabled='true']").count() == 0
+        and console.page.locator("nav.nav a[href='#/reports']").count() == 0,
+    )
+    if not phone:
+        fold = console.page.locator("nav.nav details.nav__fold > summary")
+        if fold.count():
+            fold.first.click()
+            console.page.wait_for_timeout(300)
+            touched("shell.nav-fold")
+        ok(
+            "the closed 'Khác' group holds Việc chưa hỗ trợ and the way to every other screen",
+            # Inside the group: the phone-only "Thêm" (also `#/more`) sits earlier in the list,
+            # hidden at a desk, and must not be what this looks at.
+            all(
+                console.page.locator(
+                    f"nav.nav details.nav__fold a[href='{href}']"
+                ).first.is_visible()
+                for href in ("#/gaps", "#/more")
+            ),
+        )
+    console.open("#/reminders")
+    switch = console.page.locator("#shelf-switch a[href='#/pickup']")
+    if switch.count():
+        switch.first.click()
+        console.page.wait_for_timeout(1200)
+        touched("pickup.shelf-switch")
+    ok(
+        "Nhắc khách lấy đồ and Đồ chờ lấy are one destination with a switch between them",
+        console.page.url.endswith("#/pickup")
+        and console.page.locator("#shelf-switch a[aria-current='page']").first.get_attribute("href")
+        == "#/pickup",
+        console.page.url,
+    )
+    console.open("#/staff")
+    ok(
+        "a deep link to a screen the operator cannot open still shows why",
+        "KHÔNG ĐỦ QUYỀN" in console.page.locator("main").inner_text(),
+    )
+
+    head("SH4", "SAU KHI CẬP NHẬT — the shell is revalidated, the worker waits for a person")
+    for path in ("", "app.js", "sw.js", "src/core/nav.js", "styles/kit.css"):
+        answer = console.page.request.get(f"{CONSOLE}{path}")
+        ok(
+            f"/staff/{path} is served Cache-Control: no-cache",
+            answer.status == 200 and answer.headers.get("cache-control") == "no-cache",
+            answer.headers.get("cache-control"),
+        )
+    ok(
+        "and an API answer is still never stored",
+        console.page.request.get(f"{BASE}/internal/v1/session").headers.get("cache-control")
+        == "no-store",
+    )
+    worker = console.page.evaluate(
+        """() => navigator.serviceWorker.getRegistration('/staff/').then((r) => ({
+            active: Boolean(r && r.active), waiting: Boolean(r && r.waiting),
+            controlled: Boolean(navigator.serviceWorker.controller)}))"""
+    )
+    ok(
+        "the console runs under its worker, with no update waiting and none offered",
+        worker == {"active": True, "waiting": False, "controlled": True}
+        and console.page.locator("[data-update-ready]").count() == 0,
+        worker,
+    )
+
+    head("SH5", "DUYỆT — the badge asks for one envelope, and nothing from a hidden tab")
+    console.sign_in("demo-owner")
+    asked: list[str] = []
+    listen = lambda request: (  # noqa: E731
+        asked.append(request.url) if "/internal/v1/approvals?" in request.url else None
+    )
+    console.page.on("request", listen)
+    console.page.evaluate("() => window.dispatchEvent(new Event('console:approvals-changed'))")
+    console.page.wait_for_timeout(900)
+    ok(
+        "the badge's read asks for one",
+        bool(asked) and all(url.endswith("limit=1") for url in asked),
+        asked,
+    )
+    console.page.evaluate(
+        "() => Object.defineProperty(document, 'hidden', {configurable: true, get: () => true})"
+    )
+    asked.clear()
+    console.page.evaluate("() => window.dispatchEvent(new Event('console:approvals-changed'))")
+    console.page.wait_for_timeout(900)
+    ok("a hidden tab asks nothing", asked == [], asked)
+    console.page.remove_listener("request", listen)
+    console.page.reload(wait_until="networkidle")
+    console.page.wait_for_timeout(900)
 
 
 def scenario_ai_refuses(console: Console) -> None:
@@ -9189,6 +9372,9 @@ SCENARIOS = {
     "roles": scenario_roles,
     "hiring": scenario_hiring,
     "resilience": scenario_resilience,
+    # CONSOLE-SHELL-009: Thoát offline and online, the skip control, an operator's navigation, the
+    # shell's cache policy and worker, and the approvals badge. Signs in as each person it needs.
+    "shell": scenario_shell,
     "ai": scenario_ai_refuses,
     "band": scenario_band,
     "prepaid": scenario_prepaid,

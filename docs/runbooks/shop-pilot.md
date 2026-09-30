@@ -140,7 +140,9 @@ docker compose $C up -d api worker keycloak tls
 # connect to it, and the API image carries no `scripts/` directory. Both of those are deliberate.
 # The SQL therefore arrives on stdin -- `docker cp` also fails, because the root filesystem is
 # read-only. `scripts/emit_shop_database_setup.py` prints exactly the statements to pipe, reading
-# the passwords back from `.shop/secrets/` so they match what the containers will present.
+# the passwords back from `.shop/secrets/` so they match what the containers will present. The
+# worker's grant is its own narrow set (role_grants.WORKER_GRANTS), not the API's; re-piping it on
+# an existing shop narrows a worker provisioned under the old grant.
 uv run python scripts/emit_shop_database_setup.py \
   | docker compose -f compose.r1.yaml -f compose.shop-local.yaml \
       --profile self-managed-database exec -T postgres \

@@ -218,6 +218,14 @@ On a provider-managed database the plain `uv run` form is correct and `shop-admi
 every migration** — `GRANT ... ON ALL TABLES` is a one-shot snapshot, and skipping it surfaces as
 `permission denied` on a write path days after the deploy that caused it.
 
+It gives the two application roles different grants (`PLATFORM-SECURITY-009` P1). `laundry_api`
+reads and writes every table. `laundry_worker` holds only the tables and columns the worker's code
+executes (`packages/db/src/nha_trang_laundry_db/role_grants.py`) — no customers, no staff sessions,
+no payments — and nothing by default, so a later migration's tables stay invisible to it. On a
+database provisioned before that change the same command narrows the worker's grant; the verifier
+then prints `OK laundry_worker: exactly N grants …` and names any stray grant by table and column.
+The worker container is not given the hash key either: no worker path computes a keyed digest.
+
 ## 6. The shop's own records
 
 ```bash

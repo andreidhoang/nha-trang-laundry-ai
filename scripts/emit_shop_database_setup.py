@@ -16,17 +16,16 @@ stdin is the one path that does, so this produces the SQL and the runbook does t
 
 from __future__ import annotations
 
-import re
 import sys as _sys
 from pathlib import Path as _Path
 
 _sys.path.insert(0, str(_Path(__file__).resolve().parent))
 
 import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
+from nha_trang_laundry_db.role_grants import MIGRATION_ROLE, grant_script
 
 ROOT = _Path(__file__).resolve().parents[1]
 SECRETS = ROOT / ".shop/secrets"
-GRANT_SOURCE = ROOT / "scripts/apply_demo_grants.py"
 
 
 def _password_from_dsn(name: str) -> str:
@@ -38,18 +37,13 @@ def _grants() -> str:
     """Reuse the grant statements rather than restating them.
 
     A second copy of a privilege model is a second thing to keep correct, and the one that drifts
-    is always the copy nobody runs.
+    is always the copy nobody runs. The model is `nha_trang_laundry_db.role_grants`, which
+    `apply_demo_grants.py` executes and `verify_database_grants.py` audits. This used to extract
+    the grant template from `apply_demo_grants.py` with regular expressions, and so printed the
+    API's full grant for the worker too (`PLATFORM-SECURITY-009` P1).
     """
 
-    source = GRANT_SOURCE.read_text(encoding="utf-8")
-    template = re.search(r'GRANTS = """(.*?)"""', source, re.S)
-    roles = re.search(r"APPLICATION_ROLES[^=]*=\s*\(([^)]*)\)", source, re.S)
-    owner = re.search(r'MIGRATION_ROLE\s*=\s*"([a-z_]+)"', source)
-    if template is None or roles is None:
-        raise SystemExit("apply_demo_grants.py no longer has the shape this script reads")
-    names = re.findall(r'"([a-z_]+)"', roles.group(1))
-    owner_role = owner.group(1) if owner else "laundry_migrate"
-    return "\n".join(template.group(1).format(role=name, owner=owner_role) for name in names)
+    return grant_script(MIGRATION_ROLE)
 
 
 def main() -> int:

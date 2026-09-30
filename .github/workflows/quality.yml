@@ -56,7 +56,29 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run mypy apps packages
+      # PLATFORM-SECURITY-009 P5. Every test below runs as `ci_app`, the container superuser, so
+      # a repository that needed a privilege the application roles do not hold -- or a worker grant
+      # that forgot a table -- passed CI and failed in the shop. These steps provision the two
+      # application roles the way a deployment does, apply the grants with the operator's script,
+      # verify them, and run the role-separated smoke logged in AS those roles.
+      - name: Create the application roles (CI-only passwords)
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE laundry_api LOGIN PASSWORD 'ci-only-api'" \
+            -c "CREATE ROLE laundry_worker LOGIN PASSWORD 'ci-only-worker'"
       - run: uv run python scripts/apply_migrations.py
+      # CI's migrations run as `ci_app`, so it owns the schema and the default privileges are
+      # declared for it; in a deployment the owner is `laundry_migrate`, the script's default.
+      - run: uv run python scripts/apply_demo_grants.py --owner ci_app
+      - run: uv run python scripts/verify_database_grants.py
+      - name: Role-separated smoke (API write paths as laundry_api, worker paths as laundry_worker)
+        env:
+          LAUNDRY_API_DATABASE_URL: "postgresql://laundry_api:ci-only-api@127.0.0.1:5432/nha_trang_laundry_ci"
+          LAUNDRY_WORKER_DATABASE_URL: "postgresql://laundry_worker:ci-only-worker@127.0.0.1:5432/nha_trang_laundry_ci"
+        run: >-
+          uv run pytest --require-postgres-integration -q
+          packages/db/tests/test_api_role_write_paths.py
+          apps/worker/tests/test_worker_least_privilege.py
       - run: uv run pytest --require-postgres-integration
       - run: uv run python scripts/verify_contracts.py
       - run: uv run python scripts/check_context_drift.py

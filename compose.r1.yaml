@@ -278,11 +278,10 @@ services:
         uid: "10002"
         gid: "10002"
         mode: 0400
-      - source: r1_hash_key
-        target: hash_key
-        uid: "10002"
-        gid: "10002"
-        mode: 0400
+      # No hash key (PLATFORM-SECURITY-009 P1). No worker path computes a keyed digest -- the
+      # inbox and the idempotency records are written by the API -- and this is the process that
+      # will host the model runtime, so it must not hold the key that unseals every phone.
+      # `apps/worker/tests/test_worker_least_privilege.py` runs every worker path with no key.
     depends_on:
       migrate:
         condition: service_completed_successfully

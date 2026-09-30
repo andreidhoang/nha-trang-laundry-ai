@@ -1,9 +1,29 @@
 # Runbook — restore drill
 
-**Written:** 2026-09-03 · **Status:** never executed. `specs/PRODUCTION_OPERATIONS_SPEC_V1.md` §7
-requires this runbook and it did not exist; §3.4 requires the drill and it has not been run. Every
-command here is real; the sequence has not been walked on a provisioned host, because no host
-exists.
+**Written:** 2026-09-03 · **Status:** walked end to end once, in a container, on 2026-09-30
+(`OPS-OBSERVABILITY-009`); never on a provisioned host. `specs/PRODUCTION_OPERATIONS_SPEC_V1.md` §7
+requires this runbook and §3.4 requires the drill.
+
+**What the container drill proved, and what it did not.** The repository's own scripts ran as the
+host runs them: `archive-wal.sh` as PostgreSQL's `archive_command` (config: `deploy/production/postgresql.conf`),
+`base-backup.sh` as the `laundry_backup` role, `restore.sh` into a clean directory, PostgreSQL
+replaying the encrypted archive and promoting, then `validate_restore_drill.py` against the result
+(`Restore drill verified: RPO=0s RTO=3s migrations=65`). Six orders written after the base backup
+came back from WAL alone. It did **not** prove an off-host copy or a separate failure domain: the
+archive was an rclone `local` remote on the same disk, and both clusters ran in one container. The
+key was on disk, so the RTO excludes the handover that §0 puts on the clock.
+
+**It found three defects, all fixed, each with a test that failed before the fix** — the reason a
+drill is run at all:
+
+1. PostgreSQL refused to start on the directory `restore.sh` prepared (`FATAL: data directory ...
+   has invalid permissions`): `mkdir` makes 0755 and the server wants 0700. An absent `PGDATA`
+   failed every candidate at `tar -C`. The script now creates the directory and sets 0700.
+2. `validate_restore_drill.py` refused a healthy database — and the live database it was restored
+   from — because it required contiguous `ORDER` event versions, and recording a payment or a
+   delivery leg bumps the order's version under its own aggregate. Every shop that ever took a
+   payment would have failed its drill. `ORDER` now has its own check (below).
+3. "Restore everything we have" could not be expressed. See §2: `RECOVERY_TARGET_TIME=latest`.
 
 **`BACKUP-RESTORE-001` completes on a drill result, never on configuration.** A configured backup
 that has never been restored is a belief, not a recovery capability. This is the procedure that
@@ -53,8 +73,8 @@ number `deploy/backup/backup-policy-v1.json` bounds at 900 seconds.
 ```bash
 export BACKUP_IDENTITY_FILE=/secure/path/age-identity.txt   # from step 0, item 2
 export BACKUP_REPOSITORY_PREFIX=...                          # the same prefix the host archives to
-export RECOVERY_TARGET_TIME='2026-09-03 14:05:00+07'
-export PGDATA=/var/lib/postgresql/restore                    # must be empty; the script refuses otherwise
+export RECOVERY_TARGET_TIME=latest                           # or a time: see "the target" below
+export PGDATA=/var/lib/postgresql/restore                    # empty or absent; the script refuses a non-empty one and makes it 0700
 
 # These two were missing from this runbook and `restore.sh` requires both with `:?` under `set -eu`,
 # so the drill halted on its own first command — on the stopwatch. They are how the script lists
@@ -97,9 +117,17 @@ again, inside the four-hour clock. Read the last archived segment before choosin
 psql -c "select last_archived_wal, last_archived_time from pg_stat_archiver"
 ```
 
-Pick a target **at or before** `last_archived_time`. When the source is gone, pick a target a few
-minutes before the incident rather than at it — `archive_timeout` is the width of what you cannot
-have.
+**When the host is lost and you want everything the archive holds, the target is `latest`.** That
+is the commonest restore, and until the drill it could not be expressed: a time target is only
+*reached* when recovery meets a commit **after** it, and a quiet shop has none after its last order.
+Measured on 2026-09-30, twice: a target one second after the last commit, and a target at exactly
+`last_archived_time` (the rule this page used to give), both replayed every segment and then ended
+in the `FATAL` above. With `latest` the script writes no target, and PostgreSQL replays to the end
+of the archive and promotes. `archive_timeout` is still the width of what you cannot have.
+
+**Use a time only to stop *before* something** — undoing yesterday afternoon's mistake — and pick
+it before a commit you know the archive holds (the mistake itself is one). A time after the last
+archived commit fails as shown; pick an earlier one or use `latest`.
 
 **The base backup is chosen by the target, not by recency.** A backup taken *after* the recovery
 target cannot be recovered from -- PostgreSQL refuses with `could not locate required checkpoint
@@ -108,8 +136,12 @@ something from yesterday afternoon means reaching back past last night's backup.
 picks the newest backup at or before the target and prints the ones it skipped and why. If it says
 none is eligible, the target is older than the oldest backup you hold.
 
-Then start PostgreSQL against that directory and wait for promotion. The script writes
-`recovery_target_action = 'promote'`, so the server promotes itself and stops replaying. Watch for
+Then start PostgreSQL against that directory, with `RCLONE_CONFIG` in its environment, and wait
+for promotion (the drill's command: `pg_ctl -D "$PGDATA" -o "-c port=5432" -l restore.log -w start`,
+then poll `select pg_is_in_recovery()` until it answers `f`). With a time target the script writes
+`recovery_target_action = 'promote'`; with `latest` the server promotes at the end of the archive.
+`ERROR : : error listing: directory not found` lines from rclone during recovery are PostgreSQL
+asking for timeline history files that do not exist, which is expected. Watch for
 `restored log file ... from archive` lines: that is the archive being read back, and their absence
 means `restore_command` cannot reach it.
 
@@ -137,7 +169,7 @@ The validator connects read-only and checks what can be checked in code rather t
 | Recovery point ≤ 15 min | computed from the two timestamps you recorded |
 | Recovery time ≤ 4 h | computed, wall-clock, from when you started |
 | Quote snapshots hash-identical | recomputed through `canonical_document` and compared |
-| Audit chain has no gap | for the six aggregate types whose writers promise contiguous versions, none whose highest version differs from its count of *distinct* versions, **and** the restored database reaches at least the recovery point it claims |
+| Audit chain has no gap | for the five aggregate types whose writers promise contiguous versions, none whose highest version differs from its count of *distinct* versions; for orders, no `ORDER` event beyond its row's version and none without its row; **and** the restored database reaches at least the recovery point it claims |
 | No duplicate send | duplicate `idempotency_key` in `outbox_events`, duplicate `provider_message_id`, and zero rows stuck in `PROCESSING` |
 | Object evidence fetchable | attested — the objects are outside the database |
 

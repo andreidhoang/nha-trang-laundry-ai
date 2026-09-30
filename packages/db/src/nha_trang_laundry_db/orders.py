@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
 from uuid import UUID, uuid4
 
-from nha_trang_laundry_domain.cancellation_money import (
-    RemedyCreditFact,
-    cancellation_money_refusal,
-)
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
     CommercialOrderStatus,
@@ -50,11 +46,23 @@ from nha_trang_laundry_domain.payments import (
     payment_position,
 )
 from nha_trang_laundry_domain.promise import PromiseChoice
-from nha_trang_laundry_domain.remedies import RemedyKind
 from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
-from nha_trang_laundry_domain.unclaimed import awaiting_pickup, order_storage_fee
+from nha_trang_laundry_domain.unclaimed import (
+    StoragePause,
+    order_storage_fee,
+    storage_clock,
+    storage_pause_after_move,
+)
 from nha_trang_laundry_domain.vietqr import OrderIdTransferCode, TicketTransferCode
 
+from nha_trang_laundry_db.cancellation_money import (
+    CancellationMoneyError,
+    CancellationMoneyView,
+    plan_cancellation_money,
+    plan_document,
+    read_order_cancellation_money,
+    write_cancellation_credit_moves,
+)
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.payments import PAYMENT_VIEW_COLUMNS, PaymentView, payment_views
@@ -93,19 +101,6 @@ class OrderStepRequiresHuman(OrderStateError):
     def __init__(self, message: str, reason_codes: tuple[str, ...]) -> None:
         super().__init__(message)
         self.reason_codes = reason_codes
-
-
-class OrderCancellationRefused(OrderStateError):
-    """`MONEY-LIFECYCLE-009` (M3, M7): a cancellation refused for the remedy money on the order.
-
-    `reason_codes` are `CancellationMoneyRefusal` values; `reason_vi` is the domain's sentence,
-    naming each credit and what to do instead. Nothing was written.
-    """
-
-    def __init__(self, reason_codes: tuple[str, ...], reason_vi: str) -> None:
-        self.reason_codes = reason_codes
-        self.reason_vi = reason_vi
-        super().__init__(f"HUMAN_APPROVAL_REQUIRED: {', '.join(reason_codes)}")
 
 
 class OrderPromiseRefused(OrderStateError):
@@ -351,6 +346,10 @@ class OrderView:
     #: Whether the payment that settles the order may also record that the customer takes the
     #: goods now (`order_steps.payment_may_hand_over`), so the console knows to offer that tick.
     payment_may_hand_over: bool = False
+    #: `MONEY-LIFECYCLE-009` (`DEC-045`, `DEC-046`): what a cancellation without charge does, or
+    #: did, to the remedy credits on this order -- on the read by id only, `None` when no credit
+    #: touches the order (the board never carries it).
+    cancellation_money: CancellationMoneyView | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,7 +402,8 @@ _PROMISE_VIEW_COLUMNS: Final = """,
 _VIEW_PROMISED_READY_AT: Final = 27
 #: `PAYMENT-001`: the payment ledger's sum and rows, after the customer's three (35 and 36).
 _VIEW_PAID_VND: Final = 35
-#: `UNCLAIMED-001`: the fixed storage fee, the waiver flag and the storage policy (37 to 39).
+#: `UNCLAIMED-001`: the fixed storage fee, the waiver flag and the storage policy (37 to 39), and
+#: `DEC-047`'s hold bookkeeping (40, 41).
 _VIEW_STORAGE_FEE_FIXED: Final = 37
 #: `CUSTOMER-001` (columns 32-34, after the promise's five): the customer the order was taken for,
 #: read live. The name is personal data an erasure removes, so it is never copied into a stored
@@ -474,7 +474,8 @@ _LOCK_ORDER_FOR_TRANSITION_SQL: Final = """
     SELECT store_id, commercial_status, intake_status, production_status,
            fulfillment_mode, balance_status,
            required_delivery_legs_succeeded, self_collection_recorded,
-           production_accepted_at, production_resume_status, row_version
+           production_accepted_at, production_resume_status, row_version,
+           storage_paused_at, storage_paused_days
     FROM orders
     WHERE id = %s
     FOR UPDATE
@@ -1052,16 +1053,6 @@ class OrderRepository:
             raise OrderStateError(str(error)) from error
 
         next_version = command.expected_row_version + 1
-        if (
-            next_state.commercial is CommercialOrderStatus.CANCELLED
-            and current.commercial is not CommercialOrderStatus.CANCELLED
-        ):
-            # MONEY-LIFECYCLE-009 (M3, M7): a cancellation charges the customer nothing, so it may
-            # not close an order a remedy already paid out on, or whose bill spent a credit. Read
-            # under the order lock the caller holds, before anything is written.
-            _refuse_cancellation_losing_remedy_money(
-                connection, command.order_id, command.custody_resolution
-            )
         # DEC-024. The domain decided whether money goes back; this reads how much, from the
         # settlement ledger, under the order lock already held. Nobody types the amount: it is
         # the settled amount, and `order_refunds`' composite key to `order_settlements` makes it
@@ -1077,6 +1068,28 @@ class OrderRepository:
             and next_state.balance is OrderBalanceStatus.REFUNDED
             else None
         )
+        # MONEY-LIFECYCLE-009 (M3, M7): `DEC-045` then `DEC-046`. A cancellation charges the
+        # customer nothing, so an unspent credit issued from this order is voided, one spent
+        # elsewhere is netted from the refund (never below 0), and a credit this bill spent is
+        # reissued. Read and locked under the order lock the caller holds, before anything is
+        # written; carried out in this transaction after the order's own write.
+        remedy_money = (
+            plan_cancellation_money(
+                connection,
+                order_id=command.order_id,
+                resolution=command.custody_resolution,
+                refundable_vnd=0 if refund is None else refund.amount_vnd,
+            )
+            if next_state.commercial is CommercialOrderStatus.CANCELLED
+            and current.commercial is not CommercialOrderStatus.CANCELLED
+            else None
+        )
+        if refund is not None and remedy_money is not None and remedy_money.plan.netted_vnd:
+            refund = replace(
+                refund,
+                amount_vnd=remedy_money.plan.refund_vnd,
+                netted_remedy_vnd=remedy_money.plan.netted_vnd,
+            )
         closed_at = (
             occurred_at if next_state.commercial is CommercialOrderStatus.COMPLETED else None
         )
@@ -1134,6 +1147,19 @@ class OrderRepository:
             resume_to=next_state.production_resume_status,
             moment=occurred_at,
         )
+        # DEC-047: a hold of finished laundry pauses the storage fee; lifting it resumes the count;
+        # a new or cleared ready stamp restarts it. Only a production move touches it.
+        pause = StoragePause(paused_at=_optional_datetime(row[11]), paused_days=int(str(row[12])))
+        if command.production_target is not None:
+            pause = storage_pause_after_move(
+                pause,
+                before=current.production,
+                after=next_state.production,
+                resume_to=next_state.production_resume_status,
+                ready_restamped=ready_now is not None,
+                ready_kept=ready_keep,
+                moment=occurred_at,
+            )
 
         def mutation(cursor: Any) -> None:
             # The refund row first: `order_refund_consistency` refuses to let the order read
@@ -1145,8 +1171,8 @@ class OrderRepository:
                     INSERT INTO order_refunds (
                         id, order_id, store_id, settlement_id, refunded_amount_vnd,
                         direction, custody_resolution, attested_by_staff_id, refunded_at,
-                        created_at
-                    ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s)
+                        created_at, netted_remedy_vnd
+                    ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s, %s)
                     """,
                     (
                         refund.refund_id,
@@ -1158,6 +1184,7 @@ class OrderRepository:
                         command.principal.staff_user_id,
                         occurred_at,
                         occurred_at,
+                        refund.netted_remedy_vnd,
                     ),
                 )
             cursor.execute(
@@ -1170,7 +1197,8 @@ class OrderRepository:
                         %s, CASE WHEN %s THEN production_ready_at ELSE NULL END
                     ),
                     production_released_at = COALESCE(production_released_at, %s),
-                    closed_at = COALESCE(closed_at, %s), row_version = row_version + 1
+                    closed_at = COALESCE(closed_at, %s), row_version = row_version + 1,
+                    storage_paused_at = %s, storage_paused_days = %s
                 WHERE id = %s AND row_version = %s
                 RETURNING id
                 """,
@@ -1189,6 +1217,8 @@ class OrderRepository:
                     ready_keep,
                     released_now,
                     closed_at,
+                    pause.paused_at,
+                    pause.paused_days,
                     command.order_id,
                     command.expected_row_version,
                 ),
@@ -1225,9 +1255,15 @@ class OrderRepository:
             step_note["rejection_reason"] = command.rejection_reason.value
         if step_note and command.step is not None:
             step_note["step"] = command.step.value
+        remedy_note: dict[str, object] = (
+            {"remedy_credits": plan_document(remedy_money.plan)}
+            if remedy_money is not None and remedy_money.plan.moves_remedy_money
+            else {}
+        )
         audit_details: dict[str, object] = {
             **({} if refund is None else {"refund": refund.document()}),
             **step_note,
+            **remedy_note,
         }
 
         commit_material_change(
@@ -1252,6 +1288,7 @@ class OrderRepository:
                         "custody_resolution": command.custody_resolution.value,
                         **({} if refund is None else {"refund": refund.document()}),
                         **step_note,
+                        **remedy_note,
                     }
                 ),
                 audit_action="ORDER_STATE_TRANSITION",
@@ -1289,6 +1326,20 @@ class OrderRepository:
             ),
             mutation,
         )
+        if remedy_money is not None and remedy_money.plan.moves_remedy_money:
+            try:
+                write_cancellation_credit_moves(
+                    connection,
+                    remedy_money,
+                    order_id=command.order_id,
+                    refund_id=None if refund is None else refund.refund_id,
+                    resolution=command.custody_resolution,
+                    actor_id=command.principal.staff_user_id,
+                    correlation_id=command.correlation_id,
+                    occurred_at=occurred_at,
+                )
+            except CancellationMoneyError as error:
+                raise OrderStateError(str(error)) from error
         if command.production_target is not None:
             # SHOP-CAPTURE-001 (DEC-038): into IN_PROCESS opens the order's wash cycle, into
             # QUALITY_CHECK closes it -- in this transaction, as its own WASH_CYCLE aggregate, so
@@ -1579,7 +1630,15 @@ class OrderRepository:
             store_id=_uuid(row[1]),
             error=OrderNotVisibleError,
         )
-        return _order_view_row(row)
+        view = _order_view_row(row)
+        money = read_order_cancellation_money(
+            cursor,
+            order_id=order_id,
+            commercial=view.commercial.value,
+            balance=view.balance.value,
+            paid_vnd=view.paid_vnd or 0,
+        )
+        return view if money is None else replace(view, cancellation_money=money)
 
 
 @dataclass(frozen=True)
@@ -1593,6 +1652,8 @@ class _CancellationRefund:
     store_id: UUID
     amount_vnd: int
     resolution: CustodyResolution
+    #: `DEC-045`: the face value of credits from this order already spent, taken off the refund.
+    netted_remedy_vnd: int = 0
 
     def document(self) -> dict[str, object]:
         return {
@@ -1601,6 +1662,7 @@ class _CancellationRefund:
             "refunded_amount_vnd": self.amount_vnd,
             "direction": "TO_CUSTOMER",
             "custody_resolution": self.resolution.value,
+            **({"netted_remedy_vnd": self.netted_remedy_vnd} if self.netted_remedy_vnd else {}),
         }
 
 
@@ -1666,47 +1728,6 @@ def _refund_for_cancellation(
         amount_vnd=int(row[2]),
         resolution=resolution,
     )
-
-
-def _refuse_cancellation_losing_remedy_money(
-    connection: Any, order_id: UUID, resolution: CustodyResolution | None
-) -> None:
-    """Raise `OrderCancellationRefused` when the domain refuses this cancellation for remedy money.
-
-    Two facts, from the credits table: the credits executed remedies issued *from* this order
-    (spent since or not -- M3), and the credits this order's accepted revision *spent* (M7). The
-    decision is `cancellation_money.cancellation_money_refusal`'s.
-    """
-
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT p.kind, c.amount_vnd, c.issued_from_order_id = o.id
-            FROM orders o
-            JOIN remedy_credits c
-              ON c.issued_from_order_id = o.id
-              OR (
-                  c.redeemed_quote_id = o.current_quote_id
-                  AND c.redeemed_quote_revision = o.current_quote_revision
-              )
-            JOIN remedy_proposals p ON p.id = c.remedy_proposal_id
-            WHERE o.id = %s
-            ORDER BY c.issued_at, c.id
-            """,
-            (order_id,),
-        )
-        rows = cursor.fetchall()
-    issued = tuple(
-        RemedyCreditFact(RemedyKind(str(row[0])), int(str(row[1]))) for row in rows if row[2]
-    )
-    spent = tuple(
-        RemedyCreditFact(RemedyKind(str(row[0])), int(str(row[1]))) for row in rows if not row[2]
-    )
-    refused = cancellation_money_refusal(
-        resolution=resolution, issued_from_order=issued, spent_on_order=spent
-    )
-    if refused is not None:
-        raise OrderCancellationRefused(refused.reason_codes, refused.reason_vi)
 
 
 def _order_state(row: tuple[object, ...]) -> OrderState:
@@ -1853,9 +1874,10 @@ def _storage_fee_of_row(row: tuple[object, ...], facts: StepFacts, as_of: dateti
     quoted = facts.quoted_total
     return order_storage_fee(
         None if published is None else published.policy,
-        awaiting=awaiting_pickup(
+        clock=storage_clock(
             commercial=state.commercial,
             production=state.production,
+            resume_to=state.production_resume_status,
             fulfillment_mode=state.fulfillment_mode,
             self_collection_recorded=state.self_collection_recorded,
         ),
@@ -1871,6 +1893,11 @@ def _storage_fee_of_row(row: tuple[object, ...], facts: StepFacts, as_of: dateti
         fixed_vnd=None if fixed is None else int(str(fixed)),
         # MONEY-LIFECYCLE-009: never below the part of the fee the ledger already holds.
         paid_vnd=int(str(row[_VIEW_PAID_VND])),
+        # DEC-047: a hold pauses the fee where it stood (`STORAGE_VIEW_COLUMNS`' last two).
+        pause=StoragePause(
+            paused_at=_optional_datetime(row[_VIEW_STORAGE_FEE_FIXED + 3]),
+            paused_days=int(str(row[_VIEW_STORAGE_FEE_FIXED + 4])),
+        ),
     ).amount_vnd
 
 

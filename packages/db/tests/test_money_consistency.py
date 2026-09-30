@@ -216,9 +216,15 @@ def test_the_final_functions_carry_every_slices_rule(connection: psycopg.Connect
         "enforce_account_charge_owes_total_and_fee",
         "enforce_waiver_before_settlement",
     )
+    # Re-read and admitted: `0066` (MONEY-LIFECYCLE-009, DEC-045) restates `0059`'s ledger rule
+    # with the refund clause over what went back plus what was netted; every other clause is
+    # `0059`'s, and the assertions below check them on the function that is in force.
+    replaced = {("0066", "enforce_order_payment_ledger")}
     for later in migrations[versions.index("0061") + 1 :]:
         text = later.path.read_text(encoding="utf-8")
         for name in guarded:
+            if (later.version, name) in replaced:
+                continue
             assert f"FUNCTION {name}(" not in text, (later.version, name)
 
     def body(name: str) -> str:
@@ -236,6 +242,8 @@ def test_the_final_functions_carry_every_slices_rule(connection: psycopg.Connect
     for clause in ("'UNPAID'", "'PARTIALLY_PAID'", "'PAID'", "'REFUNDED'", "'ON_ACCOUNT'"):
         assert clause in ledger, clause
     assert "customer_account_charges" in ledger
+    # `0066`: a refund plus the remedy credit it netted equals what the payments sum to.
+    assert "netted_remedy_vnd" in ledger
     refund = body("enforce_order_refund_consistency")
     # `0056`'s widening to part payments, and `0060`'s disposal exception.
     assert "'PARTIALLY_PAID'" in refund and "order_disposals" in refund

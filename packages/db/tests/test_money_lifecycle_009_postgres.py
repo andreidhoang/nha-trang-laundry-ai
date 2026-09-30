@@ -2,8 +2,8 @@
 
 Review finding **M1** (P0): the storage fee is recomputed at every read and fixed only by the
 payment that settles the order. A part payment could cover part of the fee, and a later event that
-lowers the recomputed fee -- a waiver, a hold, a rewash that restarts the free days, a cancellation,
-the owner's disposal, the owner withdrawing the policy -- then left the ledger holding more than the
+lowers the recomputed fee -- a waiver, a rewash that restarts the free days, a cancellation, the
+owner's disposal, the owner withdrawing the policy -- then left the ledger holding more than the
 order "owed": `payment_position` raised on the order read, the board list, the waiting list and the
 day's export. And a waiver that left what is owed equal to what was paid stranded the order partly
 paid with nothing left to take, so the goods could never leave.
@@ -14,6 +14,9 @@ order, with the policy in force and again after the owner withdraws it: the orde
 the waiting list, the signed export, the store report and the evening summary all succeed and agree.
 Then the two stranded shapes are walked out through the counter's own commands: the waiver that
 settles, and the 0 đồng settlement of a ledger that already covers everything.
+
+`DEC-047` (2026-09-30): a hold is not such an event. It pauses the fee where it stood and RESUME
+continues the count (`test_a_hold_pauses_the_fee_...` below, the verifier's reproduction).
 
 Harness step (documented, as in `test_unclaimed_laundry.py`): the laundry's ready time is moved
 back with one SQL statement (`_age_ready`); nothing else can make an order 25 days old in a test.
@@ -42,6 +45,7 @@ from nha_trang_laundry_db.reports import ReportKey, ReportRepository
 from nha_trang_laundry_db.settlement import CollectionCommand, SettlementRepository
 from nha_trang_laundry_db.storage_fees import publish_storage_policy
 from nha_trang_laundry_db.unclaimed import (
+    UnclaimedAuthorizationError,
     UnclaimedRefused,
     UnclaimedRepository,
     WaiverCommand,
@@ -140,9 +144,12 @@ EXPECTED: dict[str, dict[str, tuple[int, int, str]]] = {
         "a": (TOTAL_VND, DEPOSIT, "PARTIALLY_PAID"),
         "b": (PART_OF_FEE, PART_OF_FEE, "PAID"),
     },
+    # DEC-047 changed this row: it used to pin the hold as erasing the unpaid fee ((a) owed the
+    # quoted total alone), the "hold, take the quoted total, settle" bypass of the approver-only
+    # waiver. A hold pauses the fee where it stood; nothing of it is erased.
     "hold": {
-        "a": (TOTAL_VND, DEPOSIT, "PARTIALLY_PAID"),
-        "b": (PART_OF_FEE, PART_OF_FEE, "PARTIALLY_PAID"),
+        "a": (TOTAL_VND + FEE_DAY_25, DEPOSIT, "PARTIALLY_PAID"),
+        "b": (TOTAL_VND + FEE_DAY_25, PART_OF_FEE, "PARTIALLY_PAID"),
     },
     "hold_then_resume": {
         "a": (TOTAL_VND + FEE_DAY_25, DEPOSIT, "PARTIALLY_PAID"),
@@ -642,3 +649,190 @@ def test_the_fee_basis_admits_exactly_its_two_shapes(connection: psycopg.Connect
         ("policy_version_id", "YES"),
     ]
     assert "ACCRUED" in str(columns[0][2])
+
+
+# --- DEC-047: a hold pauses the fee; it never erases it -------------------------------------------
+
+
+def _age_hold(connection: Any, order_id: UUID, days: int) -> None:
+    """Harness step, as `_age_ready`: the hold (and the ready time) `days` days earlier -- the
+    order has now been on hold for `days` days."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE orders
+            SET production_ready_at = production_ready_at - make_interval(days => %s),
+                production_accepted_at = production_accepted_at - make_interval(days => %s),
+                storage_paused_at = storage_paused_at - make_interval(days => %s),
+                row_version = row_version + 1
+            WHERE id = %s
+            """,
+            (days, days, days, order_id),
+        )
+
+
+def _fee(connection: Any, order_id: UUID, staff: Any) -> Any:
+    with connection.cursor() as cursor:
+        return UnclaimedRepository.read_order_storage(
+            cursor, order_id=order_id, principal=staff, as_of=datetime.now(UTC)
+        )
+
+
+def test_a_hold_pauses_the_fee_and_holding_then_paying_the_quoted_total_does_not_settle(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The verifier's reproduction: 25 days on the shelf (25.000 ₫ accrued), HOLD, take 110.000 ₫.
+
+    Before DEC-047 the hold erased the fee, 110.000 ₫ read PAID, and after RESUME the fee was gone
+    with no fee row fixed. Now the fee stands through the hold and ten days on it, the quoted total
+    leaves it owed, and RESUME continues the count from day 25 -- not from day 35.
+    """
+
+    now = datetime.now(UTC)
+    shop = _Shop(connection, now)
+    publish_storage_policy(connection, actor_id=shop.owner.staff_user_id, payload=storage_payload())
+    staff = _operator(connection, shop.store_id)
+    try:
+        order_id = _ready_for(connection, shop, staff, None)
+        _age_ready(connection, order_id, 25)
+        assert _read(connection, order_id, staff).owed_vnd == TOTAL_VND + FEE_DAY_25
+        held = _do(connection, order_id, staff, OrderStep.HOLD)
+        assert held.owed_vnd == TOTAL_VND + FEE_DAY_25
+        assert _rows(
+            connection,
+            "SELECT storage_paused_at IS NOT NULL, storage_paused_days FROM orders WHERE id = %s",
+            order_id,
+        ) == [(True, 0)]
+        _age_hold(connection, order_id, 10)  # ten days on hold: day 35 on the shelf
+        storage = _fee(connection, order_id, staff)
+        assert (storage.fee.status, storage.fee.amount_vnd) == (
+            StorageFeeStatus.PAUSED,
+            FEE_DAY_25,
+        )
+        assert storage.fee.fee is not None and storage.fee.fee.days_waiting == 25
+        paid = _pay(connection, order_id, staff, TOTAL_VND)
+        assert (paid.balance_status, paid.remaining_vnd) == ("PARTIALLY_PAID", FEE_DAY_25)
+        assert _rows(
+            connection, "SELECT count(*) FROM order_storage_fees WHERE order_id = %s", order_id
+        ) == [(0,)]
+        resumed = _do(connection, order_id, staff, OrderStep.RESUME)
+        assert (resumed.owed_vnd, resumed.paid_vnd, resumed.balance.value) == (
+            TOTAL_VND + FEE_DAY_25,
+            TOTAL_VND,
+            "PARTIALLY_PAID",
+        )
+        assert _rows(
+            connection,
+            "SELECT storage_paused_at IS NULL, storage_paused_days FROM orders WHERE id = %s",
+            order_id,
+        ) == [(True, 10)]
+        # The board and the waiting list read the same resumed figure.
+        assert _board(connection, shop, staff)[order_id].remaining_vnd == FEE_DAY_25
+        assert _waiting(connection, shop, staff)[order_id].remaining_vnd == FEE_DAY_25
+        # Paying the rest settles it and fixes the fee accrued before the hold, with its trace.
+        settled = _pay(connection, order_id, staff, FEE_DAY_25)
+        assert settled.balance_status == "PAID"
+        assert _rows(
+            connection,
+            "SELECT amount_vnd, basis, days_waiting, chargeable_days FROM order_storage_fees "
+            "WHERE order_id = %s",
+            order_id,
+        ) == [(FEE_DAY_25, "ACCRUED", 25, 5)]
+    finally:
+        connection.rollback()
+        publish_storage_policy(
+            connection, actor_id=shop.owner.staff_user_id, payload=withdrawal_document()
+        )
+        connection.commit()
+
+
+def test_a_paused_fee_is_waived_only_by_the_approver_and_then_settles(
+    connection: psycopg.Connection[Any],
+) -> None:
+    """The one legal way to take the fee off a held order is the waiver, by an approver."""
+
+    now = datetime.now(UTC)
+    shop = _Shop(connection, now)
+    publish_storage_policy(connection, actor_id=shop.owner.staff_user_id, payload=storage_payload())
+    staff = _operator(connection, shop.store_id)
+    try:
+        order_id = _ready_for(connection, shop, staff, None)
+        _age_ready(connection, order_id, 25)
+        _do(connection, order_id, staff, OrderStep.HOLD)
+        _pay(connection, order_id, staff, TOTAL_VND)
+        effect = _fee(connection, order_id, staff).waiver_effect
+        assert effect is not None and (effect.waived_vnd, effect.settles) == (FEE_DAY_25, True)
+        # An operator may not: refused before anything is read or written.
+        with pytest.raises(UnclaimedAuthorizationError):
+            _waive(connection, order_id, staff)
+        waived = _waive(connection, order_id, shop.requester).view
+        assert (waived.balance.value, waived.owed_vnd, waived.remaining_vnd) == (
+            "PAID",
+            TOTAL_VND,
+            0,
+        )
+        assert _rows(
+            connection,
+            "SELECT waived_amount_vnd, days_waiting FROM storage_fee_waivers WHERE order_id = %s",
+            order_id,
+        ) == [(FEE_DAY_25, 25)]
+    finally:
+        connection.rollback()
+        publish_storage_policy(
+            connection, actor_id=shop.owner.staff_user_id, payload=withdrawal_document()
+        )
+        connection.commit()
+
+
+@pytest.mark.parametrize("fall", ["rewash_ready_again", "policy_withdrawn", "cancellation_review"])
+def test_a_hold_does_not_protect_the_unpaid_fee_from_the_events_that_do_lower_it(
+    connection: psycopg.Connection[Any], fall: str
+) -> None:
+    """DEC-047 keeps the other rules: a rewash restarts the free days, a withdrawn policy stops
+    accrual, a cancellation stops it -- and in each the paid part stays owed-for."""
+
+    now = datetime.now(UTC)
+    shop = _Shop(connection, now)
+    publish_storage_policy(connection, actor_id=shop.owner.staff_user_id, payload=storage_payload())
+    staff = _operator(connection, shop.store_id)
+    try:
+        order_id = _ready_for(connection, shop, staff, None)
+        _age_ready(connection, order_id, 25)
+        _pay(connection, order_id, staff, PART_OF_FEE)
+        _do(connection, order_id, staff, OrderStep.HOLD)
+        assert _read(connection, order_id, staff).owed_vnd == TOTAL_VND + FEE_DAY_25
+        if fall == "rewash_ready_again":
+            _do(connection, order_id, staff, OrderStep.RESUME)
+            _apply(connection, "rewash_ready_again", order_id, staff, shop)
+            assert _rows(
+                connection,
+                "SELECT storage_paused_at, storage_paused_days FROM orders WHERE id = %s",
+                order_id,
+            ) == [(None, 0)]
+        elif fall == "policy_withdrawn":
+            publish_storage_policy(
+                connection, actor_id=shop.owner.staff_user_id, payload=withdrawal_document()
+            )
+        else:
+            _apply(connection, "cancellation_review", order_id, staff, shop)
+        view = _read(connection, order_id, staff)
+        assert (view.owed_vnd, view.paid_vnd, view.remaining_vnd) == (PART_OF_FEE, PART_OF_FEE, 0)
+    finally:
+        connection.rollback()
+        publish_storage_policy(
+            connection, actor_id=shop.owner.staff_user_id, payload=withdrawal_document()
+        )
+        connection.commit()
+
+
+def test_the_pause_columns_admit_only_a_held_order(connection: psycopg.Connection[Any]) -> None:
+    """`0066`: a pause start on an order that is not on hold is refused by the schema."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conname = 'orders_storage_pause_only_on_hold'"
+        )
+        row = cursor.fetchone()
+    assert row is not None and "ON_HOLD" in row[0]

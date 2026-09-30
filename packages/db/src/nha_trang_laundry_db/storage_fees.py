@@ -30,11 +30,13 @@ from nha_trang_laundry_domain.catalog import (
 from nha_trang_laundry_domain.unclaimed import (
     STORAGE_POLICY_CONFIG_TYPE,
     OrderStorageFee,
+    StorageClock,
+    StoragePause,
     StoragePolicy,
     StoragePolicyError,
-    awaiting_pickup,
     order_storage_fee,
     parse_storage_policy,
+    storage_clock,
     validate_storage_document,
 )
 
@@ -147,12 +149,14 @@ _POLICY_DOCUMENT_SQL: Final = f"""
 """
 
 #: `UNCLAIMED-001`'s three columns on the order read, appended after the payment columns: the fee a
-#: settling payment fixed (null when none), whether the fee was waived, and the policy in force.
+#: settling payment fixed (null when none), whether the fee was waived, and the policy in force --
+#: then `DEC-047`'s two: when the current hold began and the days of the holds lifted.
 STORAGE_VIEW_COLUMNS: Final = f"""
     , (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = o.id)
         AS storage_fee_fixed_vnd
     , EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id) AS storage_fee_waived
     , {_POLICY_DOCUMENT_SQL} AS storage_policy
+    , o.storage_paused_at, o.storage_paused_days
 """
 
 
@@ -175,6 +179,15 @@ def read_published_storage_policy(cursor: Any) -> PublishedStoragePolicy | None:
     cursor.execute("SELECT " + _POLICY_DOCUMENT_SQL)
     row = cursor.fetchone()
     return None if row is None else policy_from_column(row[0])
+
+
+def pause_from_columns(paused_at: object, paused_days: object) -> StoragePause:
+    """`DEC-047`'s two order columns (`0066`) as the domain's hold bookkeeping."""
+
+    return StoragePause(
+        paused_at=paused_at if isinstance(paused_at, datetime) else None,
+        paused_days=int(str(paused_days)),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,7 +224,8 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
         + _POLICY_DOCUMENT_SQL
         + """,
                (SELECT coalesce(sum(p.amount_vnd), 0) FROM order_payments p
-                 WHERE p.order_id = o.id)
+                 WHERE p.order_id = o.id),
+               o.production_resume_status, o.storage_paused_at, o.storage_paused_days
         FROM orders o
         JOIN quote_revisions r
           ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
@@ -223,18 +237,20 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
     if row is None:
         raise LookupError("order is missing")
     published = policy_from_column(row[9])
-    awaiting = awaiting_pickup(
+    clock = storage_clock(
         commercial=CommercialOrderStatus(str(row[0])),
         production=ProductionStatus(str(row[1])),
+        resume_to=None if row[11] is None else ProductionStatus(str(row[11])),
         fulfillment_mode=FulfillmentMode(str(row[2])),
         self_collection_recorded=bool(row[3]),
     )
+    awaiting = clock is StorageClock.RUNNING
     ready_at = row[4] if isinstance(row[4], datetime) else None
     quoted = None if row[5] is None else int(str(row[5]))
     paid = int(str(row[10]))
     fee = order_storage_fee(
         None if published is None else published.policy,
-        awaiting=awaiting,
+        clock=clock,
         ready_at=ready_at,
         as_of=moment,
         quoted_total_vnd=quoted,
@@ -242,6 +258,7 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
         settled=bool(row[6]),
         fixed_vnd=None if row[7] is None else int(str(row[7])),
         paid_vnd=paid,
+        pause=pause_from_columns(row[12], row[13]),
     )
     return LockedStorageFee(
         fee=fee,
@@ -328,6 +345,7 @@ __all__ = [
     "PublishedStoragePolicy",
     "StoragePolicyAuthorizationError",
     "insert_fixed_storage_fee",
+    "pause_from_columns",
     "policy_from_column",
     "publish_storage_policy",
     "published_from_document",

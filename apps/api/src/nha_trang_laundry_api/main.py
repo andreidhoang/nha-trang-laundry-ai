@@ -88,7 +88,6 @@ from nha_trang_laundry_db.manual_sends import (
 from nha_trang_laundry_db.message_drafts import SEND_MESSAGE_POLICY_VERSION
 from nha_trang_laundry_db.orders import (
     OrderAuthorizationError,
-    OrderCancellationRefused,
     OrderNotVisibleError,
     OrderPromiseRefused,
     OrderStateError,
@@ -906,6 +905,27 @@ class PaymentViewResponse(BaseModel):
     recorded_by_name: str | None
 
 
+class CancellationMoneyResponse(BaseModel):
+    """`DEC-045` then `DEC-046` on one order, every figure and sentence the server's."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: `PREVIEW` before the order is cancelled, `DONE` after.
+    stage: Literal["PREVIEW", "DONE"]
+    #: What a refunding cancellation returns before netting (the ledger's sum); 0 when unpaid.
+    refundable_vnd: int = Field(ge=0)
+    #: The face value of credits from this order already spent elsewhere, taken off the refund.
+    netted_vnd: int = Field(ge=0)
+    #: What goes (or went) back to the customer.
+    refund_vnd: int = Field(ge=0)
+    #: Unspent credits from this order, voided with the cancellation.
+    voided_vnd: int = Field(ge=0)
+    #: Credits this order's bill spent, reissued at their face value.
+    reissued_vnd: int = Field(ge=0)
+    #: One sentence per credit movement, in the order they apply.
+    lines_vi: list[str]
+
+
 class OrderViewResponse(OrderResponse):
     """An order as the counter reads it: the command result's fields, plus what pickup needs.
 
@@ -980,6 +1000,10 @@ class OrderViewResponse(OrderResponse):
     payments: list[PaymentViewResponse] = Field(default_factory=list)
     payments_truncated: bool = False
     payment_may_hand_over: bool = False
+    #: `MONEY-LIFECYCLE-009` (`DEC-045`, `DEC-046`): on the read by id, when a remedy credit touches
+    #: the order -- what a cancellation without charge will do to it (`PREVIEW`, which the refund
+    #: sheet states before the press) or did (`DONE`, which the order page and the receipt print).
+    cancellation_money: CancellationMoneyResponse | None = None
 
 
 class ApprovalResponse(BaseModel):
@@ -5933,13 +5957,19 @@ class OrderRemedyCreditResponse(BaseModel):
     incident_id: UUID
     kind: str
     amount_vnd: int
-    #: `UNUSED` until an order spends it, then `REDEEMED`. There is no expired state: the schema
-    #: records no expiry for a credit, and this read does not invent one.
-    status: Literal["UNUSED", "REDEEMED"]
+    #: `UNUSED` until an order spends it, then `REDEEMED`; `VOIDED` when the cancellation of this
+    #: order voided it unspent (`DEC-045`). There is no expired state: the schema records no expiry
+    #: for a credit, and this read does not invent one.
+    status: Literal["UNUSED", "REDEEMED", "VOIDED"]
     issued_at: datetime
     redeemed_at: datetime | None
     redeemed_quote_id: UUID | None
     redeemed_quote_revision: int | None
+    #: `DEC-045`: when the cancellation of the order it was issued from voided it, unspent.
+    voided_at: datetime | None = None
+    #: `DEC-046`: the credit this one reissues, after an order that spent that one was cancelled
+    #: without charge.
+    reissue_of: UUID | None = None
 
 
 class OrderRemedyCreditsResponse(BaseModel):
@@ -5987,11 +6017,19 @@ def list_order_remedy_credits(
                 incident_id=credit.incident_id,
                 kind=credit.kind,
                 amount_vnd=credit.amount_vnd,
-                status="UNUSED" if credit.status == "UNUSED" else "REDEEMED",
+                status=(
+                    "VOIDED"
+                    if credit.status == "VOIDED"
+                    else "UNUSED"
+                    if credit.status == "UNUSED"
+                    else "REDEEMED"
+                ),
                 issued_at=credit.issued_at,
                 redeemed_at=credit.redeemed_at,
                 redeemed_quote_id=credit.redeemed_quote_id,
                 redeemed_quote_revision=credit.redeemed_quote_revision,
+                voided_at=credit.voided_at,
+                reissue_of=credit.reissue_of,
             )
             for credit in result.credits
         ],
@@ -6429,17 +6467,6 @@ def _raise_operations_error(error: Exception) -> NoReturn:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
     if isinstance(error, IdempotencyConflictError):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
-    if isinstance(error, OrderCancellationRefused):
-        # MONEY-LIFECYCLE-009 (M3, M7): a person has to decide what the remedy money does; the
-        # domain's sentence names the credit and what to do instead. Nothing was written.
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={
-                "outcome": "REQUIRE_HUMAN",
-                "reason_codes": list(error.reason_codes),
-                "reason_vi": error.reason_vi,
-            },
-        ) from error
     raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
 
 
@@ -6574,6 +6601,19 @@ def _order_view_response(view: OrderView, *, replayed: bool = False) -> OrderVie
         ],
         payments_truncated=view.payments_truncated,
         payment_may_hand_over=view.payment_may_hand_over,
+        cancellation_money=(
+            None
+            if view.cancellation_money is None
+            else CancellationMoneyResponse(
+                stage=view.cancellation_money.stage,
+                refundable_vnd=view.cancellation_money.refundable_vnd,
+                netted_vnd=view.cancellation_money.netted_vnd,
+                refund_vnd=view.cancellation_money.refund_vnd,
+                voided_vnd=view.cancellation_money.voided_vnd,
+                reissued_vnd=view.cancellation_money.reissued_vnd,
+                lines_vi=list(view.cancellation_money.lines_vi),
+            )
+        ),
     )
 
 
@@ -8651,7 +8691,7 @@ class StorageFeeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     #: `FIXED`, `ALREADY_PAID`, `WAIVED`, `POLICY_UNPUBLISHED`, `NOT_WAITING`, `NO_SINGLE_TOTAL`,
-    #: `FREE_PERIOD`, `ACCRUING`.
+    #: `FREE_PERIOD`, `ACCRUING`, `PAUSED` (`DEC-047`: on hold; the fee accrued up to the hold).
     status: str
     amount_vnd: int = Field(ge=0)
     chargeable_days: int | None

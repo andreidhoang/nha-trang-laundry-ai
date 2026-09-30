@@ -78,8 +78,9 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0063", "invoice_requests"),
         ("0064", "late_delivery_decisions"),
         ("0065", "reminder_steps"),
-        # Round 9, MONEY-LIFECYCLE-009 (M1): a fee part already paid stays owed-for.
-        ("0066", "storage_fee_already_paid"),
+        # Round 9, MONEY-LIFECYCLE-009: a fee part already paid stays owed-for (M1), a hold
+        # pauses the fee (DEC-047), a cancellation voids, nets or reissues credits (DEC-045/046).
+        ("0066", "money_lifecycle"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

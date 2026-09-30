@@ -58,6 +58,7 @@ from nha_trang_laundry_domain.unclaimed import (
     ContactOutcome,
     DisposalVerdict,
     OrderStorageFee,
+    StorageClock,
     StorageFeeStatus,
     WaiverEffect,
     awaiting_pickup,
@@ -92,6 +93,7 @@ from nha_trang_laundry_db.storage_fees import (
     STORAGE_POLICY_UNPUBLISHED,
     PublishedStoragePolicy,
     insert_fixed_storage_fee,
+    pause_from_columns,
     read_published_storage_policy,
     storage_fee_for_order,
 )
@@ -440,7 +442,7 @@ class UnclaimedRepository:
                        ORDER BY a.attempted_at DESC, a.id DESC LIMIT 1
                    ),
                    o.commercial_status, o.production_status, o.fulfillment_mode,
-                   o.self_collection_recorded
+                   o.self_collection_recorded, o.storage_paused_at, o.storage_paused_days
             FROM orders o
             JOIN quote_revisions r
               ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
@@ -471,7 +473,9 @@ class UnclaimedRepository:
             paid = int(str(row[15]))
             fee = order_storage_fee(
                 policy,
-                awaiting=awaiting,
+                # Every row here waits for pickup (`AWAITING_PICKUP_SQL`); the days of the holds
+                # lifted since it was ready do not count (`DEC-047`).
+                clock=StorageClock.RUNNING if awaiting else StorageClock.STOPPED,
                 ready_at=ready_at,
                 as_of=as_of,
                 quoted_total_vnd=quoted,
@@ -479,6 +483,7 @@ class UnclaimedRepository:
                 settled=bool(row[12]),
                 fixed_vnd=None if row[13] is None else int(str(row[13])),
                 paid_vnd=paid,
+                pause=pause_from_columns(row[23], row[24]),
             )
             times = tuple(datetime.fromisoformat(str(value)) for value in (row[17] or []))
             last = row[18] if isinstance(row[18], dict) else None

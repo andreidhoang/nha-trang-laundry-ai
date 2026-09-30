@@ -628,14 +628,9 @@ export const REASON_NOTE = {
     "Ký hiệu gồm chữ in và số (tối đa 12), số hóa đơn tối đa 8 chữ số, ngày không sau hôm nay.",
   INVOICE_NUMBER_TAKEN: "Ký hiệu và số hóa đơn này đã ghi cho một yêu cầu khác. Kiểm tra lại.",
   INVOICE_CANCEL_NOTE_REQUIRED: "Lý do khác cần vài chữ ghi rõ (tối đa 200 ký tự).",
-  // MONEY-LIFECYCLE-009 (M3, M7): a cancellation refused for the remedy money on the order. The
-  // server's sentence names the credit; this says why a person has to decide.
-  CANCEL_AFTER_MONEY_REMEDY:
-    "Chưa có quy định trừ khoản bồi thường vào tiền hoàn cho khách; chủ tiệm quyết định. Không có " +
-    "gì được ghi.",
-  CANCEL_WOULD_LOSE_SPENT_CREDIT:
-    "Chưa có quy định cấp lại khoản giảm trừ khách đã dùng cho đơn này; chủ tiệm quyết định. Không " +
-    "có gì được ghi.",
+  // MONEY-LIFECYCLE-009 (DEC-045): a credit voided with the cancellation of its order.
+  REMEDY_CREDIT_VOIDED:
+    "Khoản này đã bị huỷ khi đơn phát hành nó bị huỷ không thu tiền, nên không dùng được nữa.",
 };
 
 /**

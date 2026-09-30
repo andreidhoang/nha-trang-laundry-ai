@@ -181,26 +181,37 @@ def test_a_held_order_never_takes_the_board_down_and_zero_dong_settles_it_after_
 
     held = _step(client, order_id, "HOLD")
     assert held.status_code == 200, held.text
-    # Every read of the store answers, and agrees.
+    # Every read of the store answers, and agrees. DEC-047 changed the figures this test pinned:
+    # the hold used to erase the unpaid 22.000 ₫ of the fee (owed read 113.000 ₫, nothing left to
+    # take) -- the "hold, then settle" bypass of the approver-only waiver. A hold pauses the fee
+    # where it stood: 25.000 ₫, of which 3.000 ₫ is paid.
     read = _read(client, order_id)
     assert (read["owed_vnd"], read["paid_vnd"], read["remaining_vnd"]) == (
+        QUOTED_TOTAL + FEE_DAY_25,
         PART_OF_FEE,
-        PART_OF_FEE,
-        0,
+        QUOTED_TOTAL + FEE_DAY_25 - PART_OF_FEE,
     )
     board = client.get(f"/internal/v1/stores/{shop.store_id}/orders?limit=200")
     assert board.status_code == 200, board.text
     listed = {row["order_id"]: row for row in board.json()}
-    assert listed[str(order_id)]["owed_vnd"] == PART_OF_FEE
+    assert listed[str(order_id)]["owed_vnd"] == QUOTED_TOTAL + FEE_DAY_25
     assert str(neighbour) in listed
     waiting = client.get(f"/internal/v1/stores/{shop.store_id}/orders/awaiting-pickup")
     assert waiting.status_code == 200, waiting.text
     storage = client.get(f"/internal/v1/orders/{order_id}/storage").json()
-    assert (storage["storage_fee"]["status"], storage["storage_fee"]["amount_vnd"]) == (
-        "ALREADY_PAID",
-        3_000,
-    )
-    assert storage["waiver_effect"] is None
+    assert (
+        storage["storage_fee"]["status"],
+        storage["storage_fee"]["amount_vnd"],
+        storage["storage_fee"]["already_paid_vnd"],
+    ) == ("PAUSED", FEE_DAY_25, 3_000)
+    # Only the approver's waiver takes the unpaid part off, and the sheet says it would settle.
+    assert storage["waiver_effect"] == {
+        "waived_vnd": FEE_DAY_25 - 3_000,
+        "kept_vnd": 3_000,
+        "owed_after_vnd": PART_OF_FEE,
+        "remaining_after_vnd": 0,
+        "settles": True,
+    }
 
     # Resume, then a rewash: the laundry is ready again today and its free days restart.
     assert _step(client, order_id, "RESUME").status_code == 200

@@ -505,12 +505,9 @@ export function classify(status, detail, context = {}) {
         // quyết định" is true but says nothing a counter can act on; the codes below it do, and
         // the title says plainly that nothing was recorded.
         const intake = codes.some((code) => INTAKE_READINESS_CODES.has(code));
-        // MONEY-LIFECYCLE-009: a refusal whose server sentence names what it is about (a
-        // cancellation refused for the remedy credit it would pay twice or lose) is titled by it.
-        const said = typeof detail.reason_vi === "string" ? detail.reason_vi.trim() : "";
         return of("REQUIRE_HUMAN", {
           reasonCodes: codes,
-          ...(said ? { message: said } : intake ? { message: REFUSAL.INTAKE_BLOCKERS } : {}),
+          ...(intake ? { message: REFUSAL.INTAKE_BLOCKERS } : {}),
         });
       }
       // `NOT_SUPPORTED` is the settlement route's word for "the shop has not decided this case".

@@ -1,24 +1,27 @@
 """`MONEY-LIFECYCLE-009` over HTTP against real PostgreSQL: a cancellation never pays a remedy twice
-(review M3) and never loses a remedy credit the bill spent (review M7).
+(review M3, `DEC-045`) and never loses a remedy credit the bill spent (review M7, `DEC-046`).
 
 A cancellation in this system never charges the customer: the two `DEC-024` resolutions that end a
-paid order refund the whole ledger, and `NOT_RECEIVED` takes nothing. So:
+paid order refund what the ledger holds, and `NOT_RECEIVED` takes nothing. The owner decided on
+2026-09-30 (delegated, `docs/DECISION_RECORD_ROUND9_2026-09-30.md`) what that does to remedy money:
 
-* **M3.** An order a money remedy was executed for -- a late-delivery 10% or a damage compensation,
-  its credit spent since or not -- cancelled "lỗi tiệm, không thu tiền" gave the customer the whole
-  bill back *and* kept the credit. No decided rule nets the two, and no decision voids an issued
-  credit, so the cancellation is refused by name (`CANCEL_AFTER_MONEY_REMEDY`), on the composite
-  step and on the per-axis route, and writes nothing. The way forward is the one the order already
-  has: withdraw the cancellation and finish the order.
-* **M7.** An order whose bill spent a credit, cancelled without charge -- before work, at the
-  counter's refusal of the goods, returned unwashed, or the shop's fault, whatever was paid -- lost
-  the credit silently: `0042` forbids handing a spent credit back and no decision reissues one. It
-  is refused by name (`CANCEL_WOULD_LOSE_SPENT_CREDIT`) and writes nothing.
+* **`DEC-045` (M3).** An order a money remedy was executed for -- a late-delivery 10% or a damage
+  compensation -- cancelled "lỗi tiệm, không thu tiền": a credit from it still **unspent** is
+  **voided** in the same transaction (it can never be spent, and it leaves the counter's list); a
+  credit from it already **spent** elsewhere is **netted** -- the refund is what was paid less its
+  face value, never below 0 -- on the composite step and on the per-axis route alike.
+* **`DEC-046` (M7).** An order whose bill spent a credit, cancelled without charge -- before work,
+  at the counter's refusal of the goods, returned unwashed, or the shop's fault, whatever was
+  paid -- gets the credit back as a **new credit of the same face value**, linked to the original
+  (`reissue_of`) and to the refund by audit. The order is never stranded.
 
-Every refusal is a 422 `{"outcome": "REQUIRE_HUMAN", "reason_codes": [...], "reason_vi": ...}`,
-where `reason_vi` names the credit by what it was for and its amount. The controls: the same
-cancellations with no remedy money, a free rewash (moves no money), and a remedy proposed but not
-carried out all go through as before.
+Each move is its own `REMEDY_CREDIT` event, audit row and outbox row, in the transaction that
+cancels the order: a failure anywhere writes nothing. The order read states the plan before the
+press (`cancellation_money.stage == "PREVIEW"`) and what happened after (`"DONE"`).
+
+These tests replaced round 9's first answer, a refusal (`CANCEL_AFTER_MONEY_REMEDY`,
+`CANCEL_WOULD_LOSE_SPENT_CREDIT`), which was the decisions' "Reversal" option and stranded an order
+whose laundry never arrived.
 """
 
 from __future__ import annotations
@@ -187,77 +190,190 @@ def _step(client: TestClient, order_id: UUID, body: dict[str, Any]) -> Any:
     return _post(client, f"/internal/v1/orders/{order_id}/steps", body, if_match=version)
 
 
-def _assert_refused(answer: Any, codes: list[str], *credits: str) -> None:
-    assert answer.status_code == 422, answer.text
-    detail = answer.json()["detail"]
-    assert detail["outcome"] == "REQUIRE_HUMAN"
-    assert detail["reason_codes"] == codes
-    text = detail["reason_vi"]
-    assert text.startswith("Không huỷ được") and "báo chủ tiệm" in text
-    for credit in credits:
-        assert credit in text, (credit, text)
+def _credit(connection: Any, credit_id: UUID) -> tuple[Any, ...]:
+    return _one(
+        connection,
+        "SELECT redeemed_at IS NOT NULL, voided_at IS NOT NULL, voided_with_order_id, row_version "
+        "FROM remedy_credits WHERE id = %s",
+        credit_id,
+    )
 
 
-# --- M3: an order a money remedy paid out on ------------------------------------------------------
+def _events(connection: Any, credit_id: UUID) -> list[tuple[Any, ...]]:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT e.event_type, e.payload ->> 'order_id', a.action, o.event_type "
+            "FROM domain_events e "
+            "JOIN audit_events a ON a.aggregate_id = e.aggregate_id "
+            "AND a.correlation_id = e.correlation_id "
+            "JOIN outbox_events o ON o.aggregate_id = e.aggregate_id "
+            "WHERE e.aggregate_id = %s AND e.event_type IN "
+            "('REMEDY_CREDIT_VOIDED', 'REMEDY_CREDIT_REISSUED') "
+            "AND o.event_type IN ('remedy.credit_voided.v1', 'remedy.credit_reissued.v1')",
+            (credit_id,),
+        )
+        return [tuple(row) for row in cursor.fetchall()]
+
+
+def _refund(connection: Any, order_id: UUID) -> tuple[int, int]:
+    row = _one(
+        connection,
+        "SELECT refunded_amount_vnd, netted_remedy_vnd FROM order_refunds WHERE order_id = %s",
+        order_id,
+    )
+    return int(row[0]), int(row[1])
+
+
+def _cancel(client: TestClient, order_id: UUID, route: str, body: dict[str, Any]) -> Any:
+    if route == "steps":
+        return _step(client, order_id, {"step": "CANCEL", **body})
+    review = _post(
+        client,
+        f"/internal/v1/orders/{order_id}/transition",
+        {"target": "CANCELLATION_REVIEW"},
+        if_match=int(_read(client, order_id)["row_version"]),
+    )
+    assert review.status_code == 200, review.text
+    return _post(
+        client,
+        f"/internal/v1/orders/{order_id}/transition",
+        {"target": "CANCELLED", **body},
+        if_match=int(_read(client, order_id)["row_version"]),
+    )
+
+
+def _exported(connection: Any, store_id: UUID, order_id: UUID) -> tuple[Any, ...]:
+    """The order's row of the signed day export, through the release's own SQL and shaping."""
+
+    from nha_trang_laundry_db import exports
+
+    day = _one(
+        connection,
+        "SELECT (created_at AT TIME ZONE %s)::date FROM orders WHERE id = %s",
+        exports.BUSINESS_TIMEZONE,
+        order_id,
+    )[0]
+    with connection.cursor() as cursor:
+        cursor.execute(
+            exports._EXPORT_SQL,
+            {"store": store_id, "zone": exports.BUSINESS_TIMEZONE, "business_date": day},
+        )
+        fetched = [tuple(row) for row in cursor.fetchall()]
+    shaped = exports._money_rows(fetched, policy=None, produced_at=datetime.now(UTC))
+    [row] = [row for row in shaped if row[0] == order_id]
+    assert len(row) == len(exports.EXPORT_COLUMNS)
+    return row
+
+
+SHOP_FAULT = {"custody_resolution": "SHOP_FAULT_NO_CHARGE"}
+#: `test_remedies._shop` settles its order at 110.000 ₫.
+SETTLED = 110_000
+
+
+# --- DEC-045 (M3): an order a remedy paid out on --------------------------------------------------
 
 
 @pytest.mark.parametrize("route", ["steps", "transition"])
-@pytest.mark.parametrize("spent", [False, True], ids=["credit-unspent", "credit-spent"])
 @pytest.mark.parametrize(
     "kind", [RemedyKind.LATE_DELIVERY_CREDIT, RemedyKind.DAMAGE_COMPENSATION], ids=str
 )
-def test_cancelling_an_order_a_remedy_paid_out_on_is_refused_and_writes_nothing(
-    connection: Any,
-    service: OperationsService,
-    client: TestClient,
-    kind: RemedyKind,
-    spent: bool,
-    route: str,
+def test_an_unspent_credit_from_the_order_is_voided_with_the_cancellation(
+    connection: Any, service: OperationsService, client: TestClient, kind: RemedyKind, route: str
 ) -> None:
     store_id, staff, order_id, credit_id = _remedied(connection, kind)
     assert credit_id is not None
-    if spent:
-        _spend_on_new_order(service, connection, store_id, staff, credit_id)
-    credit_before = _one(
-        connection, "SELECT redeemed_at, row_version FROM remedy_credits WHERE id = %s", credit_id
-    )
     _as(staff)
-    shop_fault = {"custody_resolution": "SHOP_FAULT_NO_CHARGE"}
-    if route == "steps":
-        before = _order_row(connection, order_id)
-        answer = _step(client, order_id, {"step": "CANCEL", **shop_fault})
-    else:
-        review = _post(
-            client,
-            f"/internal/v1/orders/{order_id}/transition",
-            {"target": "CANCELLATION_REVIEW"},
-            if_match=int(_read(client, order_id)["row_version"]),
-        )
-        assert review.status_code == 200, review.text
-        before = _order_row(connection, order_id)
-        answer = _post(
-            client,
-            f"/internal/v1/orders/{order_id}/transition",
-            {"target": "CANCELLED", **shop_fault},
-            if_match=int(before[2]),
-        )
-    _assert_refused(answer, ["CANCEL_AFTER_MONEY_REMEDY"], LABEL[kind])
-    # Nothing written: no refund, the balance and the version as they were, the credit untouched.
-    after = _order_row(connection, order_id)
-    assert after == before and after[1] == "PAID" and after[3] == 0
-    assert (
-        _one(
-            connection,
-            "SELECT redeemed_at, row_version FROM remedy_credits WHERE id = %s",
-            credit_id,
-        )
-        == credit_before
+    face = LATE_CREDIT if kind is RemedyKind.LATE_DELIVERY_CREDIT else DAMAGE_CREDIT
+    preview = _read(client, order_id)["cancellation_money"]
+    assert preview["stage"] == "PREVIEW"
+    assert (preview["voided_vnd"], preview["netted_vnd"], preview["refund_vnd"]) == (
+        face,
+        0,
+        SETTLED,
     )
-    if route == "transition":
-        # The way forward the order already has: withdraw the cancellation, finish the order.
-        reopened = _step(client, order_id, {"step": "REOPEN"})
-        assert reopened.status_code == 200, reopened.text
-        assert reopened.json()["commercial"] == "ACTIVE"
+    assert preview["lines_vi"] == [f"Khoản {LABEL[kind]} khách chưa dùng được huỷ cùng đơn."]
+
+    answer = _cancel(client, order_id, route, SHOP_FAULT)
+    assert answer.status_code == 200, answer.text
+    assert _order_row(connection, order_id)[:2] == ("CANCELLED", "REFUNDED")
+    assert _refund(connection, order_id) == (SETTLED, 0)
+    spent, voided, voided_with, _version = _credit(connection, credit_id)
+    assert (spent, voided, voided_with) == (False, True, order_id)
+    assert _events(connection, credit_id) == [
+        ("REMEDY_CREDIT_VOIDED", str(order_id), "REMEDY_CREDIT_VOID", "remedy.credit_voided.v1")
+    ]
+    done = _read(client, order_id)["cancellation_money"]
+    assert done["stage"] == "DONE" and done["voided_vnd"] == face
+    assert done["lines_vi"] == [f"Khoản {LABEL[kind]} khách chưa dùng đã được huỷ cùng đơn."]
+    # The order's own credit list says so, and the counter's pick list no longer offers it.
+    credits = client.get(f"/internal/v1/stores/{store_id}/orders/{order_id}/remedy-credits")
+    assert credits.status_code == 200, credits.text
+    [listed] = credits.json()["credits"]
+    assert (listed["status"], listed["voided_at"] is not None) == ("VOIDED", True)
+    picks = client.get(f"/internal/v1/stores/{store_id}/remedy-credits")
+    assert picks.status_code == 200, picks.text
+    assert str(credit_id) not in {item["credit_id"] for item in picks.json()["credits"]}
+    # And it can never be spent.
+    _publish_pricebook(connection, staff)
+    _contact, request_id = _customer(connection, store_id, staff)
+    quote = _price(service, store_id=store_id, staff=staff, request_id=request_id, kg="4")
+    with pytest.raises(Exception) as refused:
+        _reserve(service, store_id=store_id, staff=staff, credit_id=credit_id, quote=quote)
+    assert "REMEDY_CREDIT_VOIDED" in repr(refused.value) or "voided" in str(refused.value)
+
+
+@pytest.mark.parametrize("route", ["steps", "transition"])
+@pytest.mark.parametrize(
+    "kind", [RemedyKind.LATE_DELIVERY_CREDIT, RemedyKind.DAMAGE_COMPENSATION], ids=str
+)
+def test_a_credit_from_the_order_spent_elsewhere_is_netted_from_the_refund(
+    connection: Any, service: OperationsService, client: TestClient, kind: RemedyKind, route: str
+) -> None:
+    store_id, staff, order_id, credit_id = _remedied(connection, kind)
+    assert credit_id is not None
+    _spend_on_new_order(service, connection, store_id, staff, credit_id)
+    before = _credit(connection, credit_id)
+    _as(staff)
+    face = LATE_CREDIT if kind is RemedyKind.LATE_DELIVERY_CREDIT else DAMAGE_CREDIT
+    refund = SETTLED - face
+    preview = _read(client, order_id)["cancellation_money"]
+    assert (preview["stage"], preview["netted_vnd"], preview["refund_vnd"]) == (
+        "PREVIEW",
+        face,
+        refund,
+    )
+    assert preview["lines_vi"] == [
+        f"Trừ khoản {LABEL[kind]} khách đã dùng: hoàn {refund:,} ₫ thay vì 110.000 ₫.".replace(
+            ",", "."
+        )
+    ]
+
+    answer = _cancel(client, order_id, route, SHOP_FAULT)
+    assert answer.status_code == 200, answer.text
+    assert _order_row(connection, order_id)[:2] == ("CANCELLED", "REFUNDED")
+    # What went back plus what was netted is what was paid; the spent credit is untouched.
+    assert _refund(connection, order_id) == (refund, face)
+    assert _credit(connection, credit_id) == before
+    event = _one(
+        connection,
+        "SELECT payload -> 'refund' ->> 'refunded_amount_vnd', "
+        "payload -> 'refund' ->> 'netted_remedy_vnd', payload -> 'remedy_credits' "
+        "FROM domain_events WHERE aggregate_id = %s AND payload ->> 'target' = 'CANCELLED'",
+        order_id,
+    )
+    assert (int(event[0]), int(event[1])) == (refund, face)
+    assert event[2]["netted_credit_ids"] == [str(credit_id)]
+    done = _read(client, order_id)["cancellation_money"]
+    assert (done["stage"], done["refund_vnd"], done["netted_vnd"]) == ("DONE", refund, face)
+    # The day's export carries the refund and its netting on the order's row (`DEC-045`).
+    exported = _exported(connection, store_id, order_id)
+    # paid_vnd, remaining_vnd (0 once cancelled), refund_netted_remedy_vnd; and the refund itself.
+    assert exported[-3:] == (SETTLED, 0, face)
+    assert exported[13] == refund
+    assert done["lines_vi"] == [
+        f"Đã trừ {face:,} ₫ (khoản khách đã dùng ở đơn khác): hoàn {refund:,} ₫ thay vì "
+        "110.000 ₫.".replace(",", ".")
+    ]
 
 
 @pytest.mark.parametrize(
@@ -277,15 +393,15 @@ def test_the_same_cancellation_goes_through_without_remedy_money(
     )
     assert credit_id is None
     _as(staff)
-    answer = _step(
-        client, order_id, {"step": "CANCEL", "custody_resolution": "SHOP_FAULT_NO_CHARGE"}
-    )
+    assert _read(client, order_id)["cancellation_money"] is None
+    answer = _step(client, order_id, {"step": "CANCEL", **SHOP_FAULT})
     assert answer.status_code == 200, answer.text
     assert (answer.json()["commercial"], answer.json()["balance"]) == ("CANCELLED", "REFUNDED")
-    assert _order_row(connection, order_id)[3] == 1
+    assert _refund(connection, order_id) == (SETTLED, 0)
+    assert _read(client, order_id)["cancellation_money"] is None
 
 
-# --- M7: an order whose bill spent a credit -------------------------------------------------------
+# --- DEC-046 (M7): an order whose bill spent a credit ---------------------------------------------
 
 
 def _pay(client: TestClient, order_id: UUID, amount: int) -> None:
@@ -302,7 +418,7 @@ def _pay(client: TestClient, order_id: UUID, amount: int) -> None:
 @pytest.mark.parametrize(
     ("moment", "paid", "body"),
     [
-        # Before anything happened to the goods: the plain cancellation.
+        # Before anything happened to the goods: the plain cancellation (the laundry never came).
         ("created", 0, {"step": "CANCEL"}),
         # The counter refuses the goods on the counter (ORDER-STEPS-002 R2).
         ("handed-over", 0, {"step": "REJECT_INTAKE", "rejection_reason": "NOT_SERVICEABLE"}),
@@ -328,7 +444,7 @@ def _pay(client: TestClient, order_id: UUID, amount: int) -> None:
         ),
     ],
 )
-def test_cancelling_an_order_whose_bill_spent_a_credit_is_refused_and_writes_nothing(
+def test_a_credit_the_bill_spent_is_reissued_when_the_order_is_cancelled_without_charge(
     connection: Any,
     service: OperationsService,
     client: TestClient,
@@ -358,32 +474,116 @@ def test_cancelling_an_order_whose_bill_spent_a_credit_is_refused_and_writes_not
         assert washing.status_code == 200, washing.text
     if paid:
         _pay(client, order_id, paid)
-    before = _order_row(connection, order_id)
-    spent_before = _one(
+    reissue_line = (
+        f"Cấp lại cho khách khoản {LABEL[RemedyKind.LATE_DELIVERY_CREDIT]} đã dùng cho đơn này."
+    )
+    preview = _read(client, order_id)["cancellation_money"]
+    assert (preview["stage"], preview["reissued_vnd"], preview["lines_vi"]) == (
+        "PREVIEW",
+        LATE_CREDIT,
+        [reissue_line],
+    )
+    original = _one(
         connection,
         "SELECT redeemed_at, redeemed_quote_id, row_version FROM remedy_credits WHERE id = %s",
         credit_id,
     )
 
     answer = _step(client, order_id, body)
-    _assert_refused(
-        answer, ["CANCEL_WOULD_LOSE_SPENT_CREDIT"], LABEL[RemedyKind.LATE_DELIVERY_CREDIT]
-    )
-    assert _order_row(connection, order_id) == before and before[3] == 0
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["commercial"] == "CANCELLED"
+    # The cash, if any, goes back whole; nothing is netted (no credit was issued from this order).
+    rows = _order_row(connection, order_id)
+    if paid:
+        assert rows[1] == "REFUNDED" and _refund(connection, order_id) == (paid, 0)
+    else:
+        assert rows[3] == 0
+    # The original stays spent, exactly as it was; a new credit of its face value stands for it.
     assert (
         _one(
             connection,
             "SELECT redeemed_at, redeemed_quote_id, row_version FROM remedy_credits WHERE id = %s",
             credit_id,
         )
-        == spent_before
+        == original
     )
+    reissued = _one(
+        connection,
+        "SELECT id, amount_vnd, redeemed_at, voided_at, reissued_for_order_id, "
+        "remedy_proposal_id = (SELECT remedy_proposal_id FROM remedy_credits WHERE id = %s) "
+        "FROM remedy_credits WHERE reissue_of = %s",
+        credit_id,
+        credit_id,
+    )
+    new_id = reissued[0]
+    assert reissued[1:] == (LATE_CREDIT, None, None, order_id, True)
+    assert _events(connection, new_id) == [
+        (
+            "REMEDY_CREDIT_REISSUED",
+            str(order_id),
+            "REMEDY_CREDIT_REISSUE",
+            "remedy.credit_reissued.v1",
+        )
+    ]
+    refund_id = _one(
+        connection,
+        "SELECT payload ->> 'refund_id' FROM domain_events WHERE aggregate_id = %s",
+        new_id,
+    )[0]
+    if paid:
+        assert refund_id == str(
+            _one(connection, "SELECT id FROM order_refunds WHERE order_id = %s", order_id)[0]
+        )
+    else:
+        assert refund_id is None
+    # The counter can pick it and spend it again.
+    picks = client.get(f"/internal/v1/stores/{store_id}/remedy-credits")
+    assert str(new_id) in {item["credit_id"] for item in picks.json()["credits"]}
+    done = _read(client, order_id)["cancellation_money"]
+    assert (done["stage"], done["reissued_vnd"]) == ("DONE", LATE_CREDIT)
+    assert done["lines_vi"] == [
+        f"Đã cấp lại cho khách khoản {LABEL[RemedyKind.LATE_DELIVERY_CREDIT]}."
+    ]
+    again = _spend_on_new_order(service, connection, store_id, staff, new_id)
+    assert _read(client, again.order_id)["owed_vnd"] == CREDITED_TOTAL
+
+
+def test_a_failure_while_moving_a_credit_writes_nothing(
+    connection: Any,
+    service: OperationsService,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Atomicity: the refund, the cancellation and every credit move commit together or not at
+    all. A failure in the reissue after the void leaves the order, the refund and both credits
+    exactly as they were."""
+
+    from nha_trang_laundry_db.cancellation_money import write_cancellation_credit_moves
+
+    _store, staff, order_id, credit_id = _remedied(connection, RemedyKind.DAMAGE_COMPENSATION)
+    assert credit_id is not None
+    original = write_cancellation_credit_moves
+
+    def failing(*args: Any, **kwargs: Any) -> Any:
+        original(*args, **kwargs)
+        raise RuntimeError("the database went away after the void")
+
+    # Replaced where the transition calls it, after it has already voided the credit.
+    monkeypatch.setattr("nha_trang_laundry_db.orders.write_cancellation_credit_moves", failing)
+    before_order = _order_row(connection, order_id)
+    before_credit = _credit(connection, credit_id)
+    _as(staff)
+    with pytest.raises(RuntimeError):
+        _step(client, order_id, {"step": "CANCEL", **SHOP_FAULT})
+    assert _order_row(connection, order_id) == before_order
+    assert _credit(connection, credit_id) == before_credit
+    assert _events(connection, credit_id) == []
 
 
 def test_an_order_with_no_credit_on_its_bill_still_cancels_without_charge(
     connection: Any, service: OperationsService, client: TestClient
 ) -> None:
-    store_id, staff, _source, _credit = _remedied(connection, None)
+    store_id, staff, _source, _credit_id = _remedied(connection, None)
     _publish_pricebook(connection, staff)
     contact_id, request_id = _customer(connection, store_id, staff)
     quote = _price(service, store_id=store_id, staff=staff, request_id=request_id, kg="4")
@@ -397,8 +597,8 @@ def test_an_order_with_no_credit_on_its_bill_still_cancels_without_charge(
     )
     assert _step(client, order.order_id, {"step": "START_WASH"}).status_code == 200
     _pay(client, order.order_id, 50_000)
-    answer = _step(
-        client, order.order_id, {"step": "CANCEL", "custody_resolution": "SHOP_FAULT_NO_CHARGE"}
-    )
+    assert _read(client, order.order_id)["cancellation_money"] is None
+    answer = _step(client, order.order_id, {"step": "CANCEL", **SHOP_FAULT})
     assert answer.status_code == 200, answer.text
     assert (answer.json()["commercial"], answer.json()["balance"]) == ("CANCELLED", "REFUNDED")
+    assert _refund(connection, order.order_id) == (50_000, 0)

@@ -3986,7 +3986,7 @@ def scenario_report(console: Console) -> None:
     ok(
         "every figure carries the rule's version, and the on-time figure says what it assumed",
         len({kpi["query_version"] for kpi in after.values()}) == 1
-        and next(iter(after.values()))["query_version"].startswith("report-v4:")
+        and next(iter(after.values()))["query_version"].startswith("report-v5:")
         and isinstance(assumed, int)
         and on_time["data_quality"] == ("RULE_ASSUMED" if assumed else "COMPLETE")
         and all(
@@ -5576,7 +5576,7 @@ def scenario_export_payments(console: Console) -> None:
     ok(
         "a one-day request today is answered in the live shape, not the retired one",
         created["status"] == 201
-        and str(body.get("query_version", "")).startswith("store-day-orders-export-v4:")
+        and str(body.get("query_version", "")).startswith("store-day-orders-export-v5:")
         and body.get("rendered_hash") not in ("", retired_hash)
         and body.get("shape_retired") is False,
         {k: body.get(k) for k in ("query_version", "shape_retired")},
@@ -5731,7 +5731,7 @@ def scenario_export_payments(console: Console) -> None:
     ok(
         "a one-day file, its header naming the v3 rule and when the money stood so",
         header.get("business_date_from") == header.get("business_date_to") == today.isoformat()
-        and header.get("export_query_version", "").startswith("store-day-orders-export-v4:")
+        and header.get("export_query_version", "").startswith("store-day-orders-export-v5:")
         and bool(header.get("produced_at")),
         header,
     )
@@ -7012,7 +7012,7 @@ def scenario_daily_summary(console: Console) -> None:
     ok(
         "the owner reads today's summary: a versioned template, lines and what it left out",
         first["status"] == 200
-        and str((first["body"] or {}).get("template_version", "")).startswith("daily-summary-v3:")
+        and str((first["body"] or {}).get("template_version", "")).startswith("daily-summary-v4:")
         and (first["body"] or {}).get("date") == today
         and (first["body"] or {}).get("so_far") is True,
         first["text"][:160],
@@ -9138,7 +9138,7 @@ def scenario_late_delivery(console: Console) -> None:
         and moved("not_store_fault") == 1
         and moved("undecided") == -2
         and moved("late") == 0
-        and str(after.get("query_version", "")).startswith("report-v4:"),
+        and str(after.get("query_version", "")).startswith("report-v5:"),
         {"before": before, "after": after},
     )
     console.open("#/reports", settle=2200)

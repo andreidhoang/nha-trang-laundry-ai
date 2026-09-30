@@ -1439,7 +1439,7 @@ DAILY_SUMMARY_LINES = [
 DAILY_SUMMARY = {
     "store_id": STORE,
     "date": "2026-09-25",
-    "template_version": "daily-summary-v3:0123456789abcdef",
+    "template_version": "daily-summary-v4:0123456789abcdef",
     "evaluated_at": "2026-09-25T12:30:00+00:00",
     "so_far": True,
     "lines": [
@@ -1455,7 +1455,7 @@ DAILY_SUMMARY = {
         },
     ],
     "text": "\n".join(text for _, text, _ in DAILY_SUMMARY_LINES),
-    "sources": [{"key": "report", "query_version": "report-v4:fd921dce5b2ee508"}],
+    "sources": [{"key": "report", "query_version": "report-v5:06bed9941d4e5cf3"}],
 }
 
 #: The SLA board, in the shape and the order the server really answers in: acceptance order,
@@ -2241,7 +2241,7 @@ EXPORT_REQUEST_CONTENT = {
         "orders.customer_id",
         "order_payments.bank_ref_last",
     ],
-    "query_version": "store-day-orders-export-v4:c2ce1e9e6379d784",
+    "query_version": "store-day-orders-export-v5:c2ce1e9e6379d784",
     "statement_vi": (
         "Xuất bản sao hồ sơ của chính cửa hàng cho ngày 2026-09-16 (theo giờ Việt Nam): mã đơn, "
         "trạng thái, mốc thời gian và tiền của những đơn MỞ trong ngày đó. Tiền đã trả lấy từ sổ "
@@ -2262,7 +2262,7 @@ EXPORT_REQUEST_CONTENT = {
         "Tiền trong tệp: đã trả (tiền mặt, chuyển khoản) theo sổ thu từng lần, còn lại, đã hoàn — "
         "tính tới lúc xuất."
     ),
-    "bound_query_version": "store-day-orders-export-v4:c2ce1e9e6379d784",
+    "bound_query_version": "store-day-orders-export-v5:c2ce1e9e6379d784",
     "bound_shape_retired": False,
 }
 

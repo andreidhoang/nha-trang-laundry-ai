@@ -34,7 +34,7 @@ import {
   skeletonRows,
   statusPill,
 } from "../ui/kit.js";
-import { contactSheet, feeText, waitingText } from "../ui/unclaimed.js";
+import { contactSheet, feeText, shelfSwitch, waitingText } from "../ui/unclaimed.js";
 import { orderName } from "./orders.js";
 
 /** One page of the waiting list; the server says when there are more (`truncated`). */
@@ -244,6 +244,7 @@ export function render_() {
       info: infoHost,
       action: button({ label: "Tải lại", icon: "refresh", variant: "quiet", onClick: () => void load() }),
     }),
+    shelfSwitch("/pickup"),
     noticeHost,
     listHost,
     sheetsHost,

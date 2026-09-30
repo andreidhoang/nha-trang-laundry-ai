@@ -327,6 +327,14 @@ DECLARED_CONTROLS = (
     "reminders.call",
     "reminders.done",
     "reminders.outcome",
+    # CONSOLE-SHELL-009 (C6): the "Khác" group (closed at the bottom of a desk sidebar, a section
+    # of Thêm on a phone) and Thêm's closed "Cần quyền khác".
+    "shell.nav-fold",
+    "more.denied-open",
+    # CONSOLE-SHELL-009 (shell scenario): the skip control, and the switch between Đồ chờ lấy and
+    # Nhắc khách lấy đồ.
+    "shell.skip-link",
+    "pickup.shelf-switch",
 )
 
 PASS: list[str] = []
@@ -408,6 +416,44 @@ class Console:
             self.page.goto("about:blank")
         self.page.goto(target, wait_until="networkidle")
         self.page.wait_for_timeout(settle)
+
+    def session_status(self) -> int:
+        """What the server says about this browser's session cookie: 200 alive, 401 gone."""
+        return int(
+            self.page.evaluate(
+                "() => fetch('/internal/v1/session', {credentials: 'same-origin'})"
+                ".then((r) => r.status)"
+            )
+        )
+
+    def nav(self, label: str, path: str) -> bool:
+        """Reach a destination the way a person does, and say whether a link was pressed.
+
+        On a desk: the sidebar link, or -- for the system screens, the two V2 lists and "Việc chưa
+        hỗ trợ" -- the sidebar's closed "Khác" group, opened first (CONSOLE-SHELL-009). On a phone:
+        the tab, or "Thêm" and then its row. Six scenarios carried their own copy of this and none
+        knew about the closed group, which a desk-size run then met as a timeout.
+        """
+        link = self.page.locator("nav a", has_text=label).first
+        if link.count() and not link.is_visible():
+            fold = self.page.locator("nav details.nav__fold > summary")
+            if fold.count() and fold.first.is_visible():
+                fold.first.click()
+                self.page.wait_for_timeout(300)
+                touched("shell.nav-fold")
+        if not (link.count() and link.is_visible()):
+            more = self.page.locator("nav a", has_text="Thêm").first
+            if more.count() and more.is_visible():
+                more.click()
+                self.page.wait_for_timeout(700)
+            link = self.page.locator(f"main a[data-nav='{path}']").first
+            # On a phone the "Khác" group is a section of Thêm: reaching its row is using it.
+            if self.page.locator(f"main ul[aria-label='Khác'] a[data-nav='{path}']").count():
+                touched("shell.nav-fold")
+        if link.count() and link.is_visible():
+            link.click()
+            return True
+        return False
 
     def text(self) -> str:
         try:
@@ -1851,11 +1897,49 @@ def scenario_resilience(console: Console) -> None:
     # The button, not the route behind it. An enumeration of the console's 28 write controls found
     # this one driven by no check anywhere: every script called `POST /auth/logout` directly, so the
     # control a staff member actually presses at the end of a shift had never been pressed.
+    #
+    # CONSOLE-SHELL-009 (C1): what the page shows is asserted BEFORE anything reloads it. This
+    # check used to reload first, so it only ever saw a fresh page -- never the order that stayed
+    # on screen after "Thoát", which is the defect a shared counter PC actually had.
+    console.open_order(order["order_id"])
+    ticket = (
+        console.call("GET", f"/internal/v1/orders/{order['order_id']}").get("body") or {}
+    ).get("ticket_number")
+    shown_before = console.page.evaluate("() => document.body.textContent || ''")
+    ok(
+        "set-up: the order is on screen before Thoát",
+        order["order_id"] in shown_before and (ticket is None or f"Phiếu {ticket}" in shown_before),
+        f"Phiếu {ticket}",
+    )
     signout = console.page.locator("button", has_text="Thoát").first
     ok("the app bar offers a sign-out control", signout.count() > 0, "")
     signout.click()
-    console.page.wait_for_timeout(1600)
+    console.page.wait_for_timeout(1200)
     touched("shell.sign-out")
+    now = console.page.evaluate(
+        """() => ({
+            heading: document.querySelector('main h1')?.textContent || '',
+            text: document.body.textContent || '',
+            open: document.querySelectorAll('dialog[open]').length,
+            hash: location.hash,
+        })"""
+    )
+    ok(
+        "at once, with no reload, the console shows the signed-out screen",
+        now["heading"] == "Chưa đăng nhập",
+        now["heading"],
+    )
+    ok(
+        "and nothing of the order that was open is left anywhere in the page",
+        order["order_id"] not in now["text"]
+        and (ticket is None or f"Phiếu {ticket}" not in now["text"]),
+        now["hash"],
+    )
+    ok("no dialog is left open", now["open"] == 0, now["open"])
+    ok(
+        "and the server ended the session: this browser's cookie opens nothing any more",
+        console.session_status() == 401,
+    )
     console.page.reload(wait_until="networkidle")
     console.page.wait_for_timeout(1300)
     ok("a signed-out console says so", "Chưa đăng nhập" in console.page.content(), "")
@@ -1865,6 +1949,185 @@ def scenario_resilience(console: Console) -> None:
         "",
     )
     console.sign_in("demo-owner")
+
+
+def scenario_shell(console: Console) -> None:
+    """CONSOLE-SHELL-009: the shell against the real API -- "Thoát" when the network is down and
+    when it is not (C1), the skip control (C5), what an operator's navigation shows (C6), what a
+    deploy can and cannot mix (C7), and the approvals badge (C11)."""
+
+    phone = viewport()["width"] < 1024
+
+    head("SH1", "THOÁT KHI MẤT MẠNG — not signed out, and the console says so")
+    console.sign_in("demo-owner")
+    order = console.build_order(stop="created")
+    console.open_order(order["order_id"])
+    console.context.set_offline(True)
+    console.page.wait_for_timeout(600)
+    console.page.locator("button", has_text="Thoát").first.click()
+    console.page.wait_for_timeout(800)
+    failed = console.page.locator("[data-sign-out-failed]")
+    ok(
+        "offline, Thoát says 'Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại'",
+        failed.count() == 1 and "Chưa đăng xuất được" in failed.first.inner_text(),
+        failed.first.inner_text() if failed.count() else "no notice",
+    )
+    ok(
+        "and the person is still signed in, the order still on screen",
+        console.page.locator(".appbar__account").count() == 1
+        and order["order_id"] in console.page.evaluate("() => document.body.textContent"),
+    )
+    console.context.set_offline(False)
+    console.page.wait_for_timeout(1200)
+    ok(
+        "the server agrees: the session is alive, and it is still the same person's",
+        console.session_status() == 200,
+    )
+    console.page.locator("button", has_text="Thoát").first.click()
+    console.page.wait_for_timeout(1200)
+    ok(
+        "back online, the next press signs out and clears the page at once",
+        console.page.locator("main h1").first.inner_text() == "Chưa đăng nhập"
+        and order["order_id"] not in console.page.evaluate("() => document.body.textContent"),
+    )
+    ok(
+        "and the server session is gone",
+        console.session_status() == 401,
+    )
+
+    head("SH2", "BỎ QUA ĐIỀU HƯỚNG — the skip control keeps the route and what was typed")
+    console.sign_in("demo-operations")
+    console.open("#/new")
+    console.type_into("#new-customer-search", "0909", "newOrder.customer-search")
+    console.page.locator(".appbar__identity").focus()
+    console.page.keyboard.press("Shift+Tab")
+    skip = console.page.evaluate(
+        "() => { const n = document.activeElement; const b = n.getBoundingClientRect();"
+        " return {id: n.id, visible: b.width > 40 && b.height > 30 && b.top >= 0}; }"
+    )
+    ok(
+        "the stop before the app bar is the skip control, visible",
+        skip["id"] == "skip-link" and skip["visible"],
+        skip,
+    )
+    console.page.keyboard.press("Enter")
+    console.page.wait_for_timeout(400)
+    touched("shell.skip-link")
+    after = console.page.evaluate(
+        "() => ({active: document.activeElement?.id, hash: location.hash,"
+        " value: document.querySelector('#new-customer-search')?.value})"
+    )
+    ok(
+        "it moves focus to the screen; the route and the typed number stay",
+        after == {"active": "main", "hash": "#/new", "value": "0909"},
+        after,
+    )
+
+    head("SH3", "ĐIỀU HƯỚNG CỦA NHÂN VIÊN QUẦY — only what they can open")
+    console.open("#/")
+    shown = console.page.evaluate(
+        """() => [...document.querySelectorAll('nav.nav a.nav__link, nav.nav summary')]
+            .filter((node) => node.checkVisibility({visibilityProperty: true}))
+            .map((node) => node.getAttribute('href') || '(Khác)')"""
+    )
+    if phone:
+        ok(
+            "the operator's tab bar: Hôm nay, Đơn hàng, Nhận đồ, Đồ chờ lấy, Thêm",
+            sorted(shown) == sorted(["#/", "#/orders", "#/new", "#/pickup", "#/more"]),
+            shown,
+        )
+    else:
+        ok("at a desk the operator meets at most 14 destinations", len(shown) <= 14, shown)
+    ok(
+        "and none of them shut",
+        console.page.locator("nav.nav [aria-disabled='true']").count() == 0
+        and console.page.locator("nav.nav a[href='#/reports']").count() == 0,
+    )
+    if not phone:
+        fold = console.page.locator("nav.nav details.nav__fold > summary")
+        if fold.count():
+            fold.first.click()
+            console.page.wait_for_timeout(300)
+            touched("shell.nav-fold")
+        ok(
+            "the closed 'Khác' group holds Việc chưa hỗ trợ and the way to every other screen",
+            # Inside the group: the phone-only "Thêm" (also `#/more`) sits earlier in the list,
+            # hidden at a desk, and must not be what this looks at.
+            all(
+                console.page.locator(
+                    f"nav.nav details.nav__fold a[href='{href}']"
+                ).first.is_visible()
+                for href in ("#/gaps", "#/more")
+            ),
+        )
+    console.open("#/reminders")
+    switch = console.page.locator("#shelf-switch a[href='#/pickup']")
+    if switch.count():
+        switch.first.click()
+        console.page.wait_for_timeout(1200)
+        touched("pickup.shelf-switch")
+    ok(
+        "Nhắc khách lấy đồ and Đồ chờ lấy are one destination with a switch between them",
+        console.page.url.endswith("#/pickup")
+        and console.page.locator("#shelf-switch a[aria-current='page']").first.get_attribute("href")
+        == "#/pickup",
+        console.page.url,
+    )
+    console.open("#/staff")
+    ok(
+        "a deep link to a screen the operator cannot open still shows why",
+        "KHÔNG ĐỦ QUYỀN" in console.page.locator("main").inner_text(),
+    )
+
+    head("SH4", "SAU KHI CẬP NHẬT — the shell is revalidated, the worker waits for a person")
+    for path in ("", "app.js", "sw.js", "src/core/nav.js", "styles/kit.css"):
+        answer = console.page.request.get(f"{CONSOLE}{path}")
+        ok(
+            f"/staff/{path} is served Cache-Control: no-cache",
+            answer.status == 200 and answer.headers.get("cache-control") == "no-cache",
+            answer.headers.get("cache-control"),
+        )
+    ok(
+        "and an API answer is still never stored",
+        console.page.request.get(f"{BASE}/internal/v1/session").headers.get("cache-control")
+        == "no-store",
+    )
+    worker = console.page.evaluate(
+        """() => navigator.serviceWorker.getRegistration('/staff/').then((r) => ({
+            active: Boolean(r && r.active), waiting: Boolean(r && r.waiting),
+            controlled: Boolean(navigator.serviceWorker.controller)}))"""
+    )
+    ok(
+        "the console runs under its worker, with no update waiting and none offered",
+        worker == {"active": True, "waiting": False, "controlled": True}
+        and console.page.locator("[data-update-ready]").count() == 0,
+        worker,
+    )
+
+    head("SH5", "DUYỆT — the badge asks for one envelope, and nothing from a hidden tab")
+    console.sign_in("demo-owner")
+    asked: list[str] = []
+    listen = lambda request: (  # noqa: E731
+        asked.append(request.url) if "/internal/v1/approvals?" in request.url else None
+    )
+    console.page.on("request", listen)
+    console.page.evaluate("() => window.dispatchEvent(new Event('console:approvals-changed'))")
+    console.page.wait_for_timeout(900)
+    ok(
+        "the badge's read asks for one",
+        bool(asked) and all(url.endswith("limit=1") for url in asked),
+        asked,
+    )
+    console.page.evaluate(
+        "() => Object.defineProperty(document, 'hidden', {configurable: true, get: () => true})"
+    )
+    asked.clear()
+    console.page.evaluate("() => window.dispatchEvent(new Event('console:approvals-changed'))")
+    console.page.wait_for_timeout(900)
+    ok("a hidden tab asks nothing", asked == [], asked)
+    console.page.remove_listener("request", listen)
+    console.page.reload(wait_until="networkidle")
+    console.page.wait_for_timeout(900)
 
 
 def scenario_ai_refuses(console: Console) -> None:
@@ -3986,13 +4249,7 @@ def scenario_report(console: Console) -> None:
     ok("and the link opens it", console.page.url.endswith("#/reports"), console.page.url)
     # And from the navigation, the way every destination is reached.
     console.open("#/orders")
-    nav = console.page.locator("nav a", has_text="Báo cáo").first
-    if not (nav.count() and nav.is_visible()):
-        console.page.locator("nav a", has_text="Thêm").first.click()
-        console.page.wait_for_timeout(700)
-        nav = console.page.locator("main a[data-nav='/reports']").first
-    if nav.count():
-        nav.click()
+    if console.nav("Báo cáo", "/reports"):
         console.page.wait_for_timeout(1500)
         touched("shell.nav.reports")
     ok("the navigation reaches Báo cáo", console.page.url.endswith("#/reports"), console.page.url)
@@ -4100,9 +4357,15 @@ def scenario_report(console: Console) -> None:
     )
     console.open("#/more")
     denied = console.page.locator("[data-nav-denied='/reports']")
+    # CONSOLE-SHELL-009 (C6): a shut destination waits under Thêm's closed "Cần quyền khác".
+    group = console.page.locator("details[data-nav-denied-group] > summary")
+    if group.count():
+        group.first.click()
+        console.page.wait_for_timeout(300)
+        touched("more.denied-open")
     ok(
-        "and Thêm still lists Báo cáo, disabled, naming who may open it",
-        denied.count() == 1 and "Chỉ" in denied.first.inner_text(),
+        "and Thêm still lists Báo cáo under Cần quyền khác, disabled, naming who may open it",
+        denied.count() == 1 and denied.first.is_visible() and "Chỉ" in denied.first.inner_text(),
         denied.first.inner_text()[:100] if denied.count() else "absent",
     )
     console.open("#/")
@@ -4537,13 +4800,7 @@ def _summary(console: Console, day: str) -> dict[str, Any]:
 def _nav_to(console: Console, label: str, path: str) -> None:
     """Reach a destination the way a person does: the sidebar link, or Thêm then its row."""
     console.open("#/orders")
-    link = console.page.locator("nav a", has_text=label).first
-    if not (link.count() and link.is_visible()):
-        console.page.locator("nav a", has_text="Thêm").first.click()
-        console.page.wait_for_timeout(700)
-        link = console.page.locator(f"main a[data-nav='{path}']").first
-    if link.count():
-        link.click()
+    if console.nav(label, path):
         console.page.wait_for_timeout(1400)
 
 
@@ -5176,14 +5433,8 @@ def scenario_customers(console: Console) -> None:
 
     head("16d", "LỊCH SỬ — the customer's page: Gọi, Zalo, open orders first")
     console.open("#/", settle=1400)
-    link = console.page.locator("nav a", has_text="Khách hàng").first
-    if link.count() and not link.is_visible():
-        # On a phone it is under "Thêm", the way a person reaches it there.
-        console.page.locator("nav a", has_text="Thêm").first.click()
-        console.page.wait_for_timeout(700)
-        link = console.page.locator("main a[data-nav='/customers']").first
-    if link.count():
-        link.click()
+    # On a phone it is under "Thêm", the way a person reaches it there.
+    if console.nav("Khách hàng", "/customers"):
         touched("shell.nav.customers")
         console.page.wait_for_timeout(1800)
     ok(
@@ -6484,13 +6735,7 @@ def _open_pickup(console: Console) -> None:
     """Đồ chờ lấy, reached the way a person reaches it: the sidebar, or "Thêm" on a phone."""
 
     console.open("#/", settle=1400)
-    link = console.page.locator("nav a", has_text="Đồ chờ lấy").first
-    if link.count() and not link.is_visible():
-        console.page.locator("nav a", has_text="Thêm").first.click()
-        console.page.wait_for_timeout(700)
-        link = console.page.locator("main a[data-nav='/pickup']").first
-    if link.count():
-        link.click()
+    if console.nav("Đồ chờ lấy", "/pickup"):
         touched("shell.nav.pickup")
         console.page.wait_for_timeout(1800)
     else:
@@ -8824,13 +9069,7 @@ def _open_late(console: Console) -> None:
     """Giao trễ cần xử lý, reached as a person reaches it: the sidebar, or "Thêm" on a phone."""
 
     console.open("#/", settle=1400)
-    link = console.page.locator("nav a", has_text="Giao trễ").first
-    if link.count() and not link.is_visible():
-        console.page.locator("nav a", has_text="Thêm").first.click()
-        console.page.wait_for_timeout(700)
-        link = console.page.locator("main a[data-nav='/late-deliveries']").first
-    if link.count():
-        link.click()
+    if console.nav("Giao trễ", "/late-deliveries"):
         touched("shell.nav.late-deliveries")
         console.page.wait_for_timeout(1800)
     else:
@@ -9281,6 +9520,9 @@ SCENARIOS = {
     "roles": scenario_roles,
     "hiring": scenario_hiring,
     "resilience": scenario_resilience,
+    # CONSOLE-SHELL-009: Thoát offline and online, the skip control, an operator's navigation, the
+    # shell's cache policy and worker, and the approvals badge. Signs in as each person it needs.
+    "shell": scenario_shell,
     "ai": scenario_ai_refuses,
     "band": scenario_band,
     "prepaid": scenario_prepaid,
@@ -9395,15 +9637,10 @@ def main() -> int:
             ("Báo giá", "quotes", "#/quotes"),
             ("Đơn hàng", "orders", "#/orders"),
         ):
-            link = console.page.locator("nav a", has_text=label).first
-            if link.count() and not link.is_visible():
-                # On a phone only five destinations are tabs; the rest are reached the way a
-                # person reaches them there: the "Thêm" tab, then the row on #/more.
-                console.page.locator("nav a", has_text="Thêm").first.click()
-                console.page.wait_for_timeout(700)
-                link = console.page.locator(f"main a[data-nav='{hash_path[1:]}']").first
-            if link.count():
-                link.click()
+            # On a phone only five destinations are tabs; the rest are reached the way a person
+            # reaches them there -- "Thêm", then the row. On a desk, Tiếp nhận and Báo giá are in
+            # the sidebar's closed "Khác" group (CONSOLE-SHELL-009).
+            if console.nav(label, hash_path[1:]):
                 console.page.wait_for_timeout(900)
                 touched(f"shell.nav.{route}")
                 ok(

@@ -45,7 +45,7 @@ import {
   statusPill,
   toast,
 } from "../ui/kit.js";
-import { waitingText } from "../ui/unclaimed.js";
+import { shelfSwitch, waitingText } from "../ui/unclaimed.js";
 import { orderName } from "./orders.js";
 
 /** One page of the due list; the server says when there are more (`truncated`). */
@@ -551,6 +551,7 @@ export function render_() {
       ),
       action: button({ label: "Tải lại", icon: "refresh", variant: "quiet", onClick: () => void load() }),
     }),
+    shelfSwitch("/reminders"),
     noticeHost,
     listHost,
     sheetsHost,

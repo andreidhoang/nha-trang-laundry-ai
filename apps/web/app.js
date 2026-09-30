@@ -14,11 +14,11 @@
  * @module app
  */
 
-import { count, shortId } from "./src/core/format.js";
+import { shortId } from "./src/core/format.js";
 import { request } from "./src/core/api.js";
-import { h, render } from "./src/core/dom.js";
+import { focusContainer, h, render } from "./src/core/dom.js";
 import { enumVi } from "./src/core/i18n.js";
-import { NAV_ITEMS, navVerdict } from "./src/core/nav.js";
+import { FOLD_GROUP, navOwns, navPlan } from "./src/core/nav.js";
 import { can } from "./src/core/rbac.js";
 import * as router from "./src/core/router.js";
 import * as session from "./src/core/session.js";
@@ -33,120 +33,191 @@ const appbarActions = document.querySelector("#appbar-actions");
 const banners = document.querySelector("#banners");
 const navList = document.querySelector("#nav-list");
 const outlet = document.querySelector("#main");
+const skipLink = document.querySelector("#skip-link");
+/**
+ * What `index.html` put in `<body>`: the skip control, the shell, `noscript`, the module script.
+ * Anything else was added since -- a screen's sheet, the account sheet, the toast host -- and goes
+ * when the person signs out (C1).
+ */
+const SHELL_NODES = new Set(document.body.children);
 
 function currentPath() {
   return router.current().path;
 }
 
 /**
- * The pending-approvals count shown on the Duyệt nav entry.
+ * Whether anything waits on the Duyệt nav entry.
  *
  * Approvals are the one queue where minutes matter — the envelopes carry ten-to-thirty-minute
- * TTLs — so the shell polls this single read endpoint once a minute while a session is active,
- * online, and allowed. It is a plain GET: nothing is written, retried, or queued, a failure just
- * clears the badge, and the count renders through `count()` so a full page reads `100+` rather
- * than posing as an exact total.
+ * TTLs — so the shell asks once a minute while a session is active, online, allowed, and the tab
+ * is being looked at. It is a plain GET: nothing is written, retried, or queued, and a failure just
+ * clears the badge.
+ *
+ * CONSOLE-SHELL-009 (C11). It used to fetch up to a hundred whole envelopes every minute, in every
+ * tab, visible or not, to draw one number. It now asks for one (`limit=1`), which is all a badge
+ * needs to know: whether the queue is empty. The badge is therefore a dot that claims "something
+ * waits", never a count it did not read -- the count and the list are on `#/approvals` itself. A
+ * hidden tab asks nothing; coming back to it asks at once.
  */
 const APPROVALS_POLL_MS = 60_000;
-const APPROVALS_LIMIT = 100;
-let approvalsBadge = "";
+const APPROVALS_BADGE_LIMIT = 1;
+let approvalsWaiting = false;
 
 async function pollApprovals() {
+  // Not while nobody is looking. `visibilitychange` asks again the moment the tab is shown.
+  if (document.hidden) return;
   const state = session.snapshot();
   const allowed =
     state.status === "active" && state.online && can(state.principal, "APPROVALS_READ").allowed;
-  let next = "";
+  let next = false;
   if (allowed) {
     try {
-      const items = await request(`/internal/v1/approvals?limit=${APPROVALS_LIMIT}`);
-      next = Array.isArray(items) && items.length ? count(items, APPROVALS_LIMIT) : "";
+      const items = await request(`/internal/v1/approvals?limit=${APPROVALS_BADGE_LIMIT}`);
+      next = Array.isArray(items) && items.length > 0;
     } catch {
-      next = "";
+      next = false;
     }
   }
-  if (next !== approvalsBadge) {
-    approvalsBadge = next;
+  if (next !== approvalsWaiting) {
+    approvalsWaiting = next;
     renderNav();
   }
 }
 
 /**
- * Whether a path is "under" a nav entry: an order page belongs to Đơn hàng, and every destination
- * reached from "Thêm" lights the Thêm tab on a phone.
+ * Whether a path is "under" a nav entry for this person: an order page belongs to Đơn hàng,
+ * "Nhắc khách lấy đồ" to Đồ chờ lấy, and every destination that is not one of this person's tabs
+ * lights the Thêm tab on a phone.
  *
- * @param {(typeof NAV_ITEMS)[number]} item
+ * @param {import("./src/core/nav.js").NavEntry} entry
+ * @param {import("./src/core/nav.js").NavEntry[]} shown
  * @param {string} path
  */
-function isActive(item, path) {
-  if (item.path === "/") return path === "/";
-  if (path === item.path || path.startsWith(`${item.path}/`)) return true;
+function isActive(entry, shown, path) {
+  const { item } = entry;
   if (item.phoneOnly) {
-    const owner = NAV_ITEMS.find(
-      (other) => !other.phoneOnly && other.path !== "/" && (path === other.path || path.startsWith(`${other.path}/`)),
-    );
+    if (path === item.path) return true;
+    const owner = shown.find((other) => !other.item.phoneOnly && navOwns(other.item, path));
     return Boolean(owner && !owner.tab);
   }
-  return false;
+  // "Tất cả màn hình" is `#/more` on a desk: lit only there.
+  if (item.deskOnly) return path === item.path;
+  return navOwns(item, path);
 }
 
 /**
- * One nav destination. A capability this role lacks is shown and marked, never removed — hiding it
- * teaches staff the feature does not exist; marking it teaches them whom to ask. The short form
- * ("Chỉ Chủ / quản trị, Người duyệt vận hành") rides in a `nav__reason` span that CSS reveals where
- * there is room for it (the desktop sidebar), as `#/more` shows it; the full reason is the `title`,
- * and the guard screen this link opens prints it -- a `title` alone is unreachable on touch.
+ * One nav destination. Only destinations this person can open are rendered (C6); a shut one is
+ * listed with whom to ask on `#/more`, and its route still opens the guard screen with the reason.
  *
- * @param {(typeof NAV_ITEMS)[number]} item
- * @param {import("./src/core/nav.js").NavVerdict} verdict
+ * @param {import("./src/core/nav.js").NavEntry} entry
+ * @param {import("./src/core/nav.js").NavEntry[]} shown
  * @returns {HTMLElement}
  */
-function navLink(item, verdict) {
-  const active = isActive(item, currentPath());
+function navLink(entry, shown) {
+  const { item } = entry;
+  const active = isActive(entry, shown, currentPath());
+  const badge = item.path === "/approvals" && approvalsWaiting;
   return h(
     "a",
     {
       class: ["nav__link", item.primary && "nav__link--primary"],
       href: `#${item.path}`,
       "aria-current": active ? "page" : null,
-      "aria-disabled": verdict.allowed ? null : "true",
-      title: verdict.allowed ? item.label : `${item.label} — ${verdict.reason}`,
+      title: item.hint ? `${item.label} — ${item.hint}` : item.label,
+      dataNavLink: item.path,
     },
     item.primary ? h("span", { class: "nav__plus" }, icon(item.icon)) : icon(item.icon),
     h("span", null, item.label),
-    item.path === "/approvals" && approvalsBadge
-      ? h("span", { class: "nav__badge" }, approvalsBadge)
+    badge
+      ? h(
+          "span",
+          { class: "nav__badge nav__badge--dot", dataApprovalsWaiting: "true" },
+          h("span", { class: "sr-only" }, "Có việc chờ duyệt"),
+        )
       : null,
-    verdict.allowed ? null : h("span", { class: "nav__reason" }, verdict.short || verdict.reason),
   );
 }
 
+/**
+ * @param {import("./src/core/nav.js").NavEntry} entry
+ * @param {import("./src/core/nav.js").NavEntry[]} shown
+ * @returns {HTMLElement}
+ */
+function navItem(entry, shown) {
+  return h(
+    "li",
+    {
+      class: [
+        "nav__item",
+        entry.tab && "nav__item--tab",
+        entry.tab && `nav__item--tab-${entry.tab}`,
+        entry.item.phoneOnly && "nav__item--phone-only",
+      ],
+    },
+    navLink(entry, shown),
+  );
+}
+
+/**
+ * Whether the sidebar's closed "Khác" group is open. In memory only (UX spec §2 invariant 3): a
+ * preference for this page's lifetime, never written to the device. Opened by a press, and kept
+ * open while the screen on show is one of its entries so the active entry is never hidden.
+ */
+let foldOpen = false;
+
 function renderNav() {
-  const principal = session.principal();
+  const { shown } = navPlan(session.principal());
+  const path = currentPath();
   const children = [];
+  const folded = [];
   let lastGroup = null;
 
-  for (const item of NAV_ITEMS) {
+  for (const entry of shown) {
+    if (entry.item.fold) {
+      folded.push(entry);
+      continue;
+    }
+    const { item } = entry;
     if (item.group && item.group !== lastGroup && !item.primary) {
       lastGroup = item.group;
       children.push(h("li", { class: "nav__group", "aria-hidden": "true" }, item.group));
     }
-    const verdict = navVerdict(principal, item);
-    children.push(
-      h(
-        "li",
-        {
-          class: [
-            "nav__item",
-            item.tab && "nav__item--tab",
-            item.tab && `nav__item--tab-${item.tab}`,
-            item.phoneOnly && "nav__item--phone-only",
-          ],
+    children.push(navItem(entry, shown));
+  }
+
+  if (folded.length) {
+    const initiallyOpen = foldOpen || folded.some((entry) => isActive(entry, shown, path));
+    const details = h(
+      "details",
+      {
+        class: "nav__fold",
+        open: initiallyOpen,
+        // Only a person's press is remembered; the open this render set is not a preference.
+        onToggle: (event) => {
+          if (event.currentTarget.open !== initiallyOpen) foldOpen = event.currentTarget.open;
         },
-        navLink(item, verdict),
+      },
+      h(
+        "summary",
+        { class: "nav__link nav__fold-summary", dataNavFold: "true" },
+        icon("more"),
+        h("span", null, FOLD_GROUP),
+      ),
+      h(
+        "ul",
+        { class: "nav__fold-list", "aria-label": FOLD_GROUP },
+        folded.map((entry) => navItem(entry, shown)),
       ),
     );
+    // A sidebar-only group: on a phone these are the "Khác" section of Thêm.
+    children.push(h("li", { class: "nav__item nav__sidebar-only" }, details));
   }
+
   render(navList, children);
+  // Nobody signed in, or a session that has ended: nothing to open, so no empty sidebar or bar.
+  // Kept (empty) while the session is still being read, so the page does not jump when it fills.
+  const bar = navList.closest(".nav");
+  if (bar) bar.hidden = children.length === 0 && session.snapshot().status !== "unknown";
   publishNavHeight();
 }
 
@@ -170,6 +241,29 @@ function publishNavHeight() {
   document.documentElement.style.setProperty("--nav-height", `${bar.offsetHeight}px`);
 }
 
+/**
+ * "Thoát", pressed (CONSOLE-SHELL-009, C1). One press, one request, no retry; the answer decides.
+ *
+ * Signed out: `session.signOut()` has already run `wipeWorkspace()` and the signed-out screen is
+ * on show -- nothing of the last customer is left in the page. Not signed out (offline, a 5xx, a
+ * timeout): the session is kept, here and on the server, and the banner says so in words; the
+ * screen is untouched. Only a person presses "Thoát" again.
+ */
+let signingOut = false;
+/** @type {unknown} why the last "Thoát" did not end the session, until the next press or a sign-out */
+let signOutFailure = null;
+
+async function pressSignOut() {
+  if (signingOut) return;
+  signingOut = true;
+  signOutFailure = null;
+  syncChrome();
+  const outcome = await session.signOut();
+  signingOut = false;
+  if (!outcome.signedOut) signOutFailure = outcome.error || true;
+  syncChrome();
+}
+
 /** The account sheet: who is signed in, with which roles, and the one way out. */
 const accountSheet = sheet({
   title: "Tài khoản",
@@ -180,9 +274,10 @@ const accountSheet = sheet({
       type: "button",
       dataVariant: "danger",
       class: "btn btn--block",
+      dataSignOut: "sheet",
       onClick: () => {
         accountSheet.close();
-        void session.signOut();
+        void pressSignOut();
       },
     },
     icon("logout"),
@@ -291,7 +386,10 @@ function renderAppbar() {
         class: "appbar__signout",
         "aria-label": "Thoát",
         title: "Thoát",
-        onClick: () => void session.signOut(),
+        dataSignOut: "appbar",
+        disabled: signingOut,
+        "aria-busy": signingOut ? "true" : null,
+        onClick: () => void pressSignOut(),
       },
       icon("logout"),
       h("span", { class: "appbar__signout-label" }, "Thoát"),
@@ -375,6 +473,34 @@ function renderBanners() {
     );
   }
 
+  // C1: "Thoát" did not reach the server, so the session is still open -- here and there.
+  if (signOutFailure && state.status === "active") {
+    children.push(
+      h(
+        "div",
+        { class: "banner", dataState: "danger", role: "alert", dataSignOutFailed: "true" },
+        "Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại. Phiên của bạn vẫn đang mở.",
+      ),
+    );
+  }
+
+  // C7: a new build is installed and waiting. Never applied by itself: reloading throws away
+  // whatever is being typed, so the person chooses the moment.
+  if (updateWaiting) {
+    children.push(
+      h(
+        "div",
+        { class: "banner", dataState: "info", role: "status", dataUpdateReady: "true" },
+        "Có bản mới — xong việc đang nhập thì bấm Tải lại.",
+        h(
+          "button",
+          { type: "button", dataUpdateApply: "true", onClick: applyUpdate },
+          "Tải lại",
+        ),
+      ),
+    );
+  }
+
   if (state.status === "unreachable") {
     children.push(
       h(
@@ -391,7 +517,9 @@ function renderBanners() {
     );
   }
 
-  if (state.status === "ended") {
+  // Not after "Thoát": the person chose to leave, the screen was cleared, and "what you typed is
+  // still on screen" would be false. The signed-out screen says what is true.
+  if (state.status === "ended" && !state.signedOut) {
     // An expiry with no error used to render nothing at all: the operator's next action failed and
     // the console said why only inside that one form. The banner is the standing condition, and it
     // states the thing that most needs saying — that nothing they typed was thrown away.
@@ -696,7 +824,94 @@ function contentKey() {
   return `${state.status}|${state.principal?.staffUserId || ""}|${state.storeId || ""}`;
 }
 
+/**
+ * Clear everything the person who just signed out could have left in this page (C1).
+ *
+ * Run by `session.signOut()` once the server has ended the session, before subscribers hear of it
+ * -- so the signed-out screen they render lands on an empty page, in the same task, with nothing
+ * painted in between. Not run for an idle expiry: that path keeps the screen on purpose.
+ *
+ *   - every open dialog is closed, and every node a screen appended to `<body>` -- sheets, the
+ *     account sheet with its device list, toasts -- is removed with whatever it said;
+ *   - the outlet is emptied (the signed-out screen follows), and the address goes back to `#/` so
+ *     the next person does not start on the last customer's order;
+ *   - what the shell held for this person is dropped: the device list, the badge, a failed-sign-out
+ *     notice. Screens drop their own hand-offs through `session.onSignOut`.
+ */
+function wipeWorkspace() {
+  for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
+  for (const node of [...document.body.children]) {
+    if (!SHELL_NODES.has(node)) node.remove();
+  }
+  render(accountSheet.body);
+  accountDevices = null;
+  approvalsWaiting = false;
+  signOutFailure = null;
+  foldOpen = false;
+  outlet.replaceChildren();
+  if (currentPath() !== "/") router.replace("/");
+}
+
+// --- C7: a new build, offered and never forced ------------------------------------------------
+
+/**
+ * How often an open console asks whether a new build exists. A browser checks for a new service
+ * worker when it navigates, and a hash-routed console never navigates, so without this a tablet
+ * left open all day would learn of a deploy only when somebody reloaded it.
+ */
+const UPDATE_CHECK_MS = 30 * 60_000;
+/** @type {ServiceWorker|null} a new build's worker, installed and waiting for the person's press */
+let updateWaiting = null;
+/** Set only by "Tải lại": the one case in which a change of worker reloads the page. */
+let reloadRequested = false;
+
+/**
+ * Watch this registration for a new build (CONSOLE-SHELL-009, C7).
+ *
+ * The worker no longer takes over by itself (`sw.js` waits), because a worker that switched under
+ * a running page served the next lazily fetched file from the new build to old code. The waiting
+ * worker is offered instead, as a quiet banner; nothing reloads until the person presses it, since
+ * a reload discards whatever is being typed. On the first install there is no controller yet, so
+ * nothing is offered: there is no old code to replace.
+ *
+ * @param {ServiceWorkerRegistration} registration
+ */
+function watchForUpdate(registration) {
+  const offer = (/** @type {ServiceWorker|null} */ worker) => {
+    if (!worker || !navigator.serviceWorker.controller) return;
+    updateWaiting = worker;
+    renderBanners();
+  };
+  offer(registration.waiting);
+  registration.addEventListener("updatefound", () => {
+    const incoming = registration.installing;
+    incoming?.addEventListener("statechange", () => {
+      if (incoming.state === "installed") offer(incoming);
+    });
+  });
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadRequested) location.reload();
+  });
+  const check = () => {
+    if (!document.hidden) registration.update().catch(() => {});
+  };
+  document.addEventListener("visibilitychange", check);
+  setInterval(check, UPDATE_CHECK_MS);
+}
+
+/** "Tải lại": let the waiting worker take over, then reload into the new build -- once. */
+function applyUpdate() {
+  reloadRequested = true;
+  updateWaiting?.postMessage("SKIP_WAITING");
+  // A worker that went redundant in the meantime never fires `controllerchange`; the press still
+  // means "reload now", and the network-first shell then serves the new build from the server.
+  setTimeout(() => location.reload(), 4000);
+}
+
 async function boot() {
+  session.onSignOut(wipeWorkspace);
+  // C5: the skip control moves focus to the screen, and nothing else -- no route, no rebuild.
+  skipLink?.addEventListener("click", () => focusContainer(outlet));
   session.watchConnectivity();
 
   /** @type {string|null} null until an authenticated screen has been rendered at least once. */
@@ -718,7 +933,14 @@ async function boot() {
     // incident for the most trivial cause. On boot (`renderedKey === null`) it still renders, which
     // is where `unreachableScreen()` belongs; mid-shift the banner below carries it and the form
     // stays exactly where the operator left it.
-    if ((state.status === "ended" || state.status === "unreachable") && renderedKey !== null) {
+    //
+    // A sign-out is the opposite case (C1): the person chose to leave, `wipeWorkspace()` has
+    // already emptied the page, and the signed-out screen is rendered in its place at once.
+    if (
+      (state.status === "ended" || state.status === "unreachable") &&
+      renderedKey !== null &&
+      !state.signedOut
+    ) {
       return;
     }
 
@@ -738,9 +960,13 @@ async function boot() {
     render(outlet, errorNotice(error));
   }
 
-  // The one standing poll in the application: a read-only count behind the approvals badge.
+  // The one standing poll in the application: a read-only look behind the approvals badge. A hidden
+  // tab skips it (`pollApprovals`), and showing the tab again asks at once.
   setInterval(() => void pollApprovals(), APPROVALS_POLL_MS);
   void pollApprovals();
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) void pollApprovals();
+  });
   // `#/approvals` announces a recorded decision so the badge follows it now, not a minute later.
   // The same read-only GET as the poll; nothing is written or retried.
   window.addEventListener("console:approvals-changed", () => void pollApprovals());
@@ -748,9 +974,12 @@ async function boot() {
   // The service worker caches the application shell and nothing else. Registered last so that a
   // failure to register never blocks sign-in.
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/staff/sw.js").catch(() => {
-      /* An unregistered worker costs offline shell loading and nothing else. */
-    });
+    navigator.serviceWorker
+      .register("/staff/sw.js")
+      .then(watchForUpdate)
+      .catch(() => {
+        /* An unregistered worker costs offline shell loading and nothing else. */
+      });
   }
 }
 

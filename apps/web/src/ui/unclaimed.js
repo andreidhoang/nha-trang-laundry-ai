@@ -661,3 +661,42 @@ export async function readStorage(orderId) {
 export function receiptStorageLine(storage) {
   return storage?.policy?.receipt_line_vi ? String(storage.policy.receipt_line_vi) : null;
 }
+
+/**
+ * The switch at the top of "Đồ chờ lấy" and "Nhắc khách lấy đồ" (CONSOLE-SHELL-009, C6).
+ *
+ * The two are one job -- the shelf of finished laundry, the same customers, the same Gọi -- and
+ * the navigation lists them as one destination. Each half keeps its own route, so every link and
+ * bookmark still lands where it did; this moves between them. Links, not buttons: each side is a
+ * place, and Back returns to the side the person came from. A group rather than a second `<nav>`
+ * landmark: the page already has one navigation, and this is two tabs of one screen.
+ *
+ * @param {"/pickup"|"/reminders"} current
+ * @returns {HTMLElement}
+ */
+export function shelfSwitch(current) {
+  return h(
+    "div",
+    {
+      class: "segmented shelf-switch",
+      role: "group",
+      "aria-label": "Đồ chờ lấy",
+      id: "shelf-switch",
+    },
+    [
+      ["/pickup", "Đồ chờ lấy"],
+      ["/reminders", "Nhắc khách lấy đồ"],
+    ].map(([path, label]) =>
+      h(
+        "a",
+        {
+          class: "segmented__option",
+          href: `#${path}`,
+          "aria-current": path === current ? "page" : null,
+          dataShelf: path,
+        },
+        h("span", null, label),
+      ),
+    ),
+  );
+}

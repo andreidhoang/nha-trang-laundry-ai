@@ -228,11 +228,11 @@
 }
 
 /* Navigation ------------------------------------------------------------------------------------
- * One list, two presentations. Phone: the five `nav__item--tab` entries in a fixed order as a tab
- * bar; everything else is reached through "Thêm" (`#/more`), a real screen that lists every
- * destination with its denial reason. Desktop: every destination, grouped, in a sidebar, with
- * "＋ Nhận đồ" as the sidebar's one primary button. A destination the role lacks is shown
- * disabled with its reason, never removed. */
+ * One list, two presentations. Phone: the `nav__item--tab` entries in a fixed order as a tab bar;
+ * everything else is reached through "Thêm" (`#/more`). Desktop: the same destinations, grouped,
+ * in a sidebar, with "＋ Nhận đồ" as the sidebar's one primary button and a closed "Khác" group
+ * at the bottom (kit.css, CONSOLE-SHELL-009). Only destinations the role can open are listed
+ * (C6); a shut one is on `#/more` under "Cần quyền khác", disabled with its reason. */
 
 .nav {
   background: color-mix(in srgb, var(--surface) 94%, transparent);
@@ -419,7 +419,7 @@
     padding: 0;
   }
 
-  /* "Thêm" is the phone's overflow; the sidebar already lists everything. */
+  /* "Thêm" is the phone's overflow; on a desk it is "Tất cả màn hình" inside "Khác". */
   .nav__item--phone-only {
     display: none;
   }

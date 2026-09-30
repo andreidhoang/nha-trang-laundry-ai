@@ -5,7 +5,7 @@
 // shared, is often unlocked, and leaves the shop; the console's offline story is therefore "the
 // interface loads and tells you it cannot reach the server", never "your data is still here".
 
-const CACHE = "staff-shell-c0975aa275bf";
+const CACHE = "staff-shell-65df94facbc7";
 
 const SHELL = [
   "/staff/",
@@ -94,7 +94,14 @@ self.addEventListener("install", (event) => {
       .open(CACHE)
       .then((cache) => cache.addAll(SHELL.map((path) => new Request(path, { cache: "reload" })))),
   );
-  self.skipWaiting();
+  // No `skipWaiting()` here (CONSOLE-SHELL-009, C7). A worker that took over by itself switched
+  // under a page still running the previous build, which then fetched its next file from the new
+  // one: old code against new code, with nobody told. The new worker waits; the page offers
+  // "Có bản mới — Tải lại", and only that press sends the message below.
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
@@ -121,9 +128,14 @@ self.addEventListener("fetch", (event) => {
   // fails to parse an error page as JavaScript and the console is blank, with a good copy of the
   // file sitting in the cache the whole time. An error response is a failure to serve the shell,
   // and is treated as one.
+  //
+  // `cache: "no-cache"` (C7): the default mode let the browser answer from its own HTTP cache, so
+  // after a deploy one module could come from the new build and the next from yesterday's. Every
+  // shell file is now revalidated with the server -- a 304 when nothing changed -- and the server
+  // sends `/staff/*` with `Cache-Control: no-cache` for the same reason.
   const fallback = () => caches.match(event.request).then((hit) => hit || Response.error());
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: "no-cache" })
       .then((response) => (response.ok ? response : fallback()))
       .catch(fallback),
   );

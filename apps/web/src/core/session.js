@@ -45,7 +45,14 @@ const state = {
   online: navigator.onLine,
   /** @type {string} */
   lastError: "",
+  // CONSOLE-SHELL-009 (C1): true once "Thoát" has been answered by the server. Distinguishes the
+  // person who chose to leave -- whose screen must be cleared -- from an idle expiry, whose screen
+  // is deliberately kept so the typed input survives (`end()`). Cleared by the next session read.
+  signedOut: false,
 };
+
+/** @type {Set<() => void>} what must be forgotten when this person signs out (C1) */
+const signOutListeners = new Set();
 
 function notify() {
   for (const listener of listeners) listener();
@@ -96,6 +103,7 @@ export async function refresh() {
     };
     state.status = "active";
     state.lastError = "";
+    state.signedOut = false;
     await loadMemberStores();
   } catch (error) {
     state.principal = null;
@@ -194,7 +202,56 @@ export function end() {
   notify();
 }
 
-/** @returns {Promise<void>} */
+/**
+ * Register what must be forgotten the moment this person signs out: an in-memory hand-off, a
+ * stash, anything the shell or a screen holds for the person who is leaving (CONSOLE-SHELL-009,
+ * C1). Called only for a sign-out the server answered -- never for an idle expiry, whose whole
+ * promise is that nothing is thrown away.
+ *
+ * @param {() => void} listener
+ * @returns {() => void} unregister
+ */
+export function onSignOut(listener) {
+  signOutListeners.add(listener);
+  return () => signOutListeners.delete(listener);
+}
+
+/**
+ * The browser holds no session any more: back to the state of a cold start with nobody signed
+ * in. The store scope goes with the person (the device's `staff_store_id` stays, and the next
+ * session read restores it); every registered listener drops what it held; then the subscribers
+ * are told, and the shell renders the signed-out screen in the place of whatever was open.
+ */
+function forget() {
+  state.principal = null;
+  state.status = "ended";
+  state.lastError = "";
+  state.signedOut = true;
+  state.memberStoreIds = [];
+  state.storeNames = {};
+  state.storeScopeKnown = false;
+  state.storeId = null;
+  for (const listener of signOutListeners) listener();
+  notify();
+}
+
+/**
+ * "Thoát": end this browser's session on the server, and only then here.
+ *
+ * Until CONSOLE-SHELL-009 a failed sign-out was swallowed and the local session ended anyway. On a
+ * shared counter PC with the wifi down that left the server session alive behind a console that
+ * said "Chưa đăng nhập" -- and "Kiểm tra lại phiên" then signed the next person in as the one who
+ * had just left. So the outcome is now reported, not assumed:
+ *
+ *   - the server answered the sign-out (200), or answered that there was no session to end (401 --
+ *     a second sign-out, an expiry that got there first): the person is out. The screen is
+ *     cleared by `forget()`'s listeners and subscribers, never left showing the last customer;
+ *   - anything else -- offline, a timeout, a 5xx, a refusal: the session may well be alive, so it
+ *     is kept here too, the operator stays signed in, and the caller says so. Nothing is retried:
+ *     only a person presses "Thoát" again.
+ *
+ * @returns {Promise<{signedOut: boolean, error: unknown}>}
+ */
 export async function signOut() {
   /** @type {string | null} */
   let endSessionUrl = null;
@@ -204,11 +261,12 @@ export async function signOut() {
       idempotencyKey: `logout:${crypto.randomUUID()}`,
     });
     endSessionUrl = result?.end_session_url ?? null;
-  } catch {
-    // A failed sign-out still ends the local session. The cookie may survive on the server, which
-    // is why the session list and its revoke control exist as a real remedy.
+  } catch (error) {
+    // `SESSION_ENDED` is the server saying this browser has no session -- the goal state -- or
+    // the CSRF cookie that is set and expires with the session cookie being gone with it.
+    if (/** @type {any} */ (error)?.kind !== "SESSION_ENDED") return { signedOut: false, error };
   }
-  end();
+  forget();
 
   // Ending our session and leaving the issuer's alive is how a shop tablet hands the next person a
   // silent sign-in as whoever used it last: their Keycloak cookies survive, so the next
@@ -220,6 +278,7 @@ export async function signOut() {
   // deployment with no issuer at all. Navigating there anyway sent the operator to a host the
   // browser cannot resolve.
   if (endSessionUrl) location.assign(endSessionUrl);
+  return { signedOut: true, error: null };
 }
 
 /**

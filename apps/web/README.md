@@ -94,6 +94,13 @@ not a same-origin absolute path is ignored.
   UUID and nothing else.
 - The service worker precaches exactly the assets on disk, never an API path, and has no branch that
   writes a response into a cache (`packages/evals/tests/test_staff_console_privacy.py`).
+- No mixed builds after a deploy (`CONSOLE-SHELL-009`): the API serves `/staff/*` with
+  `Cache-Control: no-cache`, the worker fetches the shell with `{cache: "no-cache"}`, and a new
+  worker waits until the person presses "Có bản mới — Tải lại"; nothing reloads by itself
+  (`apps/api/tests/test_staff_console_shell.py`).
+- "Thoát" ends the session only when the server answered; then the page is cleared (no dialog, no
+  sheet, no customer text left). A failed sign-out keeps the session and says so. An idle expiry
+  keeps the screen (`test_staff_console_shell.py`, and the stub browser suite).
 - Every screen's declared capability exists in `src/core/rbac.js`; every store-scoped screen declares
   `needsStore`.
 - Role names in user-facing copy gloss through the role map in `src/core/i18n.js` (`enumLabel` →

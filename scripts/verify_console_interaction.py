@@ -60,6 +60,10 @@ STORE = "11111111-2222-4333-8444-555555555555"
 PASS: list[str] = []
 FAIL: list[str] = []
 
+#: CONSOLE-SHELL-009 (C7): the build number the stub's `/staff/sw.js` carries. The section that
+#: proves the "Có bản mới" banner bumps it -- what a deploy does to the worker's bytes.
+SHELL_BUILD = {"n": 1}
+
 #: `INCIDENT-INTAKE-001`. Two rows, because the interesting one is the second: an incident whose
 #: description has been disposed of under `INCIDENT_EVIDENCE` at 365 days, or which the agent path
 #: opened with no summary at all. It must read as an expected retention state, not as a gap.
@@ -2447,6 +2451,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:
+        # CONSOLE-SHELL-009 (C7): the console under `/staff/`, the way the API serves it, so a real
+        # service worker can install there, wait, and take over -- only once the section that needs
+        # it asks, so every earlier section runs exactly as before (its `/staff/sw.js` is a 404).
+        if self.path.startswith("/staff/") and globals().get("state", {}).get("serve_staff"):
+            if self.path.split("?")[0] == "/staff/sw.js":
+                worker = (WEB / "sw.js").read_text(encoding="utf-8")
+                payload = f"{worker}\n// stub build {SHELL_BUILD['n']}\n".encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/javascript; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            self.path = self.path[len("/staff") :]
         if "/assistant/turns/" in self.path and self.path.endswith("/stream"):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -2540,6 +2559,17 @@ with sync_playwright() as playwright:
             return
         if url.endswith("/internal/v1/session"):
             body = SESSION_OK
+        elif url.split("?")[0].endswith("/internal/v1/auth/logout"):
+            # CONSOLE-SHELL-009 (C1): "Thoát", answered as the section asks -- 200 by default. A
+            # sign-out the server accepted ends the session: every later call is a 401.
+            state.setdefault("logout_posts", []).append(
+                {"key": route.request.headers.get("idempotency-key")}
+            )
+            status, answer = state.get("logout_answer") or (200, {"end_session_url": None})
+            if status < 300:
+                state["authenticated"] = False
+            route.fulfill(status=status, content_type="application/json", body=json.dumps(answer))
+            return
         # EINVOICE-REQUEST-001: a subject's Hóa đơn row, the list, and every write captured with its
         # key and If-Match. Before the statement branch below, whose "/account/statements/" match
         # would otherwise answer the month's row with a statement.
@@ -3094,6 +3124,9 @@ with sync_playwright() as playwright:
             )
             return
         elif url.split("?")[0].endswith("/internal/v1/approvals"):
+            # CONSOLE-SHELL-009 (C11): every read recorded, so the badge's section can prove what
+            # it asks for and that a hidden tab asks nothing.
+            state.setdefault("approval_reads", []).append(url)
             if state.get("order_listed"):
                 body = [order_queue_item()]
             elif state.get("remedy_listed"):
@@ -8605,15 +8638,20 @@ with sync_playwright() as playwright:
     )
 
     # An operator: the entry stays in Thêm, shut, with who may open it; the screen asks nothing.
+    # CONSOLE-SHELL-009 (C6): shut entries wait under Thêm's closed "Cần quyền khác", so the
+    # operator opens it first -- and the row must then be visible, not merely present.
     SESSION_OK["roles"] = ["OPERATOR"]
     state["report_reads"] = []
     page.goto("about:blank")
     page.goto(f"http://localhost:{PORT}/#/more", wait_until="networkidle")
     page.wait_for_timeout(900)
+    if page.locator("details[data-nav-denied-group] > summary").count():
+        page.locator("details[data-nav-denied-group] > summary").click()
+        page.wait_for_timeout(200)
     denied = page.locator("[data-nav-denied='/reports']")
     check(
         "an operator still sees Báo cáo under Thêm, disabled, naming who may open it",
-        denied.count() == 1 and "Chỉ" in denied.first.inner_text(),
+        denied.count() == 1 and denied.first.is_visible() and "Chỉ" in denied.first.inner_text(),
     )
     page.goto(f"http://localhost:{PORT}/#/reports", wait_until="networkidle")
     page.wait_for_timeout(900)
@@ -9199,9 +9237,14 @@ with sync_playwright() as playwright:
     page.goto("about:blank")
     page.goto(f"http://localhost:{PORT}/#/late-deliveries", wait_until="networkidle")
     page.wait_for_timeout(700)
+    # "Who may" is the guard screen's own sentence. Until CONSOLE-SHELL-009 this check also passed
+    # on the navigation's shut "Giao trễ" row ("Chỉ …"); the navigation lists only what a role can
+    # open now (C6), so the check reads the refusal the screen itself prints.
     check(
         "an auditor is refused the screen with who may, and nothing is asked of the server",
-        page.locator("[data-late]").count() == 0 and "Chỉ" in rendered_text(),
+        page.locator("[data-late]").count() == 0
+        and "KHÔNG ĐỦ QUYỀN" in rendered_text()
+        and "Vai trò được phép" in rendered_text(),
         rendered_text()[:160],
     )
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
@@ -9889,6 +9932,542 @@ with sync_playwright() as playwright:
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
     state["order_view"] = None
     state["invoice_subject"] = None
+
+    # ============================================================================================
+    # CONSOLE-SHELL-009 -- the shell: the skip control (C5), the navigation a role sees (C6), the
+    # approvals badge (C11), the "Có bản mới" offer after a deploy (C7), and "Thoát" (C1). Each
+    # check below failed against the shell as it was at 872ecd4.
+
+    def shell_text() -> str:
+        return str(page.evaluate("() => document.body.textContent || ''"))
+
+    def shell_shot(name: str, target: object = None) -> None:
+        """With `CONSOLE_SHELL_SHOTS` set, keep what this state looks like (full page)."""
+        folder = os.environ.get("CONSOLE_SHELL_SHOTS", "")
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+            (target or page).screenshot(  # type: ignore[attr-defined]
+                path=os.path.join(folder, f"{name}.png"), full_page=True
+            )
+
+    def visible_nav() -> list[str]:
+        """What the sidebar or the tab bar shows without opening anything, as `path` or `(Khác)`."""
+        return list(
+            page.evaluate(
+                """() => {
+                    // `checkVisibility`, not a bounding box: a closed <details> keeps its
+                    // content's layout boxes in Chrome (`content-visibility: hidden`).
+                    const shown = (node) => node.checkVisibility({visibilityProperty: true});
+                    const out = [];
+                    for (const link of document.querySelectorAll('nav.nav a.nav__link')) {
+                        if (shown(link)) out.push(link.getAttribute('href').slice(1));
+                    }
+                    for (const fold of document.querySelectorAll('nav.nav summary')) {
+                        if (shown(fold)) out.push('(Khác)');
+                    }
+                    return out;
+                }"""
+            )
+        )
+
+    print()
+    print("=" * 74)
+    print("CONSOLE-SHELL-009 C5. BỎ QUA ĐIỀU HƯỚNG — focus moves to the screen, nothing else")
+    print("=" * 74)
+
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    search = page.locator("#new-customer-search")
+    search.click()
+    page.keyboard.type("0905 12", delay=10)
+    page.wait_for_timeout(200)
+    # A keyboard user in the app bar, going back one stop: the control before the shell.
+    page.locator(".appbar__identity").focus()
+    page.keyboard.press("Shift+Tab")
+    first = page.evaluate(
+        """() => {
+            const node = document.activeElement;
+            const box = node.getBoundingClientRect();
+            return {id: node.id, tag: node.tagName, text: node.textContent.trim(),
+                    top: box.top, left: box.left, width: box.width, height: box.height,
+                    inView: box.top >= 0 && box.left >= 0 && box.bottom <= innerHeight};
+        }"""
+    )
+    shell_shot("stub-skip-link-focused-desk")
+    check(
+        "the stop before the app bar is the skip control, a button",
+        first["id"] == "skip-link" and first["tag"] == "BUTTON",
+        repr(first),
+    )
+    check(
+        "and it is visible while it has focus -- a real target, inside the viewport",
+        first["inView"] and first["width"] >= 60 and first["height"] >= 30,
+        repr(first),
+    )
+    # Pressed from the keyboard, where it now has focus (at 872ecd4: `<a href="#main">`).
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(400)
+    after = page.evaluate(
+        "() => ({active: document.activeElement?.id, hash: location.hash,"
+        " value: document.querySelector('#new-customer-search')?.value})"
+    )
+    check(
+        "pressing it moves focus to the screen",
+        after["active"] == "main",
+        repr(after),
+    )
+    check(
+        "the route is unchanged -- no 'Không có màn hình này'",
+        after["hash"] == "#/new" and "Không có màn hình này" not in shell_text(),
+        repr(after),
+    )
+    check("and what was typed is still there", after["value"] == "0905 12", repr(after))
+    page.keyboard.press("Tab")
+    check(
+        "the next Tab continues inside the screen, not back in the app bar",
+        bool(
+            page.evaluate("() => document.querySelector('main').contains(document.activeElement)")
+        ),
+        str(page.evaluate("() => document.activeElement?.outerText?.slice(0, 40)")),
+    )
+
+    print()
+    print("=" * 74)
+    print("CONSOLE-SHELL-009 C6. ĐIỀU HƯỚNG — what each role is shown, and nothing shut")
+    print("=" * 74)
+
+    SESSION_OK["roles"] = ["OPERATOR"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    desk = visible_nav()
+    check(
+        "an operator at a desk meets at most 14 destinations",
+        len(desk) <= 14,
+        f"{len(desk)}: {desk}",
+    )
+    check(
+        "none of them shut: the navigation has no disabled row",
+        page.locator("nav.nav [aria-disabled='true']").count() == 0
+        and page.locator("nav.nav .nav__reason").count() == 0,
+    )
+    shut = ["/approvals", "/reports", "/expenses", "/staff", "/exports", "/system"]
+    check(
+        "the destinations an operator cannot open are not in the navigation",
+        not [path for path in shut if page.locator(f"nav.nav a[href='#{path}']").count()],
+    )
+    check(
+        "the counter's own work is in the open part of the list",
+        all(path in desk for path in ("/", "/new", "/orders", "/customers", "/pickup")),
+        repr(desk),
+    )
+    fold = page.locator("nav.nav details.nav__fold")
+    check(
+        "system, admin and 'Việc chưa hỗ trợ' wait in one closed group at the bottom",
+        fold.count() == 1
+        and not fold.first.evaluate("(node) => node.open")
+        and not page.locator("nav.nav a[href='#/gaps']").first.is_visible(),
+    )
+    if page.locator("nav.nav details.nav__fold > summary").count():
+        page.locator("nav.nav details.nav__fold > summary").click()
+        page.wait_for_timeout(200)
+        shell_shot("stub-operator-desk-nav-fold-open")
+    check(
+        "one press opens it: Tiếp nhận, Báo giá, Máy, Việc chưa hỗ trợ, Tất cả màn hình",
+        all(
+            page.locator(f"nav.nav details.nav__fold a[href='#{path}']").first.is_visible()
+            for path in ("/order-requests", "/quotes", "/machines", "/gaps", "/more")
+        ),
+    )
+    check(
+        "Đồ chờ lấy and Nhắc khách lấy đồ are one destination",
+        page.locator("nav.nav a[href='#/pickup']").count() == 1
+        and page.locator("nav.nav a[href='#/reminders']").count() == 0,
+    )
+    page.goto(f"http://localhost:{PORT}/#/reminders", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    check(
+        "on Nhắc khách lấy đồ, the navigation marks Đồ chờ lấy as where you are",
+        page.locator("nav.nav a[href='#/pickup']").first.get_attribute("aria-current") == "page",
+    )
+    switch = page.locator("#shelf-switch")
+    check(
+        "and a switch at the top moves between the two halves",
+        switch.count() == 1
+        and switch.locator("a[aria-current='page']").first.get_attribute("href") == "#/reminders",
+    )
+    if switch.count():
+        switch.locator("a[href='#/pickup']").click()
+        page.wait_for_timeout(900)
+    check(
+        "the switch opens Đồ chờ lấy",
+        page.url.endswith("#/pickup")
+        and page.locator("#shelf-switch a[aria-current='page']").first.get_attribute("href")
+        == "#/pickup",
+        page.url,
+    )
+    page.goto(f"http://localhost:{PORT}/#/reports", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    check(
+        "a deep link to a shut screen still opens the denial screen with its reason",
+        "KHÔNG ĐỦ QUYỀN" in shell_text() and "Kế toán" in shell_text(),
+    )
+    page.goto(f"http://localhost:{PORT}/#/more", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    denied = page.locator("[data-nav-denied='/reports']")
+    check(
+        "Thêm lists the operator's own destinations with no shut row in view",
+        denied.count() == 1
+        and not denied.first.is_visible()
+        and page.locator("main a[data-nav='/customers']").first.is_visible(),
+    )
+    if page.locator("details[data-nav-denied-group] > summary").count():
+        page.locator("details[data-nav-denied-group] > summary").click()
+        page.wait_for_timeout(200)
+        shell_shot("stub-operator-desk-more-denied-open")
+    check(
+        "and 'Cần quyền khác' opens to every shut one, disabled, naming who may open it",
+        denied.first.is_visible()
+        and "Chỉ" in denied.first.inner_text()
+        and page.locator("[data-nav-denied='/approvals']").count() == 1,
+    )
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    tabs = visible_nav()
+    shell_shot("stub-operator-phone-today")
+    check(
+        "an operator's phone tab bar: Hôm nay, Đơn hàng, Nhận đồ, Đồ chờ lấy, Thêm -- none shut",
+        sorted(tabs) == sorted(["/", "/orders", "/new", "/pickup", "/more"])
+        and page.locator("nav.nav .nav__item--tab-4 a").first.get_attribute("href") == "#/pickup",
+        repr(tabs),
+    )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    shell_shot("stub-owner-phone-today")
+    check(
+        "the owner's tab 4 is Duyệt",
+        page.locator("nav.nav .nav__item--tab-4 a").first.get_attribute("href") == "#/approvals",
+    )
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    print()
+    print("=" * 74)
+    print("CONSOLE-SHELL-009 C11. DUYỆT — the badge asks for one, and never from a hidden tab")
+    print("=" * 74)
+
+    state["approvals_listed"] = True
+    state["approval_reads"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    badge_reads = [url for url in state["approval_reads"] if "limit=" in url]
+    check(
+        "the badge asks for one envelope, not a hundred",
+        bool(badge_reads) and all(url.endswith("limit=1") for url in badge_reads),
+        repr(state["approval_reads"]),
+    )
+    check(
+        "and says something waits without claiming a count it did not read",
+        page.locator("nav.nav a[href='#/approvals'] [data-approvals-waiting]").count() == 1
+        and not re.search(r"\d", page.locator("nav.nav a[href='#/approvals']").first.inner_text()),
+        page.locator("nav.nav a[href='#/approvals']").first.inner_text(),
+    )
+    page.evaluate(
+        """() => {
+            Object.defineProperty(document, 'hidden', {configurable: true, get: () => true});
+            Object.defineProperty(document, 'visibilityState',
+                {configurable: true, get: () => 'hidden'});
+            document.dispatchEvent(new Event('visibilitychange'));
+        }"""
+    )
+    state["approval_reads"] = []
+    page.evaluate("() => window.dispatchEvent(new Event('console:approvals-changed'))")
+    page.wait_for_timeout(700)
+    check(
+        "a hidden tab asks nothing",
+        state["approval_reads"] == [],
+        repr(state["approval_reads"]),
+    )
+    page.evaluate(
+        """() => {
+            Object.defineProperty(document, 'hidden', {configurable: true, get: () => false});
+            Object.defineProperty(document, 'visibilityState',
+                {configurable: true, get: () => 'visible'});
+            document.dispatchEvent(new Event('visibilitychange'));
+        }"""
+    )
+    page.wait_for_timeout(700)
+    check(
+        "and showing it again asks at once, for one",
+        len(state["approval_reads"]) == 1 and state["approval_reads"][0].endswith("limit=1"),
+        repr(state["approval_reads"]),
+    )
+    state["approvals_listed"] = False
+    # The minute timer itself, on a clock the page does not own: an hour hidden is zero reads. Its
+    # own context: Playwright's clock belongs to the context, and every page in the main one has a
+    # minute timer of its own that would tick along.
+    clock_context = browser.new_context(viewport={"width": 1280, "height": 900})
+    clock_context.add_cookies(
+        [{"name": "staff_csrf", "value": "c" * 40, "url": f"http://localhost:{PORT}"}]
+    )
+    clocked = clock_context.new_page()
+    clocked.route("**/internal/**", route_api)
+    clocked.clock.install()
+    clocked.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    clocked.wait_for_timeout(700)
+    clocked.evaluate(
+        "() => Object.defineProperty(document, 'hidden', {configurable: true, get: () => true})"
+    )
+    state["approval_reads"] = []
+    clocked.clock.run_for(60 * 60_000)
+    clocked.wait_for_timeout(300)
+    check(
+        "an hour of a hidden tab's minute timer makes no request at all",
+        state["approval_reads"] == [],
+        f"{len(state['approval_reads'])} reads",
+    )
+    clocked.evaluate(
+        "() => Object.defineProperty(document, 'hidden', {configurable: true, get: () => false})"
+    )
+    clocked.clock.run_for(61_000)
+    clocked.wait_for_timeout(300)
+    check(
+        "and the same timer reads again once the tab is shown",
+        len(state["approval_reads"]) >= 1,
+        f"{len(state['approval_reads'])} reads",
+    )
+    clock_context.close()
+
+    print()
+    print("=" * 74)
+    print("CONSOLE-SHELL-009 C7. CÓ BẢN MỚI — a deploy is offered, never forced")
+    print("=" * 74)
+
+    state["serve_staff"] = True
+    SHELL_BUILD["n"] = 1
+    shell_context = browser.new_context(viewport={"width": 1280, "height": 900})
+    shell_context.add_cookies(
+        [{"name": "staff_csrf", "value": "c" * 40, "url": f"http://localhost:{PORT}"}]
+    )
+    fresh = shell_context.new_page()
+    fresh.on("pageerror", lambda e: errors.append(f"/staff/: {e}"))
+    fresh.route("**/internal/**", route_api)
+    fresh.goto(f"http://localhost:{PORT}/staff/#/new", wait_until="networkidle")
+    for _ in range(40):
+        if fresh.evaluate("() => Boolean(navigator.serviceWorker.controller)"):
+            break
+        fresh.wait_for_timeout(250)
+    check(
+        "the first visit installs the worker, which takes the page with nothing to offer",
+        fresh.evaluate("() => Boolean(navigator.serviceWorker.controller)")
+        and fresh.locator("[data-update-ready]").count() == 0,
+    )
+    fresh.locator("#new-customer-search").click()
+    fresh.keyboard.type("0382", delay=10)
+    fresh.evaluate("() => { window.__sameDocument = true; }")
+    SHELL_BUILD["n"] = 2
+    # The console's own check -- run when the tab is looked at again -- finds the new build.
+    fresh.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+    for _ in range(60):
+        if fresh.locator("[data-update-ready]").count():
+            break
+        fresh.wait_for_timeout(250)
+    banner = fresh.locator("[data-update-ready]")
+    shell_shot("stub-update-ready-desk", fresh)
+    check(
+        "a new build waits and the console says so: 'Có bản mới' with 'Tải lại'",
+        banner.count() == 1
+        and "Có bản mới" in banner.first.inner_text()
+        and banner.locator("button", has_text="Tải lại").count() == 1,
+        banner.first.inner_text() if banner.count() else "no banner",
+    )
+    check(
+        "the new worker is waiting, not in charge",
+        fresh.evaluate(
+            "() => navigator.serviceWorker.getRegistration().then((r) => Boolean(r && r.waiting))"
+        ),
+    )
+    fresh.wait_for_timeout(2500)
+    check(
+        "nothing reloads by itself: the page and what was typed are still there",
+        fresh.evaluate("() => window.__sameDocument === true")
+        and fresh.locator("#new-customer-search").input_value() == "0382",
+    )
+    if banner.count():
+        with fresh.expect_navigation(timeout=10_000):
+            banner.locator("button", has_text="Tải lại").click()
+    fresh.wait_for_timeout(1200)
+    check(
+        "'Tải lại' hands over to the new build and reloads once, into it",
+        not fresh.evaluate("() => window.__sameDocument === true")
+        and fresh.evaluate(
+            "() => navigator.serviceWorker.getRegistration()"
+            ".then((r) => Boolean(r && r.active && !r.waiting))"
+        )
+        and fresh.locator("[data-update-ready]").count() == 0,
+    )
+    shell_context.close()
+    state["serve_staff"] = False
+
+    print()
+    print("=" * 74)
+    print("CONSOLE-SHELL-009 C1. THOÁT — out means the screen is cleared; not out means say so")
+    print("=" * 74)
+
+    def customer_on_screen() -> None:
+        """The customers screen with a regular found by the last four digits, plus two nodes a
+        screen leaves in <body> -- a closed sheet and a toast -- each carrying the same person."""
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/customers", wait_until="networkidle")
+        page.wait_for_timeout(700)
+        page.locator("#customers-search").fill("3456")
+        page.locator("#customers-search").press("Enter")
+        page.wait_for_timeout(800)
+        page.evaluate(
+            """async () => {
+                const kit = await import('/src/ui/kit.js');
+                const held = kit.sheet({title: 'chị Lan', body: 'SĐT 0905123456'});
+                held.open();
+                held.close();
+                kit.toast('Đã lưu chị Lan · 0905123456');
+            }"""
+        )
+        page.wait_for_timeout(200)
+
+    def phone_digits_in(text: str) -> bool:
+        return bool(re.search(r"0905\D?123\D?456|\b3456\b", text))
+
+    def press_sign_out() -> None:
+        """The app bar's Thoát -- when there is one to press (a console that has already dropped
+        its session shows none, and the checks below then say what went wrong)."""
+        button = page.locator(".appbar__signout")
+        if button.count():
+            button.first.click()
+
+    state["authenticated"] = True
+    state["logout_posts"] = []
+    customer_on_screen()
+    before = shell_text()
+    check(
+        "set-up: the customer's name and number are in the page before Thoát",
+        "chị Lan" in before and phone_digits_in(before),
+        before[:120],
+    )
+
+    # 1. Offline: nothing leaves the device, and nothing is ended.
+    context.set_offline(True)
+    page.wait_for_timeout(300)
+    press_sign_out()
+    page.wait_for_timeout(600)
+    failed = page.locator("[data-sign-out-failed]")
+    shell_shot("stub-signout-offline-desk")
+    check(
+        "offline, Thoát says 'Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại'",
+        failed.count() == 1
+        and "Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại" in failed.first.inner_text(),
+    )
+    check(
+        "and the operator is still signed in, with the screen untouched and nothing sent",
+        page.locator(".appbar__account").count() == 1
+        and "Chưa đăng nhập" not in page.locator(".appbar").inner_text()
+        and "chị Lan" in shell_text()
+        and state["logout_posts"] == [],
+    )
+    context.set_offline(False)
+    page.wait_for_timeout(300)
+
+    # 2. The server fails: same outcome, one request, no retry.
+    state["logout_answer"] = (503, {"detail": "operations unavailable"})
+    press_sign_out()
+    page.wait_for_timeout(800)
+    check(
+        "a 503 is not a sign-out either: the notice, still signed in, the screen as it was",
+        page.locator("[data-sign-out-failed]").count() == 1
+        and page.locator(".appbar__account").count() == 1
+        and "chị Lan" in shell_text(),
+    )
+    check(
+        "one request, with an Idempotency-Key, and no automatic retry",
+        len(state["logout_posts"]) == 1 and bool(state["logout_posts"][0]["key"]),
+        repr(state["logout_posts"]),
+    )
+
+    # 3. The server signs the person out: the page is cleared at once, before any reload.
+    state["logout_answer"] = (200, {"end_session_url": None})
+    press_sign_out()
+    page.wait_for_timeout(500)
+    out = page.evaluate(
+        """() => ({
+            heading: document.querySelector('main h1')?.textContent || '',
+            text: document.body.textContent || '',
+            open: document.querySelectorAll('dialog[open]').length,
+            dialogs: document.querySelectorAll('dialog').length,
+            extra: [...document.body.children].map((n) => n.id || n.className || n.tagName),
+            hash: location.hash,
+        })"""
+    )
+    shell_shot("stub-signed-out-desk")
+    check(
+        "a real sign-out shows the signed-out screen at once, with no reload",
+        out["heading"] == "Chưa đăng nhập",
+        repr(out["heading"]),
+    )
+    check(
+        "and no customer name or number is left anywhere in the page",
+        "chị Lan" not in out["text"] and not phone_digits_in(out["text"]),
+        out["text"][:200],
+    )
+    check(
+        "no dialog is open, and no sheet, toast or other screen leftover remains in <body>",
+        out["open"] == 0 and out["dialogs"] == 0 and len(out["extra"]) == 4,
+        repr(out["extra"]),
+    )
+    check(
+        "the address is back at #/ and neither banner claims typed input survived",
+        out["hash"] == "#/"
+        and "vẫn còn trên màn hình" not in out["text"]
+        and page.locator("[data-sign-out-failed]").count() == 0,
+        out["hash"],
+    )
+
+    # 4. Signing in again on this page is an ordinary session, the same person included.
+    state["authenticated"] = True
+    recheck = page.locator("button", has_text="Kiểm tra lại phiên")
+    if recheck.count():
+        recheck.first.click()
+        page.wait_for_timeout(1200)
+    check(
+        "'Kiểm tra lại phiên' after a sign-out opens Hôm nay for the session that is there",
+        page.locator(".appbar__account").count() == 1
+        and "Chưa đăng nhập" not in page.locator("main").inner_text(),
+    )
+
+    # 5. From the account sheet, against a server whose session already ended (401): out.
+    customer_on_screen()
+    if page.locator(".appbar__account").count():
+        page.locator(".appbar__account").click()
+        page.wait_for_timeout(500)
+    state["authenticated"] = False
+    in_sheet = page.locator("dialog[open] .sheet__actions button", has_text="Thoát")
+    if in_sheet.count():
+        in_sheet.first.click()
+        page.wait_for_timeout(600)
+    check(
+        "a 401 to Thoát is the goal state: the sheet closes and the page is cleared the same way",
+        page.locator("dialog[open]").count() == 0
+        and "chị Lan" not in shell_text()
+        and not phone_digits_in(shell_text())
+        and page.locator("main h1").first.inner_text() == "Chưa đăng nhập",
+    )
+    state["logout_answer"] = None
+    state["authenticated"] = True
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(700)
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

@@ -143,8 +143,8 @@ trước khi mở công nợ”* — mọi đơn trả tại quầy như thườ
 ### Đồ chờ lấy — khách chưa tới lấy (DEC-036)
 
 Điều khoản của tiệm: **lấy đồ trong 20 ngày; sau đó tính phí lưu kho; sau 60 ngày tiệm có thể
-thanh lý.** Màn hình **Đồ chờ lấy** (trong **Thêm**, hoặc bấm dòng **Đồ chờ lấy** ở **Hôm nay**)
-liệt kê mọi đơn đã giặt xong mà khách chưa lấy, đơn chờ lâu nhất ở trên, với số ngày chờ, số lần
+thanh lý.** Màn hình **Đồ chờ lấy** (trên điện thoại của nhân viên quầy là nút thứ tư ở thanh
+dưới; chủ tiệm và người duyệt tìm trong **Thêm**; hoặc bấm dòng **Đồ chờ lấy** ở **Hôm nay**) liệt kê mọi đơn đã giặt xong mà khách chưa lấy, đơn chờ lâu nhất ở trên, với số ngày chờ, số lần
 đã liên hệ và phí lưu kho tới giờ.
 
 | | Làm gì | Ở màn hình |
@@ -175,7 +175,7 @@ Máy chọn **ai cần nhắc** và **nhắc gì**; người ở quầy gửi b�
 Lịch nhắc tính theo ngày lịch từ ngày đồ xong: **ngày 0** (báo đồ đã xong), **ngày 3**, **ngày 7**,
 **ngày 14**, và **ngày cuối trước khi tính phí lưu kho** (chỉ khi chủ tiệm đã công bố phí). Mỗi đơn
 chỉ hiện lần nhắc mới nhất; từ ngày tính phí, đơn nằm ở **Đồ chờ lấy**. Mở bằng dòng **Nhắc khách
-lấy đồ** ở **Hôm nay** (hoặc trong **Thêm**).
+lấy đồ** ở **Hôm nay**, hoặc mở **Đồ chờ lấy** rồi bấm **Nhắc khách lấy đồ** ở thanh chọn trên cùng.
 
 | | Làm gì | Ở màn hình |
 |---|---|---|
@@ -260,7 +260,8 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
    **Báo cáo** cạnh ô tiền trên **Hôm nay**, hoặc vào **Thêm → Báo cáo**. Mỗi ô ghi cả hai số
    (ví dụ **3 / 5 đơn tạo**); **Đúng hẹn** đo theo giờ hẹn **đầu tiên** với khách (hẹn lại không
    làm số đẹp hơn); đơn nhận trước khi chủ tiệm công bố quy tắc hẹn trả thì đo theo mốc nội bộ 8
-   giờ, và ô ghi rõ có bao nhiêu đơn như vậy. Nhân viên quầy thấy mục này bị khoá, có ghi lý do.
+   giờ, và ô ghi rõ có bao nhiêu đơn như vậy. Nhân viên quầy không thấy mục này trong danh sách; nó
+   nằm ở **Thêm → Cần quyền khác**, bị khoá, có ghi ai mở được.
 5. Chủ tiệm (hoặc kế toán) ghi mọi khoản chi vào **Thêm → Sổ thu chi**: bấm **Ghi khoản chi**, chọn
    mục (điện, nước, hoá chất, túi nhãn, lương, mặt bằng, sửa chữa, xăng xe, khác), gõ số tiền, bấm
    **Ghi vào sổ**. Ghi sai thì mở dòng đó, bấm **Huỷ dòng này** hai lần rồi ghi lại dòng đúng.
@@ -284,6 +285,9 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 
    Không có gì thì máy ghi *Không có việc cần chú ý* — chỉ khi mọi nguồn đều đọc được. Máy đếm
    và so sánh bằng quy tắc cố định, không phải AI.
+7. Hết ca, bấm **Thoát** và đợi màn hình **Chưa đăng nhập** — lúc đó trên máy không còn tên hay
+   số của khách nào. Nếu máy báo **Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại** thì bạn
+   **vẫn đang đăng nhập**: kiểm tra mạng rồi bấm **Thoát** lần nữa, đừng để máy cho người khác.
 
 ---
 
@@ -453,6 +457,8 @@ hạn thì bấm **Xin duyệt lại**. *Nhập mã thủ công* chỉ dùng cho
 | **Chưa nhận đồ được** | Đơn còn thiếu điều kiện (thường là chưa tích *Tiệm làm kịp đơn này*) | Đọc từng dòng lý do ngay bên dưới, làm đúng việc đó rồi bấm lại |
 | Huỷ một đơn đã nhận đồ | Phải nói đồ và tiền đã xử lý thế nào | **Khác** → **Huỷ đơn**, chọn một cách xử lý, bấm hai lần |
 | **Phiên đăng nhập đã kết thúc** | Hết phiên | Đăng nhập lại. Không mất dữ liệu |
+| **Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại** | Bấm **Thoát** mà máy chủ chưa nhận được. Bạn vẫn đang đăng nhập | Kiểm tra mạng rồi bấm **Thoát** lần nữa, tới khi thấy **Chưa đăng nhập** |
+| **Có bản mới** | Tiệm vừa cập nhật bảng vận hành | Làm xong việc đang nhập rồi bấm **Tải lại**. Máy không tự tải lại |
 | Mất điện thoại, hoặc quên thoát ở máy khác | Máy đó vẫn đang đăng nhập | Từ một máy khác, đăng nhập rồi **bấm tên mình** ở thanh trên cùng → **Thiết bị đang đăng nhập** → ở máy bị mất bấm **Đăng xuất thiết bị này** (bấm hai lần). Dòng **Thiết bị này** là máy đang cầm. Các máy khác vẫn làm việc bình thường. Chủ tiệm cũng làm được việc này cho người khác: **Nhân sự** → bấm tên người đó → cùng danh sách |
 | **Đơn đã thay đổi sau khi gửi duyệt — mở đơn để xem lại** (thẻ duyệt) | Đơn đã chuyển bước sau khi xin duyệt, nên phiếu này không còn đúng | Nút **Duyệt** khoá. Bấm **Từ chối**, mở đơn xem lại; còn cần thì xin duyệt lại. Thẻ ghi **Đơn chưa thay đổi kể từ khi gửi duyệt** thì duyệt bình thường |
 | **Máy chủ gặp lỗi** | Lỗi thật | **Đừng thử lại.** Xem bảng đơn để biết lệnh đã vào hay chưa, chụp màn hình, báo chủ tiệm |

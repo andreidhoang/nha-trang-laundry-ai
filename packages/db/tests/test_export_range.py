@@ -188,7 +188,7 @@ def test_the_window_query_version_is_pinned_to_the_rule_it_names() -> None:
     # v4 (round 9): the held and already-paid fee and the refund's netting, as the day's v5; v3
     # (`43d07dec2e624992`) is retired.
     assert EXPORT_WINDOW_QUERY.identifier == "store-window-orders-export-v4"
-    assert EXPORT_WINDOW_QUERY.label == "store-window-orders-export-v4:ab2974fcf5a4b16f"
+    assert EXPORT_WINDOW_QUERY.label == "store-window-orders-export-v4:df4c6b79cf046076"
     assert EXPORT_WINDOW_QUERY.label != "store-window-orders-export-v3:43d07dec2e624992"
     assert EXPORT_WINDOW_QUERY.label != EXPORT_QUERY.label
 

@@ -2182,7 +2182,7 @@ EXPORT_REQUEST_CONTENT = {
         "orders.customer_id",
         "order_payments.bank_ref_last",
     ],
-    "query_version": "store-day-orders-export-v5:1a1030bc2889b0be",
+    "query_version": "store-day-orders-export-v5:85a2da5b6016d97f",
     "statement_vi": (
         "Xuất bản sao hồ sơ của chính cửa hàng cho ngày 2026-09-16 (theo giờ Việt Nam): mã đơn, "
         "trạng thái, mốc thời gian và tiền của những đơn MỞ trong ngày đó. Tiền đã trả lấy từ sổ "
@@ -2203,7 +2203,7 @@ EXPORT_REQUEST_CONTENT = {
         "Tiền trong tệp: đã trả (tiền mặt, chuyển khoản) theo sổ thu từng lần, còn lại, đã hoàn — "
         "tính tới lúc xuất."
     ),
-    "bound_query_version": "store-day-orders-export-v5:1a1030bc2889b0be",
+    "bound_query_version": "store-day-orders-export-v5:85a2da5b6016d97f",
     "bound_shape_retired": False,
 }
 

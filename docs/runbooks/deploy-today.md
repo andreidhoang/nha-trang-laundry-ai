@@ -79,17 +79,29 @@ before you make coffee, not after.
 ## 3. The certificate, and the step that catches everyone
 
 The console hostname is internal, so **no public CA can issue for it**. Make a private CA once, on
-your laptop:
+your laptop — **name-constrained to the console host**, because every device is told to trust it,
+and an unconstrained CA key can mint a certificate those devices accept for any site
+(`PLATFORM-SECURITY-009` P4):
 
 ```bash
 openssl req -x509 -newkey rsa:4096 -days 3650 -nodes -keyout ca.key -out ca.crt \
-  -subj "/CN=Giat La Sach Cong Internal CA"
+  -subj "/CN=Giat La Sach Cong Internal CA" \
+  -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign" \
+  -addext "nameConstraints=critical,permitted;DNS:console.giatlasachcong.lan,excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:0:0:0:0:0:0:0:0/0:0:0:0:0:0:0:0"
 openssl req -newkey rsa:2048 -nodes -keyout console.key -out console.csr \
   -subj "/CN=console.giatlasachcong.lan"
 printf "subjectAltName=DNS:console.giatlasachcong.lan" > san.cnf
 openssl x509 -req -in console.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
   -days 825 -extfile san.cnf -out console.crt
+openssl x509 -in ca.crt -noout -ext nameConstraints   # must print the permitted DNS name
 ```
+
+Only `console.crt` and `console.key` go to the server. **`ca.key` never does**: keep it on a
+removable drive (or delete it and re-mint the CA when the console certificate expires in 825 days,
+reinstalling `ca.crt` on each device). The shop-till path does the same through
+`bootstrap_shop_local.py`, which never writes the CA key at all unless `--export-ca-key` names a
+path outside the checkout.
 
 Then, and this is the part that turns into a mysterious morning if it is skipped:
 

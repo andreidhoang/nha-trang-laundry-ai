@@ -75,7 +75,15 @@ uv run python scripts/bootstrap_shop_local.py --backup-recipient 'age1...'
 ```
 
 That writes the database passwords, the OIDC settings and a private CA with a certificate for
-`console.giatlasachcong.lan`, all `0600` under `.shop/`, which is gitignored before it exists. It
+`console.giatlasachcong.lan`, all `0600` under `.shop/`, which is gitignored before it exists.
+The CA is **name-constrained** to that host (a tablet told to trust it still rejects a certificate
+it signs for any other site), and **its private key is never written to this machine**: it signs
+the console certificate in memory and is dropped (`PLATFORM-SECURITY-009` P4). To be able to renew
+the console certificate in 825 days without reinstalling the CA on every tablet, add
+`--export-ca-key /Volumes/<usb>/laundry-ca.key` — it asks for a passphrase, refuses a path inside
+the checkout, and a later run with `--ca-key` that file renews. Without it, renewal means moving
+`.shop/ca` aside, re-running, and reinstalling the new `ca.crt` on each tablet. A `.shop/ca/ca.key`
+left by an earlier version is reported on every run: that CA has no name constraints, so re-mint. It
 refuses to overwrite anything, so re-running after the shop has been trading cannot rotate a
 password out from under a live system. It prints the `CREATE ROLE` statements for §4.
 

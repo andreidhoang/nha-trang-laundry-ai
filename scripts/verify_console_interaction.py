@@ -10230,6 +10230,118 @@ with sync_playwright() as playwright:
     )
     state["quote_reply"] = None
 
+    # --- C2: the customer changes while "Tính giá" is in flight ---------------------------
+    # "Khách khác", or picking a waiting customer, puts other lines on screen. A's price still on
+    # its way back is A's: it must never become the price on screen, be offered with "Tiếp tục",
+    # or be the revision B's next "Tính giá" revises (round-9 verifier, repro_c2_reset.py).
+    def lines_on_screen() -> int:
+        return page.locator("input[id^='new-line-'][id$='-qty']").count()
+
+    def a_priced_then_left(leave: object) -> None:
+        """Walk-in A, 5,8 kg, 'Tính giá' held open, 'Quay lại', then `leave()`."""
+
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+        page.wait_for_timeout(1000)
+        tap("#new-walk-in")
+        page.wait_for_timeout(1000)
+        tap("#new-add-line")
+        page.wait_for_timeout(300)
+        tap("#new-picker [data-code='STD_WASH_DRY_LT6']")
+        page.wait_for_timeout(300)
+        page.keyboard.type("5.8", delay=12)
+        state["quote_posts"] = []
+        state["quote_headers"] = []
+        state["quote_reply"] = None
+        state["hold_quote"] = True
+        tap("#new-price")
+        page.wait_for_timeout(300)
+        tap("button[data-back]")
+        page.wait_for_timeout(300)
+        if callable(leave):
+            leave()
+
+    def b_is_clean(label: str) -> None:
+        text = receipt_text()
+        check(
+            f"C2 ({label}): A's 5,8 kg price is not B's -- no lines, no receipt, no 'Tiếp tục'",
+            lines_on_screen() == 0
+            and page.locator("#new-next").count() == 0
+            and "145.000" not in text
+            and "5,8" not in text,
+            f"lines={lines_on_screen()} next={page.locator('#new-next').count()} "
+            f"receipt={text[:120]!r}",
+        )
+        if not page.locator("#new-add-line").count():
+            check(f"C2 ({label}): B reached 'Đồ & giá'", False, rendered_text()[:160])
+            return
+        tap("#new-add-line")
+        page.wait_for_timeout(300)
+        tap("#new-picker [data-code='STD_WASH_DRY_LT6']")
+        page.wait_for_timeout(300)
+        page.keyboard.type("3", delay=12)
+        state["quote_reply"] = revision(1)
+        tap("#new-price")
+        page.wait_for_timeout(1000)
+        last = state["quote_posts"][-1] if state["quote_posts"] else {}
+        check(
+            f"C2 ({label}): B's 'Tính giá' is a first price of B's 3 kg -- it does not revise A's "
+            "quote -- and only that answer offers 'Tiếp tục'",
+            len(state["quote_posts"]) == 2
+            and sent_quantity() == "3"
+            and "quote_id" not in last
+            and state["quote_headers"][-1]["if_match"] is None
+            and next_offered(),
+            repr(last)[:200],
+        )
+        state["quote_reply"] = None
+
+    # 1. "Khách khác", A's answer lands on step 1, then B walks in.
+    def restart_then_release() -> None:
+        tap("#new-restart")
+        page.wait_for_timeout(300)
+        state["hold_quote"] = False
+        release_quotes(revision(1))
+        page.wait_for_timeout(700)
+        tap("#new-walk-in")
+        page.wait_for_timeout(1000)
+
+    a_priced_then_left(restart_then_release)
+    b_is_clean("Khách khác, then the answer, then B")
+
+    # 2. "Khách khác", B walks in at once (the press must work), then A's answer lands.
+    def restart_walk_in_then_release() -> None:
+        tap("#new-restart")
+        page.wait_for_timeout(300)
+        tap("#new-walk-in")
+        page.wait_for_timeout(1000)
+        state["hold_quote"] = False
+        release_quotes(revision(1))
+        page.wait_for_timeout(900)
+
+    a_priced_then_left(restart_walk_in_then_release)
+    check(
+        "C2 (Khách khác, B at once): B's walk-in is not held up by A's press in flight",
+        page.locator("#new-add-line").count() == 1,
+        rendered_text()[:160],
+    )
+    b_is_clean("Khách khác, then B, then the answer")
+
+    # 3. "Khách khác", then a waiting customer resumed from the list, then A's answer lands.
+    def restart_resume_then_release() -> None:
+        tap("#new-restart")
+        page.wait_for_timeout(700)
+        tap("#new-waiting [data-request]")
+        page.wait_for_timeout(1200)
+        state["hold_quote"] = False
+        release_quotes(revision(1))
+        page.wait_for_timeout(900)
+
+    a_priced_then_left(restart_resume_then_release)
+    b_is_clean("a waiting customer resumed, then the answer")
+    state["hold_quote"] = False
+    held_quote_routes.clear()
+
     # --- C3: the part transfer's QR -------------------------------------------------------
     state["vietqr"] = vietqr_read(60_000)
     pay_step27 = step("TAKE_PAYMENT", True, requires=["amount_vnd", "method"])
@@ -10901,6 +11013,260 @@ with sync_playwright() as playwright:
         and len(state["invoice_writes"]) == 1,
         row_text[:160],
     )
+
+    # --- C4, round 9: the sheets and paths round 1 left undriven ----------------------------
+    # Không nhận đồ: the destructive reason sheet, two presses each time.
+    reject27 = {
+        **order_view("SELF_DROP_SELF_COLLECT", balance="UNPAID", collected=False),
+        "production": "NOT_STARTED",
+        "next_steps": [
+            step("RECEIVE", True, requires=["slot_approved"]),
+            step(
+                "REJECT_INTAKE",
+                requires=["rejection_reason"],
+                rejection_reasons=["NOT_SERVICEABLE"],
+            ),
+        ],
+    }
+
+    def open_reject_sheet() -> None:
+        tap("dialog[open] button[data-step=REJECT_INTAKE]")
+        page.wait_for_timeout(400)
+        tap("dialog[open] #step-reason [data-value=NOT_SERVICEABLE]")
+        page.wait_for_timeout(150)
+
+    fresh, writes = stale_then_reload(
+        reject27,
+        "button[data-more-steps]",
+        "#step-reason-submit",
+        "order-reason",
+        prepare=open_reject_sheet,
+        presses=2,
+    )
+    check(
+        "C4 Không nhận đồ: reloaded in the sheet (the reason kept), the next two presses land at "
+        "version 15",
+        fresh
+        and landed(writes, "steps")
+        and json.loads(str(writes[1]["body"]) or "{}").get("rejection_reason") == "NOT_SERVICEABLE",
+        repr(writes)[:300],
+    )
+
+    # Huỷ đơn, and the fresh read asks for more than the sheet was opened with: the sheet is
+    # redrawn from the fresh step -- the custody answers appear, the "huỷ ngay" sentence goes, and
+    # the press waits for an answer instead of sending {}.
+    plain_cancel = order_view(
+        "SELF_DROP_SELF_COLLECT",
+        balance="UNPAID",
+        collected=False,
+        steps=[step("HAND_OVER", True), step("CANCEL")],
+    )
+    open_order(plain_cancel)
+    tap("button[data-more-steps]")
+    page.wait_for_timeout(400)
+    tap("dialog[open] button[data-step=CANCEL]")
+    page.wait_for_timeout(400)
+    before_text = open_dialog_text()
+    state["order_writes"] = []
+    state["order_write_reply"] = stale27
+    tap("dialog[open] .sheet__actions button")
+    page.wait_for_timeout(250)
+    tap("dialog[open] .sheet__actions button")
+    page.wait_for_timeout(700)
+    state["order_view"] = moved(cancel27)
+    state["order_write_reply"] = None
+    reload_in_sheet()
+    race_shot("c4-cancel-requires-custody")
+    after_text = open_dialog_text()
+    chips = page.locator("dialog[open] input[name=custody_resolution]").count()
+    shut = page.locator("dialog[open] .sheet__actions button").first.is_disabled()
+    check(
+        "C4 Huỷ đơn: when the fresh order asks for a custody answer, the reloaded sheet shows the "
+        "answers and no longer says it cancels at once; the press waits for a pick",
+        "đơn được huỷ ngay" in before_text
+        and reloaded("order-cancel")
+        and "đơn được huỷ ngay" not in after_text
+        and chips == 1
+        and shut,
+        f"chips={chips} shut={shut} text={after_text[:200]!r}",
+    )
+    if chips:
+        page.locator("dialog[open] input[name=custody_resolution]").first.check()
+        page.wait_for_timeout(150)
+    tap("dialog[open] .sheet__actions button")
+    page.wait_for_timeout(250)
+    tap("dialog[open] .sheet__actions button")
+    page.wait_for_timeout(800)
+    writes = state.get("order_writes") or []
+    check(
+        "and the next two presses send the custody answer at version 15",
+        landed(writes, "steps")
+        and json.loads(str(writes[1]["body"]) or "{}").get("custody_resolution")
+        == "SHOP_FAULT_NO_CHARGE",
+        repr(writes)[:300],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # Giặt lại, and the fresh read lists other reasons: the one picked is gone, so nothing is
+    # picked and the press waits.
+    open_order(rewash27)
+    tap("button[data-more-steps]")
+    page.wait_for_timeout(400)
+    open_rewash_sheet()
+    state["order_writes"] = []
+    state["order_write_reply"] = stale27
+    tap("dialog[open] #step-reason-submit")
+    page.wait_for_timeout(800)
+    state["order_view"] = moved(
+        rewash27,
+        next_steps=[
+            step("MARK_READY", True),
+            step("REWASH", requires=["rewash_reason"], rewash_reasons=["MACHINE_FAULT"]),
+        ],
+    )
+    state["order_write_reply"] = None
+    reload_in_sheet()
+    options = page.locator("dialog[open] #step-reason [data-value]")
+    values = [options.nth(i).get_attribute("data-value") for i in range(options.count())]
+    check(
+        "C4 Giặt lại: the reloaded sheet offers only the fresh reasons, the press waits for one",
+        reloaded("order-reason")
+        and values == ["MACHINE_FAULT"]
+        and page.locator("dialog[open] #step-reason-submit").is_disabled(),
+        f"values={values}",
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # Thu tiền by transfer: "Đã thấy tiền" was about the amount on screen. A reload that changes
+    # what is left to record clears it; a reload that changes nothing of it keeps it.
+    def transfer_seen_then_stale(fresh_view: dict[str, object]) -> bool:
+        open_order(unpaid27)
+        tap("button[data-step=TAKE_PAYMENT]")
+        page.wait_for_timeout(400)
+        tap("#payment-method button[data-value=CHUYEN_KHOAN]")
+        page.wait_for_timeout(500)
+        page.locator("#payment-transfer-seen").check()
+        state["order_writes"] = []
+        state["order_write_reply"] = stale27
+        tap("dialog[open] #payment-submit")
+        page.wait_for_timeout(900)
+        state["order_view"] = fresh_view
+        state["order_write_reply"] = None
+        reload_in_sheet()
+        return page.locator("#payment-transfer-seen").is_checked()
+
+    ticked = transfer_seen_then_stale(partly15)
+    race_shot("c4-transfer-seen-cleared")
+    check(
+        "C4 Thu tiền (chuyển khoản): 110.000 ticked as seen, then someone recorded 50.000 -- after "
+        "the reload the tick is cleared, beside the fresh 60.000",
+        reloaded("order-payment")
+        and not ticked
+        and "60.000" in text_of("dialog[open] [data-field=payment-hero]"),
+        f"ticked={ticked}",
+    )
+    page.locator("#payment-transfer-seen").check()
+    tap("dialog[open] #payment-submit")
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    sent27 = json.loads(str(writes[-1]["body"]) or "{}") if writes else {}
+    check(
+        "and ticked again, the next press records 60.000 as a seen transfer at version 15",
+        len(writes) == 2
+        and writes[1]["if_match"] == '"15"'
+        and sent27.get("amount_vnd") == 60_000
+        and sent27.get("transfer_seen") is True,
+        repr(writes)[:300],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    ticked = transfer_seen_then_stale(moved(unpaid27))
+    check(
+        "control: a reload that leaves the remaining at 110.000 keeps the tick",
+        reloaded("order-payment") and ticked,
+        f"ticked={ticked}",
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # The closing step a sheet offers after its own step landed (successState): Thu tiền lands,
+    # "Khách đã nhận đồ" is offered, is refused stale, reloads in the sheet, and the next press
+    # lands on the version just read.
+    paid_hand_over = moved(
+        order_view(
+            "SELF_DROP_SELF_COLLECT",
+            balance="PAID",
+            collected=False,
+            steps=[step("HAND_OVER", True)],
+        )
+    )
+    open_order(unpaid27)
+    tap("button[data-step=TAKE_PAYMENT]")
+    page.wait_for_timeout(400)
+    state["order_writes"] = []
+    state["order_view"] = paid_hand_over
+    tap("dialog[open] #payment-submit")
+    page.wait_for_timeout(1000)
+    offered = page.locator("dialog[open] button[data-step=HAND_OVER]").count() == 1
+    state["order_write_reply"] = stale27
+    tap("dialog[open] button[data-step=HAND_OVER]")
+    page.wait_for_timeout(900)
+    state["order_view"] = {**paid_hand_over, "row_version": 16}
+    state["order_write_reply"] = None
+    reload_in_sheet()
+    kept_open = reloaded("order-payment")
+    tap("dialog[open] button[data-step=HAND_OVER]")
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "C4 closing step: 'Khách đã nhận đồ' offered after the payment, refused stale, reloaded "
+        "in the sheet, and the next press lands at the version just read; the sheet then closes",
+        offered
+        and kept_open
+        and len(writes) == 3
+        and [w["if_match"] for w in writes] == ['"14"', '"15"', '"16"']
+        and json.loads(str(writes[2]["body"]) or "{}").get("step") == "HAND_OVER"
+        and not sheet_open("order-payment"),
+        f"offered={offered} kept_open={kept_open} {writes!r}"[:300],
+    )
+
+    # Huỷ yêu cầu hóa đơn, the request still open: the sheet stays, and the next press lands.
+    state["invoice_subject"] = invoice_subject(live=invoice_request())
+    open_order(unpaid27)
+    page.wait_for_timeout(600)
+    tap("#invoice-cancel")
+    page.wait_for_selector("#invoice-cancel-sheet[open]")
+    tap("#invoice-cancel-sheet .choice-chip[title=DUPLICATE]")
+    state["invoice_writes"] = []
+    state["invoice_refuse"] = {"detail": "STALE_VERSION: invoice request changed"}
+    state["invoice_refuse_status"] = 409
+    tap("#invoice-cancel-confirm")
+    page.wait_for_timeout(200)
+    tap("#invoice-cancel-confirm")
+    page.wait_for_timeout(900)
+    state["invoice_subject"] = invoice_subject(live={**invoice_request(), "row_version": 2})
+    state["invoice_refuse"] = None
+    state["invoice_refuse_status"] = 422
+    reload_in_sheet("Tải lại")
+    stayed = reloaded("invoice-cancel-sheet")
+    tap("#invoice-cancel-confirm")
+    page.wait_for_timeout(200)
+    tap("#invoice-cancel-confirm")
+    page.wait_for_timeout(900)
+    cancels = [w for w in state["invoice_writes"] if str(w["path"]).endswith("/cancellation")]
+    check(
+        "C4 Huỷ yêu cầu: the request still open -- the sheet stays on the fresh read and the next "
+        "two presses land with the request's new version",
+        stayed
+        and len(cancels) == 2
+        and cancels[0]["if_match"] == '"1"'
+        and cancels[1]["if_match"] == '"2"',
+        repr(cancels)[:300],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
     state["invoice_subject"] = None
     state["order_view"] = None
     state["order_writes"] = []

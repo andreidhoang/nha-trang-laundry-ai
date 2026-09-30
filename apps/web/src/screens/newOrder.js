@@ -205,6 +205,13 @@ export function render_(context) {
      * brings is about the lines on screen only if no edit happened while it was in flight.
      */
     edits: 0,
+    /**
+     * COUNTER-UI-RACE-009 (C2): bumped when the screen moves to another customer or intake
+     * ("Khách khác", a waiting customer resumed, a quote reopened) -- `newContext`. An answer to a
+     * press made under an older value belongs to lines no longer on screen and is dropped whole:
+     * never held, never offered, never the revision a later "Tính lại" revises.
+     */
+    session: 0,
     /** @type {any|null} a remedy credit applied to the current revision */
     credit: null,
     source: "UNKNOWN",
@@ -283,8 +290,30 @@ export function render_(context) {
     else render(body, stepConfirm());
   }
 
+  /**
+   * The screen is about to show another customer's or intake's lines. A press still in flight
+   * belongs to the ones leaving: it stops holding the screen (the next customer's presses work at
+   * once), and its answer is dropped when it arrives (C2).
+   *
+   * @returns {number} the new context, for an async caller to compare after each await
+   */
+  function newContext() {
+    flow.session += 1;
+    flow.busy = false;
+    return flow.session;
+  }
+
+  /** An answer to a press made for the customer before: say where it went, change nothing. */
+  function droppedAnswer() {
+    toast(
+      "Giá của khách trước đã về nhưng không dùng cho khách này — " +
+        "mở lại khách đó ở “Khách đang chờ”.",
+    );
+  }
+
   /** Start over for the next customer. The last one's intake stays in the waiting list. */
   function reset() {
+    newContext();
     Object.assign(flow, {
       request: null,
       ticket: null,
@@ -965,7 +994,10 @@ export function render_(context) {
             ? list(
                 waiting.slice(0, WAITING_SHOWN).map((item) =>
                   listRow({
-                    onClick: () => void resumeFromRequest(item),
+                    // Like every step-1 press: not while a ticket or intake is being written.
+                    onClick: () => {
+                      if (!flow.busy) void resumeFromRequest(item);
+                    },
                     leading: "intake",
                     title: customerLabel(item),
                     meta: `lúc ${clock(item.created_at)}`,
@@ -1005,12 +1037,14 @@ export function render_(context) {
       show(resumeHost, convertedAlert(item));
       return;
     }
+    const session = newContext();
     flow.request = item;
     render(resumeHost, skeleton(1));
     try {
       const quotes = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/quotes?limit=${QUOTE_SEARCH_LIMIT}`,
       );
+      if (session !== flow.session) return;
       const found = (Array.isArray(quotes) ? quotes : []).find(
         (quote) => quote.order_request_id === item.order_request_id,
       );
@@ -1021,6 +1055,7 @@ export function render_(context) {
       }
       await resumeFromQuote(String(found.quote_id), item);
     } catch (error) {
+      if (session !== flow.session) return;
       go(1);
       show(resumeHost, errorNotice(error, { onRetry: () => void resumeFromRequest(item) }));
     }
@@ -1031,11 +1066,13 @@ export function render_(context) {
    * @param {any|null} known the intake, when the caller already read it
    */
   async function resumeFromQuote(quoteId, known) {
+    const session = newContext();
     render(resumeHost, skeleton(1));
     try {
       const detail = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${encodeURIComponent(quoteId)}`,
       );
+      if (session !== flow.session) return;
       let intake = known;
       if (!intake) {
         if (!detail.order_request_id) {
@@ -1053,6 +1090,7 @@ export function render_(context) {
         intake = await request(
           `/internal/v1/stores/${encodeURIComponent(store)}/order-requests/${encodeURIComponent(detail.order_request_id)}`,
         );
+        if (session !== flow.session) return;
       }
       if (intake.order_id) {
         flow.request = null;
@@ -1074,6 +1112,7 @@ export function render_(context) {
       render(resumeHost);
       go(!revise && detail.status === "ACCEPTED_FINAL" ? 3 : 2);
     } catch (error) {
+      if (session !== flow.session) return;
       go(1);
       show(
         resumeHost,
@@ -1646,6 +1685,7 @@ export function render_(context) {
     };
     // The lines this payload was built from: any edit after this makes its answer an old price.
     const pricedAt = flow.edits;
+    const session = flow.session;
     flow.busy = true;
     setPricing(true);
     render(priceAlert, h("p", { class: "hint", role: "status" }, asBand ? "Đang ghi bản khoảng giá…" : "Đang tính giá…"));
@@ -1656,6 +1696,11 @@ export function render_(context) {
         idempotencyKey: quoteSub.key(),
         ...(revising ? { ifMatch: flow.quote.row_version } : {}),
       });
+      // Another customer is on screen now: this price is the one before's, and so is its key.
+      if (session !== flow.session) {
+        droppedAnswer();
+        return;
+      }
       quoteSub.reset();
       flow.busy = false;
       render(priceAlert);
@@ -1671,6 +1716,8 @@ export function render_(context) {
       drawActions();
       void readLines(created);
     } catch (error) {
+      // The customer before's refusal is not this customer's; the screen already moved on.
+      if (session !== flow.session) return;
       flow.busy = false;
       setPricing(false);
       const failure = /** @type {any} */ (error);
@@ -1721,7 +1768,9 @@ export function render_(context) {
    * It is always held -- it is the server's newest, and the next "Tính lại" must name it -- but
    * it is the price of the lines on screen only when no edit happened after `pricedAt` (the edit
    * count when the press that brought it was made). Otherwise it stays marked stale, so "Tiếp tục"
-   * is never offered for lines other than the ones it priced (C2).
+   * is never offered for lines other than the ones it priced (C2). `invalidate` is what every edit
+   * of this customer's lines goes through; a change of customer or intake is `newContext`, and the
+   * callers drop an answer from an older context before it ever reaches here.
    *
    * @param {any} revision
    * @param {any|null} detail its read, when in hand
@@ -1865,6 +1914,7 @@ export function render_(context) {
     // Offered only while the receipt is about the lines on screen; an edit removes it, and the
     // answer of a close already in flight is then held as an old price.
     const pricedAt = flow.edits;
+    const session = flow.session;
     render(
       bandHost,
       // A band is not one price, so there is nothing for a customer to agree to yet: the server
@@ -1887,6 +1937,10 @@ export function render_(context) {
         writeVerdict: quoteWrite,
         detail: flow.detail,
         onClosed: async (closed) => {
+          if (session !== flow.session) {
+            droppedAnswer();
+            return;
+          }
           toast(`Đã ghi giá vào bản sửa đổi ${closed.revision}`);
           adoptRevision(closed, null, pricedAt);
           drawReceipt();
@@ -2129,6 +2183,7 @@ export function render_(context) {
     const revision = flow.quote;
     if (!revision || flow.busy) return;
     const pricedAt = flow.edits;
+    const session = flow.session;
     if (creditKeyFor !== creditId) {
       creditSub.reset();
       creditKeyFor = creditId;
@@ -2153,7 +2208,8 @@ export function render_(context) {
       );
       creditSub.reset();
       creditKeyFor = "";
-      flow.busy = false;
+      // Only the context that made the press releases the screen (C2).
+      if (session === flow.session) flow.busy = false;
       control.removeAttribute("aria-busy");
       if (control instanceof HTMLButtonElement) control.disabled = false;
       render(creditAlert);
@@ -2163,12 +2219,13 @@ export function render_(context) {
       const detail = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${encodeURIComponent(revision.quote_id)}?revision=${encodeURIComponent(String(applied.revision))}`,
       );
+      if (session !== flow.session) return;
       adoptRevision(detail, detail, pricedAt);
       flow.credit = applied;
       drawReceipt();
       drawActions();
     } catch (error) {
-      flow.busy = false;
+      if (session === flow.session) flow.busy = false;
       control.removeAttribute("aria-busy");
       if (control instanceof HTMLButtonElement && control.getAttribute("data-denied") !== "true") {
         control.disabled = false;

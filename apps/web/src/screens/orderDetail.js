@@ -1016,9 +1016,35 @@ export function render_(context) {
    * @returns {boolean} whether the server still offers `step` on this order
    */
   function offers(order, step) {
-    return (Array.isArray(order?.next_steps) ? order.next_steps : []).some(
-      (entry) => String(entry?.step) === step,
+    return stepEntry(order, step) !== null;
+  }
+
+  /**
+   * @param {any} order
+   * @param {string} step
+   * @returns {any|null} the order's own `next_steps` entry for `step`, as the server listed it
+   */
+  function stepEntry(order, step) {
+    return (
+      (Array.isArray(order?.next_steps) ? order.next_steps : []).find(
+        (entry) => String(entry?.step) === step,
+      ) || null
     );
+  }
+
+  /**
+   * What a reason / custody sheet is built from, so a reload can tell whether the fresh entry
+   * still asks the same question with the same answers (COUNTER-UI-RACE-009, C4).
+   *
+   * @param {any} entry
+   */
+  function entryShape(entry) {
+    return JSON.stringify([
+      entry?.requires || [],
+      entry?.custody_resolutions || [],
+      entry?.rewash_reasons || [],
+      entry?.rejection_reasons || [],
+    ]);
   }
 
   /**
@@ -1086,9 +1112,11 @@ export function render_(context) {
    * @param {HTMLButtonElement} [control]
    * @param {{node: HTMLElement, close: () => void}} [made] the sheet the press is in, if any: a
    *   refusal there reloads in place (`sheetRefusal`), and closes it when the step is gone
+   * @param {(fresh: any) => void} [refit] redraws the sheet from the fresh read's entry for this
+   *   step, for a sheet whose body is built from the entry (its requires, its reason lists)
    * @returns {Promise<any|null>} the re-read order, or null when refused
    */
-  async function runComposite(entry, extra, alertHost, control, made) {
+  async function runComposite(entry, extra, alertHost, control, made, refit) {
     // The order as last read, at send time: a reload inside the sheet has already replaced it.
     const order = current;
     if (!order) return null;
@@ -1111,7 +1139,16 @@ export function render_(context) {
         show(
           alertHost,
           made
-            ? sheetRefusal(error, { made, alertHost, redraw: (fresh) => offers(fresh, step) })
+            ? sheetRefusal(error, {
+                made,
+                alertHost,
+                redraw: (fresh) => {
+                  const again = stepEntry(fresh, step);
+                  if (!again) return false;
+                  refit?.(again);
+                  return true;
+                },
+              })
             : refusal(error),
         );
       }
@@ -1630,6 +1667,14 @@ export function render_(context) {
               alertHost,
               redraw: (fresh) => {
                 if (!offers(fresh, "TAKE_PAYMENT")) return false;
+                // "Đã thấy tiền" was said of the figures read before. Money recorded meanwhile
+                // (maybe this very transfer, from another phone) changes them: the tick is asked
+                // again, never carried over to an amount nobody looked for (C4).
+                if (fresh.paid_vnd !== shown.paid_vnd || fresh.remaining_vnd !== shown.remaining_vnd) {
+                  seen = false;
+                  const tick = made.node.querySelector("#payment-transfer-seen");
+                  if (tick instanceof HTMLInputElement) tick.checked = false;
+                }
                 shown = fresh;
                 drawHero();
                 drawAmount();
@@ -1983,33 +2028,37 @@ export function render_(context) {
    * @param {any} entry
    */
   function openCancel(entry) {
-    const needs = Array.isArray(entry.requires) && entry.requires.includes("custody_resolution");
-    const choices = Array.isArray(entry.custody_resolutions) ? entry.custody_resolutions : [];
     const alertHost = h("div");
+    const questionHost = h("div");
+    /** The entry the sheet shows: the one it opened with, or the one a reload brought (C4). */
+    let shown = entry;
     let custody = "";
+    const needs = () =>
+      Array.isArray(shown.requires) && shown.requires.includes("custody_resolution");
     const confirm = confirmButton({
       label: "Huỷ đơn",
       confirmLabel: "Bấm lần nữa để huỷ đơn",
       block: true,
       onConfirm: async () => {
         const done = await runComposite(
-          entry,
-          needs ? { custody_resolution: custody } : {},
+          shown,
+          needs() ? { custody_resolution: custody } : {},
           alertHost,
           confirm,
           made,
+          refit,
         );
         if (done) made.close();
       },
     });
-    if (needs) confirm.disabled = true;
-    const made = openFresh({
-      id: "order-cancel",
-      title: "Huỷ đơn",
-      body: h(
-        "div",
-        { class: "stack" },
-        needs
+
+    function drawQuestion() {
+      const choices = Array.isArray(shown.custody_resolutions) ? shown.custody_resolutions : [];
+      custody = "";
+      confirm.disabled = needs() || !writeVerdict.allowed;
+      render(
+        questionHost,
+        needs()
           ? h(
               "div",
               { class: "stack stack--tight" },
@@ -2035,8 +2084,27 @@ export function render_(context) {
               ),
             )
           : h("p", null, "Khách đổi ý trước khi tiệm làm gì với đồ: đơn được huỷ ngay."),
-        alertHost,
-      ),
+      );
+    }
+
+    /**
+     * After "tải lại": the same question with the same answers keeps what was picked; a different
+     * one (the fresh order now asks where the goods and money went, or offers other answers) is
+     * drawn afresh, nothing picked (COUNTER-UI-RACE-009, C4).
+     *
+     * @param {any} fresh
+     */
+    function refit(fresh) {
+      const same = entryShape(fresh) === entryShape(shown);
+      shown = fresh;
+      if (!same) drawQuestion();
+    }
+
+    drawQuestion();
+    const made = openFresh({
+      id: "order-cancel",
+      title: "Huỷ đơn",
+      body: h("div", { class: "stack" }, questionHost, alertHost),
       actions: gated(confirm, writeVerdict),
     });
   }
@@ -2051,8 +2119,10 @@ export function render_(context) {
   function openReason(entry) {
     const step = String(entry.step);
     const spec = REASON_STEPS[step];
-    const choices = Array.isArray(entry[spec.list]) ? entry[spec.list].map(String) : [];
+    /** The entry the sheet shows: the one it opened with, or the one a reload brought (C4). */
+    let shown = entry;
     const alertHost = h("div");
+    const reasonHost = h("div");
     let reason = "";
     // SHOP-CAPTURE-001: a rewash opens a new wash cycle; the machine is asked, never required.
     let machine = "";
@@ -2073,11 +2143,12 @@ export function render_(context) {
     }
     const send = async () => {
       const done = await runComposite(
-        entry,
+        shown,
         { [spec.field]: reason, ...(machine ? { machine_id: machine } : {}) },
         alertHost,
         confirm,
         made,
+        refit,
       );
       if (done) {
         washMachines = null;
@@ -2099,14 +2170,14 @@ export function render_(context) {
           onClick: () => void send(),
         });
     confirm.id = "step-reason-submit";
-    confirm.disabled = true;
-    const made = openFresh({
-      id: "order-reason",
-      title: stepVi(step),
-      body: h(
-        "div",
-        { class: "stack" },
-        h("p", { class: "field-label" }, spec.question),
+
+    /** Exactly the reasons the server listed for this order; the press waits for one. */
+    function drawReasons() {
+      const choices = Array.isArray(shown[spec.list]) ? shown[spec.list].map(String) : [];
+      reason = "";
+      confirm.disabled = true;
+      render(
+        reasonHost,
         segmented({
           label: spec.question,
           id: "step-reason",
@@ -2118,16 +2189,40 @@ export function render_(context) {
             if (writeVerdict.allowed) confirm.disabled = false;
           },
         }),
+      );
+      // The token beside each gloss, for whoever needs to quote it (spec V2 §4.1).
+      for (const option of reasonHost.querySelectorAll("#step-reason [data-value]")) {
+        option.setAttribute("title", String(option.getAttribute("data-value")));
+      }
+    }
+
+    /**
+     * After "tải lại": the same reasons keep the one picked; other reasons are drawn afresh with
+     * none picked, so the next press never sends a reason the fresh order does not take (C4).
+     *
+     * @param {any} fresh
+     */
+    function refit(fresh) {
+      const same = entryShape(fresh) === entryShape(shown);
+      shown = fresh;
+      if (!same) drawReasons();
+    }
+
+    drawReasons();
+    const made = openFresh({
+      id: "order-reason",
+      title: stepVi(step),
+      body: h(
+        "div",
+        { class: "stack" },
+        h("p", { class: "field-label" }, spec.question),
+        reasonHost,
         h("p", { class: "hint" }, spec.note),
         machineHost,
         alertHost,
       ),
       actions: gated(confirm, writeVerdict),
     });
-    // The token beside each gloss, for whoever needs to quote it (spec V2 §4.1).
-    for (const option of made.node.querySelectorAll("#step-reason [data-value]")) {
-      option.setAttribute("title", String(option.getAttribute("data-value")));
-    }
   }
 
   // --- side reads -----------------------------------------------------------------------------

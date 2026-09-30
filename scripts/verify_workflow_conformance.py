@@ -9269,6 +9269,92 @@ def scenario_counter_race(console: Console) -> None:
         second["text"][:200],
     )
 
+    # C2, the customer changes while "Tính giá" is in flight (round-9 verifier): A's 5,8 kg is
+    # held, the person goes back, presses "Khách khác" and a walk-in B arrives. A's answer is A's:
+    # B's screen has no lines, no receipt and no "Tiếp tục", and B's own "Tính giá" opens a new
+    # quote for B's intake -- never a revision of A's, never an acceptance on it.
+    box = page.locator("#new-line-0-qty")
+    box.click()
+    box.press("Control+A")
+    page.keyboard.type("5.8", delay=12)
+    page.wait_for_timeout(200)
+    held.clear()
+    page.route("**/internal/v1/stores/*/quotes", hold)
+    page.locator("#new-price").click()
+    for _ in range(40):
+        if held:
+            break
+        page.wait_for_timeout(100)
+    page.locator("[data-back='true']").first.click()
+    page.wait_for_timeout(300)
+    page.locator("#new-restart").click()
+    page.wait_for_timeout(300)
+    late: dict[str, Any] = {}
+    if held:
+        with page.expect_response(
+            lambda r: r.request.method == "POST" and r.url.split("?")[0].endswith("/quotes"),
+            timeout=20000,
+        ) as waited:
+            held[0].continue_()
+        with contextlib.suppress(Exception):
+            late = waited.value.json()
+    page.unroute("**/internal/v1/stores/*/quotes", hold)
+    page.wait_for_timeout(800)
+    # In place, on the screen A left -- `console.walk_in()` reopens #/new, a fresh screen, and
+    # would hide the race.
+    _, intake_b = console.press_capturing(
+        page.locator("#new-walk-in"), "/counter-tickets", "/order-requests"
+    )
+    page.wait_for_timeout(800)
+    b_intake = str((intake_b.get("body") or {}).get("order_request_id") or "")
+    b_lines = page.locator("input[id^='new-line-'][id$='-qty']").count()
+    b_receipt = (
+        page.locator("#new-receipt").inner_text() if page.locator("#new-receipt").count() else ""
+    )
+    _race_shot(console, "c2-customer-changed-while-pricing")
+    ok(
+        "C2: 'Khách khác' while A's 'Tính giá' was in flight -- the server wrote A's revision, "
+        "and walk-in B's screen shows no lines, no price and no 'Tiếp tục'",
+        late.get("quote_id") == quote_id
+        and bool(b_intake)
+        and b_lines == 0
+        and page.locator("#new-next").count() == 0
+        and "5,8" not in b_receipt
+        and "5.8" not in b_receipt,
+        f"late={late.get('quote_id')} rev={late.get('revision')} lines={b_lines} "
+        f"next={page.locator('#new-next').count()} receipt={b_receipt[:120]!r}",
+    )
+    console.add_line("STANDARD_WASH_DRY", "3")
+    third = console.price()
+    body_3 = third.get("body") if isinstance(third.get("body"), dict) else {}
+    read_3 = (
+        console.call(
+            "GET",
+            f"/internal/v1/stores/{STORE}/quotes/{body_3.get('quote_id')}"
+            f"?revision={body_3.get('revision')}",
+        ).get("body")
+        or {}
+        if body_3.get("quote_id")
+        else {}
+    )
+    # The id is the server's own, checked as a UUID before it is put in the query text.
+    accepted_a = (
+        sql(f"select count(*) from quote_acceptances where quote_id = '{uuid.UUID(quote_id)}'")
+        if quote_id
+        else "no quote"
+    )
+    ok(
+        "B's 'Tính giá' is a new quote for B's intake with B's 3 kg -- not a revision of A's -- "
+        "and A's quote has no acceptance",
+        third["status"] == 201
+        and body_3.get("quote_id") not in (None, quote_id)
+        and read_3.get("order_request_id") == b_intake
+        and _quantities(read_3) == [Decimal("3")]
+        and page.locator("#new-next").count() == 1
+        and accepted_a == "0",
+        f"{third['text'][:160]} accepted_a={accepted_a}",
+    )
+
     # --- C3 -------------------------------------------------------------------------------------
     if not arguments.database_url:
         ok("the part-QR checks publish the bank account with the owner's script", False)

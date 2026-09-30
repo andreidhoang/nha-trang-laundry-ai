@@ -448,7 +448,7 @@ hạn thì bấm **Xin duyệt lại**. *Nhập mã thủ công* chỉ dùng cho
 |---|---|---|
 | **Đang ngoại tuyến** | Máy mất mạng. Không có lệnh nào được gửi đi | Kiểm tra mạng. Trong lúc đó ghi tay, nhập lại sau khi có mạng |
 | **Chưa biết lệnh có tới máy chủ hay không** | Lệnh có thể đã chạy | **Đừng bấm lại.** Tải lại đơn và xem trạng thái thật |
-| **Đơn này vừa được người khác đổi** | Người kia bấm trước | Bấm **Đơn vừa đổi — tải lại**, rồi làm theo nút mới. Đang ở trong ô *Thu tiền*, *Hẹn lại*…: ô vẫn mở với số mới, chữ đã gõ vẫn còn — đọc lại số rồi bấm lại. Việc đó không còn làm được thì ô tự đóng |
+| **Đơn này vừa được người khác đổi** | Người kia bấm trước | Bấm **Đơn vừa đổi — tải lại**, rồi làm theo nút mới. Đang ở trong ô *Thu tiền*, *Hẹn lại*…: ô vẫn mở với số mới, chữ đã gõ vẫn còn — đọc lại số rồi bấm lại. Riêng ô **Đã thấy tiền vào tài khoản** tự bỏ tích khi số tiền của đơn đã đổi (có thể máy khác vừa ghi chính khoản đó) — xem app ngân hàng rồi mới tích lại; lý do đã chọn cũng bỏ chọn khi đơn mới hỏi lý do khác. Việc đó không còn làm được thì ô tự đóng |
 | **Máy chủ không ghi nhận khoản này** | Số tiền hoặc tình huống không được hỗ trợ | Đọc lý do ngay bên dưới — nó nói rõ phải làm gì |
 | **Chưa nhận đồ được** | Đơn còn thiếu điều kiện (thường là chưa tích *Tiệm làm kịp đơn này*) | Đọc từng dòng lý do ngay bên dưới, làm đúng việc đó rồi bấm lại |
 | Huỷ một đơn đã nhận đồ | Phải nói đồ và tiền đã xử lý thế nào | **Khác** → **Huỷ đơn**, chọn một cách xử lý, bấm hai lần |

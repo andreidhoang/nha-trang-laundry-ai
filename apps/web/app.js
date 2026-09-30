@@ -14,7 +14,7 @@
  * @module app
  */
 
-import { count, shortId } from "./src/core/format.js";
+import { shortId } from "./src/core/format.js";
 import { request } from "./src/core/api.js";
 import { focusContainer, h, render } from "./src/core/dom.js";
 import { enumVi } from "./src/core/i18n.js";
@@ -46,33 +46,40 @@ function currentPath() {
 }
 
 /**
- * The pending-approvals count shown on the Duyệt nav entry.
+ * Whether anything waits on the Duyệt nav entry.
  *
  * Approvals are the one queue where minutes matter — the envelopes carry ten-to-thirty-minute
- * TTLs — so the shell polls this single read endpoint once a minute while a session is active,
- * online, and allowed. It is a plain GET: nothing is written, retried, or queued, a failure just
- * clears the badge, and the count renders through `count()` so a full page reads `100+` rather
- * than posing as an exact total.
+ * TTLs — so the shell asks once a minute while a session is active, online, allowed, and the tab
+ * is being looked at. It is a plain GET: nothing is written, retried, or queued, and a failure just
+ * clears the badge.
+ *
+ * CONSOLE-SHELL-009 (C11). It used to fetch up to a hundred whole envelopes every minute, in every
+ * tab, visible or not, to draw one number. It now asks for one (`limit=1`), which is all a badge
+ * needs to know: whether the queue is empty. The badge is therefore a dot that claims "something
+ * waits", never a count it did not read -- the count and the list are on `#/approvals` itself. A
+ * hidden tab asks nothing; coming back to it asks at once.
  */
 const APPROVALS_POLL_MS = 60_000;
-const APPROVALS_LIMIT = 100;
-let approvalsBadge = "";
+const APPROVALS_BADGE_LIMIT = 1;
+let approvalsWaiting = false;
 
 async function pollApprovals() {
+  // Not while nobody is looking. `visibilitychange` asks again the moment the tab is shown.
+  if (document.hidden) return;
   const state = session.snapshot();
   const allowed =
     state.status === "active" && state.online && can(state.principal, "APPROVALS_READ").allowed;
-  let next = "";
+  let next = false;
   if (allowed) {
     try {
-      const items = await request(`/internal/v1/approvals?limit=${APPROVALS_LIMIT}`);
-      next = Array.isArray(items) && items.length ? count(items, APPROVALS_LIMIT) : "";
+      const items = await request(`/internal/v1/approvals?limit=${APPROVALS_BADGE_LIMIT}`);
+      next = Array.isArray(items) && items.length > 0;
     } catch {
-      next = "";
+      next = false;
     }
   }
-  if (next !== approvalsBadge) {
-    approvalsBadge = next;
+  if (next !== approvalsWaiting) {
+    approvalsWaiting = next;
     renderNav();
   }
 }
@@ -120,8 +127,12 @@ function navLink(item, verdict) {
     },
     item.primary ? h("span", { class: "nav__plus" }, icon(item.icon)) : icon(item.icon),
     h("span", null, item.label),
-    item.path === "/approvals" && approvalsBadge
-      ? h("span", { class: "nav__badge" }, approvalsBadge)
+    item.path === "/approvals" && approvalsWaiting
+      ? h(
+          "span",
+          { class: "nav__badge nav__badge--dot", dataApprovalsWaiting: "true" },
+          h("span", { class: "sr-only" }, "Có việc chờ duyệt"),
+        )
       : null,
     verdict.allowed ? null : h("span", { class: "nav__reason" }, verdict.short || verdict.reason),
   );
@@ -764,7 +775,7 @@ function wipeWorkspace() {
   }
   render(accountSheet.body);
   accountDevices = null;
-  approvalsBadge = "";
+  approvalsWaiting = false;
   signOutFailure = null;
   outlet.replaceChildren();
   if (currentPath() !== "/") router.replace("/");
@@ -822,9 +833,13 @@ async function boot() {
     render(outlet, errorNotice(error));
   }
 
-  // The one standing poll in the application: a read-only count behind the approvals badge.
+  // The one standing poll in the application: a read-only look behind the approvals badge. A hidden
+  // tab skips it (`pollApprovals`), and showing the tab again asks at once.
   setInterval(() => void pollApprovals(), APPROVALS_POLL_MS);
   void pollApprovals();
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) void pollApprovals();
+  });
   // `#/approvals` announces a recorded decision so the badge follows it now, not a minute later.
   // The same read-only GET as the poll; nothing is written or retried.
   window.addEventListener("console:approvals-changed", () => void pollApprovals());

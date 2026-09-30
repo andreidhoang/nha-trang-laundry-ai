@@ -4906,3 +4906,13 @@ table.reminders th {
 .skip-link:focus-visible {
   transform: none;
 }
+
+/* C11: the badge says "something waits", never a count it did not read. */
+.nav__badge--dot {
+  height: 0.6rem;
+  min-width: 0;
+  padding: 0;
+  right: calc(50% - 1rem);
+  top: 0.4rem;
+  width: 0.6rem;
+}

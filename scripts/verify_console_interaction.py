@@ -3105,6 +3105,9 @@ with sync_playwright() as playwright:
             )
             return
         elif url.split("?")[0].endswith("/internal/v1/approvals"):
+            # CONSOLE-SHELL-009 (C11): every read recorded, so the badge's section can prove what
+            # it asks for and that a hidden tab asks nothing.
+            state.setdefault("approval_reads", []).append(url)
             if state.get("order_listed"):
                 body = [order_queue_item()]
             elif state.get("remedy_listed"):
@@ -9999,6 +10002,94 @@ with sync_playwright() as playwright:
         ),
         str(page.evaluate("() => document.activeElement?.outerText?.slice(0, 40)")),
     )
+
+    print()
+    print("=" * 74)
+    print("CONSOLE-SHELL-009 C11. DUYỆT — the badge asks for one, and never from a hidden tab")
+    print("=" * 74)
+
+    state["approvals_listed"] = True
+    state["approval_reads"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    badge_reads = [url for url in state["approval_reads"] if "limit=" in url]
+    check(
+        "the badge asks for one envelope, not a hundred",
+        bool(badge_reads) and all(url.endswith("limit=1") for url in badge_reads),
+        repr(state["approval_reads"]),
+    )
+    check(
+        "and says something waits without claiming a count it did not read",
+        page.locator("nav.nav a[href='#/approvals'] [data-approvals-waiting]").count() == 1
+        and not re.search(r"\d", page.locator("nav.nav a[href='#/approvals']").first.inner_text()),
+        page.locator("nav.nav a[href='#/approvals']").first.inner_text(),
+    )
+    page.evaluate(
+        """() => {
+            Object.defineProperty(document, 'hidden', {configurable: true, get: () => true});
+            Object.defineProperty(document, 'visibilityState',
+                {configurable: true, get: () => 'hidden'});
+            document.dispatchEvent(new Event('visibilitychange'));
+        }"""
+    )
+    state["approval_reads"] = []
+    page.evaluate("() => window.dispatchEvent(new Event('console:approvals-changed'))")
+    page.wait_for_timeout(700)
+    check(
+        "a hidden tab asks nothing",
+        state["approval_reads"] == [],
+        repr(state["approval_reads"]),
+    )
+    page.evaluate(
+        """() => {
+            Object.defineProperty(document, 'hidden', {configurable: true, get: () => false});
+            Object.defineProperty(document, 'visibilityState',
+                {configurable: true, get: () => 'visible'});
+            document.dispatchEvent(new Event('visibilitychange'));
+        }"""
+    )
+    page.wait_for_timeout(700)
+    check(
+        "and showing it again asks at once, for one",
+        len(state["approval_reads"]) == 1 and state["approval_reads"][0].endswith("limit=1"),
+        repr(state["approval_reads"]),
+    )
+    state["approvals_listed"] = False
+    # The minute timer itself, on a clock the page does not own: an hour hidden is zero reads. Its
+    # own context: Playwright's clock belongs to the context, and every page in the main one has a
+    # minute timer of its own that would tick along.
+    clock_context = browser.new_context(viewport={"width": 1280, "height": 900})
+    clock_context.add_cookies(
+        [{"name": "staff_csrf", "value": "c" * 40, "url": f"http://localhost:{PORT}"}]
+    )
+    clocked = clock_context.new_page()
+    clocked.route("**/internal/**", route_api)
+    clocked.clock.install()
+    clocked.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    clocked.wait_for_timeout(700)
+    clocked.evaluate(
+        "() => Object.defineProperty(document, 'hidden', {configurable: true, get: () => true})"
+    )
+    state["approval_reads"] = []
+    clocked.clock.run_for(60 * 60_000)
+    clocked.wait_for_timeout(300)
+    check(
+        "an hour of a hidden tab's minute timer makes no request at all",
+        state["approval_reads"] == [],
+        f"{len(state['approval_reads'])} reads",
+    )
+    clocked.evaluate(
+        "() => Object.defineProperty(document, 'hidden', {configurable: true, get: () => false})"
+    )
+    clocked.clock.run_for(61_000)
+    clocked.wait_for_timeout(300)
+    check(
+        "and the same timer reads again once the tab is shown",
+        len(state["approval_reads"]) >= 1,
+        f"{len(state['approval_reads'])} reads",
+    )
+    clock_context.close()
 
     print()
     print("=" * 74)

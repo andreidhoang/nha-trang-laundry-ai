@@ -140,7 +140,11 @@ def test_invoice_requests_from_the_counter_to_the_bookkeeper_over_http(
         "storage_fee_vnd": None,
         "charge_count": None,
         "month_ended": None,
+        "fixed_at": None,
+        "deposit_vnd": None,
+        "own_request_order_count": None,
     }
+    assert request["flags"] == [] and request["live_total_vnd"] is None
     replay = _send(client, "POST", f"{base}/orders/{walk_in}/invoice-requests", BUYER, key=key)
     assert replay.status_code == 201 and replay.json()["replayed"] is True
     assert replay.json()["invoice_request_id"] == request["invoice_request_id"]
@@ -169,7 +173,9 @@ def test_invoice_requests_from_the_counter_to_the_bookkeeper_over_http(
     )
     assert saved.status_code == 201, saved.text
     assert saved.json()["period_month"] == month
-    assert saved.json()["amount"]["source"] == "ACCOUNT_STATEMENT"
+    # INVOICE-TRUTH-009: a month is the orders it covers at what each cost (review M5).
+    assert saved.json()["amount"]["source"] == "ACCOUNT_MONTH_ORDERS"
+    assert saved.json()["amount"]["deposit_vnd"] == 0
     covered = client.get(f"{base}/orders/{charged}/invoice").json()
     assert covered["refusal"] == "INVOICE_REQUEST_EXISTS"
     assert covered["prefill_from_profile"] is True
@@ -191,7 +197,7 @@ def test_invoice_requests_from_the_counter_to_the_bookkeeper_over_http(
     assert body["counts"] == {"REQUESTED": 3, "ISSUED": 0, "CANCELLED": 0}
     assert body["total_count"] == 3 and body["truncated"] is True
     assert body["requests"][0]["invoice_request_id"] == request["invoice_request_id"]
-    assert body["query_version"].startswith("invoice-requests-v1:")
+    assert body["query_version"].startswith("invoice-requests-v2:")
 
     # Only the owner or the approver downloads, and records what the bookkeeper issued.
     assert _send(client, "POST", f"{base}/invoice-requests/export").json() == DENIED
@@ -200,7 +206,8 @@ def test_invoice_requests_from_the_counter_to_the_bookkeeper_over_http(
     assert produced.status_code == 200, produced.text
     export = produced.json()
     assert export["content_csv"].startswith("﻿")
-    assert export["query_version"].startswith("invoice-requests-export-v1:")
+    assert export["query_version"].startswith("invoice-requests-export-v2:")
+    assert export["flagged_issued_count"] == 0
     assert export["request_count"] == 3 and export["filename"].endswith(".csv")
     rows = list(csv.reader(io.StringIO(export["content_csv"].lstrip("﻿"))))
     assert any("Số tiền theo giá tiệm đã thu (chưa tách thuế)" in line for line in rows)
@@ -220,6 +227,8 @@ def test_invoice_requests_from_the_counter_to_the_bookkeeper_over_http(
     issued = _send(client, "POST", issued_path, issued_body, if_match=1)
     assert issued.status_code == 200, issued.text
     assert issued.json()["status"] == "ISSUED" and issued.json()["invoice_number"] == "0000123"
+    assert issued.json()["amount"]["total_vnd"] == TOTAL_VND
+    assert issued.json()["amount"]["fixed_at"] is not None and issued.json()["flags"] == []
     closed = _send(client, "POST", issued_path, issued_body, if_match=2)
     assert closed.status_code == 422 and _code(closed) == "INVOICE_REQUEST_CLOSED"
 

@@ -733,7 +733,7 @@ def test_the_download_lists_open_requests_line_by_line_and_is_audited(shop: Shop
     content = produced.content_csv
     assert content.startswith("﻿")
     assert produced.query_version == INVOICE_EXPORT_QUERY.label
-    assert produced.query_version.startswith("invoice-requests-export-v1:")
+    assert produced.query_version.startswith("invoice-requests-export-v2:")
     rows = list(csv.reader(io.StringIO(content.lstrip("﻿"))))
     header_at = rows.index(list(EXPORT_COLUMNS))
     assert rows[0] == ["Phiên bản truy vấn", produced.query_version]

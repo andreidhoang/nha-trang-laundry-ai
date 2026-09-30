@@ -183,6 +183,7 @@ from nha_trang_laundry_domain.customers import (
 from nha_trang_laundry_domain.invoice_requests import (
     INVOICE_DECISION,
     InvoiceCancelReason,
+    InvoiceFlag,
     InvoiceRequestStatus,
     InvoiceRuleError,
     InvoiceSubjectKind,
@@ -9333,11 +9334,14 @@ class InvoiceBuyerResponse(BaseModel):
 
 
 class InvoiceAmountResponse(BaseModel):
-    """What the request is for, read now from the ledgers -- never stored with the request.
+    """What the request is for: read now from the ledgers while it is open, fixed once issued.
 
     `source` is `ORDER_CHARGES` (the order's quoted total, and its storage fee when there is one)
-    or `ACCOUNT_STATEMENT` (the month's account charges, as the statement reads them). Amounts as
-    the shop charged them; no tax is split out.
+    or `ACCOUNT_MONTH_ORDERS` (each order the month covers at what it cost the customer, a deposit
+    taken before it went on the account included -- `deposit_vnd`; orders with a request of their
+    own are left out -- `own_request_order_count`). `fixed_at` is set once the request is issued:
+    the figure is then the one it was issued for (`INVOICE-TRUTH-009`, `0068`). Amounts as the shop
+    charged them; no tax is split out.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -9347,6 +9351,9 @@ class InvoiceAmountResponse(BaseModel):
     storage_fee_vnd: int | None
     charge_count: int | None
     month_ended: bool | None
+    fixed_at: datetime | None = None
+    deposit_vnd: int | None = None
+    own_request_order_count: int | None = None
 
 
 class InvoiceRequestResponse(BaseModel):
@@ -9381,6 +9388,12 @@ class InvoiceRequestResponse(BaseModel):
     closed_at: datetime | None
     row_version: int
     amount: InvoiceAmountResponse
+    #: An issued request: what moved on its orders after it was issued -- said, never folded into
+    #: `amount` (`INVOICE-TRUTH-009`). `live_total_vnd` with `AMOUNT_CHANGED_AFTER_ISSUE`;
+    #: `uninvoiced_charge_count` with `CHARGES_ADDED_AFTER_ISSUE`.
+    flags: list[InvoiceFlag] = []
+    live_total_vnd: int | None = None
+    uninvoiced_charge_count: int | None = None
     replayed: bool = False
 
 
@@ -9474,6 +9487,8 @@ class InvoiceExportResponse(BaseModel):
     row_count: int
     truncated: bool
     produced_at: datetime
+    #: Issued requests listed again because something moved after they were issued.
+    flagged_issued_count: int = 0
 
 
 def _invoice_buyer_response(buyer: InvoiceBuyerView) -> InvoiceBuyerResponse:
@@ -9494,6 +9509,9 @@ def _invoice_amount_response(amount: InvoiceAmount) -> InvoiceAmountResponse:
         storage_fee_vnd=amount.storage_fee_vnd,
         charge_count=amount.charge_count,
         month_ended=amount.month_ended,
+        fixed_at=amount.fixed_at,
+        deposit_vnd=amount.deposit_vnd,
+        own_request_order_count=amount.own_request_order_count,
     )
 
 
@@ -9528,6 +9546,9 @@ def _invoice_request_response(
         closed_at=view.closed_at,
         row_version=view.row_version,
         amount=_invoice_amount_response(view.amount),
+        flags=list(view.flags),
+        live_total_vnd=view.live_total_vnd,
+        uninvoiced_charge_count=view.uninvoiced_charge_count,
         replayed=replayed,
     )
 
@@ -9763,7 +9784,10 @@ def export_invoice_requests(
     principal: Annotated[StaffPrincipal, Depends(require_invoice_closer)],
     service: Annotated[InvoiceRequestService, Depends(get_invoice_request_service)],
 ) -> InvoiceExportResponse:
-    """*Tải danh sách cho kế toán*: every open request as CSV (`invoice-requests-export-v1`).
+    """*Tải danh sách cho kế toán*: open requests and flagged issued ones as CSV (export v2).
+
+    `invoice-requests-export-v2`: every open request, then every issued request something moved on
+    after it was issued, from its fixed figure, with what to tell the bookkeeper.
 
     Owner or approver, MFA. Audited: who, when, how many rows and the digest of the exact bytes.
     **This route deliberately does not honour `Idempotency-Key`**, as the round-6 export release
@@ -9785,6 +9809,7 @@ def export_invoice_requests(
         row_count=produced.row_count,
         truncated=produced.truncated,
         produced_at=produced.produced_at,
+        flagged_issued_count=produced.flagged_issued_count,
     )
 
 

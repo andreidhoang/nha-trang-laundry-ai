@@ -57,7 +57,10 @@
   - for an order: its quoted total as charged (storage fee included, and shown as a separate line
     when present);
   - for an account month: the sum of that month's account charges, through the same read
-    `PAYMENT-002`'s statement uses.
+    `PAYMENT-002`'s statement uses. *Superseded by `INVOICE-TRUTH-009` (review M5, 2026-09-30):
+    each order the month covers at what it cost the customer (`owed_vnd`, a deposit taken before
+    it went on the account included), leaving out orders with a request of their own; and once a
+    request is issued its figure is fixed (`0068`) and later events are flags, not a new figure.*
 
   Amounts are integers from the existing ledgers; this module adds no arithmetic of its own beyond
   what those reads already publish.

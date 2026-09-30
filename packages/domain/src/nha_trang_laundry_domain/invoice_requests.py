@@ -17,17 +17,22 @@ invoice. It decides:
   note when the reason is ``OTHER``); both are terminal.
 
 No tax is split, no rate is named and nothing is called a *hóa đơn* that the software prints: the
-amounts a request carries are the ones the order and the account statement already publish, read at
-the moment the request is read. Pure: no clock, no database, no environment.
+amounts a request carries are the ones the order and the account charges already publish. An open
+request reads them at the moment it is read; an issued one carries the figure fixed when it was
+issued (`INVOICE-TRUTH-009`, `0068`), and what happened to its orders afterwards is said beside it
+as a flag (`issued_flags`) rather than folded into that figure. Pure: no clock, no database, no
+environment.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
 from typing import Final
+from uuid import UUID
 
 from nha_trang_laundry_domain.unclaimed import PHONE_LIKE
 
@@ -85,8 +90,9 @@ class InvoiceRefusal(StrEnum):
     #: future, or has nothing charged in it.
     INVOICE_SUBJECT_UNAVAILABLE = "INVOICE_SUBJECT_UNAVAILABLE"
     #: A live request (REQUESTED or ISSUED) already covers this subject -- or covers it through the
-    #: other kind: an order charged to an account month that has a request, or an account month one
-    #: of whose orders has its own.
+    #: other kind: an order that an account month's live request covers (the month's open request,
+    #: or the orders its issued invoice listed), or an account month every one of whose charged
+    #: orders has its own request (`INVOICE-TRUTH-009`: one with some left covers the rest).
     INVOICE_REQUEST_EXISTS = "INVOICE_REQUEST_EXISTS"
     INVOICE_TAX_CODE_SHAPE = "INVOICE_TAX_CODE_SHAPE"
     #: A tax code was given without an address.
@@ -260,6 +266,70 @@ def require_open(status: InvoiceRequestStatus) -> None:
         raise InvoiceRuleError(InvoiceRefusal.INVOICE_REQUEST_CLOSED)
 
 
+class InvoiceFlag(StrEnum):
+    """Something that happened to an issued request's orders after the invoice was issued.
+
+    `INVOICE-TRUTH-009` (review M6). An issued invoice is a document the bookkeeper already gave the
+    customer; its figure never moves. When the order moves afterwards, the request says so, by name,
+    and the bookkeeper decides what the provider's portal needs (an adjusting invoice is theirs).
+    """
+
+    #: A covered order's money went back to the customer after the invoice was issued.
+    REFUNDED_AFTER_ISSUE = "REFUNDED_AFTER_ISSUE"
+    #: A covered order was cancelled after the invoice was issued, with no money going back.
+    CANCELLED_AFTER_ISSUE = "CANCELLED_AFTER_ISSUE"
+    #: What the covered orders cost, read now, is not the figure on the invoice (a storage fee
+    #: accrued or was settled after it, or the invoice predates the figure's fixing).
+    AMOUNT_CHANGED_AFTER_ISSUE = "AMOUNT_CHANGED_AFTER_ISSUE"
+    #: An account month: orders charged to the month after its invoice was issued, that no request
+    #: covers yet. Each can be requested on its own.
+    CHARGES_ADDED_AFTER_ISSUE = "CHARGES_ADDED_AFTER_ISSUE"
+
+
+@dataclass(frozen=True, slots=True)
+class CoveredOrderState:
+    """One covered order's state that an invoice cares about: cancelled, and money given back."""
+
+    cancelled: bool
+    refunded: bool
+
+
+def issued_flags(
+    *,
+    fixed_total_vnd: int | None,
+    live_total_vnd: int | None,
+    at_issue: Mapping[UUID, CoveredOrderState],
+    now: Mapping[UUID, CoveredOrderState],
+    uninvoiced_later_charges: int,
+) -> tuple[InvoiceFlag, ...]:
+    """What happened to an issued request's orders since it was issued, in a fixed order.
+
+    `at_issue` is each covered order's state recorded with the snapshot; `now` the same orders read
+    now (an order missing from `now` is read as unchanged). A refund implies the cancellation it
+    came with, so an order refunded after the issue is flagged once, as refunded.
+    """
+
+    if uninvoiced_later_charges < 0:
+        raise ValueError("a count of charges is never negative")
+    refunded = cancelled = False
+    for order_id, before in at_issue.items():
+        after = now.get(order_id, before)
+        if after.refunded and not before.refunded:
+            refunded = True
+        elif after.cancelled and not before.cancelled:
+            cancelled = True
+    flags: list[InvoiceFlag] = []
+    if refunded:
+        flags.append(InvoiceFlag.REFUNDED_AFTER_ISSUE)
+    if cancelled:
+        flags.append(InvoiceFlag.CANCELLED_AFTER_ISSUE)
+    if fixed_total_vnd != live_total_vnd:
+        flags.append(InvoiceFlag.AMOUNT_CHANGED_AFTER_ISSUE)
+    if uninvoiced_later_charges:
+        flags.append(InvoiceFlag.CHARGES_ADDED_AFTER_ISSUE)
+    return tuple(flags)
+
+
 #: The unit words the bookkeeper's list prints beside a quantity.
 UNIT_VI: Final = {
     "KG": "kg",
@@ -281,7 +351,9 @@ __all__ = [
     "UNIT_NAME_MAX",
     "UNIT_VI",
     "BuyerDetails",
+    "CoveredOrderState",
     "InvoiceCancelReason",
+    "InvoiceFlag",
     "InvoiceRefusal",
     "InvoiceRequestStatus",
     "InvoiceRuleError",
@@ -291,6 +363,7 @@ __all__ = [
     "clean_cancel_note",
     "clean_issued",
     "clean_tax_code",
+    "issued_flags",
     "request_code",
     "require_open",
 ]

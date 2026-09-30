@@ -177,3 +177,62 @@ def test_the_request_code() -> None:
     for bad in (0, -1, True):
         with pytest.raises(ValueError):
             request_code(bad)
+
+
+# --- INVOICE-TRUTH-009 (review M6): what moved on an issued request's orders --------------------
+
+
+def _flags(
+    *,
+    fixed: int | None = 110_000,
+    live: int | None = 110_000,
+    before: tuple[bool, bool] = (False, False),
+    after: tuple[bool, bool] = (False, False),
+    later: int = 0,
+) -> tuple[str, ...]:
+    from uuid import UUID
+
+    from nha_trang_laundry_domain.invoice_requests import CoveredOrderState, issued_flags
+
+    order = UUID(int=1)
+    return tuple(
+        flag.value
+        for flag in issued_flags(
+            fixed_total_vnd=fixed,
+            live_total_vnd=live,
+            at_issue={order: CoveredOrderState(*before)},
+            now={order: CoveredOrderState(*after)},
+            uninvoiced_later_charges=later,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ({}, ()),
+        # A refund comes with its cancellation: flagged once, as the refund.
+        ({"after": (True, True)}, ("REFUNDED_AFTER_ISSUE",)),
+        ({"after": (True, False)}, ("CANCELLED_AFTER_ISSUE",)),
+        # Already so when the invoice was issued: nothing moved after it.
+        ({"before": (True, True), "after": (True, True)}, ()),
+        ({"before": (True, False), "after": (True, True)}, ("REFUNDED_AFTER_ISSUE",)),
+        ({"live": 165_000}, ("AMOUNT_CHANGED_AFTER_ISSUE",)),
+        ({"fixed": None, "live": 110_000}, ("AMOUNT_CHANGED_AFTER_ISSUE",)),
+        ({"fixed": None, "live": None}, ()),
+        ({"later": 2}, ("CHARGES_ADDED_AFTER_ISSUE",)),
+        (
+            {"after": (True, True), "live": 0, "later": 1},
+            ("REFUNDED_AFTER_ISSUE", "AMOUNT_CHANGED_AFTER_ISSUE", "CHARGES_ADDED_AFTER_ISSUE"),
+        ),
+    ],
+)
+def test_issued_flags_say_what_moved_after_the_issue(
+    case: dict[str, object], expected: tuple[str, ...]
+) -> None:
+    assert _flags(**case) == expected  # type: ignore[arg-type]
+
+
+def test_issued_flags_refuse_a_negative_count() -> None:
+    with pytest.raises(ValueError):
+        _flags(later=-1)

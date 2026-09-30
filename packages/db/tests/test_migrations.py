@@ -78,6 +78,8 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0063", "invoice_requests"),
         ("0064", "late_delivery_decisions"),
         ("0065", "reminder_steps"),
+        # Round 9 (numbers reserved per slice; 0066/0067 are slices A and B): INVOICE-TRUTH-009.
+        ("0068", "invoice_snapshots"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

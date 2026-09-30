@@ -817,7 +817,13 @@ class SanitizedExportRepository:
         result = self._idempotency.execute(
             connection,
             IdempotentCommand(
-                scope=f"export-request:{command.store_id}",
+                # Per requester, as every other staff command is (`PLATFORM-SECURITY-009` P9). The
+                # store alone let a colleague's resend of the same key be handed the FIRST
+                # person's request as a "replay" -- a row naming someone else as its definer,
+                # which is what separation of duty measures. Keys sent before this change live
+                # under the store-only scope and are not replayed across it: a resend of one
+                # records a fresh request, never another person's.
+                scope=f"export-request:{command.store_id}:{command.principal.staff_user_id}",
                 key=command.idempotency_key,
                 # One day keeps the pre-window payload exactly, so a key first used before the
                 # window existed still replays; a window adds its last day, so reusing a key for a

@@ -139,7 +139,9 @@ CREATE ROLE laundry_retention LOGIN PASSWORD '...' IN ROLE retention_purge;
 ```
 
 **The deployment hash key is generated, never chosen.** `bootstrap_shop_local.py` writes
-`.shop/secrets/hash_key` and `compose.shop-local.yaml` mounts it at `/run/secrets/hash_key`;
+`.shop/secrets/hash_key` and `compose.shop-local.yaml` mounts it at `/run/secrets/hash_key` — in
+the API container only; the worker computes no keyed digest and is not given it
+(`PLATFORM-SECURITY-009` P1);
 `HASH-KEYING-001` makes `webhook_events.payload_hash` and
 `command_idempotency_records.request_hash` keyed HMACs rather than plain SHA-256, because both
 commitments are designed to outlive the customer content they describe and an unsalted one over a
@@ -186,6 +188,12 @@ TABLES` is a one-shot snapshot: before 2026-08-26 every migration that added a t
 application roles with **no privileges on it**, and the first symptom was `permission denied` on a
 write path in production long after the deploy that caused it. `ALTER DEFAULT PRIVILEGES` now closes
 that for new tables, and the verifier proves the result across every table rather than trusting it.
+
+The worker is the exception by design (`PLATFORM-SECURITY-009` P1): `laundry_worker` holds exactly
+the tables and columns its code executes (`nha_trang_laundry_db.role_grants.WORKER_GRANTS`) and no
+default privileges, so it cannot read customers, staff sessions or payments, and a new table stays
+invisible to it until that list names it. Re-running the grant script narrows a worker provisioned
+under the old, API-shaped grant; the verifier audits the worker per column and names any drift.
 
 What stays open in `DEC-020` is who may execute a purge. DELETE is granted to nobody, which is the
 fail-closed state that decision exists to change, and the verifier fails if that ever stops being

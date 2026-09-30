@@ -79,17 +79,29 @@ before you make coffee, not after.
 ## 3. The certificate, and the step that catches everyone
 
 The console hostname is internal, so **no public CA can issue for it**. Make a private CA once, on
-your laptop:
+your laptop — **name-constrained to the console host**, because every device is told to trust it,
+and an unconstrained CA key can mint a certificate those devices accept for any site
+(`PLATFORM-SECURITY-009` P4):
 
 ```bash
 openssl req -x509 -newkey rsa:4096 -days 3650 -nodes -keyout ca.key -out ca.crt \
-  -subj "/CN=Giat La Sach Cong Internal CA"
+  -subj "/CN=Giat La Sach Cong Internal CA" \
+  -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign" \
+  -addext "nameConstraints=critical,permitted;DNS:console.giatlasachcong.lan,excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:0:0:0:0:0:0:0:0/0:0:0:0:0:0:0:0"
 openssl req -newkey rsa:2048 -nodes -keyout console.key -out console.csr \
   -subj "/CN=console.giatlasachcong.lan"
 printf "subjectAltName=DNS:console.giatlasachcong.lan" > san.cnf
 openssl x509 -req -in console.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
   -days 825 -extfile san.cnf -out console.crt
+openssl x509 -in ca.crt -noout -ext nameConstraints   # must print the permitted DNS name
 ```
+
+Only `console.crt` and `console.key` go to the server. **`ca.key` never does**: keep it on a
+removable drive (or delete it and re-mint the CA when the console certificate expires in 825 days,
+reinstalling `ca.crt` on each device). The shop-till path does the same through
+`bootstrap_shop_local.py`, which never writes the CA key at all unless `--export-ca-key` names a
+path outside the checkout.
 
 Then, and this is the part that turns into a mysterious morning if it is skipped:
 
@@ -217,6 +229,14 @@ On a provider-managed database the plain `uv run` form is correct and `shop-admi
 **`apply_demo_grants.py` is the production grant script despite its name, and it must run after
 every migration** — `GRANT ... ON ALL TABLES` is a one-shot snapshot, and skipping it surfaces as
 `permission denied` on a write path days after the deploy that caused it.
+
+It gives the two application roles different grants (`PLATFORM-SECURITY-009` P1). `laundry_api`
+reads and writes every table. `laundry_worker` holds only the tables and columns the worker's code
+executes (`packages/db/src/nha_trang_laundry_db/role_grants.py`) — no customers, no staff sessions,
+no payments — and nothing by default, so a later migration's tables stay invisible to it. On a
+database provisioned before that change the same command narrows the worker's grant; the verifier
+then prints `OK laundry_worker: exactly N grants …` and names any stray grant by table and column.
+The worker container is not given the hash key either: no worker path computes a keyed digest.
 
 ## 6. The shop's own records
 

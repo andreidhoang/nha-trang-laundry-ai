@@ -25,6 +25,12 @@ purgeable table whose permission lives somewhere else drifts silently in the dir
 leaving a schedule the database cannot honour. Deriving the list means a class entering the registry
 without its grant fails this check instead of failing a purge in production.
 
+`PLATFORM-SECURITY-009` (P1) split the two application roles. `laundry_worker` no longer carries
+the API's grant; it holds exactly `nha_trang_laundry_db.role_grants.WORKER_GRANTS`, and this script
+audits it *exactly*: every table, every column, every privilege, plus any default privilege that
+would hand it the next migration's tables. A stray column grant on `customers.phone_ciphertext`
+fails here by name. `laundry_api` keeps the audit it always had.
+
 Usage:
     DATABASE_URL=postgresql://... uv run python scripts/verify_database_grants.py \
         --role laundry_api --role laundry_worker
@@ -43,6 +49,7 @@ import os
 import psycopg
 import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 from nha_trang_laundry_db.retention import DISPOSABLE_PAYLOAD_STORES
+from nha_trang_laundry_db.role_grants import WORKER_GRANTS, WORKER_ROLE, audit_worker
 
 #: What an application role must be able to do on every table it serves.
 REQUIRED: tuple[str, ...] = ("SELECT", "INSERT", "UPDATE")
@@ -116,6 +123,40 @@ def audit_purge_role(connection: object, role: str = PURGE_ROLE) -> tuple[list[s
     return missing, excess
 
 
+def _report_worker(connection: object, table_count: int) -> int:
+    """Print the worker's exact audit; return the number of failed checks (0 or 1 per side)."""
+
+    missing, excess = audit_worker(connection)
+    failures = 0
+    if missing:
+        failures += 1
+        print(f"FAIL {WORKER_ROLE}: missing {len(missing)} grant(s) its code needs")
+        for item in missing[:20]:
+            print(f"       missing  {item}")
+        print(
+            "       Re-run scripts/apply_demo_grants.py (the shop: emit_shop_database_setup.py). "
+            "A worker path that needs a new table goes into role_grants.WORKER_GRANTS first."
+        )
+    if excess:
+        failures += 1
+        print(f"FAIL {WORKER_ROLE}: holds {len(excess)} privilege(s) outside its grant")
+        for item in excess[:20]:
+            print(f"       excess   {item}")
+        if len(excess) > 20:
+            print(f"       ... and {len(excess) - 20} more")
+        print(
+            "       The worker holds exactly what its code executes (PLATFORM-SECURITY-009). "
+            "Re-running apply_demo_grants.py revokes everything else."
+        )
+    if not missing and not excess:
+        tables = len({grant.table for grant in WORKER_GRANTS})
+        print(
+            f"OK   {WORKER_ROLE}: exactly {len(WORKER_GRANTS)} grants on {tables} of "
+            f"{table_count} tables, no default privileges"
+        )
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL"))
@@ -146,6 +187,9 @@ def main() -> int:
                     print(f"FAIL {role}: the role does not exist in this database")
                     failures += 1
                     continue
+            if role == WORKER_ROLE:
+                failures += _report_worker(connection, table_count)
+                continue
             missing, excess = audit(connection, role)
             if missing:
                 failures += 1

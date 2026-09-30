@@ -145,11 +145,10 @@ services:
         uid: "10002"
         gid: "10002"
         mode: 0400
-      - source: staging_hash_key
-        target: hash_key
-        uid: "10002"
-        gid: "10002"
-        mode: 0400
+      # No hash key (PLATFORM-SECURITY-009 P1). No worker path computes a keyed digest -- the
+      # inbox and the idempotency records are written by the API -- and this is the process that
+      # will host the model runtime, so it must not hold the key that unseals every phone.
+      # `apps/worker/tests/test_worker_least_privilege.py` runs every worker path with no key.
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -219,9 +218,10 @@ secrets:
     external: true
   staging_oidc_mfa_value:
     external: true
-  # HASH-KEYING-001. The API and the worker both write keyed commitments -- the inbox writes
-  # `payload_hash`, and every idempotent command writes `request_hash` -- so both need it, and
-  # a service without it refuses the write rather than falling back to an unkeyed digest.
+  # HASH-KEYING-001. The API writes keyed commitments -- the inbox writes `payload_hash`, and
+  # every idempotent command writes `request_hash` -- and refuses the write without it rather
+  # than falling back to an unkeyed digest. Mounted into the API only: the worker computes no
+  # keyed digest and must not hold the key (PLATFORM-SECURITY-009 P1).
   staging_hash_key:
     external: true
   staging_tls_certificate:

@@ -2353,7 +2353,7 @@ def list_orders(
     store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
-    limit: int = 100,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
     open_only: Annotated[bool, Query(alias="open")] = False,
     ticket: Annotated[int | None, Query(ge=1, le=100_000)] = None,
     ticket_date: date | None = None,
@@ -3025,7 +3025,7 @@ def request_approval(
 def list_pending_approvals(
     principal: Annotated[StaffPrincipal, Depends(require_approval_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
-    limit: int = 100,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[ApprovalResponse]:
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
@@ -3742,7 +3742,7 @@ def list_quotes(
     store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
-    limit: int = 100,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[QuoteSummaryResponse]:
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
@@ -4015,7 +4015,7 @@ def list_order_requests(
     store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
-    limit: int = 100,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
 ) -> list[OrderRequestSummaryResponse]:
     """Newest first, capped at 100 server-side. No customer text exists on this aggregate."""
     if service is None:
@@ -5645,7 +5645,7 @@ def list_incidents(
     store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
-    limit: int = 100,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[IncidentSummaryResponse]:
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
@@ -5667,7 +5667,7 @@ def list_order_incidents(
     order_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
-    limit: int = 100,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[IncidentSummaryResponse]:
     """One order's incidents, newest first, for the order page's "Khiếu nại" section.
 
@@ -6720,7 +6720,7 @@ def list_shadow_reviews(
     store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
-    limit: int = 50,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
     before: UUID | None = None,
 ) -> list[ReviewedDraftResponse]:
     """The decisions already made about agent drafts, newest first, with the draft each was about.
@@ -6765,7 +6765,7 @@ def list_shadow_drafts(
     store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
-    limit: int = 50,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[PendingDraftResponse]:
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="operations unavailable")
@@ -6829,7 +6829,7 @@ def list_unknown_sends(
     store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
     service: Annotated[OperationsService | None, Depends(get_operations_service)] = None,
-    limit: int = 50,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[UnknownSendResponse]:
     """One store's sends whose outcome nobody observed. Membership of the store and MFA required.
 
@@ -7031,7 +7031,7 @@ def list_assistant_turns(
     store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[AssistantService | None, Depends(get_assistant_service)] = None,
-    limit: int = 50,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
     before: UUID | None = None,
 ) -> list[AssistantHistoryItemResponse]:
     """Newest first. An owner sees the store's turns; anyone else sees only their own.
@@ -7344,7 +7344,7 @@ def sla_board(
     store_id: UUID,
     principal: Annotated[StaffPrincipal, Depends(current_principal)],
     service: Annotated[OpsBoardService | None, Depends(get_ops_board_service)] = None,
-    limit: int = SLA_BOARD_DEFAULT_LIMIT,
+    limit: Annotated[int, Query(ge=1, le=200)] = SLA_BOARD_DEFAULT_LIMIT,
     after_due_at: datetime | None = None,
     after_order_id: UUID | None = None,
 ) -> SlaBoardResponse:

@@ -25,11 +25,18 @@ from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent))
 
 import argparse
+import getpass
 import re
 import secrets as _secrets
-import subprocess
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from ipaddress import IPv4Network, IPv6Network
 
 import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 ROOT = _Path(__file__).resolve().parents[1]
 SECRET_DIRECTORY = ROOT / ".shop/secrets"
@@ -59,105 +66,243 @@ def write(name: str, value: str, *, existing: list[str]) -> None:
     target.chmod(0o600)
 
 
-def certificate(host: str, existing: list[str]) -> None:
-    """A private CA and one server certificate for the console.
+#: How long the console certificate lives. 825 days is the ceiling Apple platforms accept for a
+#: TLS server certificate from a private CA; longer and iPads refuse it.
+CONSOLE_CERTIFICATE_DAYS = 825
+#: The authority outlives several console certificates only if its key is kept (`--export-ca-key`).
+AUTHORITY_DAYS = 3650
 
-    Two files rather than one: the CA certificate is what gets installed on every tablet, and it
-    outlives the server certificate. Keeping them separate means renewing the server certificate
-    does not mean re-trusting anything on ten devices.
+
+def mint_console_authority(host: str) -> tuple[x509.Certificate, rsa.RSAPrivateKey]:
+    """A private CA that can vouch for the console's name and for nothing else.
+
+    `PLATFORM-SECURITY-009` P4. The CA certificate is installed *and trusted* on every tablet, so
+    without constraints its key can mint a certificate those tablets accept for any site -- a bank,
+    a mail provider -- which makes a key sitting on the till the most valuable file on it.
+    `nameConstraints` (critical, so a client that cannot enforce it must reject the chain) permits
+    the console's DNS name and its subdomains only, and excludes every IP address so an
+    IP-addressed certificate cannot slip past a DNS-only permit. `pathlen:0` stops it minting
+    another CA; `keyUsage` limits it to signing certificates and CRLs.
     """
 
-    authority = SECRET_DIRECTORY.parent / "ca"
-    authority.mkdir(parents=True, exist_ok=True)
-    # `mkdir` takes the umask default, so this came out 0755 -- world-listable, holding the private
-    # key that signs the console certificate. The key file itself is 0600; the directory around it
-    # was not, and `chmod` is applied on every run because an existing directory keeps its mode.
-    authority.chmod(0o700)
-    ca_certificate, ca_key = authority / "ca.crt", authority / "ca.key"
-
-    if not ca_certificate.exists():
-        subprocess.run(
-            [
-                "openssl",
-                "req",
-                "-x509",
-                "-newkey",
-                "rsa:4096",
-                "-sha256",
-                "-days",
-                "3650",
-                "-nodes",
-                "-keyout",
-                str(ca_key),
-                "-out",
-                str(ca_certificate),
-                "-subj",
-                "/CN=Giat La Sach Cong Internal CA",
-            ],
-            check=True,
-            capture_output=True,
+    key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Giat La Sach Cong Internal CA")])
+    now = datetime.now(UTC)
+    authority = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=AUTHORITY_DAYS))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
         )
-        ca_key.chmod(0o600)
-    else:
-        existing.append("ca/ca.crt")
+        .add_extension(
+            x509.NameConstraints(
+                permitted_subtrees=[x509.DNSName(host)],
+                excluded_subtrees=[
+                    x509.IPAddress(IPv4Network("0.0.0.0/0")),
+                    x509.IPAddress(IPv6Network("::/0")),
+                ],
+            ),
+            critical=True,
+        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    return authority, key
+
+
+def issue_console_certificate(
+    host: str, authority: x509.Certificate, authority_key: rsa.RSAPrivateKey
+) -> tuple[bytes, bytes]:
+    """(certificate PEM, private key PEM) for the console, signed by `authority`."""
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    now = datetime.now(UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)]))
+        .issuer_name(authority.subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=CONSOLE_CERTIFICATE_DAYS))
+        # `subjectAltName` and not only the subject: browsers have ignored the common name for
+        # years, and a certificate without a SAN fails with an error that does not say why.
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=True,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(authority_key.public_key()),
+            critical=False,
+        )
+        .sign(authority_key, hashes.SHA256())
+    )
+    return (
+        certificate.public_bytes(serialization.Encoding.PEM),
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ),
+    )
+
+
+class CertificateRefused(SystemExit):
+    """A certificate step that cannot be done safely; the message says what to do instead."""
+
+
+def _write_secret(path: _Path, content: bytes) -> None:
+    path.write_bytes(content)
+    path.chmod(0o600)
+
+
+def certificate(
+    host: str,
+    existing: list[str],
+    *,
+    export_ca_key: _Path | None = None,
+    ca_key: _Path | None = None,
+    passphrase: Callable[[str], bytes] | None = None,
+) -> list[str]:
+    """A private, name-constrained CA and one server certificate for the console.
+
+    Two files rather than one: the CA certificate is what gets installed on every tablet, and it
+    outlives the server certificate.
+
+    **The CA private key is never written to this machine** (`PLATFORM-SECURITY-009` P4). It is
+    generated in memory, signs the console certificate, and is dropped. This machine serves the
+    console, so it is the one most exposed; a CA key beside the certificate it signed is the key to
+    every tablet's trust. Two ways to keep it, both off this host:
+
+    - `--export-ca-key PATH` writes it passphrase-encrypted to PATH, which must be outside this
+      checkout -- a removable drive, then unplug it. `--ca-key PATH` reads it back to renew the
+      console certificate without touching the tablets.
+    - Or keep nothing: when the console certificate expires, move `.shop/ca` aside, run this again,
+      and install the new `ca.crt` on each tablet.
+
+    Returns warnings for the operator (a CA key an earlier version left behind).
+    """
+
+    warnings: list[str] = []
+    authority_directory = SECRET_DIRECTORY.parent / "ca"
+    authority_directory.mkdir(parents=True, exist_ok=True)
+    # `mkdir` takes the umask default, so this came out 0755 -- world-listable. `chmod` is applied
+    # on every run because an existing directory keeps its mode.
+    authority_directory.chmod(0o700)
+    ca_certificate_path = authority_directory / "ca.crt"
+    legacy_key = authority_directory / "ca.key"
+    if legacy_key.exists():
+        warnings.append(
+            f"{legacy_key.relative_to(ROOT)} is a CA private key an earlier version of this script "
+            "left on this machine, for a CA with no name constraints. Mint a constrained one: move "
+            ".shop/ca and .shop/secrets/tls_* aside, run this again, reinstall ca.crt on every "
+            "tablet, then delete the old key (docs/runbooks/shop-pilot.md §2)."
+        )
+    if export_ca_key is not None:
+        _refuse_inside_checkout(export_ca_key, "--export-ca-key")
 
     if (SECRET_DIRECTORY / "tls_certificate").exists():
         existing.append("tls_certificate")
-        return
+        if not ca_certificate_path.exists():
+            existing.append("ca/ca.crt (absent)")
+        return warnings
 
-    key = SECRET_DIRECTORY / "tls_private_key"
-    request = authority / "console.csr"
-    extensions = authority / "console.ext"
-    # `subjectAltName` and not only the subject: browsers have ignored the common name for years,
-    # and a certificate without a SAN fails with an error that does not say why.
-    extensions.write_text(
-        f"subjectAltName=DNS:{host}\nbasicConstraints=CA:FALSE\n"
-        "keyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n",
-        encoding="utf-8",
-    )
-    subprocess.run(
-        [
-            "openssl",
-            "req",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-keyout",
-            str(key),
-            "-out",
-            str(request),
-            "-subj",
-            f"/CN={host}",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        [
-            "openssl",
-            "x509",
-            "-req",
-            "-in",
-            str(request),
-            "-CA",
-            str(ca_certificate),
-            "-CAkey",
-            str(ca_key),
-            "-CAcreateserial",
-            "-days",
-            "825",
-            "-sha256",
-            "-extfile",
-            str(extensions),
-            "-out",
-            str(SECRET_DIRECTORY / "tls_certificate"),
-        ],
-        check=True,
-        capture_output=True,
-    )
-    key.chmod(0o600)
-    (SECRET_DIRECTORY / "tls_certificate").chmod(0o600)
-    request.unlink(missing_ok=True)
+    if ca_certificate_path.exists():
+        # Renewal: the tablets already trust this CA, so the console certificate is re-signed by
+        # it -- which needs the key that was deliberately not kept here.
+        authority = x509.load_pem_x509_certificate(ca_certificate_path.read_bytes())
+        existing.append("ca/ca.crt")
+        if ca_key is None:
+            raise CertificateRefused(
+                "The console certificate is missing and the CA's private key is not on this "
+                "machine (it never is). Either pass --ca-key PATH with the key you exported, or "
+                "move .shop/ca aside and run this again to mint a new CA -- then install the new "
+                "ca.crt on every tablet."
+            )
+        material = ca_key.read_bytes()
+        loaded = serialization.load_pem_private_key(
+            material,
+            password=(passphrase or _ask)("Passphrase for the CA key: ")
+            if b"ENCRYPTED" in material
+            else None,
+        )
+        if not isinstance(loaded, rsa.RSAPrivateKey) or (
+            loaded.public_key().public_numbers() != authority.public_key().public_numbers()
+        ):
+            raise CertificateRefused(f"{ca_key} is not the key of {ca_certificate_path}")
+        authority_key = loaded
+    else:
+        authority, authority_key = mint_console_authority(host)
+        _write_secret(ca_certificate_path, authority.public_bytes(serialization.Encoding.PEM))
+        ca_certificate_path.chmod(0o644)  # a certificate is public; it goes to every tablet
+        if export_ca_key is not None:
+            secret = (passphrase or _ask_twice)("Passphrase to protect the exported CA key: ")
+            if len(secret) < 12:
+                raise CertificateRefused("the CA key passphrase must be at least 12 characters")
+            _write_secret(
+                export_ca_key,
+                authority_key.private_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.BestAvailableEncryption(secret),
+                ),
+            )
+
+    certificate_pem, key_pem = issue_console_certificate(host, authority, authority_key)
+    _write_secret(SECRET_DIRECTORY / "tls_private_key", key_pem)
+    _write_secret(SECRET_DIRECTORY / "tls_certificate", certificate_pem)
+    del authority_key
+    return warnings
+
+
+def _refuse_inside_checkout(path: _Path, flag: str) -> None:
+    resolved = path.expanduser().resolve()
+    if resolved == ROOT or ROOT in resolved.parents:
+        raise CertificateRefused(
+            f"{flag} {path} is inside this checkout, on the machine that serves the console. "
+            "Write it to a removable drive (then unplug it) or another machine."
+        )
+
+
+def _ask(prompt: str) -> bytes:
+    return getpass.getpass(prompt).encode()
+
+
+def _ask_twice(prompt: str) -> bytes:
+    first = _ask(prompt)
+    if _ask("Again: ") != first:
+        raise CertificateRefused("the two passphrases differ; nothing was exported")
+    return first
 
 
 def main() -> int:
@@ -178,6 +323,22 @@ def main() -> int:
             "volume filling "
             "until PostgreSQL stops accepting writes."
         ),
+    )
+    parser.add_argument(
+        "--export-ca-key",
+        type=_Path,
+        default=None,
+        help=(
+            "write the new CA's private key, passphrase-encrypted, to this path OUTSIDE the "
+            "checkout (a removable drive). Without it the key is never written anywhere and a "
+            "future renewal mints a new CA."
+        ),
+    )
+    parser.add_argument(
+        "--ca-key",
+        type=_Path,
+        default=None,
+        help="renew the console certificate with the CA key exported earlier",
     )
     arguments = parser.parse_args()
 
@@ -245,7 +406,9 @@ def main() -> int:
         existing=existing,
     )
 
-    certificate(host, existing)
+    warnings = certificate(
+        host, existing, export_ca_key=arguments.export_ca_key, ca_key=arguments.ca_key
+    )
 
     print(f"  secrets written to {SECRET_DIRECTORY.relative_to(ROOT)} (0600, gitignored)")
     if existing:
@@ -275,6 +438,11 @@ def main() -> int:
     print("    CREATE DATABASE keycloak OWNER keycloak;")
     print()
     print("  Install .shop/ca/ca.crt on every tablet, and switch trust ON for it.")
+    print(
+        f"  It vouches for {host} only (name-constrained); its private key is not on this machine."
+    )
+    for warning in warnings:
+        print(f"  WARNING: {warning}")
     print(f"  Point the shop's DNS at this machine for {host}.")
     return 0
 

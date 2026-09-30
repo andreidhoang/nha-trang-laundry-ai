@@ -9173,6 +9173,107 @@ def scenario_queue_pending(console: Console) -> None:
     )
 
 
+# --- PLATFORM-SECURITY-009 (slice G) ------------------------------------------------------------
+
+#: P8: each list route and the bound its repository enforces (apps/api/tests/test_list_route_bounds
+#: holds the full census; these are the eleven routes that had no bound at the route).
+PAGE_BOUNDS_G9 = (
+    ("/internal/v1/stores/{store}/orders", 200),
+    ("/internal/v1/approvals", 200),
+    ("/internal/v1/stores/{store}/quotes", 200),
+    ("/internal/v1/stores/{store}/order-requests", 100),
+    ("/internal/v1/stores/{store}/incidents", 200),
+    ("/internal/v1/stores/{store}/shadow/reviews", 200),
+    ("/internal/v1/stores/{store}/shadow/drafts", 200),
+    ("/internal/v1/stores/{store}/shadow/unknown-sends", 200),
+    ("/internal/v1/stores/{store}/assistant/turns", 100),
+    ("/internal/v1/stores/{store}/sla-board", 200),
+)
+
+
+def scenario_platform_bounds(console: Console) -> None:
+    """`PLATFORM-SECURITY-009` P8 + P9 against the real API, as the console's own session.
+
+    P8: a page size outside a list's bound is the client's mistake, so it is a 422 -- it used to
+    reach the repository and come back as 409 Conflict with an English sentence. The bound itself
+    is still served. P9: two people sending the same Idempotency-Key for the same export each get
+    their own request; before, the second was handed the first person's request as a "replay".
+    """
+
+    head("G9", "NỀN TẢNG — giới hạn trang danh sách, khoá lặp lại theo người")
+    console.sign_in("demo-owner")
+    console.open("#/today", settle=800)
+    for template, bound in PAGE_BOUNDS_G9:
+        path = template.format(store=STORE)
+        answers = {
+            value: console.call("GET", f"{path}?limit={value}")["status"]
+            for value in (0, bound + 1, bound)
+        }
+        ok(
+            f"{template.split('/')[-1]}: limit 0 and {bound + 1} are 422, {bound} is served",
+            answers[0] == 422 and answers[bound + 1] == 422 and answers[bound] not in (409, 422),
+            answers,
+        )
+
+    from datetime import datetime as _datetime
+    from zoneinfo import ZoneInfo
+
+    key = f"conformance-g9-{uuid.uuid4().hex}"
+    business_date = _datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date().isoformat()
+
+    def export_with_fixed_key(person: Console) -> dict[str, Any]:
+        return person.page.evaluate(
+            """async ({path, key, csrf, day}) => {
+                const r = await fetch(path, {method: 'POST', credentials: 'include',
+                    headers: {'Content-Type': 'application/json', 'Idempotency-Key': key,
+                              'X-CSRF-Token': csrf},
+                    body: JSON.stringify({business_date: day})});
+                let body = null; try { body = await r.json(); } catch (e) {}
+                return {status: r.status, body};
+            }""",
+            {
+                "path": f"/internal/v1/stores/{STORE}/exports",
+                "key": key,
+                "csrf": person.csrf(),
+                "day": business_date,
+            },
+        )
+
+    context = console.context.browser.new_context(viewport=viewport())
+    try:
+        approver = Console(context.new_page(), context)
+        approver.sign_in("demo-approver")
+        approver.open("#/today", settle=800)
+        mine = export_with_fixed_key(console)
+        theirs = export_with_fixed_key(approver)
+        again = export_with_fixed_key(approver)
+    finally:
+        context.close()
+    first = (mine.get("body") or {}).get("export_request_id")
+    second = (theirs.get("body") or {}).get("export_request_id")
+    ok(
+        "the same key from a second person records that person's own export request",
+        mine["status"] == 201 and theirs["status"] == 201 and first and second and first != second,
+        (mine["status"], theirs["status"], first, second),
+    )
+    ok(
+        "and that person's own resend replays their own request",
+        (again.get("body") or {}).get("export_request_id") == second,
+        again,
+    )
+    if READS_DATABASE and first and second:
+        owners = sql(
+            "select string_agg(s.oidc_subject, ',' order by e.requested_at, s.oidc_subject) "
+            "from export_requests e join staff_users s on s.id = e.requested_by_staff_id "
+            f"where e.id in ('{first}', '{second}')"
+        )
+        ok(
+            "each request names the person who sent it",
+            sorted(owners.split(",")) == ["demo-approver", "demo-owner"],
+            owners,
+        )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -9234,6 +9335,9 @@ SCENARIOS = {
     # invoice refusal while the notice is unpublished; this one proves the feature, and publishes
     # the notice itself only with --only on a fresh stack (after proving the refusal).
     "invoice_requests": scenario_invoice_requests,
+    # PLATFORM-SECURITY-009 (slice G). Publishes nothing and reads nothing another scenario counts;
+    # it adds two pending export requests, after export_range has made its own before/after count.
+    "platform_bounds": scenario_platform_bounds,
     # OPS-OBSERVABILITY-009 (review P6). Last: it reads the outbox every scenario above wrote to.
     "queue_pending": scenario_queue_pending,
 }

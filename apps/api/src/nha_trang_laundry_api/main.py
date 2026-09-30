@@ -388,6 +388,9 @@ async def correlation_middleware(
             response = await call_next(request)
         except Exception:
             _record_http_metrics(operation, 500, started_at)
+            # OPS-OBSERVABILITY-009: the 500 whose outcome nobody knows is the answer the ops
+            # check most needs to count, and this path used to write no line at all.
+            _record_http_completed(request, 500, context)
             raise
         trace_headers: dict[str, str] = {}
         _TELEMETRY.inject_current(trace_headers)
@@ -395,18 +398,20 @@ async def correlation_middleware(
             response.headers[name] = value
     response.headers[CORRELATION_HEADER] = context.header_value
     _record_http_metrics(operation, response.status_code, started_at)
+    _record_http_completed(request, response.status_code, context)
+    return response
+
+
+def _record_http_completed(request: Request, status_code: int, context: CorrelationContext) -> None:
+    """One line per answer: what `scripts/check_shop_operations.py --check app` counts."""
+
     _LOGGER.record(
         component="api",
         name="http.request.completed",
         outcome="completed",
         correlation=context,
-        fields={
-            "method": request.method,
-            "route": request.url.path,
-            "status_code": response.status_code,
-        },
+        fields={"method": request.method, "route": request.url.path, "status_code": status_code},
     )
-    return response
 
 
 def _http_operation(path: str) -> str:

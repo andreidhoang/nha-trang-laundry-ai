@@ -26,12 +26,26 @@ name: nha-trang-laundry-shop
 # `OPS-HARDENING-002`. Docker's default json-file driver keeps every line a container ever wrote, on
 # the same disk as `pgdata` -- and on the till that is the Mac's only disk. The volume check alerts at
 # 10% free; unbounded logs are one more way to get there. Three files of ten megabytes per service,
-# six services: at most 180 MB, whatever happens.
+# and five of twenty for the API (below): at most 250 MB across the six services, whatever happens.
 x-logging: &default-logging
   driver: json-file
   options:
     max-size: "10m"
     max-file: "3"
+
+# `OPS-OBSERVABILITY-009`. The API's log is also the source `check_shop_operations.py --check app`
+# reads, and the only record of what the application did, so it keeps fourteen busy days. Measured
+# on a full daily walk: at most 553 bytes per request as json-file stores it. A busy day is 100
+# orders x 72 requests (the walk's own ratio, 503 requests for 7 orders) + three consoles polling
+# once a minute for 14 hours + `/readyz` every five minutes = 10,008 requests = 5.5 MB. Docker
+# drops the oldest file when it rotates, so the guaranteed history is (max-file - 1) x max-size =
+# 4 x 20 MiB = 80 MiB = 15 days. Still under the 100 MiB per-service bound
+# `test_ops_hardening_contract.py` holds for the disk the database lives on.
+x-api-logging: &api-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
 
 x-runtime-hardening: &runtime-hardening
   logging: *default-logging
@@ -206,6 +220,7 @@ services:
 
   api:
     <<: *runtime-hardening
+    logging: *api-logging
     image: ${R1_API_IMAGE:-nha-trang-laundry-api:local}
     build:
       context: .

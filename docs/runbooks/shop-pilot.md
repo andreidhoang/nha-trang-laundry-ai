@@ -251,8 +251,26 @@ It used to be `-e DATABASE_URL="$(cat …)"`, which put the migration identity's
   .venv/bin/python scripts/relay_shop_alert.py --label checks-host -- \
   env R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/readyz \
   R1_CONSOLE_CA_FILE=$HOME/laundry/.shop/ca/ca.crt \
-  .venv/bin/python scripts/check_shop_operations.py --check flags --check console --emit-alert
+  .venv/bin/python scripts/check_shop_operations.py --check flags --check console \
+  --check app --app-logs compose --emit-alert
 ```
+
+**`--check app` is the one that watches the application rather than the machine**
+(`OPS-OBSERVABILITY-009`). It reads the API's own structured log through `docker compose logs api`
+— the json-file log the host already keeps, fourteen busy days of it (`compose.r1.yaml`,
+`x-api-logging`) — and fails when any count over the last 5 minutes reaches its figure. The window
+is the scheduler's interval, so one incident alerts once. The figures live in one place,
+`APP_SIGNAL_THRESHOLDS` in `scripts/check_shop_operations.py`; a test holds this table to them.
+
+| Signal | Alert at | What it is | What to do |
+|---|---|---|---|
+| `server_errors` | 1 | an answer 500–599 other than 503. Staff saw "Máy chủ gặp lỗi. Đừng thử lại": the outcome is unknown | Find the request by time in `docker compose logs api`; check the order it touched before anyone retries it |
+| `database_refusals` | 5 | `database.request_refused`: the database was busy or unreachable, nothing was written, the console asked staff to retry | One is a normal collision. Five in five minutes: `--check volume`, `--check wal`, then the database container |
+| `browser_boundary_rejections` | 10 | `auth.browser_boundary`: a request refused for its origin or CSRF token | A tab left open across an update makes a few. Ten means something other than the console is sending requests |
+
+It also fails when the API wrote **no line at all** in the last 15 minutes. The console check asks
+`/readyz` every five minutes, so a healthy API always has lines; none means the log is not reaching
+the check, and that is not the same as nothing having gone wrong.
 
 Measured against the running pilot stack: `wal_archive_gap` OK, `database_volume` OK at 14.4% free
 of 58 GiB, `base_backup_age` OK at 2.4h, `capability_flags` OK — every flag false on the running
@@ -334,7 +352,8 @@ than from someone shouting across the shop.
 
 1. `docker compose ... ps` shows five services up.
 2. `check_shop_operations.py` exited 0 on its last run — WAL archived within 15 minutes, a base
-   backup inside 26 hours, disk above 10%, no capability flag true, console answering.
+   backup inside 26 hours, disk above 10%, no capability flag true, console answering, and no
+   application signal over its figure.
 3. Somebody other than you could do (1) and (2) from this page.
 
 The third is the one that gets skipped and the one that matters on the day you are not there.

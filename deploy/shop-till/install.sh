@@ -145,10 +145,13 @@ data_checks="$relay --label checks-data \
 # exists inside the network. On the till the console is on loopback, so the name resolves through
 # /etc/hosts rather than the router. `/readyz`, not `/healthz`: the console answering while its
 # database is gone is the shop being closed (`OPS-HARDENING-002`).
+# `--check app` (OPS-OBSERVABILITY-009) reads the API's own log through the same Docker socket and
+# counts 5xx answers, database refusals and browser-boundary rejections over the last five minutes.
 host_checks="$relay --label checks-host -- \
   env R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/readyz \
   R1_CONSOLE_CA_FILE=\"$REPOSITORY/.shop/ca/ca.crt\" \
-  .venv/bin/python scripts/check_shop_operations.py --check flags --check console --emit-alert"
+  .venv/bin/python scripts/check_shop_operations.py --check flags --check console \
+  --check app --app-logs compose --emit-alert"
 
 base_backup="cd \"$REPOSITORY\" && docker compose \
   -f compose.r1.yaml -f compose.shop-local.yaml -f compose.shop-till.yaml \

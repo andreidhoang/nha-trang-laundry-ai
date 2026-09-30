@@ -144,6 +144,37 @@ def test_every_service_in_every_combination_rotates_its_log(
     assert not unbounded, "\n".join(unbounded)
 
 
+#: `OPS-OBSERVABILITY-009` (review P2). The API's log is what `check_shop_operations.py --check app`
+#: reads and the only record of what the application did; it rotated away in one to three days.
+#: Measured on a full daily walk against the real API: the longest request line, as json-file stores
+#: it, is 553 bytes, and the walk made 503 requests for 7 orders (72 an order).
+BYTES_PER_STORED_REQUEST_LINE = 553
+#: A busy day: 100 orders (above the owner's 300-400 kg/day ceiling at ~4 kg an order), three
+#: consoles open fourteen hours polling once a minute, and the console check's `/readyz` every five
+#: minutes.
+REQUESTS_PER_BUSY_DAY = 100 * 72 + 3 * 14 * 60 + 24 * 12
+API_LOG_RETENTION_DAYS = 14
+
+
+def test_the_api_log_keeps_fourteen_busy_days(rendered: dict[str, dict[str, Any]]) -> None:
+    """Docker drops the oldest file on rotation, so what is guaranteed is (max-file - 1) files."""
+
+    needed = BYTES_PER_STORED_REQUEST_LINE * REQUESTS_PER_BUSY_DAY * API_LOG_RETENTION_DAYS
+    short: list[str] = []
+    checked = 0
+    for label, document in rendered.items():
+        api = document["services"].get("api")
+        if api is None:
+            continue
+        checked += 1
+        options = (api.get("logging") or {}).get("options") or {}
+        kept = _bytes(options.get("max-size", "0")) * (int(options.get("max-file", "1")) - 1)
+        if kept < needed:
+            short.append(f"{label}: api keeps {kept} bytes for certain, {needed} are needed")
+    assert checked, "no rendered combination has an api service"
+    assert not short, "\n".join(short)
+
+
 # --- 5. The WAL staging area fits a segment ------------------------------------------------------
 
 #: `initdb`'s default, and nothing in this repository changes it: no `--wal-segsize` in any

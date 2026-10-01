@@ -225,6 +225,8 @@ DECLARED_CONTROLS = (
     "orderDetail.machine-skip",
     "orderDetail.rewash-machine",
     "orderDetail.trip-cost",
+    # GOODS-AND-DRAWER-009 (review M4): "Trả lại tiền cho khách bằng" in Huỷ đơn.
+    "orderDetail.cancel-refund-method",
     "shell.nav.expenses",
     "expenses.add",
     "expenses.category",
@@ -917,6 +919,7 @@ class Console:
         reopen: bool = True,
         reason: str = "",
         machine: str = "",
+        refund: str = "",
     ) -> str:
         """Press one step on the order's page, exactly as staff would, and return what it said.
 
@@ -925,8 +928,9 @@ class Console:
         chips when given.
 
         RECEIVE ticks the slot attestation (unless `slot=False`); CANCEL picks `custody` when the
-        server asks for one and presses twice; HOLD presses twice; REWASH and REJECT_INTAKE pick
-        `reason` from the sheet's choices (ORDER-STEPS-002), and REJECT_INTAKE presses twice.
+        server asks for one, and `refund` -- how the money goes back, when the server asks
+        (GOODS-AND-DRAWER-009) -- and presses twice; HOLD presses twice; REWASH and REJECT_INTAKE
+        pick `reason` from the sheet's choices (ORDER-STEPS-002), and REJECT_INTAKE presses twice.
         Nothing is sent that the page does not offer: a step the page does not list is reported,
         not forced.
         """
@@ -949,6 +953,9 @@ class Console:
             if custody:
                 self.page.locator(f"dialog[open] input[value={custody}]").check()
                 touched("orderDetail.cancel-custody")
+            if refund:
+                self.page.locator(f"dialog[open] input[name=refund_method][value={refund}]").check()
+                touched("orderDetail.cancel-refund-method")
             confirm = self.page.locator("dialog[open] .sheet__actions button").first
             if not confirm.is_disabled():
                 confirm.click()
@@ -1110,7 +1117,9 @@ def scenario_money(console: Console) -> None:
     """Money the counter must not take, and what the counter is told about it (PAYMENT-001)."""
 
     head("1", "TIỀN — what the counter may take, and every refusal around it")
-    order = console.build_order(kg="7", stop="released")
+    # GOODS-AND-DRAWER-009 (review M2): on the shelf, not released -- an unpaid order's laundry is
+    # no longer released at all, so this walk used to start from the defect.
+    order = console.build_order(kg="7", stop="ready")
     total = order["quote"]["net_service_subtotal_vnd"]
     grouped = f"{total:,}".replace(",", ".")
     note(f"the quote says {total} đồng; the screen prints it as {grouped}")
@@ -1162,12 +1171,13 @@ def scenario_money(console: Console) -> None:
         sheet[:130],
     )
 
-    head("1b", "ĐÓNG ĐƠN — a paid, released, collected order closes")
-    # Released before the payment (the per-axis ladder), so the one step left is "Đóng đơn", and the
-    # payment sheet offers it straight away.
-    closing = console.page.locator("dialog[open] button[data-step=COMPLETE]")
-    ok("the payment sheet offers to close the order at once", closing.count() == 1)
-    said = console.step(order["order_id"], "COMPLETE")
+    head("1b", "ĐÓNG ĐƠN — a paid, collected order is handed over and closes")
+    # Paid in full with the handover tick on the shelf, so the one step left is "Giao đồ & đóng
+    # đơn" (release, then close), and the payment sheet offers it straight away. It used to be
+    # "Đóng đơn" because the per-axis ladder had released the laundry before any money was taken.
+    closing = console.page.locator("dialog[open] button[data-step=HAND_OVER]")
+    ok("the payment sheet offers to hand over and close the order at once", closing.count() == 1)
+    said = console.step(order["order_id"], "HAND_OVER")
     if READS_DATABASE:
         ok(
             "the order reaches COMPLETED",
@@ -2509,7 +2519,8 @@ def scenario_busy(console: Console) -> None:
         note("needs --database-url to hold a row lock from a second connection; skipped")
         return
     console.sign_in("demo-operations")
-    order = console.build_order(kg="7", stop="released")
+    # GOODS-AND-DRAWER-009: on the shelf; an unpaid order's laundry is not released.
+    order = console.build_order(kg="7", stop="ready")
     order_id = order["order_id"]
     total = order["quote"]["net_service_subtotal_vnd"]
     grouped = f"{total:,}".replace(",", ".")
@@ -2569,7 +2580,7 @@ def _collected_suits(console: Console) -> dict:
     """Three suits ironed at 30.000 ₫ each, paid for and handed back -- the complaint's order."""
 
     order = console.build_order(
-        stop="released",
+        stop="ready",
         lines=[
             {
                 "service_code": "IRON_SUIT",
@@ -2588,6 +2599,15 @@ def _collected_suits(console: Console) -> dict:
     )
     if paid["status"] >= 300:
         raise AssertionError(f"could not settle the suits: {paid['status']} {paid['text']}")
+    # GOODS-AND-DRAWER-009 (review M2): released once paid -- the ladder used to release first.
+    released = console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/production-transition",
+        {"target": "RELEASED"},
+        if_match=console.current_version(order_id, order["row_version"]),
+    )
+    if released["status"] >= 300:
+        raise AssertionError(f"could not release the suits: {released['text']}")
     version = console.current_version(order_id, order["row_version"])
     closed = console.call(
         "POST",
@@ -4158,7 +4178,7 @@ def scenario_report(console: Console) -> None:
 
     # The known actions. One order goes the whole way with a per-axis rewash in the middle.
     washed = console.build_order(kg="7", stop="checking")
-    for target in ("EXCEPTION", "IN_PROCESS", "QUALITY_CHECK", "READY_AT_STORE", "RELEASED"):
+    for target in ("EXCEPTION", "IN_PROCESS", "QUALITY_CHECK", "READY_AT_STORE"):
         moved = console.call(
             "POST",
             f"/internal/v1/orders/{washed['order_id']}/production-transition",
@@ -4167,8 +4187,10 @@ def scenario_report(console: Console) -> None:
         )
         if moved["status"] >= 300:
             raise AssertionError(f"could not move to {target}: {moved['text']}")
+    # GOODS-AND-DRAWER-009 (review M2): paid with the handover, then released and closed in one
+    # step. This walk used to release first and take the money after.
     console.pay(washed["order_id"])
-    console.step(washed["order_id"], "COMPLETE")
+    console.step(washed["order_id"], "HAND_OVER")
     total = int(washed["quote"]["net_service_subtotal_vnd"])
     complaint = console.call(
         "POST",
@@ -4231,7 +4253,7 @@ def scenario_report(console: Console) -> None:
     ok(
         "every figure carries the rule's version, and the on-time figure says what it assumed",
         len({kpi["query_version"] for kpi in after.values()}) == 1
-        and next(iter(after.values()))["query_version"].startswith("report-v4:")
+        and next(iter(after.values()))["query_version"].startswith("report-v5:")
         and isinstance(assumed, int)
         and on_time["data_quality"] == ("RULE_ASSUMED" if assumed else "COMPLETE")
         and all(
@@ -4969,6 +4991,9 @@ def scenario_shop_capture(console: Console) -> None:
         and len(_capture(console, trip_order["order_id"])["legs"]) == 1,
         refused["text"][:120],
     )
+    # GOODS-AND-DRAWER-009 (review M2): the return trip used to be recorded here on laundry never
+    # washed or paid for. The courier takes finished, paid laundry: washed, then paid by transfer.
+    _washed_and_paid(console, trip_order["order_id"], trip_order["row_version"])
     returned = console.call(
         "POST",
         f"/internal/v1/orders/{trip_order['order_id']}/delivery-legs",
@@ -5069,10 +5094,12 @@ def scenario_shop_capture(console: Console) -> None:
     head("S4", "BÁO CÁO — the measured lines, and margin withheld with what is missing")
     after = _summary(console, today)
     cap0, cap1 = before["capture"], after["capture"]
+    # Four since GOODS-AND-DRAWER-009: S1's three, and S2's trip order washed (no machine named)
+    # before its return trip -- the courier no longer takes laundry nobody washed or paid for.
     ok(
-        "three more cycles, two of them with a machine",
+        "four more cycles, two of them with a machine",
         (cap1["cycles"] - cap0["cycles"], cap1["cycles_captured"] - cap0["cycles_captured"])
-        == (3, 2),
+        == (4, 2),
         (cap1["cycles"] - cap0["cycles"], cap1["cycles_captured"] - cap0["cycles_captured"]),
     )
     timed = {m["code"]: m for m in cap1["machines"]}
@@ -7677,7 +7704,7 @@ def scenario_daily_summary(console: Console) -> None:
     ok(
         "the owner reads today's summary: a versioned template, lines and what it left out",
         first["status"] == 200
-        and str((first["body"] or {}).get("template_version", "")).startswith("daily-summary-v3:")
+        and str((first["body"] or {}).get("template_version", "")).startswith("daily-summary-v4:")
         and (first["body"] or {}).get("date") == today
         and (first["body"] or {}).get("so_far") is True,
         first["text"][:160],
@@ -7722,9 +7749,10 @@ def scenario_daily_summary(console: Console) -> None:
 
     # The known actions: one order washed, paid in cash and completed; a second one with a
     # 50.000 ₫ transfer deposit; a complaint naming the customer; one line of Sổ thu chi.
-    washed = console.build_order(kg="7", stop="released")
+    # GOODS-AND-DRAWER-009: paid with the handover on the shelf, then handed over and closed.
+    washed = console.build_order(kg="7", stop="ready")
     console.pay(washed["order_id"])
-    console.step(washed["order_id"], "COMPLETE")
+    console.step(washed["order_id"], "HAND_OVER")
     paid = int(
         next(
             (
@@ -9796,7 +9824,7 @@ def scenario_late_delivery(console: Console) -> None:
         and moved("not_store_fault") == 1
         and moved("undecided") == -2
         and moved("late") == 0
-        and str(after.get("query_version", "")).startswith("report-v4:"),
+        and str(after.get("query_version", "")).startswith("report-v5:"),
         {"before": before, "after": after},
     )
     console.open("#/reports", settle=2200)
@@ -10153,6 +10181,255 @@ def scenario_copy_a11y(console: Console) -> None:
         )
 
 
+# --- GOODS-AND-DRAWER-009 (round 9, review M2 and M4) ---------------------------------------------
+
+
+def _washed_and_paid(console: Console, order_id: str, version_hint: object) -> None:
+    """Production to READY_AT_STORE over the per-axis route, then the rest paid by transfer: the
+    state a courier may take laundry out of the shop in (GOODS-AND-DRAWER-009)."""
+
+    for target in ("QUEUED", "IN_PROCESS", "QUALITY_CHECK", "READY_AT_STORE"):
+        moved = console.call(
+            "POST",
+            f"/internal/v1/orders/{order_id}/production-transition",
+            {"target": target},
+            if_match=console.current_version(order_id, version_hint),
+        )
+        if moved["status"] >= 300:
+            raise AssertionError(f"could not move to {target}: {moved['text']}")
+    read = console.call("GET", f"/internal/v1/orders/{order_id}")["body"] or {}
+    paid = console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/payments",
+        {"amount_vnd": read["remaining_vnd"], "method": "CHUYEN_KHOAN", "transfer_seen": True},
+        if_match=read["row_version"],
+    )
+    if paid["status"] >= 300:
+        raise AssertionError(f"could not take the payment: {paid['text']}")
+
+
+def _refused_by_name(answer: dict[str, Any], code: str) -> bool:
+    detail = (answer.get("body") or {}).get("detail") or {}
+    return (
+        answer["status"] == 422 and isinstance(detail, dict) and detail.get("reason_code") == code
+    )
+
+
+def scenario_goods_and_drawer(console: Console) -> None:
+    """GOODS-AND-DRAWER-009: goods leave only when paid (M2); the drawer is the drawer (M4)."""
+
+    head("G1", "THU TIỀN TRƯỚC KHI GIAO — an unpaid delivery neither leaves nor goes out")
+    order = console.build_order(kg="5", mode="PICKUP_AND_RETURN", distance_m=1500, stop="ready")
+    order_id = order["order_id"]
+    console.open_order(order_id)
+    money_card = console.page.locator(".order__money").first
+    card_text = money_card.inner_text() if money_card.count() else ""
+    offered = console.offered()
+    ok(
+        "the page says 'Thu tiền trước khi giao' beside the payment, which is the big button",
+        "Thu tiền trước khi giao" in card_text and console.primary_step() == "TAKE_PAYMENT",
+        card_text[:160],
+    )
+    ok(
+        "and neither 'Cho đồ ra' nor the courier's trip is offered while money is owed",
+        not {"RELEASE", "DELIVERY_RETURN", "HAND_OVER"} & set(offered),
+        offered,
+    )
+    version = console.current_version(order_id, order["row_version"])
+    release = console.call(
+        "POST", f"/internal/v1/orders/{order_id}/steps", {"step": "RELEASE"}, if_match=version
+    )
+    released = console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/production-transition",
+        {"target": "RELEASED"},
+        if_match=version,
+    )
+    trips = [
+        console.call(
+            "POST",
+            f"/internal/v1/orders/{order_id}/delivery-legs",
+            {"leg_kind": "RETURN", "outcome": outcome},
+        )
+        for outcome in ("SUCCEEDED", "FAILED")
+    ]
+    ok(
+        "the server refuses RELEASE on both routes by name (RELEASE_REQUIRES_PAYMENT)",
+        _refused_by_name(release, "RELEASE_REQUIRES_PAYMENT")
+        and _refused_by_name(released, "RELEASE_REQUIRES_PAYMENT"),
+        f"{release['status']} {release['text'][:80]} | {released['status']} "
+        f"{released['text'][:80]}",
+    )
+    ok(
+        "and a return trip of either outcome by name (DELIVERY_REQUIRES_PAYMENT)",
+        all(_refused_by_name(trip, "DELIVERY_REQUIRES_PAYMENT") for trip in trips),
+        " | ".join(f"{t['status']} {t['text'][:60]}" for t in trips),
+    )
+    if READS_DATABASE:
+        ok(
+            "nothing was written: no leg, laundry still on the shelf, the order at its version",
+            sql(f"select count(*) from delivery_legs where order_id='{order_id}'") == "0"
+            and stored(order_id, "production_status") == "READY_AT_STORE"
+            and stored(order_id, "row_version") == str(version),
+            stored(order_id, "production_status"),
+        )
+
+    note("the customer pays by transfer; then the courier may go")
+    said = console.pay(order_id, method="CHUYEN_KHOAN", seen=True)
+    ok(
+        "the payment is taken, and the sheet says the order closes on a successful trip",
+        "chuyến giao thành công" in said,
+        said[:160],
+    )
+    console.open_order(order_id)
+    ok(
+        "once paid, 'Cho đồ ra' is the next step and the pay-first line is gone",
+        console.primary_step() == "RELEASE" and "Thu tiền trước khi giao" not in console.text(),
+        console.primary_step(),
+    )
+    console.step(order_id, "RELEASE", reopen=False)
+    arrived = console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/delivery-legs",
+        {"leg_kind": "RETURN", "outcome": "SUCCEEDED"},
+    )
+    closed = console.step(order_id, "COMPLETE")
+    ok(
+        "the paid delivery goes out, arrives and closes",
+        arrived["status"] == 201
+        and (
+            stored(order_id, "commercial_status") == "COMPLETED"
+            if READS_DATABASE
+            else "COMPLETE" not in console.offered()
+        ),
+        f"{arrived['status']} {closed[:80]}",
+    )
+    if READS_DATABASE:
+        ok(
+            "and 'prepaid delivery' is true: the money came before the trip",
+            sql(
+                "select (select max(recorded_at) from order_payments where order_id="
+                f"'{order_id}') < (select min(recorded_at) from delivery_legs where order_id="
+                f"'{order_id}' and leg_kind='RETURN')"
+            )
+            == "t"
+            and sql(f"select settlement_shape from order_settlements where order_id='{order_id}'")
+            == "EXACT_PAYMENT_PREPAID_DELIVERY",
+        )
+
+    head("G2", "TIỀN TRONG KÉT — cash in minus cash handed back, not every method netted")
+    path = f"/internal/v1/stores/{STORE}/settlements/today"
+    before = console.call("GET", path)["body"] or {}
+    cash_order = console.build_order(kg="3", stop="active")
+    console.pay(cash_order["order_id"])
+    transfer_order = console.build_order(kg="3", stop="active")
+    console.pay(transfer_order["order_id"], method="CHUYEN_KHOAN", seen=True)
+    # A transfer paid back in cash: the every-method net does not move, the drawer does.
+    back_in_cash = console.build_order(kg="3", stop="active")
+    console.pay(back_in_cash["order_id"], "20.000", method="CHUYEN_KHOAN", seen=True)
+    console.open_order(back_in_cash["order_id"])
+    control = console.step_control("CANCEL")
+    asked = ""
+    if control is not None:
+        control.click()
+        console.page.wait_for_timeout(600)
+        asked = console.dialog_text()
+        console.page.keyboard.press("Escape")
+        console.page.wait_for_timeout(300)
+    ok(
+        "Huỷ đơn of an order that took money asks how the money goes back",
+        "Trả lại tiền cho khách bằng" in asked,
+        asked[:200],
+    )
+    said = console.step(
+        back_in_cash["order_id"],
+        "CANCEL",
+        custody="RETURNED_UNWASHED_REFUNDED",
+        refund="TIEN_MAT",
+    )
+    by_transfer = console.build_order(kg="3", stop="active")
+    console.pay(by_transfer["order_id"], "30.000")
+    console.step(
+        by_transfer["order_id"],
+        "CANCEL",
+        custody="RETURNED_UNWASHED_REFUNDED",
+        refund="CHUYEN_KHOAN",
+    )
+    after = console.call("GET", path)["body"] or {}
+
+    def delta(key: str) -> int:
+        return int(after.get(key) or 0) - int(before.get(key) or 0)
+
+    ok(
+        "the refunds are split by how they went back: 20.000 in cash, 30.000 by transfer",
+        delta("refunded_cash_vnd") == 20_000
+        and delta("refunded_transfer_vnd") == 30_000
+        and delta("refunded_unknown_count") == 0,
+        f"{said[:80]} | cash {delta('refunded_cash_vnd')} transfer "
+        f"{delta('refunded_transfer_vnd')}",
+    )
+    cash_in, cash_back = int(after.get("cash_vnd") or 0), int(after.get("refunded_cash_vnd") or 0)
+    ok(
+        "the drawer is cash in minus cash handed back, whatever the transfers did",
+        str(after.get("query_version", "")).startswith("collected-today-v4:")
+        and (after.get("drawer_direction") == "IN") == (cash_in >= cash_back)
+        and after.get("drawer_vnd") == abs(cash_in - cash_back),
+        {k: after.get(k) for k in ("cash_vnd", "refunded_cash_vnd", "drawer_vnd")},
+    )
+    if READS_DATABASE:
+        ok(
+            "each refund row records how the money went back",
+            sql(
+                "select string_agg(refund_method, ',' order by refunded_amount_vnd) from "
+                "order_refunds where order_id in "
+                f"('{back_in_cash['order_id']}','{by_transfer['order_id']}')"
+            )
+            == "TIEN_MAT,CHUYEN_KHOAN",
+        )
+
+    console.open("#/")
+    touched("shell.nav.today")
+    console.page.wait_for_timeout(1500)
+    drawer = console.page.locator(".today__refunds [data-field=drawer]")
+    line = drawer.first.inner_text() if drawer.count() else ""
+    amount = int(after.get("drawer_vnd") or 0)
+    grouped = f"{amount:,}".replace(",", ".")
+    word = (
+        "không đổi"
+        if not amount
+        else ("giảm" if after.get("drawer_direction") == "OUT" else "tăng")
+    )
+    ok(
+        "Hôm nay prints the server's drawer figure as 'Tiền mặt trong két', not the net",
+        "Tiền mặt trong két hôm nay" in line and word in line and (not amount or grouped in line),
+        line,
+    )
+    if READS_DATABASE:
+        today = sql("select (now() at time zone 'Asia/Ho_Chi_Minh')::date")
+        console.sign_in("demo-owner")
+        report = console.call(
+            "GET", f"/internal/v1/stores/{STORE}/reports/summary?from={today}&to={today}"
+        )
+        kpis = {kpi["key"]: kpi for kpi in (report["body"] or {}).get("kpis", [])}
+        ok(
+            "the report's MONEY_DRAWER is the same figure, and the net keeps its own name",
+            kpis.get("MONEY_DRAWER", {}).get("numerator") == amount
+            and kpis.get("MONEY_DRAWER", {}).get("direction") == after.get("drawer_direction")
+            and kpis.get("MONEY_NET", {}).get("numerator") == after.get("net_vnd"),
+            {k: kpis.get(k, {}).get("numerator") for k in ("MONEY_DRAWER", "MONEY_NET")},
+        )
+        summary = console.call(
+            "GET", f"/internal/v1/stores/{STORE}/reports/daily-summary?date={today}"
+        )
+        text = str((summary["body"] or {}).get("text", ""))
+        ok(
+            "the evening summary says the same drawer in words",
+            ("Tiền mặt trong két " + word) in text,
+            text[:240],
+        )
+        console.sign_in("demo-operations")
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -10189,6 +10466,10 @@ SCENARIOS = {
     # EXPORT-PAYMENTS-001: today's export carries the deposit order's split and the unpaid order's
     # remaining; an envelope over the retired shape is refused by name.
     "export_payments": scenario_export_payments,
+    # GOODS-AND-DRAWER-009 (round 9, review M2/M4): an unpaid delivery neither leaves nor goes out;
+    # a refund says how the money went back and Hôm nay's drawer is cash in minus cash handed back.
+    # It takes and refunds money on its own orders; nothing after it reads today's refunds.
+    "goods_and_drawer": scenario_goods_and_drawer,
     # CUSTOMER-001. Before promise: it proves the refusal on a shop that has not published the
     # privacy notice, then publishes it; nothing after it depends on the notice being unpublished.
     "customers": scenario_customers,

@@ -101,10 +101,13 @@ from nha_trang_laundry_domain.orders import (
     transition_intake,
     transition_production,
 )
+from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.settlement import (
+    RELEASE_REQUIRES_PAYMENT,
     QuotedTotal,
     SettlementAccepted,
     SettlementShape,
+    delivery_refusal,
     evaluate_collection,
     evaluate_settlement,
     goods_may_leave,
@@ -272,6 +275,10 @@ class PlannedTransition:
     #: transition only, so the event that starts the step says why, once.
     rewash_reason: RewashReason | None = None
     rejection_reason: IntakeRejectionReason | None = None
+    #: GOODS-AND-DRAWER-009 (review M4): how the money of a refunding cancellation goes back --
+    #: `TIEN_MAT` from the drawer, `CHUYEN_KHOAN` by bank transfer -- as the staff member says. Set
+    #: on the transition into `CANCELLED` only, and only when that transition refunds money.
+    refund_method: PaymentMethod | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,7 +290,8 @@ class NextStep:
     cancellation that goes through review, `rewash_reason` for `REWASH`, `rejection_reason` for
     `REJECT_INTAKE`. `custody_resolutions`, `rewash_reasons` and `rejection_reasons` list exactly
     the answers the domain would accept for this order -- each one dry-run -- so the console offers
-    only answers the server will take.
+    only answers the server will take. GOODS-AND-DRAWER-009 (review M4): `refund_method` is
+    required by a cancellation that hands money back, so the drawer can tell cash from transfer.
     """
 
     step: OrderStep
@@ -306,6 +314,42 @@ class StepRequiresHuman(OrderTransitionError):
             "HUMAN_APPROVAL_REQUIRED: intake blockers remain: " + ", ".join(reason_codes)
         )
         self.reason_codes = reason_codes
+
+
+class GoodsMayNotLeave(OrderTransitionError):
+    """GOODS-AND-DRAWER-009 (review M2): the goods would leave an order whose money forbids it.
+
+    Raised by `RELEASE` for every fulfilment mode when `goods_may_leave` says no: not paid in full,
+    and not charged to the customer's account. `reason_code` is the named refusal
+    (`RELEASE_REQUIRES_PAYMENT`) the routes send and the console words as "Thu tiền trước khi
+    giao"; the message keeps the domain's `INVALID_STATE_TRANSITION:` prefix for older readers.
+    """
+
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(
+            f"INVALID_STATE_TRANSITION: {reason_code}: the goods leave the shop only once the "
+            "order is paid in full or charged to the customer's account"
+        )
+        self.reason_code = reason_code
+
+
+class RefundMethodRequired(StepRequiresHuman):
+    """GOODS-AND-DRAWER-009 (review M4): a refunding cancellation that did not say how the money
+    went back. The staff member handing it back says `TIEN_MAT` (from the drawer) or
+    `CHUYEN_KHOAN` (by bank transfer); nothing is guessed, and nothing is written until they do.
+    """
+
+    def __init__(self) -> None:
+        OrderTransitionError.__init__(
+            self,
+            "HUMAN_APPROVAL_REQUIRED: REFUND_METHOD_REQUIRED: a cancellation that hands money back "
+            "says how it went back (refund_method)",
+        )
+        self.reason_codes = (REFUND_METHOD_REQUIRED,)
+
+
+#: The reason code of `RefundMethodRequired`, as the step route sends it.
+REFUND_METHOD_REQUIRED: Final = "REFUND_METHOD_REQUIRED"
 
 
 #: The instant `next_steps` hands `plan_step` for a dry run. `transition_intake` requires only that
@@ -369,6 +413,7 @@ def plan_step(
     accepted_at: datetime,
     rewash_reason: RewashReason | None = None,
     rejection_reason: IntakeRejectionReason | None = None,
+    refund_method: PaymentMethod | None = None,
 ) -> tuple[PlannedTransition, ...]:
     """The single-axis transitions `step` is made of for this order, or a refusal.
 
@@ -379,7 +424,9 @@ def plan_step(
 
     A reason is taken only by the step it belongs to, and that step refuses to run without it: a
     reason attached to a different step would be recorded nowhere, and silently dropping what a
-    person said is how a ledger stops being believed.
+    person said is how a ledger stops being believed. `refund_method` (GOODS-AND-DRAWER-009) is
+    the same rule for a cancellation: required exactly when it hands money back
+    (`RefundMethodRequired`), refused on anything else.
     """
 
     if step not in COMPOSITE_STEPS:
@@ -396,6 +443,8 @@ def plan_step(
         raise OrderTransitionError(
             f"VALIDATION_ERROR: custody_resolution is not taken by {step.value}"
         )
+    if refund_method is not None and step is not OrderStep.CANCEL:
+        raise OrderTransitionError("VALIDATION_ERROR: refund_method is taken only by CANCEL")
     simulation = _Simulation(facts.state)
     state = facts.state
     if step is OrderStep.RECEIVE:
@@ -432,18 +481,15 @@ def plan_step(
     elif step is OrderStep.RELEASE:
         # Founder ruling 2026-09-25: goods a customer collects in person do not leave an unpaid
         # order by this step. The counter's way out is TAKE_PAYMENT then HAND_OVER, which takes
-        # the money in the same visit; a delivery order is released to the courier after its
-        # DEC-023 prepayment, and a courier never takes money. `DEC-035` widened "unpaid" to "not
-        # paid in full": a deposit does not let the goods leave (`goods_may_leave`, the seam where
-        # PAYMENT-002's account customers will be admitted).
-        if state.fulfillment_mode not in MODES_EXPECTING_RETURN and not goods_may_leave(
-            state.balance
-        ):
-            raise OrderTransitionError(
-                "INVALID_STATE_TRANSITION: an order the customer collects is released only once "
-                "it is paid in full"
-            )
+        # the money in the same visit. `DEC-035` widened "unpaid" to "not paid in full": a deposit
+        # does not let the goods leave (`goods_may_leave`; `ON_ACCOUNT` is PAYMENT-002's admission).
+        # GOODS-AND-DRAWER-009 (review M2): for EVERY mode. A delivery order is released to the
+        # courier after its DEC-023 prepayment and a courier never takes money -- which used to be
+        # assumed here and enforced nowhere, so an unpaid delivery left the shop. The laundry's
+        # own state is asked first: a bag still in the machine is refused for that, not for money.
         _require_production(state, ProductionStatus.READY_AT_STORE)
+        if not goods_may_leave(state.balance):
+            raise GoodsMayNotLeave(RELEASE_REQUIRES_PAYMENT)
         simulation.production(ProductionStatus.RELEASED)
     elif step is OrderStep.HAND_OVER:
         if state.production is not ProductionStatus.RELEASED:
@@ -454,6 +500,7 @@ def plan_step(
         simulation.commercial(CommercialOrderStatus.COMPLETED)
     elif step is OrderStep.CANCEL:
         _plan_cancel(simulation, custody_resolution)
+        _attach_refund_method(simulation, facts.state, refund_method)
     elif step is OrderStep.REOPEN:
         if state.commercial is not CommercialOrderStatus.CANCELLATION_REVIEW:
             raise OrderTransitionError(_NOTHING_TO_DO)
@@ -526,6 +573,34 @@ def _plan_cancel(simulation: _Simulation, resolution: CustodyResolution | None) 
     simulation.commercial(CommercialOrderStatus.CANCELLED, resolution)
 
 
+def _attach_refund_method(
+    simulation: _Simulation, before: OrderState, method: PaymentMethod | None
+) -> None:
+    """GOODS-AND-DRAWER-009 (review M4): a cancellation that hands money back says how.
+
+    Whether money goes back is `transition_commercial`'s answer, already in the simulated state:
+    the balance became `REFUNDED`. Then the method is required and rides on the transition into
+    `CANCELLED`, whose refund row records it; otherwise a method is refused, because it would be
+    recorded nowhere.
+    """
+
+    refunds = (
+        simulation.state.balance is OrderBalanceStatus.REFUNDED
+        and before.balance is not OrderBalanceStatus.REFUNDED
+    )
+    if not refunds:
+        if method is not None:
+            raise OrderTransitionError(
+                "VALIDATION_ERROR: refund_method is taken only by a cancellation that hands "
+                "money back"
+            )
+        return
+    if method is None:
+        raise RefundMethodRequired()
+    last = len(simulation.planned) - 1
+    simulation.planned[last] = replace(simulation.planned[last], refund_method=method)
+
+
 def _plan_rewash(simulation: _Simulation, reason: RewashReason | None) -> None:
     """`REWASH`: interrupt production with an exception, then send it back through the wash.
 
@@ -595,6 +670,7 @@ def _legal(
     custody_resolution: CustodyResolution | None = None,
     rewash_reason: RewashReason | None = None,
     rejection_reason: IntakeRejectionReason | None = None,
+    refund_method: PaymentMethod | None = None,
 ) -> bool:
     """Dry-run `step`. `slot_approved` is taken as attested: the listing says what the caller may
     do once they attest it, and `requires` tells them that they must."""
@@ -608,10 +684,44 @@ def _legal(
             accepted_at=_DRY_RUN_INSTANT,
             rewash_reason=rewash_reason,
             rejection_reason=rejection_reason,
+            refund_method=refund_method,
         )
     except OrderTransitionError:
         return False
     return True
+
+
+def _cancel_legal(
+    facts: StepFacts, custody_resolution: CustodyResolution | None = None
+) -> tuple[bool, bool]:
+    """Dry-run `CANCEL` with this answer: `(legal, needs refund_method)`.
+
+    GOODS-AND-DRAWER-009: a cancellation that hands money back is legal once the staff member says
+    how the money went back, so it is asked once without a method and, only when that is exactly
+    what is missing, once with one -- the answer never depends on which method.
+    """
+
+    try:
+        plan_step(
+            OrderStep.CANCEL,
+            facts,
+            slot_approved=True,
+            custody_resolution=custody_resolution,
+            accepted_at=_DRY_RUN_INSTANT,
+        )
+    except RefundMethodRequired:
+        return (
+            _legal(
+                OrderStep.CANCEL,
+                facts,
+                custody_resolution=custody_resolution,
+                refund_method=PaymentMethod.TIEN_MAT,
+            ),
+            True,
+        )
+    except OrderTransitionError:
+        return False, False
+    return True, False
 
 
 def _payment_legal(facts: StepFacts) -> bool:
@@ -668,17 +778,22 @@ def _legal_steps(facts: StepFacts) -> dict[OrderStep, NextStep]:
             found[step] = NextStep(step, False)
     if _legal(OrderStep.RECEIVE, facts):
         found[OrderStep.RECEIVE] = NextStep(OrderStep.RECEIVE, False, ("slot_approved",))
-    if _legal(OrderStep.CANCEL, facts):
-        found[OrderStep.CANCEL] = NextStep(OrderStep.CANCEL, False)
-    else:
-        accepted = tuple(
-            resolution
-            for resolution in CustodyResolution
-            if _legal(OrderStep.CANCEL, facts, custody_resolution=resolution)
+    direct, direct_refunds = _cancel_legal(facts)
+    if direct:
+        found[OrderStep.CANCEL] = NextStep(
+            OrderStep.CANCEL, False, ("refund_method",) if direct_refunds else ()
         )
+    else:
+        answers = {resolution: _cancel_legal(facts, resolution) for resolution in CustodyResolution}
+        accepted = tuple(resolution for resolution, (legal, _) in answers.items() if legal)
+        # GOODS-AND-DRAWER-009 (review M4): a cancellation that hands money back also asks how.
+        refunds = any(needs for legal, needs in answers.values() if legal)
         if accepted:
             found[OrderStep.CANCEL] = NextStep(
-                OrderStep.CANCEL, False, ("custody_resolution",), accepted
+                OrderStep.CANCEL,
+                False,
+                ("custody_resolution", "refund_method") if refunds else ("custody_resolution",),
+                accepted,
             )
     # ORDER-STEPS-002: each reason dry-run, as the custody answers are, so `rewash_reasons` and
     # `rejection_reasons` can only ever name answers the step would take.
@@ -731,14 +846,15 @@ def _legal_steps(facts: StepFacts) -> dict[OrderStep, NextStep]:
     ):
         found[OrderStep.DELIVERY_PICKUP] = NextStep(OrderStep.DELIVERY_PICKUP, False)
     # A return leg is offered once the laundry is finished -- the same `HANDOVER_READY_PRODUCTION`
-    # rule the settlement applies to "the customer took the goods". The route itself accepts a leg
-    # on any ACTIVE order and is unchanged; this only declines to suggest recording an arrival for
-    # laundry that is still in the machine.
+    # rule the settlement applies to "the customer took the goods" -- and, since
+    # GOODS-AND-DRAWER-009 (review M2), once its money lets it leave: `delivery_refusal` is the
+    # question the leg route itself now asks under the order lock, so the list never offers a trip
+    # the server would refuse. Until then the money step is what the page offers.
     if (
         active
         and state.fulfillment_mode in MODES_EXPECTING_RETURN
         and not state.required_delivery_legs_succeeded
-        and handover_refusal(state.production) is None
+        and delivery_refusal(state.balance, state.production) is None
     ):
         found[OrderStep.DELIVERY_RETURN] = NextStep(OrderStep.DELIVERY_RETURN, False)
     return found
@@ -817,13 +933,16 @@ __all__ = [
     "COMPOSITE_STEPS",
     "NEVER_PRIMARY_STEPS",
     "READINESS_BLOCKER_CODES",
+    "REFUND_METHOD_REQUIRED",
     "REJECT_INTAKE_FROM",
     "REWASH_FROM_PRODUCTION",
     "STEP_ORDER",
+    "GoodsMayNotLeave",
     "NextStep",
     "OrderStep",
     "PlannedTransition",
     "QuoteReadinessFacts",
+    "RefundMethodRequired",
     "StepFacts",
     "StepRequiresHuman",
     "derive_intake_readiness",

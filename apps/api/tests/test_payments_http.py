@@ -185,7 +185,7 @@ def test_a_transfer_deposit_then_the_rest_in_cash_at_pickup_then_hand_over(
         1,
         1,
     )
-    assert takings["query_version"].startswith("collected-today-v3:")
+    assert takings["query_version"].startswith("collected-today-v4:")
 
 
 def test_the_payments_route_refuses_what_it_must(

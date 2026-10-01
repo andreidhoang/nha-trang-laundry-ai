@@ -201,6 +201,11 @@ EXPORT_COLUMNS: tuple[str, ...] = (
     # already spent elsewhere returns less than was paid; this is the part netted, beside the
     # refund on the same row, so `refunded_amount_vnd + refund_netted_remedy_vnd` is what was paid.
     "refund_netted_remedy_vnd",
+    # GOODS-AND-DRAWER-009 (review M4): how the refund on this row went back -- `TIEN_MAT` from the
+    # drawer or `CHUYEN_KHOAN` by transfer (`0067`) -- so the file agrees with the drawer figure on
+    # the Today screen, the report and the summary. Empty where there is no refund, and on a refund
+    # written before `0067`, which never recorded it: unknown, never guessed. Appended, as above.
+    "refund_method",
 )
 
 #: What this export withholds, named rather than implied, and hashed into the same document.
@@ -293,6 +298,11 @@ EXPORT_MONEY_SOURCES: tuple[ExportMoneySource, ...] = (
         "order_refunds.netted_remedy_vnd (DEC-045)",
         "order_refunds.refunded_at",
     ),
+    ExportMoneySource(
+        "refund_method",
+        "order_refunds.refund_method (empty before 0067: not recorded)",
+        "order_refunds.refunded_at",
+    ),
 )
 
 #: Which event cuts the shop's day for this file, named rather than left to be inferred from the
@@ -322,11 +332,12 @@ EXPORT_DAY_BOUNDARY = "orders.created_at"
 #:
 #: `EXPORT-PAYMENTS-001`: the payment ledger is summed here, by method, in one LATERAL aggregate per
 #: order (an aggregate without GROUP BY always returns its one row), and the order's current quote
-#: revision is joined for what is owed. The last twelve selected values are not cells:
-#: `_money_rows` hands them to `export_money.exported_money` -- with the storage fee
+#: revision is joined for what is owed. The selected values after the leading cells are not
+#: cells: `_money_rows` hands them to `export_money.exported_money` -- with the storage fee
 #: `unclaimed.order_storage_fee` computes from the fee's facts (the hold bookkeeping of `DEC-047`
 #: among them) and the leading cells' production status, ready time and settlement -- and the
-#: domain decides what is owed and what remains. The last is the refund's netting (`DEC-045`).
+#: domain decides what is owed and what remains. The last two are the refund's netting
+#: (`DEC-045`) and the refund's method (GOODS-AND-DRAWER-009), copied as recorded.
 _EXPORT_SQL = """
     SELECT o.id, o.created_at, o.commercial_status, o.intake_status, o.production_status,
            o.production_accepted_at, o.production_ready_at, o.production_released_at,
@@ -347,7 +358,8 @@ _EXPORT_SQL = """
                FROM order_storage_holds h
                WHERE h.order_id = o.id AND h.held_at >= o.production_ready_at
            ),
-           rf.netted_remedy_vnd
+           rf.netted_remedy_vnd,
+           rf.refund_method
     FROM orders o
     LEFT JOIN order_settlements s ON s.order_id = o.id
     LEFT JOIN order_refunds rf ON rf.order_id = o.id
@@ -382,9 +394,11 @@ def _money_sources_text(sources: tuple[ExportMoneySource, ...]) -> str:
 EXPORT_QUERY = query_version(
     # v4 (round 7 wave 2 integration): `owed_vnd` includes the storage fee (`UNCLAIMED-001`), so it
     # and `remaining_vnd` mean something new on a fee-bearing order. v3 read the quoted total alone.
-    # v5 (round 9, `MONEY-LIFECYCLE-009`): the fee in `owed_vnd` is held where it stood while the
-    # order is on hold (`DEC-047`) and never below the part already paid; a refund's remedy netting
-    # (`DEC-045`) is its own column. v4 (`store-day-orders-export-v4:c2ce1e9e6379d784`) is retired.
+    # v5 (round 9): the fee in `owed_vnd` is held where it stood while the order is on hold
+    # (`DEC-047`) and never below the part already paid (MONEY-LIFECYCLE-009); a refund's remedy
+    # netting (`DEC-045`) and how the refund went back (`refund_method`, `0067`,
+    # GOODS-AND-DRAWER-009) are their own columns. v4
+    # (`store-day-orders-export-v4:c2ce1e9e6379d784`) is retired.
     "store-day-orders-export-v5",
     _EXPORT_SQL,
     BUSINESS_TIMEZONE,
@@ -420,7 +434,8 @@ _EXPORT_WINDOW_SQL = """
                FROM order_storage_holds h
                WHERE h.order_id = o.id AND h.held_at >= o.production_ready_at
            ),
-           rf.netted_remedy_vnd
+           rf.netted_remedy_vnd,
+           rf.refund_method
     FROM orders o
     LEFT JOIN order_settlements s ON s.order_id = o.id
     LEFT JOIN order_refunds rf ON rf.order_id = o.id
@@ -444,8 +459,8 @@ _EXPORT_WINDOW_SQL = """
 #: `EXPORT-PAYMENTS-001`; v1 (`store-window-orders-export-v1:b0ae2bdf3725ab24`) is retired.
 EXPORT_WINDOW_QUERY = query_version(
     # v3 (round 7 wave 2 integration): the storage fee in `owed_vnd`, as the day's v4.
-    # v4 (round 9): the held and already-paid fee and the refund's netting, as the day's v5.
-    # v3 (`store-window-orders-export-v3:43d07dec2e624992`) is retired.
+    # v4 (round 9): the held and already-paid fee, the refund's netting and its method, as the
+    # day's v5. v3 (`store-window-orders-export-v3:43d07dec2e624992`) is retired.
     "store-window-orders-export-v4",
     _EXPORT_WINDOW_SQL,
     BUSINESS_TIMEZONE,
@@ -1265,6 +1280,9 @@ _MONEY_STATEMENT_VI = (
     "refund_netted_remedy_vnd là phần đã trừ khỏi tiền hoàn vì khách đã dùng ở đơn khác một khoản "
     "bồi thường hay giảm trừ phát hành từ chính đơn này (không trừ quá số khách đã trả): "
     "refunded_amount_vnd cộng ô này bằng số khách đã trả. "
+    "refund_method là cách tiền đã hoàn: TIEN_MAT (trả từ két) hoặc CHUYEN_KHOAN (chuyển khoản); "
+    "để trống khi đơn không hoàn tiền, và khi khoản hoàn được ghi trước lúc hệ thống hỏi cách hoàn "
+    "— không đoán. "
 )
 
 #: The withheld half, the same words for one day and for a window.
@@ -1649,8 +1667,8 @@ def _csv_bytes(rows: list[tuple[Any, ...]], *, header: tuple[object, ...]) -> st
     return buffer.getvalue()
 
 
-#: How many values `_EXPORT_SQL` selects before the twelve that follow them: the fifteen cells
-#: the file has always carried, in `EXPORT_COLUMNS` order.
+#: How many values `_EXPORT_SQL` selects before the thirteen that follow them: the fifteen
+#: cells the file has always carried, in `EXPORT_COLUMNS` order.
 _LEADING_CELLS = 15
 
 
@@ -1684,6 +1702,7 @@ def _money_rows(
             resume_to,
             holds,
             netted,
+            method,
         ) = row[_LEADING_CELLS:]
         commercial = CommercialOrderStatus(str(leading[2]))
         quoted = QuotedTotal(_optional_int(minimum), _optional_int(maximum))
@@ -1736,6 +1755,8 @@ def _money_rows(
                 money.paid_vnd,
                 money.remaining_vnd,
                 _optional_int(netted),
+                # GOODS-AND-DRAWER-009: as recorded; empty for no refund or one before `0067`.
+                None if method is None else str(method),
             )
         )
     return shaped

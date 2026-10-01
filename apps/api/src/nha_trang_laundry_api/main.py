@@ -53,6 +53,7 @@ from nha_trang_laundry_db.delivery_legs import (
     DeliveryLegError,
     DeliveryLegKind,
     DeliveryLegOutcome,
+    DeliveryLegRefused,
 )
 from nha_trang_laundry_db.exports import (
     ExportAuthorizationError,
@@ -88,6 +89,7 @@ from nha_trang_laundry_db.manual_sends import (
 from nha_trang_laundry_db.message_drafts import SEND_MESSAGE_POLICY_VERSION
 from nha_trang_laundry_db.orders import (
     OrderAuthorizationError,
+    OrderGoodsMayNotLeaveError,
     OrderNotVisibleError,
     OrderPromiseRefused,
     OrderStateError,
@@ -501,6 +503,10 @@ class CommercialTransitionRequest(StrictRequest):
     #: the money, and the order records it. There is deliberately no separate "approved" boolean --
     #: a second field nobody fills is how the original defect started.
     custody_resolution: CustodyResolution | None = None
+    #: GOODS-AND-DRAWER-009 (review M4): how the money went back, when this cancellation hands
+    #: money back -- `TIEN_MAT` from the drawer or `CHUYEN_KHOAN` by bank transfer. Required then
+    #: (422 `REQUIRE_HUMAN` / `REFUND_METHOD_REQUIRED`), refused otherwise.
+    refund_method: Literal["TIEN_MAT", "CHUYEN_KHOAN"] | None = None
 
 
 class IntakeTransitionRequest(StrictRequest):
@@ -546,6 +552,9 @@ class OrderStepRequest(StrictRequest):
     #: `START_WASH` / `REWASH` only, and optional (`SHOP-CAPTURE-001`, `DEC-038`): the machine the
     #: load went into. Absent is "Bỏ qua" -- the wash cycle is recorded as not captured.
     machine_id: UUID | None = None
+    #: `CANCEL` only (GOODS-AND-DRAWER-009, review M4): how the money went back when the
+    #: cancellation hands money back -- the `CANCEL` entry's `requires` lists `refund_method` then.
+    refund_method: Literal["TIEN_MAT", "CHUYEN_KHOAN"] | None = None
 
     @field_validator("step")
     @classmethod
@@ -587,6 +596,8 @@ class OrderStepRequest(StrictRequest):
             raise ValueError("custom_at must carry its timezone")
         if self.machine_id is not None and not (rewash or self.step is OrderStep.START_WASH):
             raise ValueError("machine_id is taken only by START_WASH and REWASH")
+        if self.refund_method is not None and self.step is not OrderStep.CANCEL:
+            raise ValueError("refund_method is taken only by CANCEL")
         return self
 
 
@@ -2465,7 +2476,16 @@ def transition_order(
             idempotency_key=idempotency_key,
             principal=principal,
             custody_resolution=request.custody_resolution,
+            refund_method=None
+            if request.refund_method is None
+            else PaymentMethod(request.refund_method),
         )
+    except OrderStepRequiresHuman as error:
+        # GOODS-AND-DRAWER-009: a refunding cancellation without its refund method.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"outcome": "REQUIRE_HUMAN", "reason_codes": list(error.reason_codes)},
+        ) from error
     except (OrderStateError, OrderAuthorizationError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
     return _order_response(stored)
@@ -2534,6 +2554,8 @@ def transition_order_production(
             idempotency_key=idempotency_key,
             principal=principal,
         )
+    except OrderGoodsMayNotLeaveError as error:
+        _refuse_goods_leaving(error)
     except (OrderStateError, OrderAuthorizationError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
     return _order_response(stored)
@@ -2584,6 +2606,9 @@ def execute_order_step(
             promise_choice=request.promise_choice,
             custom_promise_at=request.custom_at,
             machine_id=request.machine_id,
+            refund_method=None
+            if request.refund_method is None
+            else PaymentMethod(request.refund_method),
         )
     except MachineUnavailableError as error:
         # SHOP-CAPTURE-001: another store's machine, a retired one, or one a load does not go into.
@@ -2601,6 +2626,8 @@ def execute_order_step(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"reason_code": error.code, "decision": "DEC-037"},
         ) from error
+    except OrderGoodsMayNotLeaveError as error:
+        _refuse_goods_leaving(error)
     except (OrderStateError, OrderAuthorizationError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
     return _order_view_response(result.view, replayed=result.replayed)
@@ -3474,6 +3501,8 @@ def record_delivery_leg(
             principal=principal,
             trip=trip,
         )
+    except DeliveryLegRefused as error:
+        _refuse_goods_leaving(error)
     except (StoreAccessError, DeliveryLegError, IdempotencyConflictError) as error:
         _raise_operations_error(error)
     return DeliveryLegResponse(
@@ -3825,6 +3854,19 @@ class CollectedTodayResponse(BaseModel):
     cash_count: int = Field(ge=0)
     transfer_vnd: int = Field(ge=0)
     transfer_count: int = Field(ge=0)
+    #: `collected-today-v4` (GOODS-AND-DRAWER-009, review M4): `net_vnd` above is every method in
+    #: minus every refund -- it is NOT the drawer. The drawer is `drawer_vnd` / `drawer_direction`:
+    #: cash taken minus cash handed back. Refunds are split by how the money went back (`0067`);
+    #: those written before it recorded no method, are `refunded_unknown_*`, and are excluded from
+    #: the drawer rather than guessed. Every figure summed by the database.
+    refunded_cash_vnd: int = Field(ge=0)
+    refunded_cash_count: int = Field(ge=0)
+    refunded_transfer_vnd: int = Field(ge=0)
+    refunded_transfer_count: int = Field(ge=0)
+    refunded_unknown_vnd: int = Field(ge=0)
+    refunded_unknown_count: int = Field(ge=0)
+    drawer_vnd: int = Field(ge=0)
+    drawer_direction: Literal["IN", "OUT"]
     business_timezone: str
     #: `OPS-BOARD-001`, invariant 18: the identifier of the rule that produced the figure travels
     #: with the figure. This is the only money the console shows, so it is the one where "which
@@ -3864,6 +3906,14 @@ def collected_today(
         cash_count=collected.cash_count,
         transfer_vnd=collected.transfer_vnd,
         transfer_count=collected.transfer_count,
+        refunded_cash_vnd=collected.refunded_cash_vnd,
+        refunded_cash_count=collected.refunded_cash_count,
+        refunded_transfer_vnd=collected.refunded_transfer_vnd,
+        refunded_transfer_count=collected.refunded_transfer_count,
+        refunded_unknown_vnd=collected.refunded_unknown_vnd,
+        refunded_unknown_count=collected.refunded_unknown_count,
+        drawer_vnd=collected.drawer_vnd,
+        drawer_direction=collected.drawer_direction,
         business_timezone=BUSINESS_TIMEZONE,
         query_version=COLLECTED_TODAY_QUERY.label,
     )
@@ -6473,6 +6523,26 @@ def _raise_operations_error(error: Exception) -> NoReturn:
     if isinstance(error, IdempotencyConflictError):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
     raise HTTPException(status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+def _refuse_goods_leaving(error: OrderGoodsMayNotLeaveError | DeliveryLegRefused) -> NoReturn:
+    """GOODS-AND-DRAWER-009 (review M2): the goods may not leave yet, as a named refusal.
+
+    422 `{"outcome": "NOT_SUPPORTED", "reason_code", "decision"}` -- the shape the payment and
+    collection routes already send -- so the console words it ("Thu tiền trước khi giao") and
+    offers the payment instead of a reload. `RELEASE_REQUIRES_PAYMENT` / `DELIVERY_REQUIRES_PAYMENT`
+    (not paid in full, not charged to the account) or `GOODS_NOT_READY_FOR_HANDOVER`. Nothing was
+    written.
+    """
+
+    raise HTTPException(
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={
+            "outcome": "NOT_SUPPORTED",
+            "reason_code": error.reason_code,
+            "decision": error.decision,
+        },
+    ) from error
 
 
 def _raise_remedy_error(error: Exception) -> NoReturn:

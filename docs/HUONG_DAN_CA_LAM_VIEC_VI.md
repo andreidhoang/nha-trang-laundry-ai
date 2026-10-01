@@ -117,8 +117,9 @@ phần còn lại), mỗi lần bằng **Tiền mặt** hoặc **Chuyển khoả
   hiện khi đồ đã sẵn sàng và khách tự lấy.
 - **Đơn tiệm tới lấy đồ** (giao nhận *chỉ lấy*): khách chỉ trả **tại quầy** — lúc tới lấy (bước 11),
   hoặc ghé quầy trả trước (bước 7a rồi 10a). **Người giao không nhận và không đưa tiền.**
-- Huỷ đơn đã đặt cọc: **Khác** → **Huỷ đơn**, chọn cách xử lý; máy ghi hoàn **đúng số khách đã
-  trả** — đưa lại khách số đó.
+- Huỷ đơn đã đặt cọc: **Khác** → **Huỷ đơn**, chọn cách xử lý **và trả lại tiền bằng Tiền mặt
+  hay Chuyển khoản** (đưa từ két thì chọn **Tiền mặt**); máy ghi hoàn **đúng số khách đã trả** —
+  đưa lại khách số đó.
 
 ### Khách công nợ (khách sạn, homestay, spa) — trả theo tháng
 
@@ -246,7 +247,9 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
   phẩy, không số lẻ**.
 - **Đơn giao tận nơi**: thu **đủ** tiền **trước khi đồ rời tiệm** (**Thu tiền**), bấm **Đưa đồ đi
   giao**, rồi khi khách nhận được bấm **Đã giao đồ cho khách** → **Giao thành công**. Đơn chỉ đóng
-  được khi có một chuyến **TRẢ** thành công.
+  được khi có một chuyến **TRẢ** thành công. Chưa trả đủ thì trang đơn ghi **Thu tiền trước khi
+  giao** cạnh nút **Thu tiền**, không có nút đưa đồ đi hay ghi chuyến giao — máy từ chối cả chuyến
+  giao hụt, vì đồ chưa trả tiền không được rời tiệm.
 - **Chi phí chuyến.** Trên phiếu lấy đồ và giao đồ, mở **Chi phí chuyến (không bắt buộc)** rồi ghi
   xe (**Xe máy**, **Ô tô** hoặc **Thuê ngoài**), số km, và tiền xăng, gửi xe hay tiền Grab. Dưới 20 kg
   đi xe máy, từ 20 kg đi ô tô — màn hình nhắc theo cân của đơn, nhưng bạn chọn. Ghi cả chuyến giao
@@ -255,7 +258,10 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 ## Đóng ca
 
 1. Mở **Hôm nay**, đối chiếu dòng **Tiền mặt** dưới **Đã thu tại quầy** với tiền trong ngăn kéo,
-   và dòng **Chuyển khoản** với app ngân hàng của tiệm.
+   và dòng **Chuyển khoản** với app ngân hàng của tiệm. Hôm nào có hoàn tiền, so ngăn kéo với dòng
+   **Tiền mặt trong két hôm nay** (tiền mặt thu trừ tiền mặt hoàn — chuyển khoản không nằm trong
+   két). Dòng **Chưa tính … lần hoàn chưa rõ cách hoàn** là khoản hoàn ghi trước khi máy hỏi cách
+   hoàn: máy không đoán, hỏi chủ tiệm.
 2. Lệch thì **không sửa gì trên máy** — ghi ra sổ và báo chủ tiệm. Lần thu đã ghi không sửa được.
 3. Để máy **bật qua đêm** (chỉ tắt màn hình). Bản sao lưu chạy lúc 2 giờ 30 sáng.
 4. Chủ tiệm (và người duyệt, kế toán, kiểm toán) xem số của ngày, tuần, tháng ở **Báo cáo** — bấm
@@ -457,7 +463,7 @@ hạn thì bấm **Xin duyệt lại**. *Nhập mã thủ công* chỉ dùng cho
 | **Đơn này vừa được người khác đổi** | Người kia bấm trước | Bấm **Đơn vừa đổi — tải lại**, rồi làm theo nút mới |
 | **Máy chủ không ghi nhận khoản này** | Số tiền hoặc tình huống không được hỗ trợ | Đọc lý do ngay bên dưới — nó nói rõ phải làm gì |
 | **Chưa nhận đồ được** | Đơn còn thiếu điều kiện (thường là chưa tích *Tiệm làm kịp đơn này*) | Đọc từng dòng lý do ngay bên dưới, làm đúng việc đó rồi bấm lại |
-| Huỷ một đơn đã nhận đồ | Phải nói đồ và tiền đã xử lý thế nào | **Khác** → **Huỷ đơn**, chọn một cách xử lý, bấm hai lần |
+| Huỷ một đơn đã nhận đồ | Phải nói đồ và tiền đã xử lý thế nào | **Khác** → **Huỷ đơn**, chọn một cách xử lý (đơn đã thu tiền: chọn cả **Trả lại tiền cho khách bằng** tiền mặt hay chuyển khoản), bấm hai lần |
 | Phiếu **Huỷ đơn** ghi *Huỷ không thu tiền thì các khoản giảm trừ, bồi thường của đơn này: …* | Đơn có khoản giảm trừ/bồi thường (DEC-045, DEC-046) | Đọc cho khách từng dòng trước khi bấm: khoản khách **chưa dùng** thì bị huỷ cùng đơn; khoản khách **đã dùng ở đơn khác** thì trừ vào tiền hoàn (ghi *Tiền hoàn cho khách: …*) — hoàn đúng số đó; khoản khách **đã dùng cho đơn này** thì được cấp lại. Sau khi huỷ, ô tiền của đơn và phiếu in ghi lại đúng những dòng đó |
 | **Khoản này đã bị huỷ khi đơn phát hành nó bị huỷ không thu tiền** | Khách đưa mã một khoản giảm trừ đã bị huỷ cùng đơn cũ | Không dùng được. Nói với khách khoản đó đã được tính khi huỷ đơn cũ |
 | **Phiên đăng nhập đã kết thúc** | Hết phiên | Đăng nhập lại. Không mất dữ liệu |

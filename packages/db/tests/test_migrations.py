@@ -81,6 +81,9 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         # Round 9, MONEY-LIFECYCLE-009: a fee part already paid stays owed-for (M1), a hold
         # pauses the fee (DEC-047), a cancellation voids, nets or reissues credits (DEC-045/046).
         ("0066", "money_lifecycle"),
+        # Round 9: 0066 is reserved for MONEY-LIFECYCLE-009 (slice A); GOODS-AND-DRAWER-009 records
+        # how a refund's money went back (review M4).
+        ("0067", "refund_method"),
         # Round 9 slice H (OPS-OBSERVABILITY-009, review P7); 0066-0069 are reserved for A, B, C, G.
         ("0070", "event_aggregate_id_indexes"),
     ]

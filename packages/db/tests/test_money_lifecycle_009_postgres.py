@@ -224,6 +224,9 @@ def _apply(connection: Any, event: str, order_id: UUID, staff: Any, shop: _Shop)
             staff,
             OrderStep.CANCEL,
             custody_resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE,
+            # GOODS-AND-DRAWER-009: money goes back (a deposit or part of the fee was paid), so
+            # the cancellation says how.
+            refund_method=PaymentMethod.TIEN_MAT,
         )
     elif event == "disposed":
         _age_ready(connection, order_id, 36)  # day 61

@@ -975,7 +975,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   NO_STORAGE_FEE_OWED reworded in place (its slot re-keyed, none retired). The two refusal
     #   notes of round 9's first answer (CANCEL_AFTER_MONEY_REMEDY, CANCEL_WOULD_LOSE_SPENT_CREDIT)
     #   are gone with the refusals: DEC-045/DEC-046 void, net and reissue instead.
-    assert sum(counts.values()) == _registry()["total"] == 590
+    # GOODS-AND-DRAWER-009 (round 9, review M2/M4): 590 + 3 = 593. RELEASE_BY_PAYMENT merged into
+    #   PAY_BEFORE_GOODS_LEAVE (every mode now); GOODS_NOT_READY, REFUND_METHOD_REQUIRED and the
+    #   refund-method hint in ui/goodsAndDrawer.js added.
+    assert sum(counts.values()) == _registry()["total"] == 593
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

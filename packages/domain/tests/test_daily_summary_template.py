@@ -59,6 +59,14 @@ QUIET = DayFigures(
     refund_entries=0,
     net_vnd=0,
     net_direction="IN",
+    refunded_cash_vnd=0,
+    refunded_cash_entries=0,
+    refunded_transfer_vnd=0,
+    refunded_transfer_entries=0,
+    refunded_unknown_vnd=0,
+    refunded_unknown_entries=0,
+    drawer_vnd=0,
+    drawer_direction="IN",
 )
 
 BUSY = DayFigures(
@@ -80,6 +88,15 @@ BUSY = DayFigures(
     refund_entries=0,
     net_vnd=1_250_000,
     net_direction="IN",
+    refunded_cash_vnd=0,
+    refunded_cash_entries=0,
+    refunded_transfer_vnd=0,
+    refunded_transfer_entries=0,
+    refunded_unknown_vnd=0,
+    refunded_unknown_entries=0,
+    # The drawer is the cash alone: 800.000 in, nothing handed back.
+    drawer_vnd=800_000,
+    drawer_direction="IN",
 )
 
 BOARD = BoardFigures(
@@ -183,22 +200,65 @@ def test_money_line_splits_cash_and_transfer() -> None:
 
 
 def test_money_line_adds_refunds_only_when_there_are_any_and_says_the_direction_in_words() -> None:
+    # GOODS-AND-DRAWER-009 (review M4): the refund says how it went back, "Thu trừ hoàn" stays the
+    # every-method net, and the drawer -- cash in minus cash back -- is its own sentence.
     refunded_in = dataclasses.replace(
-        BUSY, refunded_vnd=110_000, refund_entries=1, net_vnd=1_140_000, net_direction="IN"
+        BUSY,
+        refunded_vnd=110_000,
+        refund_entries=1,
+        net_vnd=1_140_000,
+        net_direction="IN",
+        refunded_cash_vnd=110_000,
+        refunded_cash_entries=1,
+        drawer_vnd=690_000,
     )
     assert _line(_inputs(figures=refunded_in), LineKey.MONEY) == (
         "Đã thu 1.250.000đ (5 khoản). Tiền mặt 800.000đ. Chuyển khoản 450.000đ. "
-        "Hoàn lại khách 110.000đ (1 khoản). Thu trừ hoàn còn 1.140.000đ."
+        "Hoàn lại khách 110.000đ (1 khoản). Hoàn tiền mặt 110.000đ. "
+        "Thu trừ hoàn còn 1.140.000đ. Tiền mặt trong két tăng 690.000đ."
     )
+    # A refund written before `0067` never said how it went back: the drawer excludes it, and the
+    # line says so rather than counting it as cash.
     refunded_out = dataclasses.replace(
-        QUIET, refunded_vnd=110_000, refund_entries=1, net_vnd=110_000, net_direction="OUT"
+        QUIET,
+        refunded_vnd=110_000,
+        refund_entries=1,
+        net_vnd=110_000,
+        net_direction="OUT",
+        refunded_unknown_vnd=110_000,
+        refunded_unknown_entries=1,
     )
     text = _line(_inputs(figures=refunded_out), LineKey.MONEY)
     assert text == (
         "Chưa thu khoản tiền nào. Hoàn lại khách 110.000đ (1 khoản). "
-        "Tiền hoàn nhiều hơn tiền thu 110.000đ."
+        "Tiền hoàn nhiều hơn tiền thu 110.000đ. Tiền mặt trong két không đổi. "
+        "Số tiền trong két chưa tính 1 khoản hoàn chưa rõ cách hoàn (110.000đ)."
     )
     assert "-" not in text and chr(0x2212) not in text  # no minus sign of either kind
+
+
+def test_money_line_says_the_drawer_went_down_when_a_transfer_is_paid_back_in_cash() -> None:
+    """The review's divergence: the every-method net and the drawer tell different stories."""
+
+    transfer_back_in_cash = dataclasses.replace(
+        QUIET,
+        collected_vnd=110_000,
+        collected_entries=1,
+        transfer_vnd=110_000,
+        transfer_entries=1,
+        refunded_vnd=110_000,
+        refund_entries=1,
+        net_vnd=0,
+        net_direction="IN",
+        refunded_cash_vnd=110_000,
+        refunded_cash_entries=1,
+        drawer_vnd=110_000,
+        drawer_direction="OUT",
+    )
+    text = _line(_inputs(figures=transfer_back_in_cash), LineKey.MONEY)
+    assert "Thu trừ hoàn còn 0đ." in text
+    assert text.endswith("Tiền mặt trong két giảm 110.000đ.")
+    assert "-" not in text and chr(0x2212) not in text
 
 
 def test_finished_line_states_both_halves_of_the_fraction_and_who_had_no_promise() -> None:
@@ -410,11 +470,16 @@ def test_no_input_can_carry_free_text_into_the_summary() -> None:
 
     The template's inputs are the only way anything reaches the text, so an input with no
     free-text field is a template that cannot print a name, a phone number, an address or a note.
-    The only strings are `net_direction` (IN/OUT), a Sổ thu chi category code and an omission's
-    `source` (a slice id), each a token from a closed vocabulary.
+    The only strings are `net_direction` and `drawer_direction` (IN/OUT, printed only as the words
+    "tăng"/"giảm"), a Sổ thu chi category code and an omission's `source` (a slice id), each a
+    token from a closed vocabulary.
     """
 
-    token_fields = {("DayFigures", "net_direction"), ("Unavailable", "source")}
+    token_fields = {
+        ("DayFigures", "net_direction"),
+        ("DayFigures", "drawer_direction"),
+        ("Unavailable", "source"),
+    }
     for cls in (
         DayFigures,
         BoardFigures,

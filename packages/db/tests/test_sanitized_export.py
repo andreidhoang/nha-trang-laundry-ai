@@ -64,6 +64,7 @@ from nha_trang_laundry_domain.catalog import (
     IntakeStatus,
 )
 from nha_trang_laundry_domain.orders import IntakeReadiness
+from nha_trang_laundry_domain.payments import PaymentMethod
 from quote_test_data import accepted_quote
 
 #: The words a customer used, which must never reach a file. Distinctive on purpose: a substring
@@ -382,11 +383,12 @@ def test_the_export_query_version_is_pinned_to_the_rule_it_names() -> None:
     #
     # v5 (round 9, MONEY-LIFECYCLE-009): the fee in `owed_vnd` is held where it stood while the
     # order is on hold (`DEC-047`) and never below the part already paid, and a refund's remedy
-    # netting (`DEC-045`) is its own column -- the signed sentence about `owed_vnd` said the fee
+    # netting (`DEC-045`) and how the refund went back (`refund_method`, GOODS-AND-DRAWER-009) are
+    # their own columns -- the signed sentence about `owed_vnd` said the fee
     # applied only while the laundry waited, which stopped being true. v4 is retired: its label is
     # pinned here so a later edit cannot quietly bring it back.
     assert EXPORT_QUERY.identifier == "store-day-orders-export-v5"
-    assert EXPORT_QUERY.label == "store-day-orders-export-v5:85a2da5b6016d97f"
+    assert EXPORT_QUERY.label == "store-day-orders-export-v5:9a25c6013bb9bdf9"
     assert EXPORT_QUERY.label != "store-day-orders-export-v4:c2ce1e9e6379d784"
 
 
@@ -1268,6 +1270,8 @@ def test_a_paid_order_cancelled_with_a_refund_shows_the_refund_in_the_export(
     move(
         commercial_target=CommercialOrderStatus.CANCELLED,
         custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        # GOODS-AND-DRAWER-009 (review M4): the money went back by transfer.
+        refund_method=PaymentMethod.CHUYEN_KHOAN,
     )
 
     created = _request_export(connection, shop, _local_date(shop.now))
@@ -1292,3 +1296,5 @@ def test_a_paid_order_cancelled_with_a_refund_shows_the_refund_in_the_export(
     assert row["paid_amount_vnd"] == "110000"
     assert row["refunded_amount_vnd"] == "110000"
     assert datetime.fromisoformat(row["refunded_at"]) == shop.now
+    # GOODS-AND-DRAWER-009: and how it went back, on the same row.
+    assert row["refund_method"] == "CHUYEN_KHOAN"

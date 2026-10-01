@@ -630,6 +630,7 @@ class OperationsService:
         idempotency_key: str,
         principal: StaffPrincipal,
         custody_resolution: CustodyResolution | None = None,
+        refund_method: PaymentMethod | None = None,
     ) -> StoredOrder:
         with self._connection_factory(self._database_url) as connection:
             return self._orders.transition(
@@ -642,6 +643,7 @@ class OperationsService:
                     uuid4(),
                     commercial_target=target,
                     custody_resolution=custody_resolution,
+                    refund_method=refund_method,
                 ),
             )
 
@@ -759,6 +761,7 @@ class OperationsService:
         promise_choice: PromiseChoice | None = None,
         custom_promise_at: datetime | None = None,
         machine_id: UUID | None = None,
+        refund_method: PaymentMethod | None = None,
     ) -> OrderStepResult:
         """`ORDER-STEPS-001`: one named business step, as its domain transitions, all or nothing.
 
@@ -784,6 +787,7 @@ class OperationsService:
                     promise_choice=promise_choice,
                     custom_promise_at=custom_promise_at,
                     machine_id=machine_id,
+                    refund_method=refund_method,
                 ),
             )
 

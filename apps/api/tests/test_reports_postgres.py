@@ -121,8 +121,16 @@ def test_the_summary_serves_the_seeded_figures_in_the_fr_rpt_005_shape(
         "MONEY_COLLECTED": (220_000, None),
         "MONEY_REFUNDED": (110_000, None),
         "MONEY_NET": (110_000, None),
+        # GOODS-AND-DRAWER-009 (review M4): cash in minus cash handed back.
+        "MONEY_DRAWER": (110_000, None),
         "REMEDIES_EXECUTED": (2, None),
     }
+    assert kpis["MONEY_DRAWER"]["direction"] == "IN"
+    assert kpis["MONEY_DRAWER"]["by_kind"] == [
+        {"kind": "CASH_IN", "count": 2, "amount_vnd": 220_000},
+        {"kind": "CASH_REFUNDED", "count": 1, "amount_vnd": 110_000},
+        {"kind": "EXCLUDED_UNKNOWN_REFUNDS", "count": 0, "amount_vnd": 0},
+    ]
     assert kpis["ON_TIME_INTERNAL"]["data_quality"] == "RULE_ASSUMED"
     # No order in the seeded shop has a promise, so the stated rule judged every one of them.
     on_time = kpis["ON_TIME_INTERNAL"]

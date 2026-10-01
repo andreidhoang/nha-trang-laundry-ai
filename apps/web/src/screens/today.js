@@ -206,17 +206,43 @@ const TILES = [
 ];
 
 /**
- * The drawer's movement for the day, in words. `net_vnd` and `net_direction` arrive already
+ * The drawer's movement for the day, in words. `drawer_vnd` and `drawer_direction` arrive already
  * computed by the server; this only picks the word, so no minus sign and no arithmetic reach the
  * screen.
+ *
+ * GOODS-AND-DRAWER-009 (review M4): the drawer is CASH -- cash taken minus cash handed back
+ * (`collected-today-v4`). It used to be fed `net_vnd`, every method in minus every refund, so a
+ * transfer counted as money in the drawer.
  *
  * @param {number} amount non-negative VND
  * @param {"IN" | "OUT"} direction
  * @returns {string}
  */
 function drawerLine(amount, direction) {
-  if (amount === 0) return "Tiền trong két hôm nay: không đổi.";
-  return `Tiền trong két hôm nay: ${direction === "OUT" ? "giảm" : "tăng"} ${money(amount)}.`;
+  if (amount === 0) return "Tiền mặt trong két hôm nay: không đổi.";
+  return `Tiền mặt trong két hôm nay: ${direction === "OUT" ? "giảm" : "tăng"} ${money(amount)}.`;
+}
+
+/**
+ * "Đã hoàn lại …", with how it went back, as the server split it (`0067`). A refund recorded before
+ * the method was asked for is named apart and never counted as cash.
+ *
+ * @param {any} result a `CollectedTodayResponse`
+ * @returns {string}
+ */
+function refundLine(result) {
+  const parts = [
+    result.refunded_cash_count > 0
+      ? `${PAYMENT_METHOD_VI.TIEN_MAT.toLowerCase()} ${money(result.refunded_cash_vnd)}`
+      : null,
+    result.refunded_transfer_count > 0
+      ? `${PAYMENT_METHOD_VI.CHUYEN_KHOAN.toLowerCase()} ${money(result.refunded_transfer_vnd)}`
+      : null,
+    result.refunded_unknown_count > 0
+      ? `chưa rõ cách hoàn ${money(result.refunded_unknown_vnd)}`
+      : null,
+  ].filter(Boolean);
+  return `Đã hoàn lại ${money(result.refunded_vnd)}${parts.length ? ` (${parts.join(" · ")})` : ""}.`;
 }
 
 /**
@@ -251,8 +277,11 @@ function takingsInfo() {
       // DEC-024: refunds are shown beside the takings rather than taken out of them, on the day
       // the money went back. Said here so a drawer that "giảm" reads as the truth, not a fault.
       "Hoàn tiền ghi riêng: khi đơn đã trả tiền bị huỷ (trả đồ chưa giặt, hoặc lỗi của tiệm " +
-        "nên không thu tiền), số tiền hoàn lại hiện bên dưới, tính vào ngày hoàn, kèm tiền " +
-        "trong két hôm nay tăng hay giảm bao nhiêu. Máy chủ tính cả hai con số.",
+        "nên không thu tiền), số tiền hoàn lại hiện bên dưới, tính vào ngày hoàn, tách theo " +
+        "cách hoàn, kèm tiền mặt trong két hôm nay tăng hay giảm bao nhiêu: tiền mặt thu trừ " +
+        "tiền mặt hoàn. Chuyển khoản không nằm trong két. Khoản hoàn ghi trước khi hệ thống hỏi " +
+        "cách hoàn thì không rõ là tiền mặt hay chuyển khoản, nên không tính vào két và được nói " +
+        "riêng. Máy chủ tính mọi con số.",
     ),
     h(
       "p",
@@ -352,12 +381,22 @@ export function render_() {
         // went back, the refund and the drawer's movement are shown in words, both exactly as the
         // server computed them -- every amount non-negative, the direction a word, and no
         // arithmetic on this screen.
+        // `collected-today-v4` (GOODS-AND-DRAWER-009, review M4): the refunds by how they went
+        // back, and the drawer -- cash in minus cash handed back -- never the all-method net.
         result.refunded_vnd > 0
           ? h(
               "div",
-              { class: "today__refunds" },
-              h("p", null, `Đã hoàn lại ${money(result.refunded_vnd)}.`),
-              h("p", null, drawerLine(result.net_vnd, result.net_direction)),
+              { class: "today__refunds", dataDrawer: String(result.drawer_direction) },
+              h("p", null, refundLine(result)),
+              h("p", { dataField: "drawer" }, drawerLine(result.drawer_vnd, result.drawer_direction)),
+              result.refunded_unknown_count > 0
+                ? h(
+                    "p",
+                    { class: "hint", dataField: "drawer-excludes" },
+                    `Chưa tính ${result.refunded_unknown_count} lần hoàn chưa rõ cách hoàn ` +
+                      `(${money(result.refunded_unknown_vnd)}) — ghi trước khi hệ thống hỏi cách hoàn.`,
+                  )
+                : null,
             )
           : null,
         // The rule that produced the figure travels with the figure (invariant 18), in tier 3: a

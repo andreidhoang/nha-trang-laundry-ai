@@ -207,9 +207,19 @@ const REFUSAL = {
   WASH_NEEDS_ACTIVE_ORDER:
     "Chỉ bắt đầu giặt khi đơn đang chạy: đã nhận đồ và không đang xét huỷ. Tải lại đơn để xem " +
     "bước tiếp theo.",
-  RELEASE_BY_PAYMENT:
-    "Khách tự tới lấy mà chưa trả tiền thì không giao đồ riêng được: bấm “Thu tiền” — thu xong " +
-    "là giao đồ và đóng đơn.",
+  // GOODS-AND-DRAWER-009 (review M2): every door the goods leave by -- "Giao đồ" / "Cho đồ ra"
+  // (`RELEASE_REQUIRES_PAYMENT`) and the courier's trip (`DELIVERY_REQUIRES_PAYMENT`) -- refuses an
+  // order not paid in full, for every fulfilment mode. It replaced the self-collect-only sentence
+  // ("Khách tự tới lấy mà chưa trả tiền…"), whose server text had already drifted from this map.
+  PAY_BEFORE_GOODS_LEAVE:
+    "Thu tiền trước khi giao: đồ chỉ rời tiệm khi khách đã trả đủ (hoặc đã ghi công nợ). " +
+    "Người giao không thu tiền.",
+  GOODS_NOT_READY:
+    "Đồ chưa giặt xong nên chưa giao cho khách được. Làm xong các bước giặt trước.",
+  // GOODS-AND-DRAWER-009 (review M4): a cancellation that hands money back says how, so the
+  // drawer can count cash apart from transfers.
+  REFUND_METHOD_REQUIRED:
+    "Chưa huỷ được: chọn tiền trả lại khách bằng tiền mặt hay chuyển khoản. Không có gì được ghi.",
   INTAKE_BLOCKERS:
     "Chưa nhận đồ được: còn thiếu điều kiện bên dưới. Không có gì được ghi.",
   ORDER_MISSING: "Không tìm thấy đơn này trong cửa hàng đang chọn.",
@@ -283,6 +293,12 @@ const CONSENT_REFUSAL_KEY = {
   NOTHING_TO_RELEASE: "NOTHING_TO_RELEASE",
 };
 
+/**
+ * GOODS-AND-DRAWER-009 (review M2): the named refusals that mean "take the money first" -- the order
+ * page offers "Thu tiền" beside them instead of a reload.
+ */
+export const PAY_FIRST_CODES = new Set(["RELEASE_REQUIRES_PAYMENT", "DELIVERY_REQUIRES_PAYMENT"]);
+
 /** The six `RECEIVE` readiness codes (`order_steps.READINESS_BLOCKER_CODES`), matched exactly. */
 const INTAKE_READINESS_CODES = new Set([
   "CUSTODY_NOT_RECORDED",
@@ -341,10 +357,8 @@ const REFUSAL_TEXT = [
   // packages/domain order_steps.py -- composite steps
   ["INVALID_STATE_TRANSITION: this step has nothing to do for the order now", "STEP_NOTHING_TO_DO"],
   ["INVALID_STATE_TRANSITION: washing starts only on an active order", "WASH_NEEDS_ACTIVE_ORDER"],
-  [
-    "INVALID_STATE_TRANSITION: an unpaid order the customer collects is released by taking payment",
-    "RELEASE_BY_PAYMENT",
-  ],
+  // GOODS-AND-DRAWER-009: the routes send this as a 422 code now; the prefix is the domain text.
+  ["INVALID_STATE_TRANSITION: RELEASE_REQUIRES_PAYMENT", "PAY_BEFORE_GOODS_LEAVE"],
   ["INVALID_STATE_TRANSITION", "INVALID_STATE_TRANSITION"],
   ["HUMAN_APPROVAL_REQUIRED: intake blockers remain", "INTAKE_BLOCKERS"],
   ["HUMAN_APPROVAL_REQUIRED: work has begun", "CANCEL_NEEDS_REVIEW"],
@@ -742,7 +756,11 @@ export function classify(status, detail, context = {}) {
         const intake = codes.some((code) => INTAKE_READINESS_CODES.has(code));
         return of("REQUIRE_HUMAN", {
           reasonCodes: codes,
-          ...(intake ? { message: REFUSAL.INTAKE_BLOCKERS } : {}),
+          ...(intake
+            ? { message: REFUSAL.INTAKE_BLOCKERS }
+            : codes.includes("REFUND_METHOD_REQUIRED")
+              ? { message: REFUSAL.REFUND_METHOD_REQUIRED }
+              : {}),
         });
       }
       // `NOT_SUPPORTED` is the settlement route's word for "the shop has not decided this case".
@@ -776,7 +794,11 @@ export function classify(status, detail, context = {}) {
             ? { message: REFUSAL.AMOUNT_IS_NOT_THE_EXACT_TOTAL }
             : codes.includes("OVERPAYMENT_REFUSED")
               ? { message: REFUSAL.OVERPAYMENT_REFUSED }
-              : {}),
+              : codes.some((code) => PAY_FIRST_CODES.has(code))
+                ? { message: REFUSAL.PAY_BEFORE_GOODS_LEAVE }
+                : codes.includes("GOODS_NOT_READY_FOR_HANDOVER")
+                  ? { message: REFUSAL.GOODS_NOT_READY }
+                  : {}),
           reasonCodes: codes,
           decision: typeof detail.decision === "string" ? detail.decision : "",
         });

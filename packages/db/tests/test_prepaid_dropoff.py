@@ -29,6 +29,7 @@ from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.orders import (
     CreateOrderCommand,
+    OrderGoodsMayNotLeaveError,
     OrderRepository,
     OrderStateError,
     OrderTransitionCommand,
@@ -432,7 +433,9 @@ def test_pickup_before_payment_is_refused(connection: psycopg.Connection[Any]) -
 
     store_id = _shop(connection)
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
-    order = _Order(connection, store_id, staff).to_active().wash_to(ProductionStatus.RELEASED)
+    # GOODS-AND-DRAWER-009 (review M2): washed to READY_AT_STORE, not RELEASED -- an unpaid order's
+    # laundry can no longer be released at all, so this fixture's old state was the defect itself.
+    order = _Order(connection, store_id, staff).to_active().wash_to(ProductionStatus.READY_AT_STORE)
     _assert_refused_and_nothing_written(order, "COLLECTION_REQUIRES_PAYMENT")
 
 
@@ -479,8 +482,10 @@ def test_an_order_paid_and_collected_at_pickup_has_no_second_pickup(
 ) -> None:
     store_id = _shop(connection)
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
-    order = _Order(connection, store_id, staff).to_active().wash_to(ProductionStatus.RELEASED)
+    # Paid (and collected) on the shelf, then released: goods leave only when paid.
+    order = _Order(connection, store_id, staff).to_active().wash_to(ProductionStatus.READY_AT_STORE)
     order.pay(collected=True)
+    order.move(production_target=ProductionStatus.RELEASED)
     _assert_refused_and_nothing_written(order, "ALREADY_COLLECTED")
 
 
@@ -588,15 +593,23 @@ def test_pay_at_pickup_is_unchanged(
 ) -> None:
     store_id = _shop(connection)
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
-    order = _Order(connection, store_id, staff).to_active().wash_to(stage)
+    order = _Order(connection, store_id, staff).to_active().wash_to(ProductionStatus.READY_AT_STORE)
+    if stage is ProductionStatus.RELEASED:
+        # GOODS-AND-DRAWER-009 (review M2): this case released the laundry first and took the money
+        # after -- the unpaid release the review found. It is refused now, by name, writing
+        # nothing; the customer pays on the shelf and the release follows.
+        before = order.row()
+        with pytest.raises(OrderGoodsMayNotLeaveError) as refused:
+            order.move(production_target=ProductionStatus.RELEASED)
+        assert refused.value.reason_code == "RELEASE_REQUIRES_PAYMENT"
+        assert order.row() == before
 
     paid = order.pay(collected=True)
 
     assert paid.settlement_shape == "EXACT_PAYMENT_SELF_COLLECTION"
     assert paid.self_collection_recorded is True
     assert order.count("order_collections") == 0
-    if stage is ProductionStatus.READY_AT_STORE:
-        order.move(production_target=ProductionStatus.RELEASED)
+    order.move(production_target=ProductionStatus.RELEASED)
     completed = order.move(commercial_target=CommercialOrderStatus.COMPLETED)
     assert completed.commercial is CommercialOrderStatus.COMPLETED
 
@@ -671,12 +684,14 @@ def test_a_pickup_only_customer_who_paid_at_pickup_has_no_second_pickup(
     store_id = _shop(connection)
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
     order = _Order(connection, store_id, staff, FulfillmentMode.PICKUP_ONLY).to_active()
-    order.wash_to(ProductionStatus.RELEASED)
+    order.wash_to(ProductionStatus.READY_AT_STORE)
 
     paid = order.pay(collected=True)
 
     assert paid.settlement_shape == "EXACT_PAYMENT_SELF_COLLECTION"
     assert paid.self_collection_recorded is True
+    # Released once paid (GOODS-AND-DRAWER-009); the washing used to be released before the money.
+    order.move(production_target=ProductionStatus.RELEASED)
     _assert_refused_and_nothing_written(order, "ALREADY_COLLECTED")
 
 
@@ -707,7 +722,8 @@ def test_the_schema_refuses_a_collection_for_anything_but_a_prepaid_walk_in(
 ) -> None:
     store_id = _shop(connection)
     staff = _staff(connection, store_id, StaffRole.OPERATOR)
-    order = _Order(connection, store_id, staff).to_active().wash_to(ProductionStatus.RELEASED)
+    # GOODS-AND-DRAWER-009: paid on the shelf; an unpaid order is no longer released.
+    order = _Order(connection, store_id, staff).to_active().wash_to(ProductionStatus.READY_AT_STORE)
     paid = order.pay(collected=True)
 
     with pytest.raises(psycopg.Error), connection.transaction():

@@ -507,6 +507,25 @@ STAFF_DIRECTORY = {
 }
 
 
+def goods_shot(page: object, name: str) -> None:
+    """GOODS-AND-DRAWER-009: with CONSOLE_SHOTS_DIR set, the screen at desk and phone size.
+
+    Evidence for a person to look at, not a check: nothing is asserted here, and without the
+    variable nothing happens.
+    """
+
+    shots = os.environ.get("CONSOLE_SHOTS_DIR")
+    if not shots:
+        return
+    os.makedirs(shots, exist_ok=True)
+    for label, width, height in (("desk", 1366, 900), ("phone", 390, 844)):
+        page.set_viewport_size({"width": width, "height": height})
+        page.wait_for_timeout(400)
+        page.screenshot(path=os.path.join(shots, f"r9b-{name}-{label}.png"), full_page=True)
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.wait_for_timeout(200)
+
+
 def check(name: str, ok: bool, detail: str = "") -> None:
     (PASS if ok else FAIL).append(name)
     print(f"{'  ok  ' if ok else ' FAIL '} {name}" + (f"  — {detail}" if detail else ""))
@@ -1342,10 +1361,45 @@ SETTLEMENTS_TODAY = {
     "cash_count": 6,
     "transfer_vnd": 400_000,
     "transfer_count": 3,
+    # `collected-today-v4` (GOODS-AND-DRAWER-009, review M4): refunds by how they went back, and
+    # the drawer -- cash in minus cash handed back. No refund here, so the drawer is the cash.
+    "refunded_cash_vnd": 0,
+    "refunded_cash_count": 0,
+    "refunded_transfer_vnd": 0,
+    "refunded_transfer_count": 0,
+    "refunded_unknown_vnd": 0,
+    "refunded_unknown_count": 0,
+    "drawer_vnd": 885_000,
+    "drawer_direction": "IN",
     "business_timezone": "Asia/Ho_Chi_Minh",
     # OPS-BOARD-001, invariant 18: the rule that produced the figure travels with the figure, and
     # the takings card renders it beneath the amount.
-    "query_version": "collected-today-v3:3e7eb2f9fcaade13",
+    "query_version": "collected-today-v4:b53071ddc5a6df73",
+}
+
+#: GOODS-AND-DRAWER-009 (review M4): the review's own day. 500.000 cash + 2.000.000 transfer in;
+#: 100.000 handed back in cash and 40.000 refunded before the method was recorded. Every method in
+#: minus every refund is +2.360.000 -- what the card used to call "Tiền trong két"; the drawer is
+#: +400.000 (the unknown refund excluded, and said so).
+SETTLEMENTS_TODAY_REFUNDS = {
+    **SETTLEMENTS_TODAY,
+    "collected_vnd": 2_500_000,
+    "settlement_count": 2,
+    "refunded_vnd": 140_000,
+    "refund_count": 2,
+    "net_vnd": 2_360_000,
+    "net_direction": "IN",
+    "payment_count": 2,
+    "cash_vnd": 500_000,
+    "cash_count": 1,
+    "transfer_vnd": 2_000_000,
+    "transfer_count": 1,
+    "refunded_cash_vnd": 100_000,
+    "refunded_cash_count": 1,
+    "refunded_unknown_vnd": 40_000,
+    "refunded_unknown_count": 1,
+    "drawer_vnd": 400_000,
+    "drawer_direction": "IN",
 }
 
 #: What `GET /internal/v1/stores/{id}/day-summary` returns. Two statuses rather than one, because
@@ -1406,7 +1460,7 @@ DAILY_SUMMARY_LINES = [
 DAILY_SUMMARY = {
     "store_id": STORE,
     "date": "2026-09-25",
-    "template_version": "daily-summary-v3:0123456789abcdef",
+    "template_version": "daily-summary-v4:0123456789abcdef",
     "evaluated_at": "2026-09-25T12:30:00+00:00",
     "so_far": True,
     "lines": [
@@ -1422,7 +1476,7 @@ DAILY_SUMMARY = {
         },
     ],
     "text": "\n".join(text for _, text, _ in DAILY_SUMMARY_LINES),
-    "sources": [{"key": "report", "query_version": "report-v4:fd921dce5b2ee508"}],
+    "sources": [{"key": "report", "query_version": "report-v5:06bed9941d4e5cf3"}],
 }
 
 #: The SLA board, in the shape and the order the server really answers in: acceptance order,
@@ -1441,7 +1495,7 @@ SLA_BOARD_POLICY_NOTICE = (
 #: check), and a window whose refunds exceeded its takings, so the drawer went OUT. The screen must
 #: print every one as the server sent it and compute none of them.
 #: `report-v4` since LATE-CREDIT-002 (the late-delivery block; `report-v3` was ac05595a37f3c36d).
-REPORT_VERSION = "report-v4:fd921dce5b2ee508"
+REPORT_VERSION = "report-v5:06bed9941d4e5cf3"
 
 #: SHOP-CAPTURE-001 (DEC-038). The machines a load goes into, in the server's order (the last one
 #: used first): the console must offer exactly these, in this order, and never re-sort them.
@@ -1621,8 +1675,32 @@ def report_kpis(start: str, end: str) -> list[dict[str, object]]:
                 {"kind": "CHUYEN_KHOAN", "count": 1, "amount_vnd": 30_000},
             ],
         ),
-        kpi("MONEY_REFUNDED", 240_000, unit="VND", entries=2),
+        kpi(
+            "MONEY_REFUNDED",
+            240_000,
+            unit="VND",
+            entries=2,
+            # GOODS-AND-DRAWER-009: how each refund went back; UNKNOWN is one before `0067`.
+            by_kind=[
+                {"kind": "TIEN_MAT", "count": 1, "amount_vnd": 140_000},
+                {"kind": "CHUYEN_KHOAN", "count": 0, "amount_vnd": 0},
+                {"kind": "UNKNOWN", "count": 1, "amount_vnd": 100_000},
+            ],
+        ),
         kpi("MONEY_NET", 150_000, unit="VND", direction="OUT"),
+        # GOODS-AND-DRAWER-009 (review M4): the drawer -- 60.000 cash in, 140.000 cash handed back,
+        # so down 80.000; the unknown-method refund is excluded and listed.
+        kpi(
+            "MONEY_DRAWER",
+            80_000,
+            unit="VND",
+            direction="OUT",
+            by_kind=[
+                {"kind": "CASH_IN", "count": 1, "amount_vnd": 60_000},
+                {"kind": "CASH_REFUNDED", "count": 1, "amount_vnd": 140_000},
+                {"kind": "EXCLUDED_UNKNOWN_REFUNDS", "count": 1, "amount_vnd": 100_000},
+            ],
+        ),
         kpi(
             "REMEDIES_EXECUTED",
             2,
@@ -2186,7 +2264,7 @@ EXPORT_REQUEST_CONTENT = {
         "orders.customer_id",
         "order_payments.bank_ref_last",
     ],
-    "query_version": "store-day-orders-export-v5:85a2da5b6016d97f",
+    "query_version": "store-day-orders-export-v5:9a25c6013bb9bdf9",
     "statement_vi": (
         "Xuất bản sao hồ sơ của chính cửa hàng cho ngày 2026-09-16 (theo giờ Việt Nam): mã đơn, "
         "trạng thái, mốc thời gian và tiền của những đơn MỞ trong ngày đó. Tiền đã trả lấy từ sổ "
@@ -2207,7 +2285,7 @@ EXPORT_REQUEST_CONTENT = {
         "Tiền trong tệp: đã trả (tiền mặt, chuyển khoản) theo sổ thu từng lần, còn lại, đã hoàn — "
         "tính tới lúc xuất."
     ),
-    "bound_query_version": "store-day-orders-export-v5:85a2da5b6016d97f",
+    "bound_query_version": "store-day-orders-export-v5:9a25c6013bb9bdf9",
     "bound_shape_retired": False,
 }
 
@@ -3482,7 +3560,7 @@ with sync_playwright() as playwright:
             # nothing to do with it, and the harness would be the defect.
             body = INCIDENTS if state.get("incidents_listed") else []
         elif "/settlements/today" in url:
-            body = SETTLEMENTS_TODAY
+            body = state.get("settlements_today") or SETTLEMENTS_TODAY
         elif "/reports/daily-summary" in url:
             # DAILY-SUMMARY-001: every read is recorded, so section 25 can prove when the card asks
             # (after 18:00, or on the button) and that a refused role never asks.
@@ -4235,7 +4313,7 @@ with sync_playwright() as playwright:
     )
     check(
         "the rule behind the takings travels with the figure, in the technical drawer",
-        "collected-today-v3:3e7eb2f9fcaade13" in body,
+        "collected-today-v4:b53071ddc5a6df73" in body,
     )
     methods = page.locator("[data-methods]").first
     methods_text = methods.inner_text() if methods.count() else ""
@@ -4247,6 +4325,41 @@ with sync_playwright() as playwright:
         and "400.000" in methods_text,
         methods_text[:120],
     )
+
+    # GOODS-AND-DRAWER-009 (review M4): the review's day. The drawer line is the server's CASH
+    # figure (drawer_vnd), never the every-method net it used to print as "Tiền trong két".
+    state["settlements_today"] = SETTLEMENTS_TODAY_REFUNDS
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    refunds = page.locator(".today__refunds")
+    refunds_text = refunds.first.inner_text() if refunds.count() else ""
+    drawer_text = (
+        page.locator(".today__refunds [data-field=drawer]").first.inner_text()
+        if page.locator(".today__refunds [data-field=drawer]").count()
+        else ""
+    )
+    check(
+        "Tiền mặt trong két is cash in minus cash handed back (400.000), not the all-method net",
+        "Tiền mặt trong két hôm nay: tăng 400.000" in drawer_text
+        and "2.360.000" not in refunds_text
+        and "2.400.000" not in refunds_text,
+        refunds_text[:200],
+    )
+    check(
+        "the refund says how it went back; the unknown-method one is named, never counted as cash",
+        "Đã hoàn lại 140.000" in refunds_text
+        and "tiền mặt 100.000" in refunds_text
+        and "chưa rõ cách hoàn 40.000" in refunds_text,
+        refunds_text[:200],
+    )
+    check(
+        "the drawer line says it excludes the refund of unknown method, with its count and total",
+        "Chưa tính 1 lần hoàn chưa rõ cách hoàn (40.000" in refunds_text,
+        refunds_text[:200],
+    )
+    goods_shot(page, "today-drawer")
+    state["settlements_today"] = None
 
     print()
     print("=" * 74)
@@ -6726,6 +6839,242 @@ with sync_playwright() as playwright:
 
     print()
     print("=" * 74)
+    print("15c. THU TIỀN TRƯỚC KHI GIAO, TRẢ LẠI TIỀN BẰNG — GOODS-AND-DRAWER-009 (review M2, M4)")
+    print("=" * 74)
+
+    # M2: goods leave only when paid, for every mode. The server stops offering RELEASE and the
+    # courier's trip on an order that owes money; the delivery page says why beside the payment
+    # action, and a refusal that arrives anyway offers "Thu tiền", never a reload.
+    unpaid_delivery = order_view(
+        "PICKUP_AND_RETURN",
+        balance="UNPAID",
+        collected=False,
+        production="READY_AT_STORE",
+        steps=[
+            step("HOLD"),
+            step(
+                "CANCEL",
+                requires=["custody_resolution"],
+                custody_resolutions=["SHOP_FAULT_NO_CHARGE"],
+            ),
+            step("TAKE_PAYMENT", True, requires=["amount_vnd", "method"]),
+        ],
+    )
+    open_order(unpaid_delivery)
+    money_text = (
+        page.locator(".order__money").first.inner_text()
+        if page.locator(".order__money").count()
+        else ""
+    )
+    check(
+        "an unpaid delivery says 'Thu tiền trước khi giao' beside the payment, the payment is the "
+        "big button, and no release or trip is offered",
+        "Thu tiền trước khi giao" in money_text
+        and page.locator(".action-bar--v2 button[data-step=TAKE_PAYMENT]").count() == 1
+        and page.locator("button[data-step=RELEASE]").count() == 0
+        and page.locator("button[data-step=DELIVERY_RETURN]").count() == 0,
+        money_text[:160],
+    )
+    goods_shot(page, "order-pay-before-delivery")
+    open_order(
+        order_view(
+            "SELF_DROP_SELF_COLLECT",
+            balance="UNPAID",
+            collected=False,
+            production="READY_AT_STORE",
+            steps=[step("TAKE_PAYMENT", True, requires=["amount_vnd", "method"])],
+        )
+    )
+    check(
+        "a walk-in customer who collects is not told about a courier",
+        "Thu tiền trước khi giao" not in rendered_text(),
+    )
+
+    # A page opened before the money moved (another phone refunded it): the server refuses the
+    # trip by name, and the sheet offers the payment rather than a reload.
+    stale_trip = order_view(
+        "RETURN_ONLY",
+        balance="PAID",
+        collected=False,
+        production="READY_AT_STORE",
+        steps=[step("DELIVERY_RETURN", True)],
+    )
+    open_order(stale_trip)
+    state["order_writes"] = []
+    state["order_write_reply"] = (
+        422,
+        {
+            "detail": {
+                "outcome": "NOT_SUPPORTED",
+                "reason_code": "DELIVERY_REQUIRES_PAYMENT",
+                "decision": "DEC-023",
+            }
+        },
+    )
+    page.locator(".action-bar--v2 button[data-step=DELIVERY_RETURN]").click()
+    page.wait_for_timeout(600)
+    page.locator("dialog[open] button[data-leg-outcome=SUCCEEDED]").click()
+    page.wait_for_timeout(900)
+    sheet_text = open_dialog_text()
+    check(
+        "a trip refused for money is said in words at the sheet, with 'Thu tiền' and no reload",
+        "Thu tiền trước khi giao" in sheet_text
+        and page.locator("dialog[open] button[data-pay-first]").count() == 1
+        and page.get_by_role("button", name="Đơn vừa đổi — tải lại").count() == 0,
+        sheet_text[:200],
+    )
+    goods_shot(page, "trip-refused-pay-first")
+    state["order_write_reply"] = None
+    state["order_view"] = unpaid_delivery
+    page.locator("dialog[open] button[data-pay-first]").click()
+    page.wait_for_timeout(1200)
+    check(
+        "'Thu tiền' reads the order as it is now and opens its payment sheet",
+        page.locator("dialog[open] #payment-method").count() == 1
+        and "Còn lại" in open_dialog_text(),
+        open_dialog_text()[:160],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # The same refusal on the composite RELEASE step, at the action bar.
+    stale_release = order_view(
+        "PICKUP_AND_RETURN",
+        balance="PAID",
+        collected=False,
+        production="READY_AT_STORE",
+        steps=[step("RELEASE", True), step("DELIVERY_RETURN")],
+    )
+    open_order(stale_release)
+    state["order_writes"] = []
+    state["order_write_reply"] = (
+        422,
+        {
+            "detail": {
+                "outcome": "NOT_SUPPORTED",
+                "reason_code": "RELEASE_REQUIRES_PAYMENT",
+                "decision": "DEC-035",
+            }
+        },
+    )
+    page.locator(".action-bar--v2 button[data-step=RELEASE]").click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "RELEASE refused for money: one write, the words at the bar, 'Thu tiền' offered",
+        len(writes) == 1
+        and json.loads(writes[0]["body"] or "{}") == {"step": "RELEASE"}
+        and "Thu tiền trước khi giao" in rendered_text()
+        and page.locator("button[data-pay-first]").count() == 1,
+        repr(writes)[:160],
+    )
+    state["order_write_reply"] = None
+
+    # M4: a cancellation that hands money back asks how it went back; nothing is preselected and
+    # the press stays shut until the person says.
+    paid_cancel = order_view(
+        "SELF_DROP_SELF_COLLECT",
+        balance="PAID",
+        collected=False,
+        production="NOT_STARTED",
+        steps=[
+            step("START_WASH", True),
+            step(
+                "CANCEL",
+                requires=["custody_resolution", "refund_method"],
+                custody_resolutions=["RETURNED_UNWASHED_REFUNDED", "SHOP_FAULT_NO_CHARGE"],
+            ),
+        ],
+    )
+    open_order(paid_cancel)
+    state["order_writes"] = []
+    page.locator("button[data-more-steps]").click()
+    page.wait_for_timeout(300)
+    page.locator("dialog[open] button[data-step=CANCEL]").click()
+    page.wait_for_timeout(400)
+    methods = page.locator("dialog[open] input[name=refund_method]")
+    confirm = page.locator("dialog[open] .sheet__actions button").first
+    check(
+        "Huỷ đơn of a paid order asks how the money went back, with nothing preselected",
+        methods.count() == 2
+        and not any(methods.nth(i).is_checked() for i in range(methods.count()))
+        and "Trả lại tiền cho khách bằng" in open_dialog_text()
+        and confirm.is_disabled(),
+        open_dialog_text()[:200],
+    )
+    page.locator("dialog[open] label.choice-chip", has_text="đã trả đồ chưa giặt").first.click()
+    page.wait_for_timeout(200)
+    shut_without_method = confirm.is_disabled()
+    page.locator("dialog[open] label.choice-chip", has_text="Tiền mặt").first.click()
+    page.wait_for_timeout(200)
+    check(
+        "the press opens only once both the custody answer and the method are chosen",
+        shut_without_method and not confirm.is_disabled(),
+    )
+    goods_shot(page, "cancel-refund-method")
+    confirm.click()
+    page.wait_for_timeout(300)
+    page.locator("dialog[open] .sheet__actions button").first.click()
+    page.wait_for_timeout(900)
+    writes = state.get("order_writes") or []
+    check(
+        "the cancellation sends the custody answer and the refund method, with its key",
+        len(writes) == 1
+        and json.loads(writes[0]["body"] or "{}")
+        == {
+            "step": "CANCEL",
+            "custody_resolution": "RETURNED_UNWASHED_REFUNDED",
+            "refund_method": "TIEN_MAT",
+        }
+        and bool(writes[0]["key"]),
+        repr(writes)[:200],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    # An unpaid cancellation hands nothing back, so it is not asked.
+    open_order(unpaid_delivery)
+    page.locator("button[data-more-steps]").click()
+    page.wait_for_timeout(300)
+    page.locator("dialog[open] button[data-step=CANCEL]").click()
+    page.wait_for_timeout(400)
+    check(
+        "an unpaid order's cancellation does not ask how money went back",
+        page.locator("dialog[open] input[name=refund_method]").count() == 0,
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    # The server's refusal for a missing method is worded, not a raw code.
+    open_order(paid_cancel)
+    state["order_writes"] = []
+    state["order_write_reply"] = (
+        422,
+        {"detail": {"outcome": "REQUIRE_HUMAN", "reason_codes": ["REFUND_METHOD_REQUIRED"]}},
+    )
+    page.locator("button[data-more-steps]").click()
+    page.wait_for_timeout(300)
+    page.locator("dialog[open] button[data-step=CANCEL]").click()
+    page.wait_for_timeout(400)
+    page.locator("dialog[open] label.choice-chip", has_text="lỗi tiệm").first.click()
+    page.locator("dialog[open] label.choice-chip", has_text="Chuyển khoản").first.click()
+    page.wait_for_timeout(200)
+    page.locator("dialog[open] .sheet__actions button").first.click()
+    page.wait_for_timeout(300)
+    page.locator("dialog[open] .sheet__actions button").first.click()
+    page.wait_for_timeout(900)
+    check(
+        "a refusal for the missing method is said in Vietnamese at the sheet",
+        "chọn tiền trả lại khách bằng tiền mặt hay chuyển khoản" in open_dialog_text(),
+        open_dialog_text()[:200],
+    )
+    state["order_write_reply"] = None
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    state["order_view"] = None
+    state["order_writes"] = []
+
+    print()
+    print("=" * 74)
     print("16. DUYỆT GỬI TIN — the exact words above the button, and raised from the server's read")
     print("=" * 74)
 
@@ -8561,14 +8910,32 @@ with sync_playwright() as playwright:
         tile("ON_TIME_INTERNAL")[:80],
     )
     money_tile = tile("MONEY_NET")
+    # GOODS-AND-DRAWER-009 (review M4): this check used to demand "Két giảm" for the every-method
+    # net -- the mislabel the review found. The net is said as what it is; the drawer has its row.
     check(
-        "a drawer that went down is said in words with the server's amount, never a minus sign",
-        "Két giảm" in money_tile
+        "a net that went down is said in words with the server's amount, never a minus sign",
+        "Hoàn nhiều hơn thu" in money_tile
+        and "Két giảm" not in money_tile
         and "150.000" in money_tile
         and "-150" not in money_tile
         and "\u2212" not in money_tile,
         money_tile[:120],
     )
+    drawer_row = tile("MONEY_DRAWER")
+    check(
+        "the drawer is its own row: cash in minus cash handed back, down 80.000, in words",
+        "Tiền mặt trong két" in drawer_row
+        and "giảm 80.000" in drawer_row
+        and "150.000" not in drawer_row
+        and "\u2212" not in drawer_row,
+        drawer_row[:160],
+    )
+    check(
+        "and it names the refund of unknown method it leaves out, with the server's count and sum",
+        "Chưa tính 1 lần hoàn chưa rõ cách hoàn (100.000" in drawer_row,
+        drawer_row[:160],
+    )
+    goods_shot(page, "report-drawer")
     check(
         "what came in and what went back are the server's own sums",
         "90.000" in money_tile and "240.000" in money_tile,

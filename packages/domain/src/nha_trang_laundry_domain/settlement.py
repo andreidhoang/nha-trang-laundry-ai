@@ -272,6 +272,43 @@ def goods_may_leave(
 _OWING_BALANCES: Final = frozenset({OrderBalanceStatus.UNPAID, OrderBalanceStatus.PARTIALLY_PAID})
 
 
+# --- GOODS-AND-DRAWER-009 (review M2): every door the goods leave by asks the same questions ---
+#
+# The review found `RELEASE` checking `goods_may_leave` only for an order the customer collects,
+# and a `RETURN` leg checking nothing at all -- on the assumption that `DEC-023`'s prepayment had
+# happened. Nothing enforced it, so an unpaid delivery order could be released to the courier and
+# delivered, and a later payment was then recorded as "prepaid delivery" for goods already gone.
+# Every fulfilment mode now meets the same rule at every door: the laundry is finished
+# (`handover_refusal`) and its money lets it leave (`goods_may_leave`: paid in full, or charged to
+# the customer's account under `PAYMENT-002`, which is what `ON_ACCOUNT` records). A courier never
+# takes money (`DEC-023`), so the counter takes it first.
+
+#: `RELEASE` (the step, or the per-axis production move to `RELEASED`) of an order whose money does
+#: not let the goods leave. `DEC-035`: goods leave only when paid in full.
+RELEASE_REQUIRES_PAYMENT: Final = "RELEASE_REQUIRES_PAYMENT"
+#: A `RETURN` leg -- the courier taking the goods to the customer, whether the trip succeeded or
+#: failed -- on an order whose money does not let the goods leave. `DEC-023`: the customer pays at
+#: the counter before the laundry leaves, and no courier carries money.
+DELIVERY_REQUIRES_PAYMENT: Final = "DELIVERY_REQUIRES_PAYMENT"
+
+
+def delivery_refusal(balance: OrderBalanceStatus, production: ProductionStatus) -> str | None:
+    """Why the courier may not take this order's goods to the customer now, or `None`.
+
+    Asked of a `RETURN` leg of either outcome: a failed trip is still the goods having left the
+    shop with the courier and come back, so it is recordable exactly when the trip was allowed to
+    start. The laundry must be finished first (`GOODS_NOT_READY_FOR_HANDOVER`), and then paid for
+    (`DELIVERY_REQUIRES_PAYMENT`). A pickup leg fetches dirty laundry and is not asked.
+    """
+
+    refusal = handover_refusal(production)
+    if refusal is not None:
+        return refusal
+    if not goods_may_leave(balance):
+        return DELIVERY_REQUIRES_PAYMENT
+    return None
+
+
 class CollectionRefusal(StrEnum):
     """Why the counter may not yet record that a customer who paid in advance took their laundry.
 
@@ -336,10 +373,12 @@ def _valid_amount(value: int) -> bool:
 
 
 __all__ = [
+    "DELIVERY_REQUIRES_PAYMENT",
     "GOODS_MAY_LEAVE_BALANCES",
     "GOODS_NOT_READY_FOR_HANDOVER",
     "HANDOVER_READY_PRODUCTION",
     "REFUSAL_DECISIONS",
+    "RELEASE_REQUIRES_PAYMENT",
     "CollectionRefusal",
     "QuotedTotal",
     "SettlementAccepted",
@@ -347,6 +386,7 @@ __all__ = [
     "SettlementOutcome",
     "SettlementRefusal",
     "SettlementShape",
+    "delivery_refusal",
     "evaluate_collection",
     "evaluate_settlement",
     "goods_may_leave",

@@ -1107,6 +1107,20 @@ with sync_playwright() as pw:
         primary_step() == "TAKE_PAYMENT",
         primary_step(),
     )
+    # GOODS-AND-DRAWER-009 (review M2): said beside the payment, and no way out is offered yet
+    # (the "Khác" sheet each look may open is closed again before the payment is taken).
+    pay_first = "Thu tiền trước khi giao" in page.locator("main").first.inner_text()
+    offered_out = []
+    for leaving in ("RELEASE", "DELIVERY_RETURN"):
+        if step_control(leaving) is not None:
+            offered_out.append(leaving)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+    ok(
+        "the page says 'Thu tiền trước khi giao' and offers neither the release nor the trip",
+        pay_first and not offered_out,
+        f"pay_first={pay_first} offered={offered_out}",
+    )
     said = pay("the delivered total is settled at the counter")
     ok(
         "and the sheet says the order closes only on a successful delivery, not a pickup",

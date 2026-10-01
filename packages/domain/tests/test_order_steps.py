@@ -43,6 +43,7 @@ from nha_trang_laundry_domain.orders import (
     transition_intake,
     transition_production,
 )
+from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
 
 NOW = datetime(2026, 9, 25, 9, 0, tzinfo=UTC)
@@ -208,8 +209,10 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
                 balance=OrderBalanceStatus.PARTIALLY_PAID,
                 pickup_done=True,
             ),
-            # DEC-023 unchanged in meaning: the rest is taken before the courier leaves.
-            [S.HOLD, S.REWASH, S.RELEASE, S.CANCEL, S.TAKE_PAYMENT, S.DELIVERY_RETURN],
+            # DEC-023: the rest is taken before the courier leaves. GOODS-AND-DRAWER-009 (review
+            # M2): this row used to list RELEASE and DELIVERY_RETURN too -- the defect, written
+            # down as expected. Neither is offered until the money lets the goods leave.
+            [S.HOLD, S.REWASH, S.CANCEL, S.TAKE_PAYMENT],
             S.TAKE_PAYMENT,
         )
         for mode in (P_AND_R, R_ONLY)
@@ -285,7 +288,9 @@ LIFECYCLE: list[tuple[str, StepFacts, list[OrderStep], OrderStep]] = [
         (
             f"{mode} ready unpaid",
             _active(mode, production=P.READY_AT_STORE, pickup_done=True),
-            [S.HOLD, S.REWASH, S.RELEASE, S.CANCEL, S.TAKE_PAYMENT, S.DELIVERY_RETURN],
+            # GOODS-AND-DRAWER-009 (review M2): RELEASE and DELIVERY_RETURN were listed here for an
+            # UNPAID delivery -- the review's exact failure. Payment first; nothing else leaves.
+            [S.HOLD, S.REWASH, S.CANCEL, S.TAKE_PAYMENT],
             S.TAKE_PAYMENT,
         )
         for mode in (P_AND_R, R_ONLY)
@@ -540,6 +545,11 @@ def test_every_listed_composite_step_plans_successfully_and_every_other_is_refus
                     custody_resolution=next(iter(entry.custody_resolutions), None),
                     rewash_reason=next(iter(entry.rewash_reasons), None),
                     rejection_reason=next(iter(entry.rejection_reasons), None),
+                    # GOODS-AND-DRAWER-009: a cancellation that hands money back names how, and
+                    # the listing says so in `requires`.
+                    refund_method=(
+                        PaymentMethod.TIEN_MAT if "refund_method" in entry.requires else None
+                    ),
                 )
             elif step in {S.RELEASE, S.HAND_OVER}:
                 continue  # one of the pair is suppressed in favour of the other on purpose
@@ -865,8 +875,17 @@ def test_a_partly_paid_cancellation_offers_only_the_resolutions_that_refund_the_
         CustodyResolution.RETURNED_UNWASHED_REFUNDED,
         CustodyResolution.SHOP_FAULT_NO_CHARGE,
     )
-    after = _apply(
+    # GOODS-AND-DRAWER-009 (review M4): the deposit goes back, so the drawer must know how.
+    assert cancel.requires == ("custody_resolution", "refund_method")
+    with pytest.raises(StepRequiresHuman) as missing:
+        _plan(S.CANCEL, partly, custody_resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE)
+    assert missing.value.reason_codes == ("REFUND_METHOD_REQUIRED",)
+    plan = _plan(
+        S.CANCEL,
         partly,
-        _plan(S.CANCEL, partly, custody_resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE),
+        custody_resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE,
+        refund_method=PaymentMethod.CHUYEN_KHOAN,
     )
+    assert [item.refund_method for item in plan] == [None, PaymentMethod.CHUYEN_KHOAN]
+    after = _apply(partly, plan)
     assert after.state.balance is OrderBalanceStatus.REFUNDED

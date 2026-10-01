@@ -271,7 +271,8 @@ def test_every_board_figure_carries_the_version_of_the_query_that_produced_it(
     assert board["query_version"] == sla_board_query_version(SLA_POLICY).label
     assert summary["query_version"].startswith("today-status-counts-v1:")
     # v2 since DEC-024 refunds travel beside the takings; the digest is pinned in test_ops_board.py.
-    assert takings["query_version"].startswith("collected-today-v3:")
+    # v4 since GOODS-AND-DRAWER-009 (review M4): the refunds by method and the drawer.
+    assert takings["query_version"].startswith("collected-today-v4:")
     # Invariant 2 at the wire: every number the route serves is a non-negative integer, and the
     # drawer's direction is a word. `CollectedTodayResponse` also declares `ge=0` on each.
     numeric = {key: value for key, value in takings.items() if isinstance(value, int)}
@@ -287,9 +288,18 @@ def test_every_board_figure_carries_the_version_of_the_query_that_produced_it(
         "cash_count",
         "transfer_vnd",
         "transfer_count",
+        # `collected-today-v4` (GOODS-AND-DRAWER-009): refunds by method, and the drawer.
+        "refunded_cash_vnd",
+        "refunded_cash_count",
+        "refunded_transfer_vnd",
+        "refunded_transfer_count",
+        "refunded_unknown_vnd",
+        "refunded_unknown_count",
+        "drawer_vnd",
     }
     assert all(value >= 0 for value in numeric.values())
     assert takings["net_direction"] in ("IN", "OUT")
+    assert takings["drawer_direction"] in ("IN", "OUT")
 
 
 def test_the_board_refuses_a_store_the_caller_is_not_assigned_to(
@@ -796,8 +806,8 @@ def test_a_one_day_export_request_answers_exactly_as_before(
         # v2 (`3f884e227d6a2d05`) is retired, and an envelope bound to it is refused by name.
         # v4 since the round 7 wave 2 integration: `owed_vnd` includes the storage fee. v5 since
         # round 9 (MONEY-LIFECYCLE-009): the fee held on hold and kept once paid, and the refund's
-        # remedy netting in its own column.
-        assert body["query_version"] == "store-day-orders-export-v5:85a2da5b6016d97f"
+        # remedy netting and `refund_method` in their own columns.
+        assert body["query_version"] == "store-day-orders-export-v5:9a25c6013bb9bdf9"
         assert body["shape_retired"] is False
         assert [item["column"] for item in body["money_sources"]] == [
             "expected_total_vnd",
@@ -809,6 +819,8 @@ def test_a_one_day_export_request_answers_exactly_as_before(
             "paid_vnd",
             "remaining_vnd",
             "refund_netted_remedy_vnd",
+            # GOODS-AND-DRAWER-009: how the row's refund went back.
+            "refund_method",
         ]
         assert body["money_line_vi"].startswith("Tiền trong tệp:")
         assert body["statement_vi"].startswith(

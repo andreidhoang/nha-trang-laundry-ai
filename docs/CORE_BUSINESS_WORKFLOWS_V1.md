@@ -142,7 +142,12 @@ The same spine with three differences:
 2. **Money is taken before the goods leave**, as `EXACT_PAYMENT_PREPAID_DELIVERY` (`DEC-023`): the
    shop is never owed money by somebody holding its laundry, and no driver carries cash. The
    settlement is recorded with **Khách đã tự lấy đồ** *unticked*, because nobody has received
-   anything yet.
+   anything yet. Enforced since `GOODS-AND-DRAWER-009` (round 9, review M2), where it was only
+   assumed: `RELEASE` (and any production move to `RELEASED`) is refused
+   `RELEASE_REQUIRES_PAYMENT`, and a `RETURN` leg of **either** outcome `DELIVERY_REQUIRES_PAYMENT`
+   (422, nothing written), until the order is paid in full or charged to its account; a return
+   leg for laundry not yet finished is `GOODS_NOT_READY_FOR_HANDOVER`. `next_steps` offers neither
+   until then, and the order page says **Thu tiền trước khi giao** beside the payment.
 3. **A delivery leg closes the order, not self-collection.** A failed attempt is recorded as a
    failure, costs nothing extra, and the next attempt is a new row. Only a successful `RETURN` leg
    permits `COMPLETED`.
@@ -172,7 +177,7 @@ method, the optional last characters of the bank reference, the staff member and
 | A transfer nobody has seen arrive | refused; the sheet asks "Đã thấy tiền vào tài khoản" | `TRANSFER_NOT_SEEN` |
 | *Chuyển khoản* chosen (`VIETQR-001`, `DEC-041`) | `GET /orders/{id}/vietqr`: the NAPAS VietQR for exactly the ledger's remaining balance, memo = the order's transfer code (`NTL` + ddmm + ticket, or `NTL` + 8 id characters); also on *Phiếu cho khách* while money is owed, and per account month on the statement (`NTLCN…`). The order search resolves a code (`?transfer_code=`). Nothing is posted automatically | `BANK_ACCOUNT_UNPUBLISHED` (until `scripts/publish_bank_account.py`), `NOTHING_OWED` |
 | "The customer takes the goods now" with money still owed | refused: goods leave only when paid | `HANDOVER_REQUIRES_FULL_PAYMENT` |
-| Pickup, `RELEASE` for a self-collect order, or `HAND_OVER` while partly paid | refused (`settlement.goods_may_leave`; an account customer's order leaves through *Giao đồ — ghi công nợ*, §4.1) | `COLLECTION_REQUIRES_PAYMENT` / `INVALID_STATE_TRANSITION` |
+| Pickup, `RELEASE` / production → `RELEASED` (every mode, `GOODS-AND-DRAWER-009`), a `RETURN` leg, or `HAND_OVER` while not paid in full | refused (`settlement.goods_may_leave`; an account customer's order leaves through *Giao đồ — ghi công nợ*, §4.1, which makes it `ON_ACCOUNT`) | `COLLECTION_REQUIRES_PAYMENT` / `RELEASE_REQUIRES_PAYMENT` / `DELIVERY_REQUIRES_PAYMENT` / `INVALID_STATE_TRANSITION` |
 | Quote has no single total (unresolved fee) | no payment can be measured against it | `NO_PRESENTABLE_TOTAL` (`DEC-003`) |
 | Quote is a range | same | `NO_PRESENTABLE_TOTAL` / `TOTAL_IS_A_RANGE` (`DEC-001`) |
 | A delivery order paid in full "and collected at the counter" | the tick and the mode disagree | `COLLECTION_WAS_NOT_BY_THE_CUSTOMER` (`DEC-003`) |
@@ -189,14 +194,24 @@ over is one press followed by **Giao đồ & đóng đơn**, as it was.
 `paid_vnd` and `remaining_vnd` are computed by the domain from it and the ledger's SQL sum. The
 storage fee (`UNCLAIMED-001`, `DEC-036`) is added to the same list without changing a rule.
 
-**The day's money.** *Đã thu tại quầy* on Hôm nay (`collected-today-v3`) and the report's money
-figure (`report-v3`) sum the payment ledger, split into **Tiền mặt** (reconcile with the drawer) and
+**The day's money.** *Đã thu tại quầy* on Hôm nay (`collected-today-v4`) and the report's money
+figure (`report-v5`) sum the payment ledger, split into **Tiền mặt** (reconcile with the drawer) and
 **Chuyển khoản** (reconcile with the bank app), each on the day it was taken — a deposit counts on
 the day of the deposit. Every settlement written before `0056` became its one payment, counted as
-cash and marked `legacy`, so no past day's figure moved.
+cash and marked `legacy`, so no past day's figure moved. **The drawer** (`GOODS-AND-DRAWER-009`,
+review M4) is its own figure — *Tiền mặt trong két* on Hôm nay, `MONEY_DRAWER` in the report, the
+same sentence in the evening summary: cash taken minus cash handed back. The every-method net (all
+money in minus all refunds, `MONEY_NET`) keeps its name and is no longer called the drawer. A
+refund written before `0067` recorded no method; it is counted as *chưa rõ cách hoàn* and the
+drawer figure says it excludes it (count and total) rather than guessing.
 
 **Refunds.** A cancellation after a deposit refunds exactly what was paid, through the `DEC-024`
-refund path; the refund names no settlement because the order never had one.
+refund path; the refund names no settlement because the order never had one. Since `0067` the staff
+member cancelling says how the money went back — `refund_method` `TIEN_MAT` (from the drawer) or
+`CHUYEN_KHOAN` — asked in *Huỷ đơn* whenever the `CANCEL` entry's `requires` lists it; a refunding
+cancellation without it is refused `REQUIRE_HUMAN` / `REFUND_METHOD_REQUIRED` and a method on a
+cancellation that refunds nothing is refused as well. The database refuses a new refund row with
+no method; the export carries it per row (`refund_method`, `store-day-orders-export-v5`).
 
 **The exact-total route stays.** `POST /orders/{id}/settlement` still accepts the exact total only
 (`AMOUNT_IS_NOT_THE_EXACT_TOTAL`, `DEC-010`) and now also records it as one `legacy` payment; an

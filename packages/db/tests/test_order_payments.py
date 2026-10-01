@@ -502,6 +502,8 @@ def test_a_cancellation_after_a_deposit_refunds_exactly_the_deposit(
         view.row_version,
         OrderStep.CANCEL,
         custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        # GOODS-AND-DRAWER-009 (review M4): the deposit goes back, so say how.
+        refund_method=PaymentMethod.TIEN_MAT,
     ).view
     connection.commit()
     assert (done.commercial, done.balance) == (
@@ -554,6 +556,7 @@ def test_a_months_margin_takes_its_money_from_the_payment_ledger_each_payment_on
         view.row_version,
         OrderStep.CANCEL,
         custody_resolution=CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+        refund_method=PaymentMethod.TIEN_MAT,
     )
     owner = StaffPrincipal(
         staff.staff_user_id,

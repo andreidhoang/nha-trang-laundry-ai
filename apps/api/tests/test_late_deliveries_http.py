@@ -260,7 +260,8 @@ def test_the_report_carries_the_late_delivery_block(
     path = f"/internal/v1/stores/{shop.store_id}/reports/summary?from={day}&to={day}"
     block = client.get(path).json()["late_deliveries"]
     assert block["status"] == "COMPLETE" and block["late"] == 1 and block["undecided"] == 1
-    assert block["query_version"].startswith("report-v4:")
+    # report-v5 since GOODS-AND-DRAWER-009 (the refund split and MONEY_DRAWER).
+    assert block["query_version"].startswith("report-v5:")
     _as(shop.operator)
     _post(
         client,

@@ -125,6 +125,8 @@ import { accountHandover } from "../ui/accountHandover.js";
 import { readStorage, storageCharge, storageChargeLine, storageSection } from "../ui/unclaimed.js";
 // EINVOICE-REQUEST-001 (DEC-040): the order's Hóa đơn row.
 import { invoiceSection } from "../ui/invoice.js";
+// GOODS-AND-DRAWER-009: "Thu tiền trước khi giao" (review M2) and the refund's method (review M4).
+import { payFirstCaption, paysFirst, refundMethodField } from "../ui/goodsAndDrawer.js";
 // SHOP-CAPTURE-001: "Máy nào?", the trip-cost fields and the order's recorded cycles and trips.
 import {
   captureRows,
@@ -555,7 +557,7 @@ export function render_(context) {
       : due
         ? due.text
         : UNKNOWN;
-    const caption = onAccount
+    const plainCaption = onAccount
       ? "Tiền ghi vào công nợ của khách, không thu tại quầy. Thu ở trang của khách."
       : paid
       ? `Đã thu đủ tiền.${waiting ? " Khách chưa nhận đồ." : ""}`
@@ -573,6 +575,10 @@ export function render_(context) {
                 : null
             : `Công nợ: ${enumVi(order.balance)}. Quầy không thu tiền cho đơn này; có gì chưa ` +
               "rõ thì báo chủ tiệm.";
+    // GOODS-AND-DRAWER-009 (review M2): a delivery that still owes money leaves only once paid,
+    // said beside the payment action -- unless the quote has no single total to take.
+    const payFirst = partly || (due && due.known) ? payFirstCaption(order) : null;
+    const caption = payFirst || plainCaption;
     const payments = Array.isArray(order.payments) ? order.payments : [];
     // Tổng · Đã trả once something is paid; before that "Phải thu" already is the total.
     const split =
@@ -994,6 +1000,19 @@ export function render_(context) {
    * @returns {HTMLElement}
    */
   function refusal(error) {
+    // GOODS-AND-DRAWER-009 (review M2): the goods may not leave yet -- take the money, not a reload.
+    if (paysFirst(error)) {
+      return errorNotice(error, {
+        actions: [
+          button({
+            label: "Thu tiền",
+            variant: "primary",
+            data: { payFirst: "true" },
+            onClick: () => void payFromRefusal(),
+          }),
+        ],
+      });
+    }
     const reload = button({
       label: "Đơn vừa đổi — tải lại",
       icon: "refresh",
@@ -1022,6 +1041,15 @@ export function render_(context) {
           ? [button({ label: "Tải lại đơn", icon: "refresh", onClick: () => void reread() })]
           : [],
     });
+  }
+
+  /** "Thu tiền" from a pay-first refusal: the order as it is now, then its payment sheet. */
+  async function payFromRefusal() {
+    openSheet?.close();
+    const view = await reread();
+    if ((view?.next_steps || []).some((entry) => String(entry.step) === "TAKE_PAYMENT")) {
+      openPayment();
+    }
   }
 
   /**
@@ -1961,8 +1989,12 @@ export function render_(context) {
   function openCancel(entry) {
     const needs = Array.isArray(entry.requires) && entry.requires.includes("custody_resolution");
     const choices = Array.isArray(entry.custody_resolutions) ? entry.custody_resolutions : [];
+    // GOODS-AND-DRAWER-009 (review M4): money goes back, so the server asks how.
+    const refunds = Array.isArray(entry.requires) && entry.requires.includes("refund_method");
     const alertHost = h("div");
     let custody = "";
+    let refundMethod = "";
+    const ready = () => (!needs || custody !== "") && (!refunds || refundMethod !== "");
     const confirm = confirmButton({
       label: "Huỷ đơn",
       confirmLabel: "Bấm lần nữa để huỷ đơn",
@@ -1970,14 +2002,17 @@ export function render_(context) {
       onConfirm: async () => {
         const done = await runComposite(
           entry,
-          needs ? { custody_resolution: custody } : {},
+          {
+            ...(needs ? { custody_resolution: custody } : {}),
+            ...(refunds ? { refund_method: refundMethod } : {}),
+          },
           alertHost,
           confirm,
         );
         if (done) made.close();
       },
     });
-    if (needs) confirm.disabled = true;
+    if (needs || refunds) confirm.disabled = true;
     const made = openFresh({
       id: "order-cancel",
       title: "Huỷ đơn",
@@ -1999,7 +2034,7 @@ export function render_(context) {
                 })),
                 onChange: (value) => {
                   custody = value;
-                  if (writeVerdict.allowed) confirm.disabled = false;
+                  if (writeVerdict.allowed) confirm.disabled = !ready();
                 },
               }),
               h(
@@ -2012,6 +2047,12 @@ export function render_(context) {
           : h("p", null, "Khách đổi ý trước khi tiệm làm gì với đồ: đơn được huỷ ngay."),
         // MONEY-LIFECYCLE-009 (DEC-045/046): stated before the press, in the server's words.
         cancellationMoneyBlock(current, "PREVIEW"),
+        refunds
+          ? refundMethodField((value) => {
+              refundMethod = value;
+              if (writeVerdict.allowed) confirm.disabled = !ready();
+            })
+          : null,
         alertHost,
       ),
       actions: gated(confirm, writeVerdict),

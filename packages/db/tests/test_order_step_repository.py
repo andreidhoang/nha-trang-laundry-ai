@@ -54,6 +54,7 @@ from nha_trang_laundry_domain.catalog import (
     RewashReason,
 )
 from nha_trang_laundry_domain.order_steps import OrderStep
+from nha_trang_laundry_domain.payments import PaymentMethod
 from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA
 from quote_test_data import accepted_quote, ensure_store
 
@@ -145,6 +146,7 @@ def _step(
     custody_resolution: CustodyResolution | None = None,
     rewash_reason: RewashReason | None = None,
     rejection_reason: IntakeRejectionReason | None = None,
+    refund_method: PaymentMethod | None = None,
 ) -> OrderStepResult:
     return OrderRepository().execute_step(
         connection,
@@ -159,6 +161,7 @@ def _step(
             custody_resolution=custody_resolution,
             rewash_reason=rewash_reason,
             rejection_reason=rejection_reason,
+            refund_method=refund_method,
         ),
     )
 

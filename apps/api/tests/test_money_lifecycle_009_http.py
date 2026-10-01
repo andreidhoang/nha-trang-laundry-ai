@@ -185,8 +185,21 @@ def _read(client: TestClient, order_id: UUID) -> dict[str, Any]:
     return body
 
 
+def _with_refund_method(client: TestClient, order_id: UUID, body: dict[str, Any]) -> dict[str, Any]:
+    """GOODS-AND-DRAWER-009: a cancellation that hands money back says how (`refund_method`).
+
+    Added exactly when the order has taken money, as the counter's sheet does; never on an unpaid
+    order, which the API refuses (no money goes back, so there is no method to name).
+    """
+
+    cancelling = body.get("step") == "CANCEL" or body.get("target") == "CANCELLED"
+    paid = _read(client, order_id)["balance"] in {"PAID", "PARTIALLY_PAID"}
+    return {**body, "refund_method": "TIEN_MAT"} if cancelling and paid else body
+
+
 def _step(client: TestClient, order_id: UUID, body: dict[str, Any]) -> Any:
     version = int(_read(client, order_id)["row_version"])
+    body = _with_refund_method(client, order_id, body)
     return _post(client, f"/internal/v1/orders/{order_id}/steps", body, if_match=version)
 
 
@@ -237,7 +250,7 @@ def _cancel(client: TestClient, order_id: UUID, route: str, body: dict[str, Any]
     return _post(
         client,
         f"/internal/v1/orders/{order_id}/transition",
-        {"target": "CANCELLED", **body},
+        _with_refund_method(client, order_id, {"target": "CANCELLED", **body}),
         if_match=int(_read(client, order_id)["row_version"]),
     )
 
@@ -368,7 +381,9 @@ def test_a_credit_from_the_order_spent_elsewhere_is_netted_from_the_refund(
     # The day's export carries the refund and its netting on the order's row (`DEC-045`).
     exported = _exported(connection, store_id, order_id)
     # paid_vnd, remaining_vnd (0 once cancelled), refund_netted_remedy_vnd; and the refund itself.
-    assert exported[-3:] == (SETTLED, 0, face)
+    # paid_vnd, remaining_vnd, refund_netted_remedy_vnd -- then GOODS-AND-DRAWER-009's
+    # refund_method, the file's last cell.
+    assert exported[-4:] == (SETTLED, 0, face, "TIEN_MAT")
     assert exported[13] == refund
     assert done["lines_vi"] == [
         f"Đã trừ {face:,} ₫ (khoản khách đã dùng ở đơn khác): hoàn {refund:,} ₫ thay vì "
@@ -641,6 +656,7 @@ def test_a_replayed_cancellation_returns_its_answer_and_moves_no_credit_again(
     body: dict[str, object] = (
         {"step": "CANCEL", **SHOP_FAULT} if move != "reissue" else {"step": "CANCEL"}
     )
+    body = _with_refund_method(client, order_id, body)
     version = int(_read(client, order_id)["row_version"])
     before = _remedy_money_rows(connection)
     key = f"cancel-{uuid4().hex}"
@@ -673,7 +689,9 @@ def test_a_replayed_cancellation_returns_its_answer_and_moves_no_credit_again(
     changed = _post(
         client,
         path,
-        {"step": "CANCEL", "custody_resolution": "RETURNED_UNWASHED_REFUNDED"},
+        _with_refund_method(
+            client, order_id, {"step": "CANCEL", "custody_resolution": "RETURNED_UNWASHED_REFUNDED"}
+        ),
         key=key,
         if_match=version,
     )

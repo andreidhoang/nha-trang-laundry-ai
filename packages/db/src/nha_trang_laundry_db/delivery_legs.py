@@ -7,6 +7,13 @@ writer.
 It moves no money. The owner decided the customer pays in full at the counter before the laundry
 leaves, so a leg attests one fact -- arrival, or the absence of it -- and a driver never carries
 cash. That decision is why this module is as small as it is.
+
+GOODS-AND-DRAWER-009 (review M2): the decision was assumed here and enforced nowhere, so a `RETURN`
+leg was accepted on an order nobody had paid for, and on laundry still in the machine. A return
+trip, succeeded or failed, is the goods leaving the shop with the courier; it is now recorded only
+when `settlement.delivery_refusal` finds nothing to refuse -- the laundry finished, and paid in
+full or charged to the customer's account -- under the order's row lock. A pickup leg fetches
+dirty laundry and is not asked.
 """
 
 from __future__ import annotations
@@ -21,7 +28,10 @@ from nha_trang_laundry_domain.catalog import (
     MODES_EXPECTING_PICKUP,
     MODES_EXPECTING_RETURN,
     FulfillmentMode,
+    OrderBalanceStatus,
+    ProductionStatus,
 )
+from nha_trang_laundry_domain.settlement import GOODS_NOT_READY_FOR_HANDOVER, delivery_refusal
 from nha_trang_laundry_domain.shop_capture import TripCost
 from psycopg.errors import UniqueViolation
 
@@ -48,6 +58,20 @@ class DeliveryLegOutcome(StrEnum):
 
 class DeliveryLegError(ValueError):
     """A leg could not be recorded."""
+
+
+class DeliveryLegRefused(DeliveryLegError):
+    """GOODS-AND-DRAWER-009 (review M2): a return trip the order's state does not allow, by name.
+
+    `DELIVERY_REQUIRES_PAYMENT` (`DEC-023`: paid at the counter before the laundry leaves; no
+    courier carries money) or `GOODS_NOT_READY_FOR_HANDOVER` (the laundry is not finished). Nothing
+    is written.
+    """
+
+    def __init__(self, reason_code: str, message: str, *, decision: str | None = None) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.decision = decision
 
 
 @dataclass(frozen=True)
@@ -96,7 +120,8 @@ class DeliveryLegRepository:
             cursor.execute(
                 """
                 SELECT store_id, commercial_status, fulfillment_mode,
-                       required_delivery_legs_succeeded, row_version
+                       required_delivery_legs_succeeded, row_version,
+                       balance_status, production_status
                 FROM orders WHERE id = %s FOR UPDATE
                 """,
                 (command.order_id,),
@@ -122,6 +147,19 @@ class DeliveryLegRepository:
                 raise DeliveryLegError("this order's fulfilment mode has no return leg")
             if command.leg_kind is DeliveryLegKind.PICKUP and mode not in MODES_EXPECTING_PICKUP:
                 raise DeliveryLegError("this order's fulfilment mode has no pickup leg")
+            if command.leg_kind is DeliveryLegKind.RETURN:
+                # GOODS-AND-DRAWER-009 (review M2): read under this row lock, so a payment or a
+                # refund racing the courier's press is seen as it stands when the trip is written.
+                refused = delivery_refusal(
+                    OrderBalanceStatus(str(row[5])), ProductionStatus(str(row[6]))
+                )
+                if refused is not None:
+                    raise DeliveryLegRefused(
+                        refused,
+                        f"{refused}: the courier takes the goods only once they are finished and "
+                        "paid in full (or charged to the customer's account)",
+                        decision=None if refused == GOODS_NOT_READY_FOR_HANDOVER else "DEC-023",
+                    )
             # The partial unique index refuses a second success per leg kind, which is right --
             # two successful returns would be two handovers that did not both happen. It escaped
             # as a raw psycopg error and the route turned it into HTTP 500 until 2026-08-29, so
@@ -233,6 +271,7 @@ __all__ = [
     "DeliveryLegError",
     "DeliveryLegKind",
     "DeliveryLegOutcome",
+    "DeliveryLegRefused",
     "DeliveryLegRepository",
     "RecordDeliveryLegCommand",
     "StoredDeliveryLeg",

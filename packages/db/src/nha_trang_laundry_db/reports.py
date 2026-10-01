@@ -137,7 +137,10 @@ REPORT_MAX_DAYS: Final = 92
 #: identifier, and every statement they add is hashed into the digest.
 #: `v4` (`LATE-CREDIT-002`, `DEC-042`): the late-delivery block -- measured late deliveries and
 #: what was decided about them -- with its two statements and the clock's identity in the digest.
-REPORT_QUERY_IDENTIFIER: Final = "report-v4"
+#: `v5` (GOODS-AND-DRAWER-009, review M4): refunds split by how the money went back (`0067`), and
+#: `MONEY_DRAWER` -- cash in minus cash handed back -- beside `MONEY_NET`, which stays every method
+#: in minus every refund and is no longer called the drawer.
+REPORT_QUERY_IDENTIFIER: Final = "report-v5"
 
 #: The production sequence the rewash rule compares positions in, as the SQL receives it.
 _SEQUENCE: Final = tuple(status.value for status in PRODUCTION_SEQUENCE)
@@ -164,12 +167,21 @@ class ReportKey(StrEnum):
     MONEY_COLLECTED = "MONEY_COLLECTED"
     MONEY_REFUNDED = "MONEY_REFUNDED"
     MONEY_NET = "MONEY_NET"
+    #: GOODS-AND-DRAWER-009 (review M4): the drawer -- cash taken minus cash handed back.
+    MONEY_DRAWER = "MONEY_DRAWER"
     REMEDIES_EXECUTED = "REMEDIES_EXECUTED"
 
 
 #: `PAYMENT-001`: the payment methods, in the order `MONEY_COLLECTED.by_kind` lists them. The
 #: schema's CHECK on `order_payments.method` is the authority, as for the remedy kinds below.
 PAYMENT_METHODS: Final = ("TIEN_MAT", "CHUYEN_KHOAN")
+
+#: GOODS-AND-DRAWER-009 (review M4): how a refund went back, in the order `MONEY_REFUNDED.by_kind`
+#: lists them -- the two methods `0067` records, then `UNKNOWN` for the refunds written before it,
+#: which never said. `MONEY_DRAWER.by_kind` lists what the drawer is made of: cash in, cash handed
+#: back, and the unknown-method refunds it EXCLUDES (counted and summed so the reader is told).
+REFUND_METHODS: Final = ("TIEN_MAT", "CHUYEN_KHOAN", "UNKNOWN")
+DRAWER_PARTS: Final = ("CASH_IN", "CASH_REFUNDED", "EXCLUDED_UNKNOWN_REFUNDS")
 
 #: Remedy kinds in the order the report lists them. The schema's CHECK is the authority; a kind
 #: added there and not here is reported under nothing, which the pinned digest makes visible.
@@ -236,7 +248,8 @@ _REPORT_SQL = """
         FROM order_payments p
         WHERE p.store_id = %(store)s
         UNION ALL
-        SELECT 'MONEY_REFUNDED', r.refunded_at, r.id, r.refunded_amount_vnd
+        SELECT 'MONEY_REFUNDED_' || coalesce(r.refund_method, 'UNKNOWN'), r.refunded_at, r.id,
+               r.refunded_amount_vnd
         FROM order_refunds r
         WHERE r.store_id = %(store)s AND r.direction = 'TO_CUSTOMER'
         UNION ALL
@@ -262,8 +275,9 @@ _REPORT_SQL = """
                    AS settlement_count,
                coalesce(sum(w.amount) FILTER (WHERE left(w.fact, 16) = 'MONEY_COLLECTED_'), 0)
                    AS collected_vnd,
-               count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_REFUNDED') AS refund_count,
-               coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_REFUNDED'), 0)
+               count(DISTINCT w.subject) FILTER (WHERE left(w.fact, 15) = 'MONEY_REFUNDED_')
+                   AS refund_count,
+               coalesce(sum(w.amount) FILTER (WHERE left(w.fact, 15) = 'MONEY_REFUNDED_'), 0)
                    AS refunded_vnd,
                count(DISTINCT w.subject) FILTER (WHERE w.fact = 'REMEDY_FREE_REWASH')
                    AS remedy_free_rewash,
@@ -289,7 +303,19 @@ _REPORT_SQL = """
                count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_COLLECTED_CHUYEN_KHOAN')
                    AS transfer_count,
                coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_COLLECTED_CHUYEN_KHOAN'), 0)
-                   AS transfer_vnd
+                   AS transfer_vnd,
+               count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_REFUNDED_TIEN_MAT')
+                   AS refund_cash_count,
+               coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_REFUNDED_TIEN_MAT'), 0)
+                   AS refund_cash_vnd,
+               count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_REFUNDED_CHUYEN_KHOAN')
+                   AS refund_transfer_count,
+               coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_REFUNDED_CHUYEN_KHOAN'), 0)
+                   AS refund_transfer_vnd,
+               count(DISTINCT w.subject) FILTER (WHERE w.fact = 'MONEY_REFUNDED_UNKNOWN')
+                   AS refund_unknown_count,
+               coalesce(sum(w.amount) FILTER (WHERE w.fact = 'MONEY_REFUNDED_UNKNOWN'), 0)
+                   AS refund_unknown_vnd
         FROM days d
         LEFT JOIN windowed w ON w.day = d.day
         GROUP BY GROUPING SETS ((d.day), ())
@@ -300,7 +326,11 @@ _REPORT_SQL = """
            CASE WHEN collected_vnd >= refunded_vnd THEN 'IN' ELSE 'OUT' END AS net_direction,
            remedy_free_rewash, remedy_damage, remedy_damage_vnd, remedy_late, remedy_late_vnd,
            remedy_lost, remedy_lost_vnd, remedies, remedies_vnd,
-           cash_count, cash_vnd, transfer_count, transfer_vnd
+           cash_count, cash_vnd, transfer_count, transfer_vnd,
+           refund_cash_count, refund_cash_vnd, refund_transfer_count, refund_transfer_vnd,
+           refund_unknown_count, refund_unknown_vnd,
+           abs(cash_vnd - refund_cash_vnd) AS drawer_vnd,
+           CASE WHEN cash_vnd >= refund_cash_vnd THEN 'IN' ELSE 'OUT' END AS drawer_direction
     FROM counted
     ORDER BY is_window, day
 """
@@ -429,6 +459,8 @@ def report_query_version(policy: ProductionSlaPolicy) -> QueryVersion:
         "|".join(_SEQUENCE),
         "|".join(REMEDY_KINDS),
         "|".join(PAYMENT_METHODS),
+        "|".join(REFUND_METHODS),
+        "|".join(DRAWER_PARTS),
         str(REPORT_MAX_DAYS),
         sla_board_query_version(policy).label,
         # SHOP-CAPTURE-001: the capture statements, the month's money, the spending vocabulary,
@@ -851,7 +883,8 @@ def _period(
     created, completed, cancelled = int(row[2]), int(row[3]), int(row[4])
     reached_quality_check, rewashed, incidents = int(row[5]), int(row[6]), int(row[7])
     direction = str(row[13])
-    if direction not in ("IN", "OUT"):  # pragma: no cover - the CASE has exactly two arms
+    drawer_direction = str(row[34])
+    if not {direction, drawer_direction} <= {"IN", "OUT"}:  # pragma: no cover - two arms each
         raise RuntimeError("the drawer direction is not one the rule produces")
     by_kind = (
         ("FREE_REWASH", int(row[14]), None),
@@ -912,6 +945,12 @@ def _period(
             "VND",
             DataQuality.COMPLETE,
             entries=int(row[10]),
+            # GOODS-AND-DRAWER-009: how each refund went back; UNKNOWN is a refund before `0067`.
+            by_kind=(
+                ("TIEN_MAT", int(row[27]), int(row[28])),
+                ("CHUYEN_KHOAN", int(row[29]), int(row[30])),
+                ("UNKNOWN", int(row[31]), int(row[32])),
+            ),
         ),
         ReportFigure(
             ReportKey.MONEY_NET,
@@ -921,6 +960,23 @@ def _period(
             "VND",
             DataQuality.COMPLETE,
             direction=direction,
+        ),
+        # GOODS-AND-DRAWER-009 (review M4): the drawer. Cash in minus cash handed back, as a
+        # magnitude and a direction; the refunds of unknown method are listed as excluded, never
+        # netted as a guess.
+        ReportFigure(
+            ReportKey.MONEY_DRAWER,
+            int(row[33]),
+            None,
+            None,
+            "VND",
+            DataQuality.COMPLETE,
+            direction=drawer_direction,
+            by_kind=(
+                ("CASH_IN", int(row[23]), int(row[24])),
+                ("CASH_REFUNDED", int(row[27]), int(row[28])),
+                ("EXCLUDED_UNKNOWN_REFUNDS", int(row[31]), int(row[32])),
+            ),
         ),
         ReportFigure(
             ReportKey.REMEDIES_EXECUTED,

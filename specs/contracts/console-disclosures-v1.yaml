@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 549
+  DESCRIPTIVE: 552
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 19
   SERVER_GATE: 15
-total: 590
+total: 593
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -331,11 +331,27 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/errors.js#REFUSAL.RELEASE_BY_PAYMENT:f2f795f7818a
+- slot_id: core/errors.js#REFUSAL.PAY_BEFORE_GOODS_LEAVE:414bbef487ed
   module: core/errors.js
-  key: REFUSAL.RELEASE_BY_PAYMENT
-  text: 'Khách tự tới lấy mà chưa trả tiền thì không giao đồ riêng được: bấm “Thu tiền” — thu xong là
-    giao đồ và đóng đơn.'
+  key: REFUSAL.PAY_BEFORE_GOODS_LEAVE
+  text: 'Thu tiền trước khi giao: đồ chỉ rời tiệm khi khách đã trả đủ (hoặc đã ghi công nợ). Người giao
+    không thu tiền.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.GOODS_NOT_READY:f24e2e0e392b
+  module: core/errors.js
+  key: REFUSAL.GOODS_NOT_READY
+  text: Đồ chưa giặt xong nên chưa giao cho khách được. Làm xong các bước giặt trước.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.REFUND_METHOD_REQUIRED:5225b88abd89
+  module: core/errors.js
+  key: REFUSAL.REFUND_METHOD_REQUIRED
+  text: 'Chưa huỷ được: chọn tiền trả lại khách bằng tiền mặt hay chuyển khoản. Không có gì được ghi.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -5070,6 +5086,14 @@ disclosures:
   module: ui/customers.js
   key: hint
   text: Chỉ ghi cách giặt. Không ghi sức khoẻ, tôn giáo hay chuyện riêng.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/goodsAndDrawer.js#hint:99a30e45450b
+  module: ui/goodsAndDrawer.js
+  key: hint
+  text: 'Đưa tiền từ két thì chọn Tiền mặt: tiền trong két hôm nay trừ đúng khoản này.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

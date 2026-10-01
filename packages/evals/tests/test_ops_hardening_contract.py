@@ -146,20 +146,172 @@ def test_every_service_in_every_combination_rotates_its_log(
 
 #: `OPS-OBSERVABILITY-009` (review P2). The API's log is what `check_shop_operations.py --check app`
 #: reads and the only record of what the application did; it rotated away in one to three days.
-#: Measured on a full daily walk against the real API: the longest request line, as json-file stores
-#: it, is 553 bytes, and the walk made 503 requests for 7 orders (72 an order).
-BYTES_PER_STORED_REQUEST_LINE = 553
-#: A busy day: 100 orders (above the owner's 300-400 kg/day ceiling at ~4 kg an order), three
-#: consoles open fourteen hours polling once a minute, and the console check's `/readyz` every five
-#: minutes.
-REQUESTS_PER_BUSY_DAY = 100 * 72 + 3 * 14 * 60 + 24 * 12
+#:
+#: Round 9 (verifier): the first model counted only the console's requests at a hand-measured
+#: 553 bytes. It left out the image's own Docker `HEALTHCHECK` -- `/healthz` every 30 s, all day,
+#: 2,880 lines -- and the conformance run then wrote a 584-byte line. So the model is now built
+#: from the things that decide it rather than from a sample: the longest line any route the API
+#: serves can produce, computed from the route table through the API's own logger; the healthcheck
+#: interval read from `apps/api/Dockerfile` (or the rendered compose override); the console check's
+#: interval read from `deploy/shop-till/install.sh`. Only the traffic itself is an assumption:
+#:
+#: - 100 orders (above the owner's 300-400 kg/day ceiling at ~4 kg an order), each at the daily
+#:   walk's own ratio of API lines to orders. 2026-10-01, port 8108: 506 API lines (501
+#:   `http.request.completed`, 5 `auth.*`) for 7 order submissions -> 73 an order. The walk opens a
+#:   fresh browser every time, so the console's static files are in that figure too.
+#: - three consoles open fourteen hours, each polling once a minute (`ui/promise.js`).
+#:
+#: Every one of those lines is costed at the longest line any route can write; only the two probes,
+#: whose route is fixed, are costed at their own length.
+ORDERS_PER_BUSY_DAY = 100
+API_LINES_PER_ORDER = 73
+CONSOLE_POLL_LINES_PER_DAY = 3 * 14 * 60
 API_LOG_RETENTION_DAYS = 14
+#: The longest stored line the conformance run wrote (round-9 verifier, `/quotes/{id}/range-prices/
+#: {id}`). The computed bound must never be below what was actually seen.
+LONGEST_LINE_SEEN = 584
+SECONDS_PER_DAY = 24 * 60 * 60
+#: RFC3339Nano at full length; Docker trims trailing zeros, so no stored time is longer.
+_LONGEST_DOCKER_TIME = "2026-10-01T12:34:56.123456789Z"
+
+
+def _stored_bytes(line: str) -> int:
+    """What json-file writes for one line of stdout: `{"log":…,"stream":…,"time":…}` and a newline.
+
+    Docker escapes the line as a JSON string, HTML-safe (`<`, `>`, `&` as `\\u00XX`).
+    """
+
+    escaped = json.dumps(line + "\n", ensure_ascii=False)
+    for character in "<>&":
+        escaped = escaped.replace(character, f"\\u{ord(character):04x}")
+    record = f'{{"log":{escaped},"stream":"stdout","time":"{_LONGEST_DOCKER_TIME}"}}\n'
+    return len(record.encode("utf-8"))
+
+
+def _request_line(method: str, path: str) -> str:
+    """The `http.request.completed` line the API writes for this request, at its longest."""
+
+    from types import SimpleNamespace
+
+    from nha_trang_laundry_api import main as api_main
+    from nha_trang_laundry_observability import CorrelationContext, SafeStructuredLogger
+
+    written: list[str] = []
+    original = api_main._LOGGER
+    api_main._LOGGER = SafeStructuredLogger(sink=written.append)
+    try:
+        request = SimpleNamespace(method=method, url=SimpleNamespace(path=path))
+        api_main._record_http_completed(request, 503, CorrelationContext.new())  # type: ignore[arg-type]
+    finally:
+        api_main._LOGGER = original
+    (line,) = written
+    # `isoformat` drops the microseconds when they are zero; cost every line at the long form.
+    return re.sub(
+        r'"occurred_at":"[^"]+"', '"occurred_at":"2026-10-01T12:34:56.123456+00:00"', line
+    )
+
+
+#: A UUID with no run of digits, so the logger's phone-number redaction leaves it alone ...
+_IDENTIFIER = "ffffffff-ffff-4fff-bfff-ffffffffffff"
+#: ... and what that redaction could add to a real one. `[REDACTED]` is ten bytes and the shortest
+#: thing it replaces is nine digits, so a 36-character UUID (32 hex digits) grows by at most 3.
+_REDACTION_GROWTH_PER_IDENTIFIER = 3
+
+
+def _longest_request_line() -> tuple[int, str]:
+    from fastapi.routing import APIRoute
+    from nha_trang_laundry_api import main as api_main
+
+    candidates: list[tuple[str, str, int]] = []
+    for route in api_main.app.routes:
+        if isinstance(route, APIRoute):
+            # Every path parameter is a UUID except the statement month (`2026-09`) and a role
+            # name, which is shorter than a UUID; a UUID is the upper bound for both.
+            path = route.path.replace("{month}", "2026-09")
+            identifiers = len(re.findall(r"\{[^}]+\}", path))
+            path = re.sub(r"\{[^}]+\}", _IDENTIFIER, path)
+            candidates.extend((method, path, identifiers) for method in route.methods or ())
+    web = Path(api_main.WEB_DIRECTORY)
+    candidates.extend(
+        ("GET", "/staff/" + file.relative_to(web).as_posix(), 0)
+        for file in web.rglob("*")
+        if file.is_file()
+    )
+    return max(
+        (
+            _stored_bytes(_request_line(method, path))
+            + identifiers * _REDACTION_GROWTH_PER_IDENTIFIER,
+            f"{method} {path}",
+        )
+        for method, path, identifiers in candidates
+    )
+
+
+def _seconds(duration: str) -> int:
+    match = re.fullmatch(r"(?:(\d+)m)?(?:(\d+)s)?", duration.strip())
+    assert match and any(match.groups()), f"unparseable interval {duration!r}"
+    return int(match.group(1) or 0) * 60 + int(match.group(2) or 0)
+
+
+def _healthcheck_interval(api: dict[str, Any]) -> int:
+    """Seconds between Docker's own `/healthz` probes: the compose override, else the image's."""
+
+    override = (api.get("healthcheck") or {}).get("interval")
+    if override:
+        return _seconds(str(override))
+    dockerfile = (ROOT / "apps/api/Dockerfile").read_text("utf-8")
+    match = re.search(r"^HEALTHCHECK\b.*?--interval=(\S+)", dockerfile, re.MULTILINE)
+    assert match, "apps/api/Dockerfile has no HEALTHCHECK interval; the model needs one"
+    assert "/healthz" in dockerfile[match.start() : match.start() + 400]
+    return _seconds(match.group(1))
+
+
+def _console_check_interval() -> int:
+    install = (ROOT / "deploy/shop-till/install.sh").read_text("utf-8")
+    match = re.search(r"every_five_minutes='<key>StartInterval</key><integer>(\d+)<", install)
+    assert match, "the host checks' StartInterval moved; the model reads it from install.sh"
+    return int(match.group(1))
+
+
+def _busy_day_bytes(api: dict[str, Any]) -> tuple[int, dict[str, int]]:
+    longest, _ = _longest_request_line()
+    healthz = _stored_bytes(_request_line("GET", "/healthz"))
+    readyz = _stored_bytes(_request_line("GET", "/readyz"))
+    lines = {
+        "orders": ORDERS_PER_BUSY_DAY * API_LINES_PER_ORDER,
+        "polls": CONSOLE_POLL_LINES_PER_DAY,
+        "readyz": SECONDS_PER_DAY // _console_check_interval(),
+        "healthcheck": SECONDS_PER_DAY // _healthcheck_interval(api),
+    }
+    total = (
+        (lines["orders"] + lines["polls"]) * longest
+        + lines["readyz"] * readyz
+        + lines["healthcheck"] * healthz
+    )
+    return total, lines
+
+
+def test_the_retention_model_is_built_from_what_writes_the_log(
+    rendered: dict[str, dict[str, Any]],
+) -> None:
+    """The pieces the first model got wrong, pinned: the healthcheck is in it, and no line the API
+    can write is longer than the figure the arithmetic uses."""
+
+    longest, where = _longest_request_line()
+    assert longest >= LONGEST_LINE_SEEN, where
+    assert _stored_bytes(_request_line("GET", "/healthz")) == 441  # measured on the json-file log
+    for label, document in rendered.items():
+        api = document["services"].get("api")
+        if api is None:
+            continue
+        _, lines = _busy_day_bytes(api)
+        assert lines["healthcheck"] == SECONDS_PER_DAY // 30, label
+        assert lines["readyz"] == SECONDS_PER_DAY // 300, label
 
 
 def test_the_api_log_keeps_fourteen_busy_days(rendered: dict[str, dict[str, Any]]) -> None:
     """Docker drops the oldest file on rotation, so what is guaranteed is (max-file - 1) files."""
 
-    needed = BYTES_PER_STORED_REQUEST_LINE * REQUESTS_PER_BUSY_DAY * API_LOG_RETENTION_DAYS
     short: list[str] = []
     checked = 0
     for label, document in rendered.items():
@@ -167,10 +319,15 @@ def test_the_api_log_keeps_fourteen_busy_days(rendered: dict[str, dict[str, Any]
         if api is None:
             continue
         checked += 1
+        per_day, _ = _busy_day_bytes(api)
+        needed = per_day * API_LOG_RETENTION_DAYS
         options = (api.get("logging") or {}).get("options") or {}
         kept = _bytes(options.get("max-size", "0")) * (int(options.get("max-file", "1")) - 1)
         if kept < needed:
-            short.append(f"{label}: api keeps {kept} bytes for certain, {needed} are needed")
+            short.append(
+                f"{label}: api keeps {kept} bytes for certain = {kept / per_day:.1f} busy days; "
+                f"{API_LOG_RETENTION_DAYS} need {needed}"
+            )
     assert checked, "no rendered combination has an api service"
     assert not short, "\n".join(short)
 

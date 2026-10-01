@@ -1066,7 +1066,7 @@ def invoice_subject(
         "history": [live] if live else [],
         "history_truncated": False,
         "evaluated_at": "2026-09-27T03:00:00+00:00",
-        "query_version": "invoice-requests-v3:0000000000000000",
+        "query_version": "invoice-requests-v3:d3625d72002168a4",
         "decision": "DEC-040",
     }
 
@@ -1091,7 +1091,7 @@ def invoice_list(status: str) -> dict[str, object]:
         "truncated": False,
         "counts": {"REQUESTED": 2, "ISSUED": 1, "CANCELLED": 0},
         "requests": items,
-        "query_version": "invoice-requests-v3:0000000000000000",
+        "query_version": "invoice-requests-v3:d3625d72002168a4",
     }
 
 

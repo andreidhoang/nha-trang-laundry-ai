@@ -268,12 +268,24 @@ class Expense:
     category: ExpenseCategory
     amount_vnd: int
     note: str | None
+    #: `CASH-COUNT-009` (`DEC-049`): the money was handed out of the counter's drawer ("Trả từ
+    #: két"), so the day's cash count expects that much less. Default no; every line written before
+    #: `0072` is no.
+    paid_from_drawer: bool = False
 
 
 def expense(
-    *, spent_on: date, category: ExpenseCategory, amount_vnd: int, note: str | None, today: date
+    *,
+    spent_on: date,
+    category: ExpenseCategory,
+    amount_vnd: int,
+    note: str | None,
+    today: date,
+    paid_from_drawer: bool = False,
 ) -> Expense:
     """One line of Sổ thu chi, or the reason it is refused. `today` is the shop's, passed in."""
+    if not isinstance(paid_from_drawer, bool):
+        raise ShopCaptureError("EXPENSE_DRAWER_FLAG_INVALID", "trả từ két is yes or no")
     require_non_negative_vnd(amount_vnd)
     if amount_vnd == 0:
         raise ShopCaptureError("EXPENSE_AMOUNT_REQUIRED", "an expense is more than 0 đồng")
@@ -288,7 +300,11 @@ def expense(
             "EXPENSE_DATE_TOO_OLD", "an expense is dated within the last 366 days"
         )
     return Expense(
-        spent_on=spent_on, category=category, amount_vnd=amount_vnd, note=capture_note(note)
+        spent_on=spent_on,
+        category=category,
+        amount_vnd=amount_vnd,
+        note=capture_note(note),
+        paid_from_drawer=paid_from_drawer,
     )
 
 

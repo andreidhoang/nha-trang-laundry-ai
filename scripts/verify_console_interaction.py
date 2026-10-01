@@ -1066,7 +1066,7 @@ def invoice_subject(
         "history": [live] if live else [],
         "history_truncated": False,
         "evaluated_at": "2026-09-27T03:00:00+00:00",
-        "query_version": "invoice-requests-v1:0000000000000000",
+        "query_version": "invoice-requests-v2:0000000000000000",
         "decision": "DEC-040",
     }
 
@@ -1091,7 +1091,7 @@ def invoice_list(status: str) -> dict[str, object]:
         "truncated": False,
         "counts": {"REQUESTED": 2, "ISSUED": 1, "CANCELLED": 0},
         "requests": items,
-        "query_version": "invoice-requests-v1:0000000000000000",
+        "query_version": "invoice-requests-v2:0000000000000000",
     }
 
 
@@ -1519,7 +1519,7 @@ DAILY_SUMMARY_LINES = [
 DAILY_SUMMARY = {
     "store_id": STORE,
     "date": "2026-09-25",
-    "template_version": "daily-summary-v4:0123456789abcdef",
+    "template_version": "daily-summary-v5:0123456789abcdef",
     "evaluated_at": "2026-09-25T12:30:00+00:00",
     "so_far": True,
     "lines": [

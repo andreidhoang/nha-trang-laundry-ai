@@ -183,7 +183,7 @@ def test_the_drawer_is_cash_in_minus_cash_back_and_every_reader_agrees(connectio
     day_figures = {figure.key: figure for figure in only_day.figures}
     assert day_figures[ReportKey.MONEY_DRAWER] == drawer
 
-    # --- the evening summary (`daily-summary-v4`) -------------------------------------------
+    # --- the evening summary (`daily-summary-v5`) -------------------------------------------
     summary = DailySummaryRepository.read(
         connection,
         store_id=shop.store_id,

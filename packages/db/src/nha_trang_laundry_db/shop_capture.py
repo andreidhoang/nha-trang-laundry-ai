@@ -928,6 +928,8 @@ class ExpenseView:
     recorded_at: datetime
     voided_at: datetime | None
     row_version: int
+    #: `CASH-COUNT-009` (`DEC-049`): "Trả từ két" -- handed out of the drawer.
+    paid_from_drawer: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -967,6 +969,8 @@ class RecordExpenseCommand:
     #: The shop's today, passed in: the domain refuses a line dated after it.
     today: date
     occurred_at: datetime | None = None
+    #: `CASH-COUNT-009` (`DEC-049`): "Trả từ két". Default no.
+    paid_from_drawer: bool = False
 
 
 @dataclass(frozen=True)
@@ -981,7 +985,7 @@ class VoidExpenseCommand:
 
 _EXPENSE_COLUMNS: Final = """
     e.id, e.spent_on, e.category, e.amount_vnd, e.note, e.recorded_by, u.display_name,
-    e.recorded_at, e.voided_at, e.row_version
+    e.recorded_at, e.voided_at, e.row_version, e.paid_from_drawer
 """
 
 
@@ -997,6 +1001,7 @@ def _expense(row: Any) -> ExpenseView:
         recorded_at=row[7],
         voided_at=row[8],
         row_version=int(row[9]),
+        paid_from_drawer=bool(row[10]),
     )
 
 
@@ -1055,6 +1060,7 @@ class ExpenseRepository:
                 amount_vnd=command.amount_vnd,
                 note=command.note,
                 today=command.today,
+                paid_from_drawer=command.paid_from_drawer,
             )
         except ShopCaptureError as error:
             raise _refusal(error) from error
@@ -1067,8 +1073,8 @@ class ExpenseRepository:
                     """
                     INSERT INTO expenses (
                         id, store_id, spent_on, category, amount_vnd, note, recorded_by,
-                        recorded_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        recorded_at, paid_from_drawer
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         expense_id,
@@ -1079,6 +1085,7 @@ class ExpenseRepository:
                         line.note,
                         command.principal.staff_user_id,
                         moment,
+                        line.paid_from_drawer,
                     ),
                 )
 
@@ -1095,6 +1102,7 @@ class ExpenseRepository:
                         "spent_on": line.spent_on.isoformat(),
                         "category": line.category.value,
                         "amount_vnd": line.amount_vnd,
+                        "paid_from_drawer": line.paid_from_drawer,
                     },
                     audit_action="EXPENSE_RECORD",
                     actor_type="STAFF",
@@ -1123,6 +1131,9 @@ class ExpenseRepository:
                     "category": line.category.value,
                     "amount_vnd": line.amount_vnd,
                     "note": line.note,
+                    # Named only when yes, so a key used before `0072` (when every line was "no")
+                    # still replays to its first answer rather than reading as a changed payload.
+                    **({"paid_from_drawer": True} if line.paid_from_drawer else {}),
                 },
                 moment,
             ),

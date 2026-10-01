@@ -29,7 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, time
 from enum import StrEnum
-from typing import Final
+from typing import Final, Literal
 
 #: The template's published identifier. The digest beside it is taken over this module's rules
 #: (`nha_trang_laundry_db.daily_summary.daily_summary_template_version`), and a test pins it: a
@@ -49,7 +49,11 @@ from typing import Final
 #: v4 (round 9, GOODS-AND-DRAWER-009, review M4): the money line says how refunds went back and
 #: what the drawer did -- cash in minus cash handed back -- beside "Thu trừ hoàn" (every method),
 #: and names the refunds of unknown method (written before `0067`) that the drawer figure excludes.
-DAILY_SUMMARY_TEMPLATE_IDENTIFIER: Final = "daily-summary-v4"
+#:
+#: v5 (round 9b, `CASH-COUNT-009`, `DEC-049`): a sixth *Cần chú ý* line -- the day's closing
+#: cash count when it was not even with what the books say (thừa / thiếu, both figures, and the
+#: refunds of unknown method the expected figure left out), or when it could not be compared.
+DAILY_SUMMARY_TEMPLATE_IDENTIFIER: Final = "daily-summary-v5"
 
 #: `Asia/Ho_Chi_Minh` weekday names, Monday first, as the counter says them.
 _WEEKDAY_VI: Final = ("thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy", "Chủ nhật")
@@ -81,6 +85,8 @@ class LineKey(StrEnum):
     ATTN_PICKUP = "ATTN_PICKUP"
     ATTN_INVOICES = "ATTN_INVOICES"
     ATTN_NUMBERS = "ATTN_NUMBERS"
+    #: `DEC-049`: the closing cash count, after the five `DEC-044` lines.
+    ATTN_CASH_COUNT = "ATTN_CASH_COUNT"
     ATTN_NONE = "ATTN_NONE"
     ORDERS = "ORDERS"
     MONEY = "MONEY"
@@ -152,10 +158,12 @@ _LINE_TOPIC_VI: Final = {
     LineKey.ATTN_PICKUP: "Nhắc khách lấy đồ",
     LineKey.ATTN_INVOICES: "Hóa đơn cần xuất",
     LineKey.ATTN_NUMBERS: "So với các tuần trước",
+    LineKey.ATTN_CASH_COUNT: "Đếm két",
 }
 
-#: How many lines the *Cần chú ý* block may hold (`DEC-044`): a list the owner reads at a glance.
-ATTENTION_MAX_LINES: Final = 5
+#: How many lines the *Cần chú ý* block may hold: one per kind of line, each firing at most once --
+#: the five of `DEC-044` and the cash count of `DEC-049`. A list the owner reads at a glance.
+ATTENTION_MAX_LINES: Final = 6
 
 #: Invoice asks older than this many days are named (`DEC-044` line 4).
 INVOICE_STALE_DAYS: Final = 3
@@ -319,6 +327,25 @@ class FeeSoon:
 
 
 @dataclass(frozen=True, slots=True)
+class CashCountFigures:
+    """`CASH-COUNT-009` (`DEC-049`): the day's current closing count, as it was RECORDED.
+
+    `status` is the expected figure's (`COMPLETE`, `INCOMPLETE`, `FLOAT_MISSING`,
+    `BOOKS_BELOW_ZERO`); `expected_vnd`, `difference_vnd` and `direction` (`EVEN`, `OVER`, `SHORT`)
+    exist only when an expected figure was produced. Every amount is a magnitude.
+    """
+
+    status: Literal["COMPLETE", "INCOMPLETE", "FLOAT_MISSING", "BOOKS_BELOW_ZERO"]
+    counted_vnd: int
+    expected_vnd: int | None
+    difference_vnd: int | None
+    direction: Literal["EVEN", "OVER", "SHORT"] | None
+    excluded_unknown_entries: int
+    excluded_unknown_vnd: int
+    books_over_vnd: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class AttentionFacts:
     """The *Cần chú ý* sources (`DEC-044`). Counts and money only; each may be `Unavailable`."""
 
@@ -333,6 +360,9 @@ class AttentionFacts:
     comparison: DayComparison | Unavailable
     #: `None` before `MISSING_COSTS_AFTER_DAY`, or when last month has every category.
     missing_costs: MissingCosts | Unavailable | None
+    #: `CASH-COUNT-009`: the day's recorded closing count; `None` when none was recorded (nothing
+    #: happens automatically, so an uncounted day is not a line).
+    cash_count: CashCountFigures | Unavailable | None = None
 
 
 def _unavailable_attention(source: str) -> AttentionFacts:
@@ -779,6 +809,14 @@ def _attention(inputs: SummaryInputs, omitted: list[Omission]) -> list[SummaryLi
         sentences, figures = numbers
         found.append(SummaryLine(LineKey.ATTN_NUMBERS, " ".join(sentences), tuple(figures)))
 
+    counted = facts.cash_count
+    if isinstance(counted, Unavailable):
+        missing(LineKey.ATTN_CASH_COUNT, counted)
+    elif counted is not None:
+        line = _cash_count_line(counted)
+        if line is not None:
+            found.append(line)
+
     if found:
         title = SummaryLine(LineKey.ATTENTION, "Cần chú ý:", (("attention", len(found)),))
         return [title, *(_bulleted(line) for line in found[:ATTENTION_MAX_LINES])]
@@ -863,6 +901,49 @@ def _numbers_sentences(
     return (sentences, figures) if sentences else None
 
 
+def _cash_count_line(counted: CashCountFigures) -> SummaryLine | None:
+    """`DEC-049`: the closing count when it is not even with the books, or could not be compared.
+
+    Thừa / thiếu is a word and the gap a magnitude; both figures are printed, never a difference
+    the reader would have to take from them. An even count is not a line.
+    """
+    figures: tuple[tuple[str, Figure], ...] = (
+        ("cash_count_status", counted.status),
+        ("cash_counted_vnd", counted.counted_vnd),
+        ("cash_expected_vnd", counted.expected_vnd),
+        ("cash_difference_vnd", counted.difference_vnd),
+        ("cash_difference_direction", counted.direction),
+    )
+    if counted.status == "FLOAT_MISSING":
+        text = (
+            f"Đếm két cuối ngày được {format_vnd(counted.counted_vnd)} nhưng chưa so được: "
+            "chưa ghi tiền đầu ngày."
+        )
+        return SummaryLine(LineKey.ATTN_CASH_COUNT, text, figures)
+    if counted.status == "BOOKS_BELOW_ZERO":
+        text = (
+            f"Đếm két cuối ngày được {format_vnd(counted.counted_vnd)} nhưng chưa so được: "
+            "sổ ghi tiền ra khỏi két nhiều hơn tiền vào "
+            f"{format_vnd(counted.books_over_vnd or 0)}."
+        )
+        return SummaryLine(LineKey.ATTN_CASH_COUNT, text, figures)
+    if counted.direction not in ("OVER", "SHORT") or counted.expected_vnd is None:
+        return None
+    word = "thừa" if counted.direction == "OVER" else "thiếu"
+    sentences = [
+        f"Đếm két cuối ngày {word} {format_vnd(counted.difference_vnd or 0)} "
+        f"(phải có {format_vnd(counted.expected_vnd)}, "
+        f"đếm được {format_vnd(counted.counted_vnd)})."
+    ]
+    if counted.excluded_unknown_entries:
+        sentences.append(
+            "Số phải có chưa tính "
+            f"{format_count(counted.excluded_unknown_entries, 'khoản hoàn')} chưa rõ cách hoàn "
+            f"({format_vnd(counted.excluded_unknown_vnd)})."
+        )
+    return SummaryLine(LineKey.ATTN_CASH_COUNT, " ".join(sentences), figures)
+
+
 def _direction_vi(direction: Direction) -> str:
     return "thấp hơn thường lệ" if direction is Direction.LOW else "cao hơn thường lệ"
 
@@ -907,6 +988,7 @@ __all__ = [
     "AccountsDueFigures",
     "AttentionFacts",
     "BoardFigures",
+    "CashCountFigures",
     "DayComparison",
     "DayFigures",
     "Direction",

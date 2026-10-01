@@ -7710,7 +7710,7 @@ def scenario_daily_summary(console: Console) -> None:
     ok(
         "the owner reads today's summary: a versioned template, lines and what it left out",
         first["status"] == 200
-        and str((first["body"] or {}).get("template_version", "")).startswith("daily-summary-v4:")
+        and str((first["body"] or {}).get("template_version", "")).startswith("daily-summary-v5:")
         and (first["body"] or {}).get("date") == today
         and (first["body"] or {}).get("so_far") is True,
         first["text"][:160],

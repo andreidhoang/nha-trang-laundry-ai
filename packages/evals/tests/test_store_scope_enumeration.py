@@ -516,6 +516,16 @@ ROUTE_SCOPE: dict[tuple[str, str], RouteScope] = {
         "keyed by expense_id: the row's store must be the path's store (else 404), and "
         "membership is required against the store read off the expense row.",
     ),
+    # --- CASH-COUNT-009 (DEC-049) ---------------------------------------------------------------
+    ("GET", "/internal/v1/stores/{store_id}/cash-count"): store_scoped(
+        "cash_counts", "CashCountRepository.today"
+    ),
+    ("POST", "/internal/v1/stores/{store_id}/cash-count"): store_scoped(
+        "cash_counts", "CashCountRepository.record"
+    ),
+    ("GET", "/internal/v1/stores/{store_id}/cash-counts"): store_scoped(
+        "cash_counts", "CashCountRepository.history"
+    ),
     ("GET", "/internal/v1/orders/{order_id}/capture"): RouteScope(
         "STORE_SCOPED",
         ("shop_capture", "order_capture"),

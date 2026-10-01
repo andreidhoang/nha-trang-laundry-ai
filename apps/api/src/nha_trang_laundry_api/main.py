@@ -36,6 +36,12 @@ from nha_trang_laundry_db.approvals import (
     StoredApproval,
 )
 from nha_trang_laundry_db.assistant import AssistantAuthorizationError
+from nha_trang_laundry_db.cash_counts import (
+    CashCountAuthorizationError,
+    CashCountDay,
+    CashCountEntry,
+    CashCountRefusal,
+)
 from nha_trang_laundry_db.channel import ChannelBindingError
 from nha_trang_laundry_db.connection import DatabaseUnavailableError
 from nha_trang_laundry_db.consent_egress import EgressRefusedError
@@ -159,6 +165,11 @@ from nha_trang_laundry_domain.accounts import (
 from nha_trang_laundry_domain.accounts import month_label as account_month_label
 from nha_trang_laundry_domain.approvals import ApprovalEnvelopeError
 from nha_trang_laundry_domain.canonical import MAX_CANONICAL_INT
+from nha_trang_laundry_domain.cash_count import (
+    CashCountKind,
+    DifferenceDirection,
+    ExpectedStatus,
+)
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
     ApprovalAction,
@@ -254,6 +265,7 @@ from nha_trang_laundry_api.auth import (
     StaffIdentityService,
 )
 from nha_trang_laundry_api.authorization import RouteGate, register_gate
+from nha_trang_laundry_api.cash_count import CashCountService, CashCountUnavailable
 from nha_trang_laundry_api.customers import (
     CUSTOMER_PATH_MARKER,
     CustomerService,
@@ -8458,6 +8470,8 @@ class ExpenseResponse(BaseModel):
     recorded_at: datetime
     voided_at: datetime | None
     row_version: int = Field(ge=1)
+    #: `CASH-COUNT-009` (`DEC-049`): "Trả từ két" -- handed out of the counter's drawer.
+    paid_from_drawer: bool = False
     replayed: bool = False
 
 
@@ -8500,6 +8514,7 @@ def _expense_response(line: ExpenseView, *, replayed: bool = False) -> ExpenseRe
         recorded_at=line.recorded_at,
         voided_at=line.voided_at,
         row_version=line.row_version,
+        paid_from_drawer=line.paid_from_drawer,
         replayed=replayed,
     )
 
@@ -8548,6 +8563,8 @@ class ExpenseCreateRequest(StrictRequest):
     category: ExpenseCategory
     amount_vnd: StrictInt = Field(ge=1, le=MAX_CANONICAL_INT)
     note: str | None = Field(default=None, max_length=200)
+    #: `CASH-COUNT-009` (`DEC-049`): "Trả từ két". Default no.
+    paid_from_drawer: StrictBool = False
 
 
 @app.post(
@@ -8575,6 +8592,7 @@ def record_expense(
             note=request.note,
             principal=principal,
             idempotency_key=idempotency_key,
+            paid_from_drawer=request.paid_from_drawer,
         )
     except _SHOP_CAPTURE_ERRORS as error:
         _raise_shop_capture_error(error)
@@ -8608,6 +8626,274 @@ def void_expense(
     except _SHOP_CAPTURE_ERRORS as error:
         _raise_shop_capture_error(error)
     return _expense_response(line, replayed=replayed)
+
+
+# --- CASH-COUNT-009 (DEC-049): the end-of-day cash count, "đếm két" ------------------------------
+#
+# Staff record the opening float and the closing count, each once per store per business day; a
+# correction is a new entry superseding the current one, with a reason. The server computes what
+# the drawer should hold (float + cash taken - cash refunded - Sổ thu chi lines "trả từ két") and
+# the difference as a size and a word; the console does no arithmetic. Counter roles record and
+# read today's sheet under the drawer route's own gate (`require_operations_staff`); the owner
+# reads every day (`require_owner`). Nothing happens automatically: no adjustment, no money moved.
+
+
+def get_cash_count_service() -> CashCountService:
+    try:
+        return CashCountService(AuthSettings())
+    except CashCountUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="cash count unavailable"
+        ) from error
+
+
+_CASH_COUNT_ERRORS = (
+    CashCountAuthorizationError,
+    StoreAccessError,
+    IdempotencyConflictError,
+    CashCountRefusal,
+)
+
+
+def _raise_cash_count_error(error: Exception) -> NoReturn:
+    """403 opaque; 409 for a reused key, an entry already recorded or a correction of an entry
+    that is no longer current (`CODE: text`, so the console re-reads); 422 `{reason_code}` for a
+    value the rules refuse."""
+    if isinstance(error, (CashCountAuthorizationError, StoreAccessError)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=AUTHORIZATION_DENIED) from error
+    if isinstance(error, IdempotencyConflictError):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEMPOTENCY_CONFLICT") from error
+    if isinstance(error, CashCountRefusal):
+        if error.conflict:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, detail=f"{error.reason_code}: {error}"
+            ) from error
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail={"reason_code": error.reason_code}
+        ) from error
+    raise error
+
+
+class CashCountEntryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entry_id: UUID
+    business_day: date
+    kind: CashCountKind
+    counted_vnd: int = Field(ge=0)
+    supersedes_id: UUID | None
+    correction_reason: str | None
+    #: A closing count's record of the books when it was counted; null on an opening float.
+    expected_status: ExpectedStatus | None
+    expected_vnd: int | None = Field(ge=0)
+    #: The gap as a size and a word (`EVEN`, `OVER` = thừa, `SHORT` = thiếu); never signed.
+    difference_vnd: int | None = Field(ge=0)
+    difference_direction: DifferenceDirection | None
+    trace_hash: str | None
+    recorded_by: UUID
+    recorded_by_name: str | None
+    recorded_at: datetime
+    #: A later correction replaced this entry.
+    superseded: bool
+
+
+class CashExpectedResponse(BaseModel):
+    """What the books say the drawer holds now. Every figure is the server's; the console adds
+    nothing. `expected_vnd` is null unless `status` is COMPLETE or INCOMPLETE -- no float recorded
+    (`FLOAT_MISSING`) and books below nothing (`BOOKS_BELOW_ZERO`) are not zeros."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: ExpectedStatus
+    expected_vnd: int | None = Field(ge=0)
+    float_vnd: int | None = Field(ge=0)
+    cash_in_vnd: int = Field(ge=0)
+    cash_in_count: int = Field(ge=0)
+    cash_refunded_vnd: int = Field(ge=0)
+    cash_refunded_count: int = Field(ge=0)
+    drawer_expenses_vnd: int = Field(ge=0)
+    drawer_expenses_count: int = Field(ge=0)
+    #: `DEC-048`: refunds of unknown method, left out of the figure (never guessed as cash).
+    excluded_unknown_refunds_vnd: int = Field(ge=0)
+    excluded_unknown_refunds_count: int = Field(ge=0)
+    books_over_vnd: int | None = Field(ge=0)
+
+
+class CashCountDayResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    business_day: date
+    business_timezone: str
+    opening_float: CashCountEntryResponse | None
+    closing_count: CashCountEntryResponse | None
+    #: Every entry of the day, oldest first, corrections and what they replaced included.
+    entries: list[CashCountEntryResponse]
+    expected: CashExpectedResponse
+    #: A closing count is recorded and the books (or the float) say something else now.
+    changed_since_count: bool
+    query_version: str
+
+
+class CashCountRecordResponse(CashCountDayResponse):
+    entry: CashCountEntryResponse
+    replayed: bool = False
+
+
+class CashCountHistoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_id: UUID
+    from_date: date
+    to_date: date
+    truncated: bool
+    #: The days of the window with any entry, oldest first.
+    days: list[CashCountDayResponse]
+    query_version: str
+
+
+def _cash_entry_response(entry: CashCountEntry) -> CashCountEntryResponse:
+    return CashCountEntryResponse(
+        entry_id=entry.entry_id,
+        business_day=entry.business_day,
+        kind=entry.kind,
+        counted_vnd=entry.counted_vnd,
+        supersedes_id=entry.supersedes_id,
+        correction_reason=entry.correction_reason,
+        expected_status=entry.expected_status,
+        expected_vnd=entry.expected_vnd,
+        difference_vnd=entry.difference_vnd,
+        difference_direction=entry.difference_direction,
+        trace_hash=entry.trace_hash,
+        recorded_by=entry.recorded_by,
+        recorded_by_name=entry.recorded_by_name,
+        recorded_at=entry.recorded_at,
+        superseded=entry.superseded,
+    )
+
+
+def _cash_day_fields(day: CashCountDay) -> dict[str, Any]:
+    expected = day.expected
+    movement = expected.movement
+    return {
+        "store_id": day.store_id,
+        "business_day": day.business_day,
+        "business_timezone": BUSINESS_TIMEZONE,
+        "opening_float": (
+            None if day.opening_float is None else _cash_entry_response(day.opening_float)
+        ),
+        "closing_count": (
+            None if day.closing_count is None else _cash_entry_response(day.closing_count)
+        ),
+        "entries": [_cash_entry_response(entry) for entry in day.entries],
+        "expected": CashExpectedResponse(
+            status=expected.status,
+            expected_vnd=expected.expected_vnd,
+            float_vnd=expected.float_vnd,
+            cash_in_vnd=movement.cash_in_vnd,
+            cash_in_count=movement.cash_in_entries,
+            cash_refunded_vnd=movement.cash_refunded_vnd,
+            cash_refunded_count=movement.cash_refunded_entries,
+            drawer_expenses_vnd=movement.drawer_expenses_vnd,
+            drawer_expenses_count=movement.drawer_expenses_entries,
+            excluded_unknown_refunds_vnd=movement.unknown_refunds_vnd,
+            excluded_unknown_refunds_count=movement.unknown_refunds_entries,
+            books_over_vnd=expected.books_over_vnd,
+        ),
+        "changed_since_count": day.changed_since_count,
+        "query_version": day.query_version,
+    }
+
+
+@app.get("/internal/v1/stores/{store_id}/cash-count", response_model=CashCountDayResponse)
+def read_cash_count(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[CashCountService | None, Depends(get_cash_count_service)] = None,
+) -> CashCountDayResponse:
+    """Today's cash count: the float and the closing count recorded (and their corrections), what
+    the books say the drawer should hold now, and the recorded difference."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="cash count unavailable")
+    try:
+        day = service.today(store_id=store_id, principal=principal)
+    except _CASH_COUNT_ERRORS as error:
+        _raise_cash_count_error(error)
+    return CashCountDayResponse(**_cash_day_fields(day))
+
+
+class CashCountRecordRequest(StrictRequest):
+    """One entry: the day it is for (the shop's today), what was counted, and -- for a correction
+    -- the current entry it replaces and why."""
+
+    business_day: date
+    kind: CashCountKind
+    counted_vnd: StrictInt = Field(ge=0, le=MAX_CANONICAL_INT)
+    supersedes_entry_id: UUID | None = None
+    reason: str | None = Field(default=None, max_length=200)
+
+
+@app.post(
+    "/internal/v1/stores/{store_id}/cash-count",
+    response_model=CashCountRecordResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_cash_count(
+    store_id: UUID,
+    request: CashCountRecordRequest,
+    idempotency_key: IdempotencyKey,
+    principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
+    service: Annotated[CashCountService | None, Depends(get_cash_count_service)] = None,
+) -> CashCountRecordResponse:
+    """Record the opening float or the closing count, or correct the current one with a reason.
+    Each is recorded once per day (`CASH_COUNT_ALREADY_RECORDED`, 409); a correction of an entry
+    that is no longer current is `CASH_COUNT_STALE` (409)."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="cash count unavailable")
+    try:
+        entry, day, replayed = service.record(
+            store_id=store_id,
+            business_day=request.business_day,
+            kind=request.kind,
+            counted_vnd=request.counted_vnd,
+            supersedes_entry_id=request.supersedes_entry_id,
+            reason=request.reason,
+            principal=principal,
+            idempotency_key=idempotency_key,
+        )
+    except _CASH_COUNT_ERRORS as error:
+        _raise_cash_count_error(error)
+    return CashCountRecordResponse(
+        **_cash_day_fields(day), entry=_cash_entry_response(entry), replayed=replayed
+    )
+
+
+@app.get("/internal/v1/stores/{store_id}/cash-counts", response_model=CashCountHistoryResponse)
+def list_cash_counts(
+    store_id: UUID,
+    principal: Annotated[StaffPrincipal, Depends(require_owner)],
+    from_date: Annotated[date, Query(alias="from")],
+    to_date: Annotated[date, Query(alias="to")],
+    service: Annotated[CashCountService | None, Depends(get_cash_count_service)] = None,
+) -> CashCountHistoryResponse:
+    """The owner's read: every day of `[from, to]` (at most 92, the report's window) that has a
+    cash-count entry, with the recorded difference and what the books say now."""
+    if service is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="cash count unavailable")
+    try:
+        history = service.history(
+            store_id=store_id, principal=principal, from_date=from_date, to_date=to_date
+        )
+    except _CASH_COUNT_ERRORS as error:
+        _raise_cash_count_error(error)
+    return CashCountHistoryResponse(
+        store_id=history.store_id,
+        from_date=history.from_date,
+        to_date=history.to_date,
+        truncated=history.truncated,
+        days=[CashCountDayResponse(**_cash_day_fields(day)) for day in history.days],
+        query_version=history.query_version,
+    )
 
 
 class CaptureCycleResponse(BaseModel):

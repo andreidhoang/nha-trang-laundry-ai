@@ -17,6 +17,7 @@ from nha_trang_laundry_domain.daily_summary import (
     AccountsDueFigures,
     AttentionFacts,
     BoardFigures,
+    CashCountFigures,
     DayComparison,
     DayFigures,
     Direction,
@@ -692,7 +693,14 @@ def test_compare_refuses_what_is_not_a_count() -> None:
 
 
 def test_attention_inputs_carry_no_free_text() -> None:
-    for cls in (AttentionFacts, DayComparison, UsualFigure, MissingCosts, FeeSoon):
+    for cls in (
+        AttentionFacts,
+        DayComparison,
+        UsualFigure,
+        MissingCosts,
+        FeeSoon,
+        CashCountFigures,
+    ):
         hints = typing.get_type_hints(cls)
         for field in dataclasses.fields(cls):
             hint = hints[field.name]
@@ -705,3 +713,118 @@ def test_attention_inputs_carry_no_free_text() -> None:
         _attention_lines(
             missing_costs=MissingCosts(month=date(2026, 8, 1), categories=("Nguyễn Văn A",))
         )
+
+
+# --- v5: the closing cash count (`CASH-COUNT-009`, `DEC-049`) ----------------------------------
+
+
+def _counted(
+    status: str = "COMPLETE",
+    counted: int = 590_000,
+    expected: int | None = 600_000,
+    difference: int | None = 10_000,
+    direction: str | None = "SHORT",
+    excluded: tuple[int, int] = (0, 0),
+    books_over: int | None = None,
+) -> CashCountFigures:
+    return CashCountFigures(
+        status=status,  # type: ignore[arg-type]
+        counted_vnd=counted,
+        expected_vnd=expected,
+        difference_vnd=difference,
+        direction=direction,  # type: ignore[arg-type]
+        excluded_unknown_entries=excluded[0],
+        excluded_unknown_vnd=excluded[1],
+        books_over_vnd=books_over,
+    )
+
+
+def test_a_short_or_over_closing_count_is_named_with_both_figures() -> None:
+    assert _attention_lines(cash_count=_counted()) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày thiếu 10.000đ (phải có 600.000đ, đếm được 590.000đ).",
+    ]
+    over = _counted(counted=605_000, difference=5_000, direction="OVER")
+    assert _attention_lines(cash_count=over) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày thừa 5.000đ (phải có 600.000đ, đếm được 605.000đ).",
+    ]
+    incomplete = _counted(status="INCOMPLETE", excluded=(2, 45_000))
+    assert _attention_lines(cash_count=incomplete) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày thiếu 10.000đ (phải có 600.000đ, đếm được 590.000đ). "
+        "Số phải có chưa tính 2 khoản hoàn chưa rõ cách hoàn (45.000đ).",
+    ]
+
+
+def test_an_even_count_or_no_count_is_not_a_line_and_the_all_clear_stands() -> None:
+    even = _counted(counted=600_000, difference=0, direction="EVEN")
+    assert _attention_lines(cash_count=even) == ["Không có việc cần chú ý."]
+    assert _attention_lines(cash_count=None) == ["Không có việc cần chú ý."]
+    # Even but incomplete: no gap to report; the refunds left out are said on the count's screen.
+    even_incomplete = _counted(
+        status="INCOMPLETE", counted=600_000, difference=0, direction="EVEN", excluded=(1, 1)
+    )
+    assert _attention_lines(cash_count=even_incomplete) == ["Không có việc cần chú ý."]
+
+
+def test_a_count_that_could_not_be_compared_is_named_never_read_as_even() -> None:
+    no_float = _counted(
+        status="FLOAT_MISSING", counted=300_000, expected=None, difference=None, direction=None
+    )
+    assert _attention_lines(cash_count=no_float) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày được 300.000đ nhưng chưa so được: chưa ghi tiền đầu ngày.",
+    ]
+    below = _counted(
+        status="BOOKS_BELOW_ZERO",
+        counted=0,
+        expected=None,
+        difference=None,
+        direction=None,
+        books_over=100_000,
+    )
+    assert _attention_lines(cash_count=below) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày được 0đ nhưng chưa so được: sổ ghi tiền ra khỏi két nhiều hơn tiền "
+        "vào 100.000đ.",
+    ]
+
+
+def test_a_reader_who_may_not_read_the_counts_gets_no_all_clear() -> None:
+    refused = Unavailable(OmissionReason.ROLE_NOT_PERMITTED, "CASH-COUNT-009")
+    assert _attention_lines(cash_count=refused) == []
+    summary = render_summary(
+        _inputs(board=CALM_BOARD, attention=dataclasses.replace(CALM, cash_count=refused))
+    )
+    notes = [item.note for item in summary.omitted if item.key is LineKey.ATTN_CASH_COUNT]
+    assert notes == ["Đếm két: vai trò của bạn không xem được nguồn số liệu này."]
+
+
+def test_all_six_lines_in_order_the_cash_count_after_the_five_of_dec_044() -> None:
+    low = UsualFigure(today=1, usual=10, direction=Direction.LOW)
+    facts = AttentionFacts(
+        late_deliveries_undecided=1,
+        reminders_due=2,
+        fee_soon=FeeSoon(count=1, free_days=20),
+        invoices_waiting=1,
+        comparison=DayComparison(weeks_with_data=4, collected=low, orders=low),
+        missing_costs=MissingCosts(month=date(2026, 8, 1), categories=("NUOC",)),
+        cash_count=_counted(),
+    )
+    summary = render_summary(_inputs(attention=facts))
+    keys = [line.key for line in summary.lines if line.key.value.startswith("ATT")]
+    assert keys == [
+        LineKey.ATTENTION,
+        LineKey.ATTN_LATE_DELIVERIES,
+        LineKey.ATTN_OVERDUE,
+        LineKey.ATTN_PICKUP,
+        LineKey.ATTN_INVOICES,
+        LineKey.ATTN_NUMBERS,
+        LineKey.ATTN_CASH_COUNT,
+    ]
+    assert len(keys) - 1 == template.ATTENTION_MAX_LINES == 6
+    # No minus sign anywhere: the gap is a word and a magnitude.
+    cash = next(line for line in summary.lines if line.key is LineKey.ATTN_CASH_COUNT)
+    assert "-" not in cash.text[2:] and "\u2212" not in cash.text
+    assert dict(cash.figures)["cash_difference_direction"] == "SHORT"

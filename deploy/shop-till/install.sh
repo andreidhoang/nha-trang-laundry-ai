@@ -14,6 +14,9 @@ set -euo pipefail
 LABEL_PREFIX="com.giatlasachcong"
 AGENT_DIRECTORY="$HOME/Library/LaunchAgents"
 LOG_DIRECTORY="$HOME/Library/Logs/giatlasachcong"
+# What a check must remember between runs (`--check app`'s read position). Outside the checkout, so
+# a `git clean` or a fresh clone does not make the next run skip what happened in between.
+STATE_DIRECTORY="$HOME/Library/Application Support/giatlasachcong"
 REPOSITORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROJECT="nha-trang-laundry-shop"
 
@@ -49,7 +52,7 @@ case "$REPOSITORY" in
         ;;
 esac
 
-mkdir -p "$AGENT_DIRECTORY" "$LOG_DIRECTORY"
+mkdir -p "$AGENT_DIRECTORY" "$LOG_DIRECTORY" "$STATE_DIRECTORY"
 
 # `DEC-025`: one Telegram message to the owner, from a separate bot. The token and the chat live in
 # host files beside the other secrets -- gitignored, 0600, never in this repository and never on a
@@ -146,10 +149,12 @@ data_checks="$relay --label checks-data \
 # /etc/hosts rather than the router. `/readyz`, not `/healthz`: the console answering while its
 # database is gone is the shop being closed (`OPS-HARDENING-002`).
 # `--check app` (OPS-OBSERVABILITY-009) reads the API's own log through the same Docker socket and
-# counts 5xx answers, database refusals and browser-boundary rejections over the last five minutes.
+# counts 5xx answers, database refusals and browser-boundary rejections since the last line the
+# previous run counted, whose instant it keeps in R1_APP_SIGNAL_CURSOR.
 host_checks="$relay --label checks-host -- \
   env R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/readyz \
   R1_CONSOLE_CA_FILE=\"$REPOSITORY/.shop/ca/ca.crt\" \
+  R1_APP_SIGNAL_CURSOR=\"$STATE_DIRECTORY/app-signal-cursor.json\" \
   .venv/bin/python scripts/check_shop_operations.py --check flags --check console \
   --check app --app-logs compose --emit-alert"
 

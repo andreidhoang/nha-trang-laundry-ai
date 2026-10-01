@@ -251,6 +251,7 @@ It used to be `-e DATABASE_URL="$(cat …)"`, which put the migration identity's
   .venv/bin/python scripts/relay_shop_alert.py --label checks-host -- \
   env R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/readyz \
   R1_CONSOLE_CA_FILE=$HOME/laundry/.shop/ca/ca.crt \
+  R1_APP_SIGNAL_CURSOR=$HOME/laundry/.shop/app-signal-cursor.json \
   .venv/bin/python scripts/check_shop_operations.py --check flags --check console \
   --check app --app-logs compose --emit-alert
 ```
@@ -258,19 +259,26 @@ It used to be `-e DATABASE_URL="$(cat …)"`, which put the migration identity's
 **`--check app` is the one that watches the application rather than the machine**
 (`OPS-OBSERVABILITY-009`). It reads the API's own structured log through `docker compose logs api`
 — the json-file log the host already keeps, fourteen busy days of it (`compose.r1.yaml`,
-`x-api-logging`) — and fails when any count over the last 5 minutes reaches its figure. The window
-is the scheduler's interval, so one incident alerts once. The figures live in one place,
+`x-api-logging`, where the arithmetic is written out, Docker's own healthcheck included) — and fails
+when a count reaches its figure. **Each run counts from the last line the previous run counted**,
+whose instant it keeps in `R1_APP_SIGNAL_CURSOR` (on the till, `~/Library/Application
+Support/giatlasachcong/app-signal-cursor.json`, outside the checkout). So nothing written between two
+runs is missed, a run launchd delayed or skipped is caught up by the next one, and one incident
+alerts once. The two rates are judged over any 5 minutes, wherever a run boundary falls. If that
+file is ever unreadable the check fails and says so; deleting it makes the next run start from the
+last 5 minutes, and anything older than that is then never checked. The figures live in one place,
 `APP_SIGNAL_THRESHOLDS` in `scripts/check_shop_operations.py`; a test holds this table to them.
 
 | Signal | Alert at | What it is | What to do |
 |---|---|---|---|
-| `server_errors` | 1 | an answer 500–599 other than 503. Staff saw "Máy chủ gặp lỗi. Đừng thử lại": the outcome is unknown | Find the request by time in `docker compose logs api`; check the order it touched before anyone retries it |
-| `database_refusals` | 5 | `database.request_refused`: the database was busy or unreachable, nothing was written, the console asked staff to retry | One is a normal collision. Five in five minutes: `--check volume`, `--check wal`, then the database container |
-| `browser_boundary_rejections` | 10 | `auth.browser_boundary`: a request refused for its origin or CSRF token | A tab left open across an update makes a few. Ten means something other than the console is sending requests |
+| `server_errors` | 1 | an answer 500–599, except a 503 the API wrote `database.request_refused` for (the next row) and `/readyz`'s 503 (the console check's finding, quiet at night by `DEC-025`). A 500 told staff "Máy chủ gặp lỗi. Đừng thử lại": the outcome is unknown. Any other 503 — "staff identity unavailable", "operations unavailable" — is an outage nothing else reports: nobody can sign in, or the API is missing a service it needs | Find the request by time in `docker compose logs api`. A 500: check the order it touched before anyone retries it. A 503 on `/internal/v1/auth/session`: the identity provider; anything else: the API's configuration |
+| `database_refusals` | 5 in 5 minutes | `database.request_refused`: the database was busy or unreachable, nothing was written, the console asked staff to retry | One is a normal collision. Five in five minutes: `--check volume`, `--check wal`, then the database container |
+| `browser_boundary_rejections` | 10 in 5 minutes | `auth.browser_boundary`: a request refused for its origin or CSRF token | A tab left open across an update makes a few. Ten means something other than the console is sending requests |
 
 It also fails when the API wrote **no line at all** in the last 15 minutes. The console check asks
-`/readyz` every five minutes, so a healthy API always has lines; none means the log is not reaching
-the check, and that is not the same as nothing having gone wrong.
+`/readyz` every five minutes and Docker's healthcheck asks `/healthz` every thirty seconds, so a
+healthy API always has lines; none means the log is not reaching the check, and that is not the same
+as nothing having gone wrong.
 
 Measured against the running pilot stack: `wal_archive_gap` OK, `database_volume` OK at 14.4% free
 of 58 GiB, `base_backup_age` OK at 2.4h, `capability_flags` OK — every flag false on the running

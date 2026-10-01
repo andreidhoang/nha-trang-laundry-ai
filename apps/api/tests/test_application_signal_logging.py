@@ -23,7 +23,9 @@ import pytest
 from fastapi.testclient import TestClient
 from nha_trang_laundry_api import main as api_main
 from nha_trang_laundry_api import security as api_security
+from nha_trang_laundry_api.auth import AuthenticationAttemptLimiter, AuthenticationUnavailable
 from nha_trang_laundry_api.main import app, current_principal, get_operations_service
+from nha_trang_laundry_api.operations import OperationsUnavailable
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_observability import SafeStructuredLogger
 
@@ -122,3 +124,52 @@ def test_an_ordinary_answer_is_liveness_and_nothing_else(written: list[str]) -> 
         0,
         0,
     )
+
+
+# --- round 9 (verifier): a 503 the API wrote no refusal for is an outage -----------------------
+
+
+def test_a_sign_in_the_identity_service_cannot_serve_is_a_server_error(
+    written: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`get_identity_service` answers 503 "staff identity unavailable" and writes nothing else.
+
+    Before, every 503 was assumed to be a database refusal and left out, so a sign-in outage at
+    the start of a shift -- nothing but these -- passed the check."""
+
+    def _unavailable(*_: object, **__: object) -> object:
+        raise AuthenticationUnavailable("issuer unreachable")
+
+    monkeypatch.setattr(api_main, "StaffIdentityService", _unavailable)
+    # A fresh limiter, so failures other tests recorded against "testclient" cannot throttle this.
+    monkeypatch.setattr(
+        api_main,
+        "_AUTH_LIMITER",
+        AuthenticationAttemptLimiter(limit=30, window_seconds=300),
+    )
+    app.dependency_overrides.clear()
+    origin = "http://testserver"
+    response = TestClient(app, base_url=origin).post(
+        "/internal/v1/auth/session", headers={"Origin": origin, "Authorization": "Bearer x.y.z"}
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "staff identity unavailable"
+    counts = CHECKS.count_application_signals(written, now=datetime.now(UTC))
+    assert (counts.server_errors, counts.database_refusals) == (1, 0)
+    assert not CHECKS.check_application_signals(written, now=datetime.now(UTC)).passed
+
+
+def test_operations_the_api_cannot_serve_are_a_server_error(
+    written: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _unavailable(*_: object, **__: object) -> object:
+        raise OperationsUnavailable("no database configured")
+
+    monkeypatch.setattr(api_main, "OperationsService", _unavailable)
+    response = TestClient(app).get("/internal/v1/queue-recovery")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "operations unavailable"
+    counts = CHECKS.count_application_signals(written, now=datetime.now(UTC))
+    assert (counts.server_errors, counts.database_refusals) == (1, 0)

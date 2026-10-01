@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import shlex
 import shutil
 import socket
 import subprocess
@@ -450,6 +451,23 @@ def test_both_check_agents_deliver_through_the_host_relay(
     # Nothing Telegram crosses into the internal-network container: it could not use it.
     assert "R1_ALERT" not in docker_run
     assert "--network nha-trang-laundry-shop_database-private" in docker_run
+
+
+def test_the_application_check_keeps_its_read_position_outside_the_checkout(
+    installed_agents: dict[str, dict[str, Any]],
+) -> None:
+    """`OPS-OBSERVABILITY-009`, round 9: every run counts from where the last one stopped, so the
+    position has to survive between runs -- and a `git clean` of the checkout."""
+
+    words = shlex.split(installed_agents["checks-host"]["ProgramArguments"][2])
+    assert "--check" in words and "app" in words
+    (assignment,) = [word for word in words if word.startswith("R1_APP_SIGNAL_CURSOR=")]
+    cursor = Path(assignment.split("=", 1)[1])
+    assert cursor.name == "app-signal-cursor.json"
+    assert cursor.parent.name == "giatlasachcong"
+    assert cursor.parent.parent.as_posix().endswith("/home/Library/Application Support")
+    assert cursor.parent.is_dir(), "install.sh creates the directory"
+    assert ROOT not in cursor.parents
 
 
 def _recording_docker(directory: Path, record: Path, then: str) -> None:

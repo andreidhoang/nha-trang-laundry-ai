@@ -63,23 +63,20 @@ export function expectedNote(expected) {
 }
 
 /**
- * The recorded comparison of a closing count as a sentence, from the stored figures.
+ * What the recorded gap is measured against, as the words that follow its pill: "so với két phải
+ * có 600.000 ₫." -- or why there was nothing to compare with. The pill (`differenceWords`) carries
+ * the gap itself, so the figure is said once.
  *
  * @param {any} entry
  * @returns {string}
  */
 export function comparisonSentence(entry) {
-  if (entry.expected_status === "FLOAT_MISSING") {
-    return "Chưa so được: lúc đếm chưa ghi tiền đầu ngày.";
-  }
+  if (entry.expected_status === "FLOAT_MISSING") return "lúc đếm chưa ghi tiền đầu ngày.";
   if (entry.expected_status === "BOOKS_BELOW_ZERO") {
-    return "Chưa so được: sổ ghi tiền ra nhiều hơn tiền vào két.";
+    return "sổ ghi tiền ra nhiều hơn tiền vào két.";
   }
-  const words = differenceWords(entry);
-  const against = `két phải có ${money(entry.expected_vnd)}`;
-  return entry.difference_direction === "EVEN"
-    ? `Khớp với ${against}.`
-    : `${words.text} so với ${against}.`;
+  const against = `két phải có ${money(entry.expected_vnd)}.`;
+  return entry.difference_direction === "EVEN" ? `với ${against}` : `so với ${against}`;
 }
 
 /**

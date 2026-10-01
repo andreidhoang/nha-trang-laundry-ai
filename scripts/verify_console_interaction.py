@@ -14172,7 +14172,8 @@ with sync_playwright() as playwright:
         and writes[0]["body"]
         == {"business_day": CASH_DAY, "kind": "CLOSING_COUNT", "counted_vnd": 590_000}
         and page.locator("[data-cash-difference=SHORT]").count() == 1
-        and "Thiếu 10.000 ₫ so với két phải có 600.000 ₫." in shown,
+        and "Thiếu 10.000 ₫" in page.locator("[data-cash-difference=SHORT]").inner_text()
+        and "so với két phải có 600.000 ₫." in shown,
         shown[:300].replace("\n", " | "),
     )
     check(

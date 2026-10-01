@@ -236,12 +236,13 @@ DECLARED_CONTROLS = (
     "expenses.save",
     "expenses.void",
     # CASH-COUNT-009 (DEC-049): Đếm két from Hôm nay, its two entries, the drawer tick in Sổ thu
-    # chi, and the owner's days on Báo cáo.
+    # chi, a correction with its reason, and the owner's days on Báo cáo.
     "today.cash-count",
     "cashCount.float-amount",
     "cashCount.float-save",
     "cashCount.close-amount",
     "cashCount.close-save",
+    "cashCount.correct",
     "expenses.drawer",
     "reports.cash-count",
     "shell.nav.machines",
@@ -11494,14 +11495,20 @@ def _cash_entry(console: Console, kind: str, amount: int, reason: str) -> dict[s
         (answer,) = console.press_capturing(console.page.locator(f"#{prefix}-save"), "/cash-count")
         touched(f"cashCount.{prefix.split('-')[1]}-save")
     else:
-        console.page.locator(f"button[data-cash-correct={kind}]").click()
-        console.page.wait_for_selector("#cash-correct[open]")
-        console.type_into("#cash-correct-amount", str(amount))
-        console.type_into("#cash-correct-reason", reason)
-        (answer,) = console.press_capturing(
-            console.page.locator("#cash-correct-save"), "/cash-count"
-        )
-        touched("cashCount.correct")
+        return _cash_correct(console, kind, amount, reason)
+    console.page.wait_for_timeout(1200)
+    return answer
+
+
+def _cash_correct(console: Console, kind: str, amount: int, reason: str) -> dict[str, Any]:
+    """Sửa: correct today's current `kind` entry with a reason, as the counter does."""
+
+    console.page.locator(f"button[data-cash-correct={kind}]").click()
+    console.page.wait_for_selector("#cash-correct[open]")
+    console.type_into("#cash-correct-amount", str(amount))
+    console.type_into("#cash-correct-reason", reason)
+    (answer,) = console.press_capturing(console.page.locator("#cash-correct-save"), "/cash-count")
+    touched("cashCount.correct")
     console.page.wait_for_timeout(1200)
     return answer
 
@@ -11530,15 +11537,42 @@ def scenario_cash_count(console: Console) -> None:
         bool(day) and str(sheet.get("query_version", "")).startswith("cash-count-v1:"),
         str(sheet.get("query_version")),
     )
-    opened = _cash_entry(console, "OPENING_FLOAT", 500_000, "đếm lại tiền lẻ đầu ngày")
-    float_entry = (opened.get("body") or {}).get("entry") or {}
+    first = _cash_entry(console, "OPENING_FLOAT", 450_000, "đếm lại tiền lẻ đầu ngày")
+    first_entry = (first.get("body") or {}).get("entry") or {}
     ok(
         "the float is recorded as typed, for the sheet's own day",
+        first["status"] == 201
+        and first_entry.get("counted_vnd") == 450_000
+        and first_entry.get("business_day") == day,
+        first["text"][:160],
+    )
+    # A wrong float is corrected, never edited: Sửa with a reason makes a new entry that supersedes
+    # the first, and the first stays listed as "Đã thay". Done on every run, so the control is
+    # exercised on a fresh stack too.
+    opened = _cash_correct(console, "OPENING_FLOAT", 500_000, "đếm sót tờ 50.000")
+    float_entry = (opened.get("body") or {}).get("entry") or {}
+    listed = console.page.locator(f"[data-cash-entry='{first_entry.get('entry_id')}']")
+    ok(
+        "Sửa tiền đầu ngày records 500.000 superseding the first figure, which stays listed",
         opened["status"] == 201
         and float_entry.get("counted_vnd") == 500_000
-        and float_entry.get("business_day") == day,
-        opened["text"][:160],
+        and float_entry.get("supersedes_id") == first_entry.get("entry_id")
+        and float_entry.get("correction_reason") == "đếm sót tờ 50.000"
+        and listed.count() == 1
+        and "Đã thay" in listed.inner_text(),
+        opened["text"][:200],
     )
+    if READS_DATABASE and float_entry.get("entry_id"):
+        ok(
+            "the correction is its own CASH_COUNT_CORRECTED event; the first row is untouched",
+            sql(
+                "select event_type from domain_events "
+                f"where aggregate_id='{float_entry['entry_id']}'"
+            )
+            == "CASH_COUNT_CORRECTED"
+            and sql(f"select counted_vnd from cash_counts where id='{first_entry.get('entry_id')}'")
+            == "450000",
+        )
     before = (opened.get("body") or {}).get("expected") or {}
     _cash_shot(console, "k1-float")
 
@@ -11662,6 +11696,8 @@ def scenario_cash_count(console: Console) -> None:
         "Thiếu 10.000 ₫" in row_text and f"phải có {grouped} ₫" in row_text,
         row_text.replace("\n", " | ") or "absent",
     )
+    if row.count():
+        row.scroll_into_view_if_needed()
     _cash_shot(console, "k4-report")
     history = console.call("GET", f"/internal/v1/stores/{STORE}/cash-counts?from={day}&to={day}")
     days = (history.get("body") or {}).get("days") or []

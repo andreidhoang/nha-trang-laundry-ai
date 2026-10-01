@@ -19,6 +19,7 @@ those rows are written by the API; only what the worker process itself executes 
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -460,3 +461,336 @@ def test_reapplying_narrows_a_database_provisioned_with_the_old_worker_grant(
         worker.execute("SELECT phone_ciphertext FROM customers")
     verified = _verify(_database_url())
     assert verified.returncode == 0, verified.stdout + verified.stderr
+
+
+# --- PLATFORM-RESIDUAL-009B L2: column-level ledger INSERTs, and every OUTBOX_WORKER path -------
+
+#: The columns worker code names in its INSERTs (`commit_material_change`, `OutboxRepository`,
+#: `AgentRunRepository.recover_expired`). Anything else on these tables is out of the worker's
+#: reach: an outbox row it writes cannot choose a recipient, a purpose or a status.
+WORKER_INSERT_COLUMNS = {
+    "outbox_events": {
+        "id",
+        "aggregate_type",
+        "aggregate_id",
+        "event_type",
+        "payload",
+        "idempotency_key",
+        "correlation_id",
+        "occurred_at",
+        "traceparent",
+        "tracestate",
+    },
+    "domain_events": {
+        "id",
+        "aggregate_type",
+        "aggregate_id",
+        "aggregate_version",
+        "event_type",
+        "payload",
+        "correlation_id",
+        "occurred_at",
+    },
+    "audit_events": {
+        "id",
+        "aggregate_type",
+        "aggregate_id",
+        "action",
+        "actor_type",
+        "actor_id",
+        "correlation_id",
+        "details",
+        "occurred_at",
+    },
+}
+
+
+@pytest.mark.parametrize("table", sorted(WORKER_INSERT_COLUMNS))
+def test_the_worker_inserts_into_the_ledgers_only_through_the_columns_its_code_writes(
+    owner: psycopg.Connection[Any], table: str
+) -> None:
+    """No table-level INSERT: a column a later migration adds is not the worker's to fill, and on
+    the outbox the worker cannot set who a row goes to, why, or that it was already sent."""
+
+    with owner.cursor() as cursor:
+        cursor.execute("SELECT has_table_privilege(%s, %s, 'INSERT')", (WORKER, table))
+        assert cursor.fetchone() == (False,), f"{table}: table-level INSERT is too wide"
+        cursor.execute(
+            """
+            SELECT a.attname, has_column_privilege(%s, a.attrelid, a.attnum, 'INSERT')
+            FROM pg_attribute a
+            WHERE a.attrelid = %s::regclass AND a.attnum > 0 AND NOT a.attisdropped
+            """,
+            (WORKER, table),
+        )
+        held = {str(name) for name, granted in cursor.fetchall() if granted}
+    assert held == WORKER_INSERT_COLUMNS[table]
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("purpose", "'MARKETING'"),
+        ("recipient_binding_id", "gen_random_uuid()"),
+        ("status", "'SENT'"),
+        ("approved_action_id", "gen_random_uuid()"),
+        ("available_at", "now()"),
+        ("attempt_count", "0"),
+    ],
+)
+def test_the_worker_cannot_write_an_outbox_row_that_chooses_its_own_delivery(
+    owner: psycopg.Connection[Any], column: str, value: str
+) -> None:
+    statement = f"""
+        INSERT INTO outbox_events (
+            id, aggregate_type, aggregate_id, event_type, payload, idempotency_key,
+            correlation_id, occurred_at, {column}
+        ) VALUES (
+            gen_random_uuid(), 'TEST', gen_random_uuid(), 'order.state_transitioned.v1',
+            '{{}}'::jsonb, 'l2:' || gen_random_uuid(), gen_random_uuid(), now(), {value}
+        )
+    """
+    with connect_as(WORKER) as worker, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        worker.execute(statement)
+
+
+def _designated_paths() -> set[str]:
+    """Every public repository method that names `OUTBOX_WORKER`, directly or through a module
+    guard that does -- found in the source, so a new one cannot be added without a decision."""
+
+    import ast
+
+    designated: set[str] = set()
+    package = ROOT / "packages/db/src/nha_trang_laundry_db"
+    for path in sorted(package.glob("*.py")):
+        tree = ast.parse(path.read_text("utf-8"))
+
+        def names(node: ast.AST) -> bool:
+            for child in ast.walk(node):
+                if isinstance(child, ast.Attribute) and child.attr == "OUTBOX_WORKER":
+                    return True
+                if (
+                    isinstance(child, ast.Constant)
+                    and isinstance(child.value, str)
+                    and "OUTBOX_WORKER" in child.value
+                    and "only OUTBOX_WORKER" not in child.value
+                ):
+                    return True
+            return False
+
+        guards = {
+            node.name for node in tree.body if isinstance(node, ast.FunctionDef) and names(node)
+        }
+
+        def calls_guard(node: ast.AST, guards: set[str] = guards) -> bool:
+            return any(
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id in guards
+                for child in ast.walk(node)
+            )
+
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for method in node.body:
+                if (
+                    isinstance(method, ast.FunctionDef)
+                    and not method.name.startswith("_")
+                    and (names(method) or calls_guard(method))
+                ):
+                    designated.add(f"{path.stem}.{node.name}.{method.name}")
+    return designated
+
+
+#: Which test executes each GRANTED path as `laundry_worker`.
+EXECUTED_BY = {
+    "outbox.OutboxRepository.claim_next_internal": (
+        "test_every_internal_outbox_path_runs_as_laundry_worker_without_the_hash_key"
+    ),
+    "outbox.OutboxRepository.complete_internal": (
+        "test_every_internal_outbox_path_runs_as_laundry_worker_without_the_hash_key"
+    ),
+    "outbox.OutboxRepository.retry_or_dead_letter_internal": (
+        "test_every_internal_outbox_path_runs_as_laundry_worker_without_the_hash_key"
+    ),
+    "outbox.OutboxRepository.recover_expired_internal": (
+        "test_every_internal_outbox_path_runs_as_laundry_worker_without_the_hash_key"
+    ),
+    "marketing_delivery.MarketingDeliveryRepository.hold_if_not_authorized": (
+        "test_the_marketing_hold_runs_as_laundry_worker"
+    ),
+    "automation.AutomationExecutionRepository.hold_if_disabled": (
+        "test_the_automation_hold_runs_as_laundry_worker"
+    ),
+}
+
+
+def test_every_outbox_worker_path_is_granted_or_explicitly_withheld() -> None:
+    from nha_trang_laundry_db.role_grants import OUTBOX_WORKER_PATHS
+
+    assert set(OUTBOX_WORKER_PATHS) == _designated_paths()
+    for name, designation in OUTBOX_WORKER_PATHS.items():
+        if designation.granted:
+            assert name in EXECUTED_BY, f"{name} is granted but nothing executes it as the worker"
+            assert EXECUTED_BY[name] in globals(), EXECUTED_BY[name]
+        else:
+            # Withheld means the database refuses it as the worker, atomically -- proven below.
+            assert designation.reason and "DECISION" in designation.reason.upper()
+            assert name == "approvals.ApprovalRepository.claim_execution"
+
+
+def _claimed_marketing_event(
+    connection: Any, *, recipient: UUID | None, channel: str | None
+) -> tuple[UUID, UUID, datetime]:
+    event_id, claim_token = uuid4(), uuid4()
+    now = datetime.now(UTC)
+    payload = "{}" if channel is None else json.dumps({"channel": channel})
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO outbox_events (
+                id, aggregate_type, aggregate_id, event_type, payload, idempotency_key,
+                correlation_id, occurred_at, status, attempt_count, recipient_binding_id,
+                purpose, claim_token, claimed_at, lease_expires_at
+            ) VALUES (
+                %s, 'MESSAGE', %s, 'message.send_requested.v1', %s::jsonb, %s, %s, %s,
+                'PROCESSING', 1, %s, 'MARKETING', %s, %s, %s
+            )
+            """,
+            (
+                event_id,
+                event_id,
+                payload,
+                f"l2-marketing:{event_id}",
+                uuid4(),
+                now,
+                recipient,
+                claim_token,
+                now,
+                now + timedelta(minutes=5),
+            ),
+        )
+    return event_id, claim_token, now
+
+
+@pytest.mark.parametrize(
+    ("recipient", "channel", "reason"),
+    [
+        (None, "INTERNAL_TEST", "RECIPIENT_OR_CHANNEL_UNAVAILABLE"),
+        (uuid4(), None, "RECIPIENT_OR_CHANNEL_UNAVAILABLE"),
+        (uuid4(), "INTERNAL_TEST", "MARKETING_AUTHORIZATION_UNAVAILABLE"),
+    ],
+)
+def test_the_marketing_hold_runs_as_laundry_worker(
+    owner: psycopg.Connection[Any], recipient: UUID | None, channel: str | None, reason: str
+) -> None:
+    """The final suppression check reads the suppression ledger by purpose and channel; with the
+    round-9 grant it was `permission denied` as the worker it is reserved for."""
+
+    from nha_trang_laundry_db.marketing_delivery import MarketingDeliveryRepository
+
+    event_id, claim_token, now = _claimed_marketing_event(
+        owner, recipient=recipient, channel=channel
+    )
+    with connect_as(WORKER) as worker:
+        held = MarketingDeliveryRepository().hold_if_not_authorized(
+            worker,
+            outbox_event_id=event_id,
+            claim_token=claim_token,
+            worker_role=ActorRole.OUTBOX_WORKER,
+            actor_id=uuid4(),
+            correlation_id=uuid4(),
+            now=now,
+        )
+    assert held == reason
+    assert _one(owner, "SELECT status, held_reason FROM outbox_events WHERE id = %s", event_id) == (
+        "HELD",
+        reason,
+    )
+    # The hold commits with its event, audit and outbox rows -- written through the column grants.
+    assert _one(
+        owner,
+        "SELECT (SELECT count(*) FROM domain_events WHERE aggregate_id = %s "
+        "AND event_type = 'MARKETING_DELIVERY_HELD'), (SELECT count(*) FROM audit_events "
+        "WHERE aggregate_id = %s AND actor_type = 'OUTBOX_WORKER'), (SELECT count(*) FROM "
+        "outbox_events WHERE idempotency_key = %s)",
+        event_id,
+        event_id,
+        f"marketing-delivery:{event_id}:held",
+    ) == (1, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("hold_policy", "capability_enabled", "expected"),
+    [("HOLD", False, "HELD"), ("CANCEL", False, "CANCELLED"), ("HOLD", True, "PENDING")],
+)
+def test_the_automation_hold_runs_as_laundry_worker(
+    owner: psycopg.Connection[Any], hold_policy: str, capability_enabled: bool, expected: str
+) -> None:
+    from nha_trang_laundry_db.automation import AutomationExecutionRepository
+
+    envelope_id, outbox_event_id = uuid4(), uuid4()
+    capability = f"L2_{uuid4().hex}"
+    now = datetime.now(UTC)
+    with owner.transaction(), owner.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO outbox_events (
+                id, aggregate_type, aggregate_id, event_type, payload, idempotency_key,
+                correlation_id, occurred_at
+            ) VALUES (%s, 'MESSAGE', %s, 'message.send_requested.v1', '{}'::jsonb, %s, %s, %s)
+            """,
+            (outbox_event_id, envelope_id, f"l2-automation:{envelope_id}", uuid4(), now),
+        )
+        cursor.execute(
+            """
+            INSERT INTO automated_execution_envelopes (
+                id, capability, outbox_event_id, status, hold_policy, created_at
+            ) VALUES (%s, %s, %s, 'PENDING', %s, %s)
+            """,
+            (envelope_id, capability, outbox_event_id, hold_policy, now),
+        )
+        cursor.execute(
+            """
+            INSERT INTO automation_execution_gates (
+                capability, global_automation_enabled, agent_processing_enabled,
+                agent_outbound_enabled, channel_ingress_enabled, capability_enabled,
+                stage_policy_allows, pdp_allows, version, expires_at, updated_at
+            ) VALUES (%s, TRUE, TRUE, TRUE, TRUE, %s, TRUE, TRUE, 1, %s, %s)
+            """,
+            (capability, capability_enabled, now + timedelta(minutes=5), now),
+        )
+    with connect_as(WORKER) as worker:
+        status = AutomationExecutionRepository().hold_if_disabled(
+            worker, envelope_id=envelope_id, actor_id=uuid4(), correlation_id=uuid4(), now=now
+        )
+    assert status == expected
+    assert _one(
+        owner, "SELECT status FROM automated_execution_envelopes WHERE id = %s", envelope_id
+    ) == (expected,)
+
+
+def test_the_approval_execution_claim_is_refused_to_the_worker_whole(
+    owner: psycopg.Connection[Any],
+) -> None:
+    """Withheld, not granted: the claim re-reads the approved resource under a row lock (orders,
+    quotes -- `FOR SHARE` needs UPDATE there), the message draft's text and the export's content.
+    Until a sender exists (`OUTBOX_WORKER_PATHS` names the decision) the database refuses it as the
+    worker on its first read, so nothing of it can half-happen."""
+
+    from nha_trang_laundry_db.approvals import ApprovalExecutionCommand, ApprovalRepository
+
+    with connect_as(WORKER) as worker, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        ApprovalRepository().claim_execution(
+            worker,
+            ApprovalExecutionCommand(
+                approval_request_id=uuid4(),
+                worker_role=ActorRole.OUTBOX_WORKER,
+                observed_resource_version=1,
+                observed_snapshot_hash="a" * 64,
+                observed_rendered_hash="b" * 64,
+                observed_policy_version="v1",
+                correlation_id=uuid4(),
+            ),
+        )

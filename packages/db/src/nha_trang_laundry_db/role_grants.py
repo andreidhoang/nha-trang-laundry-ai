@@ -25,15 +25,29 @@ columns that find a run's enqueue event, never its payload.
 
 - `outbox_events` -- claim, complete, retry, dead-letter and recover internal events
   (`OutboxRepository.*_internal`); INSERT because every material change the worker commits writes
-  its outbox row (`commit_material_change`, `AgentRunRepository.recover_expired`).
+  its outbox row (`commit_material_change`, `AgentRunRepository.recover_expired`). The INSERT is
+  **column-level** (`PLATFORM-RESIDUAL-009B` L2): exactly the columns those statements name, so a
+  row the worker writes cannot choose its recipient, purpose, status or approved action -- the
+  columns that would make it a send.
 - `dead_letter_events` -- the DLQ row a dead or expired internal event leaves.
-- `domain_events`, `audit_events` -- the event and audit rows of every worker mutation; the narrow
-  SELECT is `AgentRunRepository.recover_expired`'s lookup of a run's enqueue correlation.
+- `domain_events`, `audit_events` -- the event and audit rows of every worker mutation, INSERT on
+  the columns `commit_material_change` writes; the narrow SELECT is
+  `AgentRunRepository.recover_expired`'s lookup of a run's enqueue correlation. Column-level, so a
+  column a later migration adds is not the worker's to fill until this list says so.
 - `agent_runs` -- claim, complete, fail and recover runs; UPDATE only on the lifecycle columns.
 - `agent_tool_calls` -- the redacted tool-call ledger (`record_tool_call`).
 - `agent_drafts` -- the proposal filed for human review, and the "already filed" probe.
 - `webhook_events`, `suppression_entries`, `automation_execution_gates` -- the facts the policy gate
-  reads before any model call (`read_agent_run_policy_facts`).
+  reads before any model call (`read_agent_run_policy_facts`); `suppression_entries`' `purpose` and
+  `channel` too, for the marketing hold below.
+- `automated_execution_envelopes` -- the kill-switch hold
+  (`AutomationExecutionRepository.hold_if_disabled`): the envelope's state, and UPDATE of exactly
+  the columns a hold changes.
+
+**Every repository path designated for `OUTBOX_WORKER`** -- the actor that, in a deployment, *is*
+the `laundry_worker` process -- is listed in `OUTBOX_WORKER_PATHS`, either granted (and executed
+as `laundry_worker` by a test) or withheld with the decision that would grant it. A test scans the
+repository source, so a new designated path cannot appear without an entry here.
 
 The worker holds no sequence privilege because the schema has no sequences (every key is a UUID).
 """
@@ -111,28 +125,123 @@ _AGENT_RUN_LIFECYCLE = (
     "failure_code",
 )
 
+#: The columns the worker's ledger INSERTs name (`transactions.commit_material_change`,
+#: `outbox.OutboxRepository.recover_expired_internal`, `agent_runs.AgentRunRepository.
+#: recover_expired`). `apps/worker/tests/test_worker_least_privilege.py` pins each set.
+_OUTBOX_INSERT = (
+    "id",
+    "aggregate_type",
+    "aggregate_id",
+    "event_type",
+    "payload",
+    "idempotency_key",
+    "correlation_id",
+    "occurred_at",
+    "traceparent",
+    "tracestate",
+)
+_DOMAIN_EVENT_INSERT = (
+    "id",
+    "aggregate_type",
+    "aggregate_id",
+    "aggregate_version",
+    "event_type",
+    "payload",
+    "correlation_id",
+    "occurred_at",
+)
+_AUDIT_INSERT = (
+    "id",
+    "aggregate_type",
+    "aggregate_id",
+    "action",
+    "actor_type",
+    "actor_id",
+    "correlation_id",
+    "details",
+    "occurred_at",
+)
+
 #: Exactly what `laundry_worker` may do. Read the module docstring before adding to it.
 WORKER_GRANTS: Final[tuple[TableGrant, ...]] = (
     TableGrant("outbox_events", "SELECT"),
-    TableGrant("outbox_events", "INSERT"),
+    TableGrant("outbox_events", "INSERT", _OUTBOX_INSERT),
     TableGrant("outbox_events", "UPDATE", _OUTBOX_LIFECYCLE),
     TableGrant("dead_letter_events", "INSERT"),
-    TableGrant("domain_events", "INSERT"),
+    TableGrant("domain_events", "INSERT", _DOMAIN_EVENT_INSERT),
     TableGrant(
         "domain_events",
         "SELECT",
         ("id", "aggregate_type", "aggregate_id", "event_type", "occurred_at", "correlation_id"),
     ),
-    TableGrant("audit_events", "INSERT"),
+    TableGrant("audit_events", "INSERT", _AUDIT_INSERT),
     TableGrant("agent_runs", "SELECT"),
     TableGrant("agent_runs", "UPDATE", _AGENT_RUN_LIFECYCLE),
     TableGrant("agent_tool_calls", "INSERT"),
     TableGrant("agent_drafts", "INSERT"),
     TableGrant("agent_drafts", "SELECT", ("agent_run_id",)),
     TableGrant("webhook_events", "SELECT", ("id", "contact_binding_id")),
-    TableGrant("suppression_entries", "SELECT", ("contact_binding_id", "state")),
+    TableGrant(
+        "suppression_entries", "SELECT", ("contact_binding_id", "purpose", "channel", "state")
+    ),
     TableGrant("automation_execution_gates", "SELECT"),
+    TableGrant(
+        "automated_execution_envelopes",
+        "SELECT",
+        ("id", "capability", "status", "hold_policy", "row_version"),
+    ),
+    TableGrant(
+        "automated_execution_envelopes",
+        "UPDATE",
+        ("status", "held_at", "hold_reason", "row_version"),
+    ),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerPath:
+    """One repository path designated for the `OUTBOX_WORKER` actor, and what the grant does."""
+
+    granted: bool
+    reason: str
+
+
+#: `PLATFORM-RESIDUAL-009B` L2. Every public repository method that names `OUTBOX_WORKER` (as its
+#: guard, its actor or its audit row). Granted paths run as `laundry_worker` in
+#: `apps/worker/tests/test_worker_least_privilege.py`; a withheld one is refused by the database
+#: as the worker, on its first read, so nothing of it can half-happen.
+OUTBOX_WORKER_PATHS: Final[dict[str, WorkerPath]] = {
+    "outbox.OutboxRepository.claim_next_internal": WorkerPath(True, "the internal outbox loop"),
+    "outbox.OutboxRepository.complete_internal": WorkerPath(True, "the internal outbox loop"),
+    "outbox.OutboxRepository.retry_or_dead_letter_internal": WorkerPath(
+        True, "the internal outbox loop"
+    ),
+    "outbox.OutboxRepository.recover_expired_internal": WorkerPath(
+        True, "the supervisor's lease recovery"
+    ),
+    "marketing_delivery.MarketingDeliveryRepository.hold_if_not_authorized": WorkerPath(
+        True,
+        "the final suppression check before a marketing send: it only ever holds, and reads the "
+        "suppression ledger's key, purpose, channel and state",
+    ),
+    "automation.AutomationExecutionRepository.hold_if_disabled": WorkerPath(
+        True,
+        "the kill switch re-read before an automated execution: it only ever holds or cancels",
+    ),
+    "approvals.ApprovalRepository.claim_execution": WorkerPath(
+        False,
+        "DECISION NEEDED before granting: the claim re-reads the approved resource under a row "
+        "lock -- `FOR SHARE` on orders and quotes, which PostgreSQL allows only with UPDATE "
+        "there -- and re-derives digests from the message draft's text and the export's "
+        "content. Nothing calls it outside the eval suites (no sender exists: DEC-001..006, "
+        "ADR-0002 'sole OUTBOX_WORKER sender' is unbuilt), the designation is in migration "
+        "0007's CHECK (approval_executions.claimed_by = 'OUTBOX_WORKER'), and widening the "
+        "worker to orders, quotes, drafts and exports is what PLATFORM-SECURITY-009 P1 took "
+        "away. When a sender is built, decide between granting those reads to the worker and "
+        "running the claim in the API process (laundry_api) with only the claimed envelope "
+        "handed to the worker.",
+    ),
+}
 
 
 def _split(script: str) -> list[str]:
@@ -296,9 +405,11 @@ __all__ = [
     "API_ROLE",
     "APPLICATION_ROLES",
     "MIGRATION_ROLE",
+    "OUTBOX_WORKER_PATHS",
     "WORKER_GRANTS",
     "WORKER_ROLE",
     "TableGrant",
+    "WorkerPath",
     "api_statements",
     "apply_role_grants",
     "audit_worker",

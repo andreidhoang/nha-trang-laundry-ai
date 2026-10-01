@@ -26,7 +26,7 @@
 import { Submission, request } from "../core/api.js";
 import { monthName, statementPath } from "../core/accounts.js";
 import { h, render } from "../core/dom.js";
-import { businessDate, calendarDay, dateOnly, money } from "../core/format.js";
+import { businessDate, calendarDay, dateOnly, money, parseDong } from "../core/format.js";
 import { can } from "../core/rbac.js";
 import { principal } from "../core/session.js";
 import { errorNotice, gated } from "./components.js";
@@ -106,8 +106,8 @@ export const INVOICE_FLAG_VI = {
   CANCELLED_AFTER_ISSUE: () => "Đơn đã huỷ sau khi xuất hóa đơn — báo kế toán.",
   AMOUNT_CHANGED_AFTER_ISSUE: (item) =>
     `Số tiền của đơn nay là ${money(item?.live_total_vnd, "chưa có tổng")}, khác số trên hóa đơn — báo kế toán.`,
-  CHARGES_ADDED_AFTER_ISSUE: (item) =>
-    `${item?.uninvoiced_charge_count ?? 0} đơn ghi công nợ tháng này sau khi xuất hóa đơn — lập yêu cầu riêng cho từng đơn.`,
+  MONTH_ORDERS_NOT_ON_INVOICE: (item) =>
+    `${item?.uninvoiced_charge_count ?? 0} đơn ghi công nợ tháng này không có trên hóa đơn và chưa có yêu cầu nào — lập yêu cầu riêng cho từng đơn.`,
 };
 
 /**
@@ -452,12 +452,23 @@ export function issuedSheet(spec) {
   const { item } = spec;
   const submission = new Submission("invoice-issued");
   let intent = "";
+  // Set once the server said the request moved since this sheet read it: never pressed again.
+  let moved = false;
   const symbol = field({ id: "invoice-symbol", label: "Ký hiệu", maxlength: 12, placeholder: "Ví dụ 1C26TYY" });
   symbol.input.style.textTransform = "uppercase";
   const number = field({ id: "invoice-number", label: "Số hóa đơn", inputmode: "numeric", maxlength: 8 });
   const day = field({ id: "invoice-date", label: "Ngày hóa đơn", type: "date", value: businessDate() });
   day.input.max = businessDate();
-  const fields = { invoice_symbol: symbol, invoice_number: number, invoice_date: day };
+  // Review round 9: what the INVOICE says, typed off it -- never the figure this sheet read, which
+  // may hold orders charged after the invoice was made. Asked only when the request has a figure.
+  const hasTotal = Number.isInteger(item.amount?.total_vnd);
+  const total = field({ id: "invoice-total", label: "Tổng tiền trên hóa đơn", inputmode: "numeric", maxlength: 15, placeholder: "Ví dụ 110.000" });
+  const month = item.subject_kind === "ACCOUNT_MONTH";
+  const lines = month && Array.isArray(item.lines) ? item.lines : [];
+  const ticks = lines.map((line) => /** @type {HTMLInputElement} */ (
+    h("input", { type: "checkbox", id: `invoice-line-${line.order_id}`, value: String(line.order_id), checked: true })
+  ));
+  const fields = { invoice_symbol: symbol, invoice_number: number, invoice_date: day, invoice_total_vnd: total };
   const alertHost = h("div");
   const submit = button({
     label: "Lưu số hóa đơn",
@@ -469,10 +480,22 @@ export function issuedSheet(spec) {
   });
 
   async function send() {
+    if (moved) return;
+    const listed = month
+      ? ticks.filter((tick) => tick.checked).map((tick) => tick.value)
+      : Array.isArray(item.covered_order_ids) ? item.covered_order_ids : [];
+    if (month && !listed.length) {
+      show(alertHost, inlineAlert({ state: "danger", title: "Chưa chọn đơn nào. Chọn các đơn có trên hóa đơn." }));
+      return;
+    }
     const body = {
       invoice_symbol: symbol.input.value.trim().toUpperCase(),
       invoice_number: number.input.value.trim(),
       invoice_date: day.input.value,
+      // Review round 9: what the invoice says -- its total and the orders it lists. The server
+      // fixes the request at exactly these, or nothing (`INVOICE_TOTAL_MISMATCH`).
+      invoice_total_vnd: hasTotal ? parseDong(total.input.value) : null,
+      invoice_order_ids: listed,
     };
     const next = JSON.stringify(body);
     if (next !== intent) {
@@ -493,6 +516,14 @@ export function issuedSheet(spec) {
         toast(`Đã ghi số hóa đơn · ${item.request_code}`);
         spec.onDone(updated);
       } catch (error) {
+        if (/** @type {any} */ (error)?.reasonCodes?.includes("INVOICE_AMOUNT_MOVED")) {
+          // What this sheet showed is no longer what the request is for: nothing was saved. The
+          // page behind reads it again; this sheet cannot be saved with the old figure.
+          moved = true;
+          show(alertHost, errorNotice(/** @type {any} */ (error)));
+          spec.onDone(null);
+          return;
+        }
         const named = refusedField(error);
         const marked = named ? fields[/** @type {keyof typeof fields} */ (named)] : null;
         if (marked) {
@@ -505,6 +536,7 @@ export function issuedSheet(spec) {
         );
       }
     });
+    if (moved) submit.disabled = true;
   }
 
   const made = sheet({
@@ -516,17 +548,44 @@ export function issuedSheet(spec) {
       h("p", { class: "invoice-sheet__subject" }, `${requestTitle(item)} · ${amountText(item.amount)}`),
       h("div", { class: "invoice-form invoice-form--three" }, symbol.node, number.node, day.node),
       h("p", { class: "hint" }, "Chép đúng ký hiệu, số và ngày trên hóa đơn kế toán đã xuất. Ghi rồi không sửa được."),
-      h(
-        "p",
-        { class: "hint", dataField: "invoice-issued-fixed" },
-        `Số tiền ghi theo hóa đơn: ${amountText(item.amount)}. Lưu rồi số này giữ nguyên.`,
-      ),
+      lines.length
+        ? h(
+            "fieldset",
+            { class: "check-row invoice-lines", dataField: "invoice-issued-lines" },
+            h("legend", { class: "field-label" }, "Đơn có trên hóa đơn"),
+            ...lines.map((line, index) =>
+              h("label", { class: "check-row__label", for: ticks[index].id }, ticks[index], lineText(line)),
+            ),
+            h("p", { class: "hint" }, "Bỏ chọn đơn hóa đơn không ghi. Đơn bỏ ra chưa có hóa đơn: lập yêu cầu riêng cho đơn đó."),
+          )
+        : null,
+      hasTotal ? total.node : null,
+      hasTotal
+        ? h(
+            "p",
+            { class: "hint", dataField: "invoice-issued-fixed" },
+            "Chép tổng tiền in trên hóa đơn, không chép số trên màn hình. Lưu khi tổng này đúng bằng các đơn đã chọn; lưu rồi số này giữ nguyên.",
+          )
+        : null,
       alertHost,
     ),
     actions: submit,
     onClose: () => made.node.remove(),
   });
   return made;
+}
+
+/**
+ * One account-month order on the issued sheet: its ticket and what it cost the customer.
+ *
+ * @param {any} line an `InvoiceLineResponse`
+ * @returns {string}
+ */
+function lineText(line) {
+  const ticket = Number.isInteger(line?.ticket_number)
+    ? `Phiếu ${line.ticket_number}${line.ticket_issued_on ? ` · ${calendarDay(line.ticket_issued_on, { weekday: false })}` : ""}`
+    : "Đơn không có phiếu";
+  return `${ticket} — ${money(line?.amount_vnd, "chưa có tổng")}`;
 }
 
 /**

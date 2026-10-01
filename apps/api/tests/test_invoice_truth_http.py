@@ -18,6 +18,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import psycopg
 from fastapi.testclient import TestClient
@@ -90,7 +91,11 @@ def test_an_issued_request_over_http_keeps_its_figure_and_flags_a_refund(
     request = _send(client, "POST", f"{base}/orders/{order_id}/invoice-requests", BUYER).json()
     request_path = f"{base}/invoice-requests/{request['invoice_request_id']}"
     _as(shop.owner)
-    issued = _send(client, "POST", f"{request_path}/issued", ISSUED, if_match=1)
+    checked = {
+        "invoice_total_vnd": request["amount"]["total_vnd"],
+        "invoice_order_ids": request["covered_order_ids"],
+    }
+    issued = _send(client, "POST", f"{request_path}/issued", {**ISSUED, **checked}, if_match=1)
     assert issued.status_code == 200, issued.text
 
     view = _read_order(connection, order_id, shop.counter)
@@ -121,3 +126,76 @@ def test_an_issued_request_over_http_keeps_its_figure_and_flags_a_refund(
     assert body[0][12] == str(TOTAL_VND)
     assert body[0][13].startswith("1C26TYY · 0000901")
     assert body[0][14] == "Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán."
+
+
+def test_an_issue_over_http_is_fixed_at_what_the_invoice_lists(
+    connection: psycopg.Connection[Any], client: TestClient
+) -> None:
+    """Review round 9, the verifier's case over HTTP: the month is downloaded (1 order), the
+    invoice is made for it, a second order goes on the month, the request is read again (2 orders)
+    and *Ghi số hóa đơn* is pressed. The sheet sends what the invoice says -- its total and the
+    orders it lists -- so the request is fixed at the 1 order, never at the 2 it reads now."""
+
+    shop = Shop(connection)
+    base = _base(shop)
+    homestay = shop.customer()
+    shop.open(homestay, 5_000_000)
+    first = shop.ready_order(homestay)
+    shop.charge(first)
+    month = month_label(statement_month(datetime.now(UTC)))
+    path = f"{base}/customers/{homestay}/account/statements/{month}"
+    _as(shop.counter)
+    created = _send(
+        client, "POST", f"{path}/invoice-requests", {**BUYER, "buyer_unit_name": "Homestay"}
+    ).json()
+    assert created["covered_order_ids"] == [str(first)]
+    assert [line["order_id"] for line in created["lines"]] == [str(first)]
+    assert created["lines"][0]["amount_vnd"] == TOTAL_VND
+    request_path = f"{base}/invoice-requests/{created['invoice_request_id']}"
+
+    _as(shop.owner)
+    exported = _send(client, "POST", f"{base}/invoice-requests/export", {})
+    assert exported.status_code == 200, exported.text
+    late = shop.ready_order(homestay)
+    shop.charge(late)
+    read = client.get(request_path).json()
+    assert set(read["covered_order_ids"]) == {str(first), str(late)}
+    assert read["amount"]["total_vnd"] == 2 * TOTAL_VND
+
+    # The invoice's figure is required.
+    missing = _send(client, "POST", f"{request_path}/issued", ISSUED, if_match=1)
+    assert missing.status_code == 422, missing.text
+    # The invoice's total with both orders ticked: not what both cost.
+    both = {"invoice_total_vnd": TOTAL_VND, "invoice_order_ids": read["covered_order_ids"]}
+    mismatch = _send(client, "POST", f"{request_path}/issued", {**ISSUED, **both}, if_match=1)
+    assert mismatch.status_code == 422, mismatch.text
+    assert mismatch.json()["detail"] == {
+        "reason_code": "INVOICE_TOTAL_MISMATCH",
+        "field": "invoice_total_vnd",
+    }
+    # An order that is not the month's.
+    stranger = {"invoice_total_vnd": TOTAL_VND, "invoice_order_ids": [str(uuid4())]}
+    moved = _send(client, "POST", f"{request_path}/issued", {**ISSUED, **stranger}, if_match=1)
+    assert moved.status_code == 422, moved.text
+    assert moved.json()["detail"]["reason_code"] == "INVOICE_AMOUNT_MOVED"
+    still = client.get(request_path).json()
+    assert still["status"] == "REQUESTED" and still["row_version"] == 1
+
+    listed = {"invoice_total_vnd": TOTAL_VND, "invoice_order_ids": [str(first)]}
+    issued = _send(
+        client,
+        "POST",
+        f"{request_path}/issued",
+        {**ISSUED, "invoice_number": "0000902", **listed},
+        if_match=1,
+    )
+    assert issued.status_code == 200, issued.text
+    body = issued.json()
+    assert body["amount"]["total_vnd"] == TOTAL_VND
+    assert body["covered_order_ids"] == [str(first)]
+    assert [line["order_id"] for line in body["lines"]] == [str(first)]
+    assert body["flags"] == ["MONTH_ORDERS_NOT_ON_INVOICE"]
+    assert body["uninvoiced_charge_count"] == 1
+    _as(shop.counter)
+    own = client.get(f"{base}/orders/{late}/invoice").json()
+    assert own["refusal"] is None, own

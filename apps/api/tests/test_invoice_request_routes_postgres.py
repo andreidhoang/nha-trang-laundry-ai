@@ -217,7 +217,11 @@ def test_invoice_requests_from_the_counter_to_the_bookkeeper_over_http(
         "invoice_symbol": "1C26TYY",
         "invoice_number": "0000123",
         "invoice_date": (datetime.now(UTC).date() - timedelta(days=1)).isoformat(),
+        # What the invoice says: its total and the order it lists (review round 9).
+        "invoice_total_vnd": request["amount"]["total_vnd"],
+        "invoice_order_ids": request["covered_order_ids"],
     }
+    assert request["covered_order_ids"] == [str(walk_in)]
     assert _send(client, "POST", issued_path, issued_body).status_code == 428
     stale = _send(client, "POST", issued_path, issued_body, if_match=9)
     assert stale.status_code == 409 and _code(stale).startswith("STALE_VERSION")

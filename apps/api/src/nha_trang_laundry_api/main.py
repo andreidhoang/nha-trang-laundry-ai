@@ -9356,6 +9356,20 @@ class InvoiceAmountResponse(BaseModel):
     own_request_order_count: int | None = None
 
 
+class InvoiceLineResponse(BaseModel):
+    """One order on an account month's request (`INVOICE-TRUTH-009`): what it cost the customer
+    (`amount_vnd`, a deposit taken before it went on the account included -- `deposit_vnd`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    charged_at: datetime
+    amount_vnd: int
+    deposit_vnd: int
+
+
 class InvoiceRequestResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -9390,10 +9404,16 @@ class InvoiceRequestResponse(BaseModel):
     amount: InvoiceAmountResponse
     #: An issued request: what moved on its orders after it was issued -- said, never folded into
     #: `amount` (`INVOICE-TRUTH-009`). `live_total_vnd` with `AMOUNT_CHANGED_AFTER_ISSUE`;
-    #: `uninvoiced_charge_count` with `CHARGES_ADDED_AFTER_ISSUE`.
+    #: `uninvoiced_charge_count` with `MONTH_ORDERS_NOT_ON_INVOICE`.
     flags: list[InvoiceFlag] = []
     live_total_vnd: int | None = None
     uninvoiced_charge_count: int | None = None
+    #: The orders the request covers: an order's own; an open month's charged orders without a
+    #: request of their own; an issued request's fixed list.
+    covered_order_ids: list[UUID] = []
+    #: An account month's orders, each at what it cost the customer, as the request is for them
+    #: (fixed once issued). *Ghi số hóa đơn* lists them to tick the ones the invoice lists.
+    lines: list[InvoiceLineResponse] = []
     replayed: bool = False
 
 
@@ -9464,6 +9484,13 @@ class InvoiceIssuedRequest(StrictRequest):
     invoice_symbol: str = Field(max_length=100)
     invoice_number: str = Field(max_length=100)
     invoice_date: date
+    #: What the INVOICE says (review round 9), never what the sheet read: the total typed off it
+    #: (null only for an order whose quote presents no single total) and the orders it lists -- an
+    #: order request's one, or the account month's orders the invoice lists. The request is fixed at
+    #: exactly these: 422 `INVOICE_TOTAL_MISMATCH` (field `invoice_total_vnd`) when the total is not
+    #: what those orders cost; 422 `INVOICE_AMOUNT_MOVED` when an order is not the request's now.
+    invoice_total_vnd: StrictInt | None = Field(ge=0)
+    invoice_order_ids: list[UUID] = Field(max_length=10000)
 
 
 class InvoiceCancelRequest(StrictRequest):
@@ -9549,6 +9576,19 @@ def _invoice_request_response(
         flags=list(view.flags),
         live_total_vnd=view.live_total_vnd,
         uninvoiced_charge_count=view.uninvoiced_charge_count,
+        covered_order_ids=list(view.covered_order_ids),
+        lines=[
+            InvoiceLineResponse(
+                order_id=line.order_id,
+                ticket_number=line.ticket_number,
+                ticket_issued_on=line.ticket_issued_on,
+                charged_at=line.charged_at,
+                amount_vnd=line.amount_vnd,
+                deposit_vnd=line.deposit_vnd,
+            )
+            for line in view.month_lines
+            if view.status is not InvoiceRequestStatus.CANCELLED
+        ],
         replayed=replayed,
     )
 
@@ -9848,7 +9888,10 @@ def record_invoice_issued(
 
     Owner or approver, MFA, `If-Match` the request's row version. Refusals:
     `INVOICE_ISSUED_DETAILS_INVALID` (with the field), `INVOICE_NUMBER_TAKEN`,
-    `INVOICE_REQUEST_CLOSED`; 409 `STALE_VERSION`.
+    `INVOICE_REQUEST_CLOSED`, `INVOICE_TOTAL_MISMATCH` (the total typed off the invoice is not what
+    the orders it lists cost), `INVOICE_AMOUNT_MOVED` (an order sent is not the request's now: read
+    it again); nothing is fixed on any of them; 409 `STALE_VERSION`. An account month may be fixed
+    at some of its orders: the rest stay on no invoice and the month says so.
     """
     expected = _parse_if_match(if_match)
     try:
@@ -9861,6 +9904,8 @@ def record_invoice_issued(
             invoice_symbol=request.invoice_symbol,
             invoice_number=request.invoice_number,
             invoice_date=request.invoice_date,
+            invoice_total_vnd=request.invoice_total_vnd,
+            invoice_order_ids=tuple(request.invoice_order_ids),
         )
     except _INVOICE_ERRORS as error:
         _raise_invoice_error(error)

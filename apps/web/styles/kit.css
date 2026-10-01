@@ -4899,3 +4899,11 @@ table.reminders th {
   max-width: 22rem;
   white-space: normal;
 }
+
+/* Ghi số hóa đơn: the account month's orders, ticked as the invoice lists them (round 9 fix). */
+.invoice-lines {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}

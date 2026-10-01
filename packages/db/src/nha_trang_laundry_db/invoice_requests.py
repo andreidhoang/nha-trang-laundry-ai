@@ -55,7 +55,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from hashlib import sha256
 from typing import Any, Final
@@ -87,6 +87,7 @@ from nha_trang_laundry_domain.invoice_requests import (
     clean_cancel_note,
     clean_issued,
     issued_flags,
+    orders_on_invoice,
     request_code,
     require_open,
 )
@@ -171,8 +172,9 @@ FLAG_TEXT_VI: Final = {
     InvoiceFlag.AMOUNT_CHANGED_AFTER_ISSUE: (
         "Số tiền của đơn nay là {live}, khác số trên hóa đơn — báo kế toán."
     ),
-    InvoiceFlag.CHARGES_ADDED_AFTER_ISSUE: (
-        "{count} đơn ghi công nợ tháng này sau khi xuất hóa đơn — lập yêu cầu riêng cho từng đơn."
+    InvoiceFlag.MONTH_ORDERS_NOT_ON_INVOICE: (
+        "{count} đơn ghi công nợ tháng này không có trên hóa đơn và chưa có yêu cầu nào — "
+        "lập yêu cầu riêng cho từng đơn."
     ),
 }
 
@@ -211,6 +213,89 @@ _LIST_SQL: Final = (
         CASE WHEN r.status <> 'REQUESTED' THEN r.closed_at END DESC,
         r.request_number
     LIMIT %(limit)s
+"""
+)
+
+#: The issued requests of the store something can still have moved on since they were issued,
+#: newest closed first, for the download to read and list the flagged ones. Not bounded by a count
+#: (bounding it dropped older flagged invoices silently), and not every issued request either:
+#: reading each one by one grew the download with every invoice the shop ever issued (review round
+#: 9, N+1). One statement keeps those `_issued_figures` could flag -- a superset, never fewer:
+#:
+#: * an order on it cancelled, or given money back, since the issue (`cancelled_at_issue`,
+#:   `refunded_at_issue`);
+#: * an order request whose figure can still differ: the order is not settled (a storage fee moves
+#:   with the clock until it is: `order_storage_fee`), its quote or its fixed storage fee is not the
+#:   one the snapshot holds, or the snapshot was the migration's backfill;
+#: * an account month whose listed orders cost, now, other than its total, or with an order charged
+#:   to the month that it does not list and no live request of its own covers.
+#:
+#: A settled order's fee never moves again (`order_storage_fee`): with the same quote and the same
+#: fixed fee its figure is the snapshot's, so such an invoice is not read. Which of these is flagged
+#: is still decided by `_view` alone.
+_ISSUED_SCAN_SQL: Final = (
+    "SELECT "
+    + _REQUEST_COLUMNS
+    + _REQUEST_JOINS
+    + """
+    JOIN invoice_request_snapshots s ON s.request_id = r.id
+    WHERE r.store_id = %(store)s AND r.status = 'ISSUED'
+      AND (
+          EXISTS (
+              SELECT 1
+              FROM invoice_request_snapshot_orders so
+              JOIN orders so_o ON so_o.id = so.order_id
+              WHERE so.request_id = r.id
+                AND (
+                    (NOT so.cancelled_at_issue AND so_o.commercial_status = 'CANCELLED')
+                    OR (NOT so.refunded_at_issue
+                        AND EXISTS (SELECT 1 FROM order_refunds x WHERE x.order_id = so.order_id))
+                )
+          )
+          OR (
+              r.subject_kind = 'ORDER'
+              AND (
+                  s.origin <> 'AT_ISSUE'
+                  OR NOT EXISTS (SELECT 1 FROM order_settlements st WHERE st.order_id = r.order_id)
+                  OR o.current_quote_id IS DISTINCT FROM s.quote_id
+                  OR o.current_quote_revision IS DISTINCT FROM s.quote_revision
+                  OR coalesce(
+                      (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = r.order_id),
+                      0
+                  ) <> coalesce(s.storage_fee_vnd, 0)
+              )
+          )
+          OR (
+              r.subject_kind = 'ACCOUNT_MONTH'
+              AND (
+                  s.total_vnd IS DISTINCT FROM (
+                      SELECT sum(ch.owed_vnd)
+                      FROM invoice_request_snapshot_orders so
+                      JOIN customer_account_charges ch ON ch.id = so.account_charge_id
+                      WHERE so.request_id = r.id
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM customer_account_charges ch
+                      WHERE ch.account_id = r.account_id
+                        AND ch.charged_at >= r.period_month::timestamp AT TIME ZONE %(zone)s
+                        AND ch.charged_at
+                            < (r.period_month + INTERVAL '1 month')::date::timestamp
+                              AT TIME ZONE %(zone)s
+                        AND NOT EXISTS (
+                            SELECT 1 FROM invoice_request_snapshot_orders so
+                            WHERE so.request_id = r.id AND so.account_charge_id = ch.id
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1 FROM invoice_requests own
+                            WHERE own.order_id = ch.order_id AND own.subject_kind = 'ORDER'
+                              AND own.status IN ('REQUESTED', 'ISSUED')
+                        )
+                  )
+              )
+          )
+      )
+    ORDER BY r.closed_at DESC, r.request_number
 """
 )
 
@@ -311,6 +396,7 @@ INVOICE_LIST_QUERY: Final[QueryVersion] = query_version(
 INVOICE_EXPORT_QUERY: Final[QueryVersion] = query_version(
     "invoice-requests-export-v2",
     INVOICE_LIST_QUERY.label,
+    _ISSUED_SCAN_SQL,
     "|".join(EXPORT_COLUMNS),
     "|".join(EXPORT_HEADER_KEYS),
     DELIVERY_LINE_VI,
@@ -426,7 +512,8 @@ class InvoiceRequestView:
     flags: tuple[InvoiceFlag, ...] = ()
     #: With `AMOUNT_CHANGED_AFTER_ISSUE`: what the covered orders cost, read now.
     live_total_vnd: int | None = None
-    #: With `CHARGES_ADDED_AFTER_ISSUE`: orders charged to the month since that no request covers.
+    #: With `MONTH_ORDERS_NOT_ON_INVOICE`: orders charged to the month, not on its invoice, that no
+    #: request covers now.
     uninvoiced_charge_count: int | None = None
     #: An account month's lines, as the request is for them (fixed once issued).
     month_lines: tuple[MonthLine, ...] = ()
@@ -540,6 +627,12 @@ class RecordIssuedCommand:
     invoice_symbol: str
     invoice_number: str
     invoice_date: date | None
+    #: What the invoice says (review round 9): the total the owner typed off it, and the orders
+    #: it lists -- an order request's one, or the month's orders ticked on the sheet. The request
+    #: is fixed at exactly these, checked by `orders_on_invoice` under the store's lock, or nothing
+    #: is fixed. Never what the sheet read when it was opened: the invoice may predate that read.
+    invoice_total_vnd: int | None
+    invoice_order_ids: tuple[UUID, ...]
     principal: StaffPrincipal
     idempotency_key: str
     correlation_id: UUID
@@ -1001,6 +1094,18 @@ class InvoiceRequestRepository:
                     raise InvoiceRuleError(InvoiceRefusal.INVOICE_NUMBER_TAKEN)
                 # What the invoice is for, read now under both locks and written with the state.
                 plan = _snapshot_plan(cursor, request_id=command.request_id, at=command.at)
+            # Review round 9: fixed at what the invoice lists, at its exact total -- never at what
+            # the month reads at the press, which may hold orders charged after the invoice was
+            # made. A month's orders the invoice does not list stay on no invoice, and say so.
+            plan = plan.listing(
+                orders_on_invoice(
+                    kind=plan.kind,
+                    invoice_total_vnd=command.invoice_total_vnd,
+                    invoice_order_ids=command.invoice_order_ids,
+                    request_total_vnd=plan.total_vnd,
+                    lines=[(line.order_id, line.amount_vnd) for line in plan.lines],
+                )
+            )
 
             def mutation(cursor: Any) -> None:
                 cursor.execute(
@@ -1083,6 +1188,8 @@ class InvoiceRequestRepository:
                     "invoice_symbol": issued.symbol,
                     "invoice_number": issued.number,
                     "invoice_date": issued.issued_on.isoformat(),
+                    "invoice_total_vnd": command.invoice_total_vnd,
+                    "invoice_order_ids": sorted(str(item) for item in command.invoice_order_ids),
                 },
                 occurred_at=command.at,
             ),
@@ -1211,24 +1318,23 @@ class InvoiceRequestRepository:
                 view = _view(cursor, row, command.at)
                 rows.extend(_export_rows(cursor, view, command.at))
             # `INVOICE-TRUTH-009`: an issued request whose orders moved since (a refund, a
-            # cancellation, a fee, a later charge to its month) is listed again, from its fixed
-            # figure, with what to tell the bookkeeper. Newest issued first, within the same bound.
-            cursor.execute(
-                _LIST_SQL,
-                {
-                    "store": command.store_id,
-                    "status": InvoiceRequestStatus.ISSUED.value,
-                    "limit": EXPORT_MAX_REQUESTS + 1,
-                },
-            )
+            # cancellation, a fee, a month order no invoice lists) is listed again, from its fixed
+            # figure, with what to tell the bookkeeper. Newest issued first. Every issued request
+            # something can have moved on is read (`_ISSUED_SCAN_SQL`); at most
+            # `EXPORT_MAX_REQUESTS` flagged ones are listed, and the file says it stopped only when
+            # a flagged one was left out (review round 9).
+            cursor.execute(_ISSUED_SCAN_SQL, {"store": command.store_id, "zone": ACCOUNT_TIMEZONE})
             issued = cursor.fetchall()
-            truncated = truncated or len(issued) > EXPORT_MAX_REQUESTS
             flagged = 0
-            for row in issued[:EXPORT_MAX_REQUESTS]:
+            for row in issued:
                 view = _view(cursor, row, command.at)
-                if view.flags:
-                    flagged += 1
-                    rows.extend(_export_rows(cursor, view, command.at))
+                if not view.flags:
+                    continue
+                if flagged == EXPORT_MAX_REQUESTS:
+                    truncated = True
+                    break
+                flagged += 1
+                rows.extend(_export_rows(cursor, view, command.at))
         request_count = min(len(fetched), EXPORT_MAX_REQUESTS) + flagged
         label = INVOICE_EXPORT_QUERY.label
         content = _csv_text(
@@ -1610,6 +1716,21 @@ class _SnapshotPlan:
     quote: tuple[UUID, int] | None
     lines: tuple[_SnapshotLine, ...]
     at: datetime
+    #: An account month's orders the invoice does not list (`listing`): on no invoice yet.
+    left_off: int = 0
+
+    def listing(self, order_ids: tuple[UUID, ...]) -> _SnapshotPlan:
+        """The plan for the orders the invoice lists (`orders_on_invoice` chose them)."""
+
+        kept = tuple(line for line in self.lines if line.order_id in set(order_ids))
+        if self.kind is InvoiceSubjectKind.ORDER:
+            return replace(self, lines=kept)
+        return replace(
+            self,
+            lines=kept,
+            total_vnd=sum(line.amount_vnd or 0 for line in kept),
+            left_off=len(self.lines) - len(kept),
+        )
 
     def facts(self) -> dict[str, object]:
         """The event's and the audit row's words about it: amounts and counts, no buyer."""
@@ -1617,6 +1738,7 @@ class _SnapshotPlan:
         return {
             "fixed_total_vnd": self.total_vnd,
             "fixed_order_count": len(self.lines),
+            "month_orders_left_off": self.left_off,
         }
 
 
@@ -2005,7 +2127,7 @@ def _issued_figures(
         live_total_vnd=live_total,
         at_issue=at_issue,
         now=now_state,
-        uninvoiced_later_charges=uninvoiced,
+        uninvoiced_month_orders=uninvoiced,
     )
     return _Figures(
         amount=amount,
@@ -2043,7 +2165,7 @@ def _flag_text(view: InvoiceRequestView) -> str:
                 if view.live_total_vnd is None
                 else format_vnd(view.live_total_vnd)
             )
-        elif flag is InvoiceFlag.CHARGES_ADDED_AFTER_ISSUE:
+        elif flag is InvoiceFlag.MONTH_ORDERS_NOT_ON_INVOICE:
             text = text.format(count=view.uninvoiced_charge_count or 0)
         parts.append(text)
     return " ".join(parts)

@@ -202,7 +202,7 @@ def _flags(
             live_total_vnd=live,
             at_issue={order: CoveredOrderState(*before)},
             now={order: CoveredOrderState(*after)},
-            uninvoiced_later_charges=later,
+            uninvoiced_month_orders=later,
         )
     )
 
@@ -220,10 +220,10 @@ def _flags(
         ({"live": 165_000}, ("AMOUNT_CHANGED_AFTER_ISSUE",)),
         ({"fixed": None, "live": 110_000}, ("AMOUNT_CHANGED_AFTER_ISSUE",)),
         ({"fixed": None, "live": None}, ()),
-        ({"later": 2}, ("CHARGES_ADDED_AFTER_ISSUE",)),
+        ({"later": 2}, ("MONTH_ORDERS_NOT_ON_INVOICE",)),
         (
             {"after": (True, True), "live": 0, "later": 1},
-            ("REFUNDED_AFTER_ISSUE", "AMOUNT_CHANGED_AFTER_ISSUE", "CHARGES_ADDED_AFTER_ISSUE"),
+            ("REFUNDED_AFTER_ISSUE", "AMOUNT_CHANGED_AFTER_ISSUE", "MONTH_ORDERS_NOT_ON_INVOICE"),
         ),
     ],
 )
@@ -236,3 +236,84 @@ def test_issued_flags_say_what_moved_after_the_issue(
 def test_issued_flags_refuse_a_negative_count() -> None:
     with pytest.raises(ValueError):
         _flags(later=-1)
+
+
+# --- review round 9: *Ghi số hóa đơn* fixes what the invoice lists, at its exact total ----------
+
+
+def _on_invoice(
+    kind: str,
+    invoice: tuple[int | None, tuple[int, ...]],
+    lines: tuple[tuple[int, int | None], ...],
+    request_total: int | None = None,
+) -> tuple[int, ...] | str:
+    from uuid import UUID
+
+    from nha_trang_laundry_domain.invoice_requests import (
+        InvoiceRuleError,
+        InvoiceSubjectKind,
+        orders_on_invoice,
+    )
+
+    try:
+        chosen = orders_on_invoice(
+            kind=InvoiceSubjectKind(kind),
+            invoice_total_vnd=invoice[0],
+            invoice_order_ids=[UUID(int=n) for n in invoice[1]],
+            request_total_vnd=request_total,
+            lines=[(UUID(int=n), amount) for n, amount in lines],
+        )
+    except InvoiceRuleError as error:
+        assert (error.field == "invoice_total_vnd") is (str(error) == "INVOICE_TOTAL_MISMATCH")
+        return str(error)
+    return tuple(order_id.int for order_id in chosen)
+
+
+MONTH = ((1, 110_000), (2, 70_000), (3, 40_000))
+
+
+@pytest.mark.parametrize(
+    ("invoice", "result"),
+    [
+        # Every order, in any order sent: all of them, in the request's order.
+        ((220_000, (3, 1, 2)), (1, 2, 3)),
+        # The invoice was made before 2 and 3 went on the month: fixed at 1 alone.
+        ((110_000, (1,)), (1,)),
+        ((110_000, (3, 2)), (2, 3)),
+        # The total of everything with only some ticked, a slip, no total.
+        ((220_000, (1,)), "INVOICE_TOTAL_MISMATCH"),
+        ((109_999, (1,)), "INVOICE_TOTAL_MISMATCH"),
+        ((None, (1,)), "INVOICE_TOTAL_MISMATCH"),
+        # Not the month's now, repeated, none.
+        ((110_000, (4,)), "INVOICE_AMOUNT_MOVED"),
+        ((220_000, (1, 2, 3, 4)), "INVOICE_AMOUNT_MOVED"),
+        ((220_000, (1, 1, 2)), "INVOICE_AMOUNT_MOVED"),
+        ((0, ()), "INVOICE_AMOUNT_MOVED"),
+    ],
+)
+def test_a_month_is_fixed_at_the_orders_its_invoice_lists(
+    invoice: tuple[int | None, tuple[int, ...]], result: tuple[int, ...] | str
+) -> None:
+    assert _on_invoice("ACCOUNT_MONTH", invoice, MONTH) == result
+
+
+@pytest.mark.parametrize(
+    ("invoice", "request_total", "result"),
+    [
+        ((110_000, (1,)), 110_000, (1,)),
+        ((None, (1,)), None, (1,)),
+        # A fee accrued since the invoice was made; a single total appeared or went away.
+        ((110_000, (1,)), 135_000, "INVOICE_TOTAL_MISMATCH"),
+        ((None, (1,)), 110_000, "INVOICE_TOTAL_MISMATCH"),
+        ((110_000, (1,)), None, "INVOICE_TOTAL_MISMATCH"),
+        ((110_000, (2,)), 110_000, "INVOICE_AMOUNT_MOVED"),
+        ((110_000, ()), 110_000, "INVOICE_AMOUNT_MOVED"),
+        ((110_000, (1, 1)), 110_000, "INVOICE_AMOUNT_MOVED"),
+    ],
+)
+def test_an_order_is_fixed_only_at_its_total_now(
+    invoice: tuple[int | None, tuple[int, ...]],
+    request_total: int | None,
+    result: tuple[int, ...] | str,
+) -> None:
+    assert _on_invoice("ORDER", invoice, ((1, request_total),), request_total) == result

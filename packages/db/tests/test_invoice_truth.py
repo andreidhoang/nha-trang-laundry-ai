@@ -27,8 +27,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+import nha_trang_laundry_db.invoice_requests as invoice_requests_module
 import psycopg
 import pytest
+from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.invoice_requests import (
     EXPORT_COLUMNS,
     INVOICE_EXPORT_QUERY,
@@ -38,7 +40,7 @@ from nha_trang_laundry_db.invoice_requests import (
 )
 from nha_trang_laundry_db.payments import PaymentCommand, PaymentRepository
 from nha_trang_laundry_db.storage_fees import publish_storage_policy
-from nha_trang_laundry_domain.accounts import statement_month
+from nha_trang_laundry_domain.accounts import ACCOUNT_TIMEZONE, statement_month
 from nha_trang_laundry_domain.catalog import CustodyResolution
 from nha_trang_laundry_domain.invoice_requests import (
     InvoiceRefusal,
@@ -278,7 +280,7 @@ def test_an_order_charged_after_the_month_was_issued_stays_invoiceable(
     issued = _read(shop, month.request_id)
     assert issued.amount.total_vnd == TOTAL_VND
     assert issued.covered_order_ids == (early,)
-    assert issued.flags == ("CHARGES_ADDED_AFTER_ISSUE",)
+    assert issued.flags == ("MONTH_ORDERS_NOT_ON_INVOICE",)
     assert issued.uninvoiced_charge_count == 1
     _assert_every_order_invoiceable_once(shop, [early, late])
     _create(shop, order_id=late)
@@ -418,6 +420,8 @@ def test_a_replayed_issue_takes_no_second_snapshot(shop: Shop) -> None:
         invoice_symbol="1C26TYY",
         invoice_number="406",
         invoice_date=datetime.now(UTC).date() - timedelta(days=1),
+        invoice_total_vnd=TOTAL_VND,
+        invoice_order_ids=(_read(shop, stored.request_id).order_id,),
         principal=shop.owner,
         idempotency_key=f"issued-{uuid4().hex}",
         correlation_id=uuid4(),
@@ -504,3 +508,517 @@ def test_the_issue_writes_its_snapshot_in_the_same_transaction(shop: Shop) -> No
             (stored.request_id,),
         )
         assert cursor.fetchone() == (TOTAL_VND, "AT_ISSUE", True)
+
+
+# --- review round 9: an issue is fixed only at what the invoice says ----------------------------
+
+
+def _checked(view: Any) -> tuple[int | None, tuple[UUID, ...]]:
+    """An invoice made for everything the request reads: its figure and the orders it covers."""
+
+    return view.amount.total_vnd, view.covered_order_ids
+
+
+def _record(
+    shop: Shop,
+    request_id: UUID,
+    *,
+    checked: tuple[int | None, tuple[UUID, ...]],
+    number: str,
+    at: datetime | None = None,
+    key: str | None = None,
+) -> Any:
+    """*Ghi số hóa đơn* with what the invoice says: `checked` = (its total, the orders it lists)."""
+
+    return InvoiceRequestRepository().record_issued(
+        shop.connection,
+        RecordIssuedCommand(
+            store_id=shop.store_id,
+            request_id=request_id,
+            expected_row_version=1,
+            invoice_symbol="1C26TYY",
+            invoice_number=number,
+            invoice_date=datetime.now(UTC).date() - timedelta(days=1),
+            invoice_total_vnd=checked[0],
+            invoice_order_ids=checked[1],
+            principal=shop.owner,
+            idempotency_key=key or f"issued-{uuid4().hex}",
+            correlation_id=uuid4(),
+            at=at or datetime.now(UTC),
+        ),
+    )
+
+
+def test_an_order_charged_between_the_check_and_the_press_is_not_fixed_as_invoiced(
+    shop: Shop, account: UUID
+) -> None:
+    """The invoice was made for A from what the sheet showed; C went on the account; then *Ghi số
+    hóa đơn*. C is never fixed as covered by an invoice that did not list it: the request is fixed
+    at A, and C is on no invoice and requestable. (Until this fix round the press was refused,
+    leaving the invoice already issued for A unrecordable.)"""
+
+    a = shop.ready_order(account)
+    shop.charge(a)
+    month = _month_request(shop, account)
+    checked = _checked(_read(shop, month.request_id))
+    assert checked == (TOTAL_VND, (a,))
+    c = shop.ready_order(account)
+    shop.charge(c)
+    _record(shop, month.request_id, checked=checked, number="990")
+    fixed = _read(shop, month.request_id)
+    assert fixed.status is InvoiceRequestStatus.ISSUED
+    assert fixed.covered_order_ids == (a,) and fixed.amount.total_vnd == TOTAL_VND
+    assert fixed.flags == ("MONTH_ORDERS_NOT_ON_INVOICE",) and fixed.uninvoiced_charge_count == 1
+    assert _order_subject(shop, c).refusal is None
+    _assert_every_order_invoiceable_once(shop, [a, c])
+
+
+def test_an_own_request_cancelled_between_the_check_and_the_press_is_not_fixed_as_invoiced(
+    shop: Shop, account: UUID
+) -> None:
+    own, rest = shop.ready_order(account), shop.ready_order(account)
+    shop.charge(own)
+    shop.charge(rest)
+    own_request = _create(shop, order_id=own)
+    month = _month_request(shop, account)
+    checked = _checked(_read(shop, month.request_id))
+    assert checked == (TOTAL_VND, (rest,))
+    _cancel(shop, own_request.request_id, 1)
+    # The open month now reads both; the invoice lists `rest`: fixed at `rest` alone.
+    assert set(_read(shop, month.request_id).covered_order_ids) == {own, rest}
+    _record(shop, month.request_id, checked=checked, number="991")
+    fixed = _read(shop, month.request_id)
+    assert fixed.covered_order_ids == (rest,) and fixed.amount.total_vnd == TOTAL_VND
+    assert fixed.flags == ("MONTH_ORDERS_NOT_ON_INVOICE",)
+    assert _order_subject(shop, own).refusal is None
+    _assert_every_order_invoiceable_once(shop, [own, rest])
+
+
+def test_an_order_charged_in_with_its_own_request_does_not_move_the_month(
+    shop: Shop, account: UUID
+) -> None:
+    """A move that is not the month's changes nothing: the figure and the orders are the same."""
+
+    first = shop.ready_order(account)
+    shop.charge(first)
+    month = _month_request(shop, account)
+    checked = _checked(_read(shop, month.request_id))
+    waiting = shop.ready_order(account)
+    _create(shop, order_id=waiting)
+    shop.charge(waiting)
+    _record(shop, month.request_id, checked=checked, number="992")
+    fixed = _read(shop, month.request_id)
+    assert fixed.covered_order_ids == (first,) and fixed.amount.total_vnd == TOTAL_VND
+    assert fixed.flags == ()
+    _assert_every_order_invoiceable_once(shop, [first, waiting])
+
+
+def test_a_fee_accrued_between_the_check_and_the_press_is_not_fixed_as_invoiced(
+    shop: Shop, account: UUID, storage_policy: None
+) -> None:
+    order_id = shop.ready_order(account)
+    stored = _create(shop, order_id=order_id)
+    checked_on = datetime.now(UTC) + timedelta(days=20)
+    pressed_on = datetime.now(UTC) + timedelta(days=25)
+    checked = _checked(_read_at(shop, stored.request_id, checked_on))
+    moved = _read_at(shop, stored.request_id, pressed_on).amount.total_vnd
+    assert checked[0] is not None and moved is not None and moved > checked[0]
+
+    with pytest.raises(InvoiceRuleError) as caught:
+        _record(shop, stored.request_id, checked=checked, number="993", at=pressed_on)
+    assert caught.value.code is InvoiceRefusal.INVOICE_TOTAL_MISMATCH
+    _assert_nothing_fixed(shop, stored.request_id, pressed_on)
+    # An invoice made for what it is for at the press is fixed at that.
+    now_checked = _checked(_read_at(shop, stored.request_id, pressed_on))
+    _record(shop, stored.request_id, checked=now_checked, number="993", at=pressed_on)
+    fixed = _read_at(shop, stored.request_id, pressed_on)
+    assert fixed.amount.total_vnd == moved and fixed.flags == ()
+
+
+def test_the_checked_figure_is_part_of_the_issue_key(shop: Shop, account: UUID) -> None:
+    order_id = shop.ready_order(account)
+    stored = _create(shop, order_id=order_id)
+    checked = _checked(_read(shop, stored.request_id))
+    key = f"issued-{uuid4().hex}"
+    first = _record(shop, stored.request_id, checked=checked, number="994", key=key)
+    again = _record(shop, stored.request_id, checked=checked, number="994", key=key)
+    assert again.replayed is True and again.row_version == first.row_version
+    with pytest.raises(IdempotencyConflictError):
+        _record(shop, stored.request_id, checked=(1, checked[1]), number="994", key=key)
+
+
+# --- review round 9: the download reads every issued request, and says it stopped only when it did
+
+
+@pytest.fixture
+def small_bound(monkeypatch: pytest.MonkeyPatch) -> int:
+    """The download's bound, made small so a test can pass it."""
+
+    monkeypatch.setattr(invoice_requests_module, "EXPORT_MAX_REQUESTS", 3)
+    return 3
+
+
+def _produce(shop: Shop) -> Any:
+    return InvoiceRequestRepository().export_open(
+        shop.connection, ExportCommand(shop.store_id, shop.owner, uuid4(), datetime.now(UTC))
+    )
+
+
+def _issued_request(shop: Shop, number: str, *, refunded_after: bool = False) -> Any:
+    order_id = _paid_received_order(shop) if refunded_after else _walk_in_order(shop)
+    stored = _create(shop, order_id=order_id)
+    _issue(shop, stored.request_id, 1, number=number)
+    if refunded_after:
+        _cancel_order(shop, order_id)
+    return _read(shop, stored.request_id)
+
+
+def test_many_issued_invoices_with_nothing_flagged_are_not_a_cut_short_download(
+    shop: Shop, small_bound: int
+) -> None:
+    for index in range(small_bound + 1):
+        _issued_request(shop, f"50{index}")
+    produced = _produce(shop)
+    assert (produced.request_count, produced.flagged_issued_count) == (0, 0)
+    assert produced.truncated is False
+    assert "chưa hết danh sách" not in produced.content_csv
+
+
+def test_a_flagged_invoice_older_than_the_bound_is_still_in_the_download(
+    shop: Shop, small_bound: int
+) -> None:
+    old = _issued_request(shop, "600", refunded_after=True)
+    assert old.flags == ("REFUNDED_AFTER_ISSUE",)
+    for index in range(small_bound + 1):
+        _issued_request(shop, f"61{index}")
+    produced = _produce(shop)
+    assert produced.flagged_issued_count == 1 and produced.truncated is False
+    assert old.request_code in produced.content_csv
+
+
+def test_the_download_says_it_stopped_when_a_flagged_invoice_was_left_out(
+    shop: Shop, small_bound: int
+) -> None:
+    flagged = [_issued_request(shop, f"70{index}", refunded_after=True) for index in range(4)]
+    produced = _produce(shop)
+    assert produced.flagged_issued_count == small_bound and produced.truncated is True
+    assert "chưa hết danh sách" in produced.content_csv
+    # Newest first: the oldest is the one left out, and the file says the list stopped.
+    listed = [item.request_code in produced.content_csv for item in flagged]
+    assert listed == [False, True, True, True]
+
+
+def test_the_download_still_stops_at_the_bound_of_open_requests(
+    shop: Shop, small_bound: int
+) -> None:
+    for _ in range(small_bound + 1):
+        _create(shop, order_id=_walk_in_order(shop))
+    produced = _produce(shop)
+    assert produced.request_count == small_bound and produced.truncated is True
+
+
+# --- review round 9: the month's flag says only what it measured ---------------------------------
+
+
+def test_an_own_request_cancelled_after_the_month_was_issued_is_not_called_a_later_charge(
+    shop: Shop, account: UUID
+) -> None:
+    """X had its own request when the month was issued (covering Y); X's is then cancelled. X was
+    charged before the issue, so "charged after the issue" would be untrue; the flag says only
+    that X is on no invoice and no request, and what to do."""
+
+    x, y = shop.ready_order(account), shop.ready_order(account)
+    shop.charge(x)
+    shop.charge(y)
+    own = _create(shop, order_id=x)
+    month = _month_request(shop, account)
+    _issue(shop, month.request_id, 1, number="801")
+    _cancel(shop, own.request_id, 1)
+    view = _read(shop, month.request_id)
+    assert view.covered_order_ids == (y,)
+    assert view.flags == ("MONTH_ORDERS_NOT_ON_INVOICE",) and view.uninvoiced_charge_count == 1
+    rows = [row for row in _export(shop) if row[0] == view.request_code]
+    said = rows[0][EXPORT_COLUMNS.index(FLAG_COLUMN)]
+    assert said == (
+        "1 đơn ghi công nợ tháng này không có trên hóa đơn và chưa có yêu cầu nào — lập yêu cầu "
+        "riêng cho từng đơn."
+    )
+    assert "sau khi xuất" not in said
+    assert _order_subject(shop, x).refusal is None
+    _assert_every_order_invoiceable_once(shop, [x, y])
+
+
+# --- review round 9 (fix round): the issue is fixed at what the invoice lists --------------------
+#
+# The verifier's case: the bookkeeper downloads (the month = A), issues the invoice for A in the
+# portal; C goes on the account; the owner opens *Ghi số hóa đơn* -- which now reads A and C -- and
+# presses. Sending back what the sheet showed fixed the request at A + C, an invoice that never
+# listed C. The sheet now sends what the INVOICE says: its total, typed off the invoice, and the
+# orders it lists. The request is fixed at exactly those, or nothing is fixed.
+
+
+def _assert_nothing_fixed(shop: Shop, request_id: UUID, at: datetime | None = None) -> None:
+    view = _read_at(shop, request_id, at or datetime.now(UTC))
+    assert view.status is InvoiceRequestStatus.REQUESTED and view.row_version == 1
+    with shop.connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT (SELECT count(*) FROM invoice_request_snapshots WHERE request_id = %(r)s),"
+            " (SELECT count(*) FROM domain_events WHERE aggregate_id = %(r)s"
+            "  AND event_type = 'INVOICE_REQUEST_ISSUED_RECORDED')",
+            {"r": request_id},
+        )
+        assert cursor.fetchone() == (0, 0)
+
+
+def _refused(
+    shop: Shop,
+    request_id: UUID,
+    *,
+    invoice: tuple[int | None, tuple[UUID, ...]],
+    number: str,
+    at: datetime | None = None,
+) -> InvoiceRuleError:
+    with pytest.raises(InvoiceRuleError) as caught:
+        _record(shop, request_id, checked=invoice, number=number, at=at)
+    _assert_nothing_fixed(shop, request_id, at)
+    return caught.value
+
+
+def _fixed_count(shop: Shop, request_id: UUID) -> int:
+    with shop.connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT order_count FROM invoice_request_snapshots WHERE request_id = %s",
+            (request_id,),
+        )
+        row = cursor.fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_an_invoice_made_from_the_download_is_fixed_at_what_it_lists_not_the_month_now(
+    shop: Shop, account: UUID
+) -> None:
+    a = shop.ready_order(account)
+    shop.charge(a)
+    month = _month_request(shop, account)
+    code = _read(shop, month.request_id).request_code
+    downloaded = [row for row in _export(shop) if row[0] == code]
+    assert len(downloaded) == 1 and downloaded[0][12] == str(TOTAL_VND)
+    c = shop.ready_order(account)
+    shop.charge(c)
+
+    # The sheet opened now reads A and C, both ticked; the owner types the invoice's total.
+    opened = _read(shop, month.request_id)
+    assert set(opened.covered_order_ids) == {a, c}
+    error = _refused(
+        shop, month.request_id, invoice=(TOTAL_VND, opened.covered_order_ids), number="995"
+    )
+    assert error.code is InvoiceRefusal.INVOICE_TOTAL_MISMATCH
+    assert error.field == "invoice_total_vnd"
+
+    # Only A ticked -- what the invoice lists -- at its total: fixed at A alone.
+    _record(shop, month.request_id, checked=(TOTAL_VND, (a,)), number="995")
+    fixed = _read(shop, month.request_id)
+    assert fixed.status is InvoiceRequestStatus.ISSUED
+    assert fixed.covered_order_ids == (a,) and fixed.amount.total_vnd == TOTAL_VND
+    assert _fixed_count(shop, month.request_id) == 1
+    # C is on no invoice: the month says so, and C can be requested on its own.
+    assert fixed.flags == ("MONTH_ORDERS_NOT_ON_INVOICE",) and fixed.uninvoiced_charge_count == 1
+    assert _order_subject(shop, c).refusal is None
+    _assert_every_order_invoiceable_once(shop, [a, c])
+    _create(shop, order_id=c)
+    assert _read(shop, month.request_id).flags == ()
+    _assert_every_order_invoiceable_once(shop, [a, c])
+
+
+def test_an_invoice_listing_every_order_of_the_month_is_fixed_at_all_of_them(
+    shop: Shop, account: UUID
+) -> None:
+    a, c = shop.ready_order(account), shop.ready_order(account)
+    shop.charge(a)
+    shop.charge(c)
+    month = _month_request(shop, account)
+    _record(shop, month.request_id, checked=(2 * TOTAL_VND, (c, a)), number="996")
+    fixed = _read(shop, month.request_id)
+    assert set(fixed.covered_order_ids) == {a, c} and fixed.flags == ()
+    assert fixed.amount.total_vnd == 2 * TOTAL_VND and _fixed_count(shop, month.request_id) == 2
+
+
+@pytest.mark.parametrize(
+    ("invoice", "code"),
+    [
+        # The total of both, but only one ticked.
+        (lambda a, c, other: (2 * TOTAL_VND, (a,)), "INVOICE_TOTAL_MISMATCH"),
+        # A typing slip on the total.
+        (lambda a, c, other: (TOTAL_VND - 1, (a,)), "INVOICE_TOTAL_MISMATCH"),
+        (lambda a, c, other: (None, (a,)), "INVOICE_TOTAL_MISMATCH"),
+        # An order the month does not cover now (its own request), an unknown one, none, twice.
+        (lambda a, c, other: (2 * TOTAL_VND, (a, other)), "INVOICE_AMOUNT_MOVED"),
+        (lambda a, c, other: (TOTAL_VND, (uuid4(),)), "INVOICE_AMOUNT_MOVED"),
+        (lambda a, c, other: (0, ()), "INVOICE_AMOUNT_MOVED"),
+        (lambda a, c, other: (2 * TOTAL_VND, (a, a)), "INVOICE_AMOUNT_MOVED"),
+    ],
+)
+def test_a_month_is_fixed_only_at_orders_it_covers_and_their_exact_total(
+    shop: Shop, account: UUID, invoice: Any, code: str
+) -> None:
+    a, c, other = (shop.ready_order(account) for _ in range(3))
+    for order_id in (a, c, other):
+        shop.charge(order_id)
+    _create(shop, order_id=other)
+    month = _month_request(shop, account)
+    assert set(_read(shop, month.request_id).covered_order_ids) == {a, c}
+    error = _refused(shop, month.request_id, invoice=invoice(a, c, other), number="997")
+    assert error.code == code
+    _assert_every_order_invoiceable_once(shop, [a, c, other])
+
+
+def test_an_order_invoice_is_fixed_only_at_the_orders_total_now(
+    shop: Shop, account: UUID, storage_policy: None
+) -> None:
+    """An order is one line: its invoice's total is the order's total at the press, or nothing is
+    fixed (a fee accrued since the download -- DECISIONS NEEDED: record the invoice's figure)."""
+
+    order_id = shop.ready_order(account)
+    stored = _create(shop, order_id=order_id)
+    downloaded_on = datetime.now(UTC) + timedelta(days=20)
+    pressed_on = datetime.now(UTC) + timedelta(days=25)
+    on_invoice = _read_at(shop, stored.request_id, downloaded_on).amount.total_vnd
+    now = _read_at(shop, stored.request_id, pressed_on).amount.total_vnd
+    assert on_invoice is not None and now is not None and now > on_invoice
+    error = _refused(
+        shop, stored.request_id, invoice=(on_invoice, (order_id,)), number="998", at=pressed_on
+    )
+    assert error.code is InvoiceRefusal.INVOICE_TOTAL_MISMATCH
+    stranger = _refused(
+        shop, stored.request_id, invoice=(now, (uuid4(),)), number="998", at=pressed_on
+    )
+    assert stranger.code is InvoiceRefusal.INVOICE_AMOUNT_MOVED
+    _record(shop, stored.request_id, checked=(now, (order_id,)), number="998", at=pressed_on)
+    assert _read_at(shop, stored.request_id, pressed_on).amount.total_vnd == now
+
+
+# --- review round 9 (fix round): the download reads only what can still move --------------------
+
+
+def _settled_issued_request(shop: Shop, number: str) -> Any:
+    order_id = _paid_received_order(shop)
+    stored = _create(shop, order_id=order_id)
+    _issue(shop, stored.request_id, 1, number=number)
+    return _read(shop, stored.request_id)
+
+
+def _count_views(monkeypatch: pytest.MonkeyPatch) -> list[UUID]:
+    seen: list[UUID] = []
+    real = invoice_requests_module._view
+
+    def counting(cursor: Any, row: tuple[Any, ...], now: datetime) -> Any:
+        seen.append(row[0])
+        return real(cursor, row, now)
+
+    monkeypatch.setattr(invoice_requests_module, "_view", counting)
+    return seen
+
+
+def test_the_download_does_not_reread_every_invoice_ever_issued(
+    shop: Shop, account: UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settled orders' invoices and a whole month with nothing new cannot move: the download does
+    not read them one by one (the verifier's N+1). The one that moved is read and listed."""
+
+    quiet = [_settled_issued_request(shop, f"85{index}") for index in range(6)]
+    charged = shop.ready_order(account)
+    shop.charge(charged)
+    month = _month_request(shop, account)
+    _issue(shop, month.request_id, 1, number="860")
+    moved = _issued_request(shop, "861", refunded_after=True)
+    assert all(item.flags == () for item in quiet) and moved.flags == ("REFUNDED_AFTER_ISSUE",)
+
+    seen = _count_views(monkeypatch)
+    produced = _produce(shop)
+    assert produced.flagged_issued_count == 1 and moved.request_code in produced.content_csv
+    assert seen == [moved.request_id]
+
+
+def _scan(shop: Shop) -> set[UUID]:
+    with shop.connection.cursor() as cursor:
+        cursor.execute(
+            invoice_requests_module._ISSUED_SCAN_SQL,
+            {"store": shop.store_id, "zone": ACCOUNT_TIMEZONE},
+        )
+        return {row[0] for row in cursor.fetchall()}
+
+
+def _every_issued(shop: Shop, at: datetime) -> list[Any]:
+    with shop.connection.cursor() as cursor:
+        listed = InvoiceRequestRepository().list(
+            cursor,
+            store_id=shop.store_id,
+            principal=shop.owner,
+            status=InvoiceRequestStatus.ISSUED,
+            limit=200,
+            now=at,
+        )
+    assert not listed.truncated
+    return list(listed.requests)
+
+
+def test_the_download_scan_keeps_every_issued_request_a_read_flags(
+    shop: Shop, account: UUID, storage_policy: None
+) -> None:
+    """The scan is a superset of what `_view` flags, for every way an issued request is flagged,
+    and leaves out the ones that cannot move: the matrix behind the N+1 fix."""
+
+    quiet = _settled_issued_request(shop, "870")
+    refunded = _issued_request(shop, "871", refunded_after=True)
+    cancelled_order = _walk_in_order(shop)
+    cancelled = _create(shop, order_id=cancelled_order)
+    _issue(shop, cancelled.request_id, 1, number="872")
+    _cancel_order(shop, cancelled_order)
+    # A storage fee accruing on an order not settled (flagged 40 days on).
+    waiting = shop.ready_order(account)
+    accruing = _create(shop, order_id=waiting)
+    _issue(shop, accruing.request_id, 1, number="873")
+    # Months: one with nothing new, one with an order charged after, one whose own request was
+    # cancelled after, one with a deposit order (no flag: the line is its whole cost).
+    other = shop.customer()
+    shop.open(other, 5_000_000)
+    third = shop.customer()
+    shop.open(third, 5_000_000)
+    fourth = shop.customer()
+    shop.open(fourth, 5_000_000)
+    still = shop.ready_order(other)
+    _deposit(shop, still, DEPOSIT)
+    shop.charge(still)
+    still_month = _month_request(shop, other)
+    _issue(shop, still_month.request_id, 1, number="874")
+    early = shop.ready_order(third)
+    shop.charge(early)
+    later_month = _month_request(shop, third)
+    _issue(shop, later_month.request_id, 1, number="875")
+    late = shop.ready_order(third)
+    shop.charge(late)
+    x, y = shop.ready_order(fourth), shop.ready_order(fourth)
+    shop.charge(x)
+    shop.charge(y)
+    own = _create(shop, order_id=x)
+    reopened_month = _month_request(shop, fourth)
+    _issue(shop, reopened_month.request_id, 1, number="876")
+    _cancel(shop, own.request_id, 1)
+
+    for at in (datetime.now(UTC), datetime.now(UTC) + timedelta(days=40)):
+        issued = _every_issued(shop, at)
+        flagged = {item.request_id for item in issued if item.flags}
+        scanned = _scan(shop)
+        assert flagged <= scanned, f"the scan misses {flagged - scanned}"
+    assert flagged == {
+        refunded.request_id,
+        cancelled.request_id,
+        accruing.request_id,
+        later_month.request_id,
+        reopened_month.request_id,
+    }
+    # Cannot move: a settled order's invoice, a month with nothing new.
+    assert quiet.request_id not in scanned and still_month.request_id not in scanned
+    # Not settled, so read (its fee moves with the clock), though not flagged today.
+    assert accruing.request_id in scanned

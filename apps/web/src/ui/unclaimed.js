@@ -166,6 +166,41 @@ function refusal(error, reload) {
   return errorNotice(/** @type {any} */ (error));
 }
 
+/** COUNTER-UI-RACE-009 (C4): what a storage sheet says after its in-place "Tải lại". */
+const RELOADED = "Đã tải lại đơn mới nhất — kiểm tra lại rồi bấm.";
+
+/**
+ * "Tải lại" inside the waiver or disposal sheet after a stale refusal (COUNTER-UI-RACE-009, C4).
+ * With `spec.reread` (the order page's re-read) the sheet stays open: the fresh order and storage
+ * reads go to `apply`, which redraws the sheet's figures and makes the next press carry the new
+ * version -- the reason typed stays -- or answers false when the decision is no longer offered,
+ * and the sheet closes. Without it, the sheet closes and the page re-reads, as before.
+ *
+ * @param {{order: any, onChanged: () => void, reread?: () => Promise<any|null>}} spec
+ * @param {{node: HTMLElement, close: () => void}} made
+ * @param {HTMLElement} alertHost
+ * @param {(order: any, storage: any) => boolean} apply
+ * @returns {() => Promise<void>}
+ */
+function reloadInPlace(spec, made, alertHost, apply) {
+  return async () => {
+    if (!spec.reread) {
+      made.close();
+      spec.onChanged();
+      return;
+    }
+    const order = await spec.reread();
+    if (!order || !made.node.isConnected) return;
+    const storage = await readStorage(String(order.order_id));
+    if (!made.node.isConnected) return;
+    if (!storage || !apply(order, storage)) {
+      made.close();
+      return;
+    }
+    show(alertHost, inlineAlert({ state: "info", title: RELOADED }));
+  };
+}
+
 /**
  * Press once, wait once: the control is off while the request is in flight.
  *
@@ -331,6 +366,8 @@ export function contactSheet(spec) {
  * @param {any} spec.storage the `OrderStorageResponse`
  * @param {HTMLElement} spec.sheetsHost where the sheets are mounted
  * @param {() => void} spec.onChanged re-read the order after a write
+ * @param {() => Promise<any|null>} [spec.reread] re-read the order and answer it: a sheet's
+ *   "Tải lại" after a stale refusal then keeps the sheet open on the fresh figures (C4)
  * @param {string} spec.title the order's short name, for the sheets and the toasts
  * @returns {HTMLElement|null}
  */
@@ -515,6 +552,33 @@ export function storageSection(spec) {
  */
 function openWaiver(spec, fee, effect) {
   const id = encodeURIComponent(String(spec.order.order_id));
+  // The order read the press is against, the fee shown and what the waiver will do to it
+  // (MONEY-LIFECYCLE-009, A3); a reload in the sheet replaces all three (COUNTER-UI-RACE-009, C4),
+  // so the figures stated before the press are always the fresh read's.
+  let shown = spec.order;
+  let effectNow = effect;
+  const feeHost = h("div");
+  const drawFee = (/** @type {any} */ now) =>
+    render(
+      feeHost,
+      keyValues([
+        ["Đơn", spec.title],
+        ["Phí hiện tại", money(now.amount_vnd)],
+        effectNow?.kept_vnd ? ["Khách đã trả phí (giữ nguyên)", money(effectNow.kept_vnd)] : null,
+        effectNow ? ["Miễn", money(effectNow.waived_vnd)] : null,
+        effectNow && !effectNow.settles
+          ? ["Còn lại sau khi miễn", money(effectNow.remaining_after_vnd)]
+          : null,
+      ]),
+      effectNow?.settles
+        ? inlineAlert({
+            state: "ok",
+            title: "Khách đã trả đủ — đơn sẽ được tất toán.",
+            body: "Miễn xong là đơn đủ tiền; khi đưa đồ, bấm “Khách đã nhận đồ”.",
+          })
+        : null,
+    );
+  drawFee(fee);
   const submission = new Submission("storage-waiver");
   let reason = "";
   let intent = "";
@@ -533,7 +597,7 @@ function openWaiver(spec, fee, effect) {
       show(alertHost, inlineAlert({ state: "danger", title: REASON_NOTE.NOTE_REQUIRED }));
       return;
     }
-    const next = `${spec.order.row_version}|${reason.trim()}`;
+    const next = `${shown.row_version}|${reason.trim()}`;
     if (next !== intent) {
       submission.reset();
       intent = next;
@@ -544,21 +608,35 @@ function openWaiver(spec, fee, effect) {
         await request(`/internal/v1/orders/${id}/storage-fee-waiver`, {
           method: "POST",
           body: { reason: reason.trim() },
-          ifMatch: spec.order.row_version,
+          ifMatch: shown.row_version,
           idempotencyKey: submission.key(),
         });
         made.close();
         toast(
-          effect?.settles
+          effectNow?.settles
             ? `Đã miễn phí lưu kho — đơn đã tất toán · ${spec.title}`
             : `Đã miễn phí lưu kho · ${spec.title}`,
         );
         spec.onChanged();
       } catch (error) {
-        show(alertHost, refusal(error, () => {
-          made.close();
-          spec.onChanged();
-        }));
+        show(
+          alertHost,
+          refusal(
+            error,
+            reloadInPlace(spec, made, alertHost, (order, storage) => {
+              // Offered exactly as `storageSection` offers it: some fee unpaid, and the server's
+              // statement of what the waiver will do.
+              const now = storage.storage_fee || {};
+              if (!(now.status === "ACCRUING" || now.status === "PAUSED") || !storage.waiver_effect) {
+                return false;
+              }
+              shown = order;
+              effectNow = storage.waiver_effect;
+              drawFee(now);
+              return true;
+            }),
+          ),
+        );
       }
     });
   }
@@ -569,22 +647,7 @@ function openWaiver(spec, fee, effect) {
     body: h(
       "div",
       { class: "stack" },
-      keyValues([
-        ["Đơn", spec.title],
-        ["Phí hiện tại", money(fee.amount_vnd)],
-        effect?.kept_vnd ? ["Khách đã trả phí (giữ nguyên)", money(effect.kept_vnd)] : null,
-        effect ? ["Miễn", money(effect.waived_vnd)] : null,
-        effect && !effect.settles
-          ? ["Còn lại sau khi miễn", money(effect.remaining_after_vnd)]
-          : null,
-      ]),
-      effect?.settles
-        ? inlineAlert({
-            state: "ok",
-            title: "Khách đã trả đủ — đơn sẽ được tất toán.",
-            body: "Miễn xong là đơn đủ tiền; khi đưa đồ, bấm “Khách đã nhận đồ”.",
-          })
-        : null,
+      feeHost,
       h("p", { class: "hint" }, "Miễn rồi thì đơn này không tính phí lưu kho nữa. Lý do được ghi lại."),
       noteField({
         id: "waiver-reason",
@@ -612,11 +675,27 @@ function openWaiver(spec, fee, effect) {
  * @param {Parameters<typeof storageSection>[0]} spec
  */
 function openDisposal(spec) {
-  const { order, storage } = spec;
+  // The order and storage reads the sheet shows; a reload in the sheet replaces both (C4).
+  let order = spec.order;
+  let storage = spec.storage;
   const id = encodeURIComponent(String(order.order_id));
   const submission = new Submission("unclaimed-disposal");
   const alertHost = h("div");
-  const verdict = storage.disposal_verdict || {};
+  const factsHost = h("div");
+  function drawFacts() {
+    const verdict = storage.disposal_verdict || {};
+    render(
+      factsHost,
+      keyValues([
+        ["Đơn", spec.title],
+        ["Chờ lấy", waitingText(storage.days_waiting)],
+        ["Đã liên hệ", `${verdict.attempts_counted ?? 0} lần · ${verdict.attempt_days ?? 0} ngày`],
+        ["Khách đã trả (giữ nguyên)", money(order.paid_vnd)],
+        ["Còn nợ (xoá)", money(order.remaining_vnd)],
+      ]),
+    );
+  }
+  drawFacts();
   const confirm = confirmButton({
     label: "Thanh lý",
     confirmLabel: "Bấm lần nữa để thanh lý",
@@ -638,10 +717,19 @@ function openDisposal(spec) {
         toast(`Đã thanh lý · ${spec.title}`);
         spec.onChanged();
       } catch (error) {
-        show(alertHost, refusal(error, () => {
-          made.close();
-          spec.onChanged();
-        }));
+        show(
+          alertHost,
+          refusal(
+            error,
+            reloadInPlace(spec, made, alertHost, (fresh, read) => {
+              if (read.disposal_verdict?.allowed !== true) return false;
+              order = fresh;
+              storage = read;
+              drawFacts();
+              return true;
+            }),
+          ),
+        );
       }
     });
   }
@@ -657,13 +745,7 @@ function openDisposal(spec) {
         { class: "rule-quote", dataField: "disposal-rule" },
         storage.policy ? storage.policy.disposal_rule_vi : "",
       ),
-      keyValues([
-        ["Đơn", spec.title],
-        ["Chờ lấy", waitingText(storage.days_waiting)],
-        ["Đã liên hệ", `${verdict.attempts_counted ?? 0} lần · ${verdict.attempt_days ?? 0} ngày`],
-        ["Khách đã trả (giữ nguyên)", money(order.paid_vnd)],
-        ["Còn nợ (xoá)", money(order.remaining_vnd)],
-      ]),
+      factsHost,
       alertHost,
     ),
     actions: gated(confirm, can(principal(), "UNCLAIMED_DISPOSE")),

@@ -7,7 +7,9 @@
  *     draws those squares — one SVG path built from the matrix, never markup the server wrote — and
  *     prints the amount and the code in large type beside it.
  *   - **The amount is what the payment ledger says remains**, read by the server in the same request
- *     that built the QR. Nothing here adds, subtracts or compares money.
+ *     that built the QR -- or, in *Thu tiền* while "một phần" is open, the part typed, which the
+ *     server checks against what remains (`?amount_vnd=`, COUNTER-UI-RACE-009). Nothing here adds,
+ *     subtracts or compares money.
  *   - **Unpublished means no QR.** Until the owner publishes the shop's account every read answers
  *     `BANK_ACCOUNT_UNPUBLISHED`; the counter shows one short line and a tier-2 note naming the
  *     owner's switch, and everything else works as before.
@@ -25,13 +27,16 @@ export const CHECK_BANK_APP_LINE =
   "Kiểm tra app ngân hàng: đúng nội dung và số tiền rồi mới bấm Ghi nhận đã thu.";
 
 /**
- * The QR route for an order.
+ * The QR route for an order: for what remains, or -- `part` -- for a part payment the counter
+ * typed, which the server checks against what remains (`AMOUNT_ABOVE_REMAINING` otherwise).
  *
  * @param {string} orderId
+ * @param {number|null} [part]
  * @returns {string}
  */
-export function orderQrPath(orderId) {
-  return `/internal/v1/orders/${encodeURIComponent(String(orderId))}/vietqr`;
+export function orderQrPath(orderId, part = null) {
+  const path = `/internal/v1/orders/${encodeURIComponent(String(orderId))}/vietqr`;
+  return part === null ? path : `${path}?amount_vnd=${encodeURIComponent(String(part))}`;
 }
 
 /**
@@ -117,6 +122,11 @@ function refusalLine(read) {
       return "Không còn tiền phải trả — không cần mã QR.";
     case "MONTH_NOT_STARTED":
       return "Tháng này chưa bắt đầu.";
+    // COUNTER-UI-RACE-009 (C3): a typed part the payment route would refuse gets no QR.
+    case "AMOUNT_ABOVE_REMAINING":
+      return "Số gõ lớn hơn số còn lại — không có mã QR cho số này.";
+    case "AMOUNT_INVALID":
+      return "Số tiền chưa đúng — chưa có mã QR.";
     default:
       return "Đơn này chưa thu tiền được, nên chưa có mã QR.";
   }
@@ -195,20 +205,60 @@ export function qrAbsent(read) {
   );
 }
 
+/** How long the typing pauses before the QR for a typed part is asked for (one read, not one per key). */
+const PART_PAUSE_MS = 350;
+
 /**
- * The QR inside *Thu tiền* when the method is *Chuyển khoản*: read once when first shown, then
- * the QR, the amount and the code in large type, and the check-the-bank-app line.
+ * The QR inside *Thu tiền* when the method is *Chuyển khoản*: read when shown, then the QR, the
+ * amount and the code in large type, and the check-the-bank-app line.
+ *
+ * COUNTER-UI-RACE-009 (C3): the QR is for exactly the amount the payment will record. `ask(null)`
+ * is the whole remaining; `ask(amount)` a part the counter typed, read (after a short pause in the
+ * typing) with the amount for the server to check; `ask(undefined)` -- nothing usable typed --
+ * shows no QR. A new ask clears what is drawn at once and drops any read still in flight for the
+ * old one, so no moment shows a QR for a different amount than the one in the field. `reload()`
+ * reads again for the same ask (the order moved); a hidden QR reads when next shown.
  *
  * @param {string} orderId
- * @returns {{node: HTMLElement, show: () => void}}
+ * @returns {{node: HTMLElement, show: () => void, hide: () => void,
+ *   ask: (part: number|null|undefined) => void, reload: () => void}}
  */
 export function paymentQr(orderId) {
   const node = h("div", { class: "vietqr-host", id: "payment-qr" });
-  let started = false;
+  let visible = false;
+  /** @type {number|null|undefined} */
+  let asked = null;
+  /** Whether `node` shows the answer (or the prompt) for `asked`; false means it must be read. */
+  let current = false;
+  let generation = 0;
+  /** @type {number|undefined} */
+  let pause;
+
+  /** @param {number|null|undefined} part */
+  const same = (part) => part === asked;
+
+  function prompt() {
+    return h(
+      "p",
+      { class: "vietqr__absent hint", dataVietqr: "typing" },
+      "Gõ số tiền khách chuyển — mã QR ghi đúng số đó.",
+    );
+  }
 
   async function load() {
+    window.clearTimeout(pause);
+    generation += 1;
+    const mine = generation;
+    const part = asked;
+    current = true;
+    if (part === undefined) {
+      render(node, prompt());
+      return;
+    }
     render(node, skeletonRows(2));
-    const read = await readQr(orderQrPath(orderId));
+    const read = await readQr(orderQrPath(orderId, part));
+    // A newer ask (or a reload) was made while this read was in flight: its answer is not for it.
+    if (mine !== generation) return;
     // A read with neither a refusal nor a matrix is not a QR: said as a failed read, never drawn.
     if (read === null || (!read.refusal && !Array.isArray(read.modules))) {
       render(
@@ -226,15 +276,37 @@ export function paymentQr(orderId) {
       render(node, qrAbsent(read));
       return;
     }
-    render(node, qrCard(read, { check: true }));
+    render(
+      node,
+      qrCard(read, { check: true, amountLabel: part === null ? undefined : "Khách chuyển lần này" }),
+    );
   }
 
   return {
     node,
     show() {
-      if (started) return;
-      started = true;
-      void load();
+      visible = true;
+      if (!current) void load();
+    },
+    hide() {
+      visible = false;
+    },
+    ask(part) {
+      if (same(part)) return;
+      asked = part;
+      current = false;
+      generation += 1;
+      window.clearTimeout(pause);
+      // Cleared at once: the QR on screen was for another amount.
+      render(node, part === undefined ? prompt() : skeletonRows(2));
+      if (!visible) return;
+      if (part === undefined || part === null) void load();
+      else pause = window.setTimeout(() => void load(), PART_PAUSE_MS);
+    },
+    reload() {
+      current = false;
+      generation += 1;
+      if (visible) void load();
     },
   };
 }

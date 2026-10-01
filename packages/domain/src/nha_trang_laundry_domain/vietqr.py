@@ -410,6 +410,12 @@ class QrRefusal(StrEnum):
     NO_PRESENTABLE_TOTAL = "NO_PRESENTABLE_TOTAL"
     #: An account month that has not begun has no statement to pay yet.
     MONTH_NOT_STARTED = "MONTH_NOT_STARTED"
+    #: COUNTER-UI-RACE-009 (C3): a part payment typed at the counter ("đặt cọc") that is more than
+    #: is still owed. The payment route refuses that amount (`OVERPAYMENT_REFUSED`), so no QR may
+    #: ask the customer to send it.
+    AMOUNT_ABOVE_REMAINING = "AMOUNT_ABOVE_REMAINING"
+    #: A part amount that is not a whole number of đồng from 1 to the settlement ceiling.
+    AMOUNT_INVALID = "AMOUNT_INVALID"
 
 
 #: The balances on which money is still owed at the counter (`payments.PAYABLE_BALANCES`).
@@ -421,12 +427,19 @@ def order_qr_amount(
     commercial: CommercialOrderStatus,
     balance: OrderBalanceStatus,
     remaining_vnd: int | None,
+    part_vnd: int | None = None,
 ) -> int | QrRefusal:
     """The amount an order's QR asks for -- the ledger's remaining balance -- or why there is none.
 
-    Exactly the payments the counter's payment route would record in full: a QR for an amount that
-    route would refuse would send the customer's money somewhere the shop cannot book it.
+    Exactly the payments the counter's payment route would record: a QR for an amount that route
+    would refuse would send the customer's money somewhere the shop cannot book it.
     ``remaining_vnd`` is `payments.payment_position`'s, read in the same request.
+
+    ``part_vnd`` is a part payment the counter typed ("Khách trả một phần (đặt cọc)", `DEC-035`):
+    the QR then asks for exactly that, provided the payment route would accept it -- a whole number
+    of đồng from 1 up to what remains. Anything else is refused by name, never clamped: a QR for
+    an amount other than the one typed is how a customer pays 200.000 ₫ against a 50.000 ₫ deposit.
+    The order's own refusals come first, as for the full amount.
     """
 
     if balance not in _OWING_BALANCES:
@@ -437,7 +450,17 @@ def order_qr_amount(
         return QrRefusal.NO_PRESENTABLE_TOTAL
     if remaining_vnd == 0:
         return QrRefusal.NOTHING_OWED
-    return _require_amount(remaining_vnd)
+    if part_vnd is None:
+        return _require_amount(remaining_vnd)
+    if (
+        not isinstance(part_vnd, int)
+        or isinstance(part_vnd, bool)
+        or not 1 <= part_vnd <= MAX_SETTLEMENT_VND
+    ):
+        return QrRefusal.AMOUNT_INVALID
+    if part_vnd > remaining_vnd:
+        return QrRefusal.AMOUNT_ABOVE_REMAINING
+    return part_vnd
 
 
 def account_month_qr_amount(unpaid_vnd: int) -> int | QrRefusal:

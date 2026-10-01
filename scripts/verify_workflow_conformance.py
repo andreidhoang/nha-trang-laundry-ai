@@ -55,6 +55,7 @@ import time
 import traceback
 import urllib.request
 import uuid
+from decimal import Decimal
 from typing import Any
 
 from console_recording import Recorder, add_arguments, viewport, watch_render_defects
@@ -9722,10 +9723,16 @@ def scenario_vietqr(console: Console) -> None:
     )
     console.page.locator("#payment-edit").click()
     touched("orderDetail.payment-edit")
+    console.page.wait_for_timeout(300)
+    # COUNTER-UI-RACE-009 (C3): this used to assert the whole remaining's QR stayed beside the
+    # part field -- the defect, a QR for another amount than the one typed. The typed part's own
+    # QR is proven by the counter_race scenario.
     ok(
-        "the amount stays editable: the customer may pay part",
+        "the amount stays editable (the customer may pay part), and the whole remaining's QR is "
+        "withdrawn until the part is typed",
         console.page.locator("#payment-amount").is_enabled()
-        and console.page.locator(f"{scope} svg.vietqr__symbol").count() == 1,
+        and console.page.locator(f"{scope} svg.vietqr__symbol").count() == 0
+        and "Gõ số tiền khách chuyển" in console.dialog_text(),
     )
     console.page.keyboard.press("Escape")
 
@@ -10866,6 +10873,589 @@ def scenario_goods_and_drawer(console: Console) -> None:
         console.sign_in("demo-operations")
 
 
+# --- COUNTER-UI-RACE-009 (C2, C3, C4): the price, the QR and If-Match are of what is on screen ----
+
+
+def _vnd_text(amount: int) -> str:
+    """How a person types an amount at the counter: 1.234.000 (dots group thousands)."""
+
+    return f"{amount:,}".replace(",", ".")
+
+
+def _race_shot(console: Console, name: str) -> None:
+    """A full-page picture at this point, when `COUNTER_RACE_SHOTS` names a directory, tagged with
+    the viewport (`CONSOLE_VIEWPORT`), so each race can be looked at as the counter sees it."""
+
+    directory = os.environ.get("COUNTER_RACE_SHOTS", "")
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+        tag = os.environ.get("CONSOLE_VIEWPORT", "desk")
+        console.page.screenshot(path=os.path.join(directory, f"{name}-{tag}.png"), full_page=True)
+
+
+def _quantities(revision: dict[str, Any]) -> list[Decimal]:
+    """A revision read's line quantities as numbers, whatever decimal form the server writes."""
+
+    found: list[Decimal] = []
+    for line in revision.get("lines") or []:
+        with contextlib.suppress(Exception):
+            found.append(Decimal(str(line.get("quantity"))))
+    return found
+
+
+def _qr_read(console: Console, order_id: str, part: int | None = None) -> dict[str, Any]:
+    path = f"/internal/v1/orders/{order_id}/vietqr"
+    answer = console.call("GET", path if part is None else f"{path}?amount_vnd={part}")
+    return answer.get("body") or {"status": answer["status"], "text": answer["text"][:200]}
+
+
+def _walk_in_during_resume(console: Console, x_request: str, resume_first: bool) -> dict[str, Any]:
+    """C2 (round-9 verifier, repro_walkin_during_resume.py): on a fresh Nhận đồ, waiting
+    customer X is tapped in "Khách đang chờ" with the resume's quote search held open, then
+    "Khách vãng lai" is pressed with its intake write held open. Both are let through in the
+    order asked for. Returns what the screen shows afterwards and the walk-in's intake id."""
+
+    page = console.page
+    console.open("#/new")
+    page.wait_for_timeout(800)
+    held_search: list[Any] = []
+    held_intake: list[Any] = []
+
+    def hold_search(route: Any) -> None:
+        if route.request.method == "GET":
+            held_search.append(route)
+        else:
+            route.continue_()
+
+    def hold_intake(route: Any) -> None:
+        if route.request.method == "POST":
+            held_intake.append(route)
+        else:
+            route.continue_()
+
+    row = page.locator(f"#new-waiting [data-request='{x_request}']")
+    with contextlib.suppress(Exception):
+        row.first.wait_for(timeout=8000)
+    if not row.count():
+        return {"error": "X is not in 'Khách đang chờ'"}
+    page.route("**/internal/v1/stores/*/quotes?*", hold_search)
+    page.route("**/internal/v1/stores/*/order-requests", hold_intake)
+    row.first.click()
+    touched("newOrder.resume")
+    for _ in range(40):
+        if held_search:
+            break
+        page.wait_for_timeout(100)
+    walk_in_open = page.locator("#new-walk-in").count() == 1
+    if walk_in_open:
+        page.locator("#new-walk-in").click()
+        touched("newOrder.walk-in")
+    for _ in range(80):
+        if held_intake:
+            break
+        page.wait_for_timeout(100)
+    intake: dict[str, Any] = {}
+
+    def let_search() -> None:
+        for route in held_search:
+            route.continue_()
+        held_search.clear()
+        page.unroute("**/internal/v1/stores/*/quotes?*", hold_search)
+        page.wait_for_timeout(2500)
+
+    def let_intake() -> None:
+        if held_intake:
+            with page.expect_response(
+                lambda r: (
+                    r.request.method == "POST" and r.url.split("?")[0].endswith("/order-requests")
+                ),
+                timeout=20000,
+            ) as waited:
+                for route in held_intake:
+                    route.continue_()
+            with contextlib.suppress(Exception):
+                intake.update(waited.value.json())
+        held_intake.clear()
+        page.unroute("**/internal/v1/stores/*/order-requests", hold_intake)
+        page.wait_for_timeout(2500)
+
+    for step in (let_search, let_intake) if resume_first else (let_intake, let_search):
+        step()
+    hero = page.locator("#new-ticket")
+    receipt = page.locator("#new-receipt")
+    return {
+        "walk_in_open": walk_in_open,
+        "intake": str(intake.get("order_request_id") or ""),
+        "hero": (hero.first.inner_text() if hero.count() else "").replace("\n", " "),
+        "lines": page.locator("input[id^='new-line-'][id$='-qty']").count(),
+        "next": page.locator("#new-next").count(),
+        "receipt": (receipt.first.inner_text() if receipt.count() else "")[:160],
+    }
+
+
+def scenario_counter_race(console: Console) -> None:
+    """COUNTER-UI-RACE-009 against the real API. C2: the weight corrected across the 6 kg cliff
+    while "Tính giá" is in flight (the request held open in the browser, then let through) never
+    offers "Tiếp tục" for the old price, and "Tính lại" prices what is on screen. C3: a typed
+    deposit's QR asks the server for exactly that amount, is refused by name above what remains,
+    and the payment records it. C4: Thu tiền and Hẹn lại, opened, then the order moved by another
+    device -- the real 409, "tải lại" in the sheet, fresh figures, and the next press lands."""
+
+    head("33", "KHI MÁY CHẬM, KHI ĐƠN VỪA ĐỔI — giá, mã QR và If-Match của số trên màn hình")
+    console.sign_in("demo-operations")
+    page = console.page
+
+    # --- C2 -------------------------------------------------------------------------------------
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "5.8")
+    held: list[Any] = []
+
+    def hold(route: Any) -> None:
+        if route.request.method == "POST":
+            held.append(route)
+        else:
+            route.continue_()
+
+    page.route("**/internal/v1/stores/*/quotes", hold)
+    page.locator("#new-price").click()
+    touched("newOrder.price")
+    for _ in range(40):
+        if held:
+            break
+        page.wait_for_timeout(100)
+    in_flight = bool(held) and page.locator("#new-price").is_disabled()
+    box = page.locator("#new-line-0-qty")
+    box.click()
+    box.press("Control+A")
+    page.keyboard.type("6.2", delay=12)
+    touched("newOrder.line-qty")
+    page.wait_for_timeout(200)
+    first: dict[str, Any] = {}
+    if held:
+        with page.expect_response(
+            lambda r: r.request.method == "POST" and r.url.split("?")[0].endswith("/quotes"),
+            timeout=20000,
+        ) as waited:
+            held[0].continue_()
+        with contextlib.suppress(Exception):
+            first = waited.value.json()
+    page.unroute("**/internal/v1/stores/*/quotes", hold)
+    page.wait_for_timeout(1500)
+    quote_id = str(first.get("quote_id") or "")
+    read_1 = (
+        console.call(
+            "GET", f"/internal/v1/stores/{STORE}/quotes/{quote_id}?revision={first.get('revision')}"
+        ).get("body")
+        or {}
+        if quote_id
+        else {}
+    )
+    receipt = (
+        page.locator("#new-receipt").inner_text() if page.locator("#new-receipt").count() else ""
+    )
+    _race_shot(console, "c2-edited-while-pricing")
+    ok(
+        "C2: 5,8 kg priced, corrected to 6,2 kg while 'Tính giá' was in flight -- the server "
+        "priced 5,8 kg, and 'Tiếp tục' is not offered for that price",
+        in_flight
+        and _quantities(read_1) == [Decimal("5.8")]
+        and page.locator("#new-next").count() == 0
+        and "Đã sửa sau khi tính giá" in receipt
+        and (
+            page.locator("#new-price").inner_text().strip()
+            if page.locator("#new-price").count()
+            else ""
+        )
+        == "Tính lại",
+        f"in_flight={in_flight} lines={read_1.get('lines')} "
+        f"next={page.locator('#new-next').count()}",
+    )
+    second = console.price()
+    body_2 = second.get("body") if isinstance(second.get("body"), dict) else {}
+    read_2 = (
+        console.call(
+            "GET",
+            f"/internal/v1/stores/{STORE}/quotes/{quote_id}?revision={body_2.get('revision')}",
+        ).get("body")
+        or {}
+        if quote_id
+        else {}
+    )
+    ok(
+        "'Tính lại' prices the 6,2 kg on screen as the next revision of the same quote, and only "
+        "then is 'Tiếp tục' offered",
+        second["status"] == 201
+        and body_2.get("quote_id") == quote_id
+        and body_2.get("revision") == (first.get("revision") or 0) + 1
+        and _quantities(read_2) == [Decimal("6.2")]
+        and page.locator("#new-next").count() == 1
+        and page.locator("#new-next").is_enabled(),
+        second["text"][:200],
+    )
+
+    # C2, the customer changes while "Tính giá" is in flight (round-9 verifier): A's 5,8 kg is
+    # held, the person goes back, presses "Khách khác" and a walk-in B arrives. A's answer is A's:
+    # B's screen has no lines, no receipt and no "Tiếp tục", and B's own "Tính giá" opens a new
+    # quote for B's intake -- never a revision of A's, never an acceptance on it.
+    box = page.locator("#new-line-0-qty")
+    box.click()
+    box.press("Control+A")
+    page.keyboard.type("5.8", delay=12)
+    page.wait_for_timeout(200)
+    held.clear()
+    page.route("**/internal/v1/stores/*/quotes", hold)
+    page.locator("#new-price").click()
+    for _ in range(40):
+        if held:
+            break
+        page.wait_for_timeout(100)
+    page.locator("[data-back='true']").first.click()
+    page.wait_for_timeout(300)
+    page.locator("#new-restart").click()
+    page.wait_for_timeout(300)
+    late: dict[str, Any] = {}
+    if held:
+        with page.expect_response(
+            lambda r: r.request.method == "POST" and r.url.split("?")[0].endswith("/quotes"),
+            timeout=20000,
+        ) as waited:
+            held[0].continue_()
+        with contextlib.suppress(Exception):
+            late = waited.value.json()
+    page.unroute("**/internal/v1/stores/*/quotes", hold)
+    page.wait_for_timeout(800)
+    # In place, on the screen A left -- `console.walk_in()` reopens #/new, a fresh screen, and
+    # would hide the race.
+    _, intake_b = console.press_capturing(
+        page.locator("#new-walk-in"), "/counter-tickets", "/order-requests"
+    )
+    page.wait_for_timeout(800)
+    b_intake = str((intake_b.get("body") or {}).get("order_request_id") or "")
+    b_lines = page.locator("input[id^='new-line-'][id$='-qty']").count()
+    b_receipt = (
+        page.locator("#new-receipt").inner_text() if page.locator("#new-receipt").count() else ""
+    )
+    _race_shot(console, "c2-customer-changed-while-pricing")
+    ok(
+        "C2: 'Khách khác' while A's 'Tính giá' was in flight -- the server wrote A's revision, "
+        "and walk-in B's screen shows no lines, no price and no 'Tiếp tục'",
+        late.get("quote_id") == quote_id
+        and bool(b_intake)
+        and b_lines == 0
+        and page.locator("#new-next").count() == 0
+        and "5,8" not in b_receipt
+        and "5.8" not in b_receipt,
+        f"late={late.get('quote_id')} rev={late.get('revision')} lines={b_lines} "
+        f"next={page.locator('#new-next').count()} receipt={b_receipt[:120]!r}",
+    )
+    console.add_line("STANDARD_WASH_DRY", "3")
+    third = console.price()
+    body_3 = third.get("body") if isinstance(third.get("body"), dict) else {}
+    read_3 = (
+        console.call(
+            "GET",
+            f"/internal/v1/stores/{STORE}/quotes/{body_3.get('quote_id')}"
+            f"?revision={body_3.get('revision')}",
+        ).get("body")
+        or {}
+        if body_3.get("quote_id")
+        else {}
+    )
+    # The id is the server's own, checked as a UUID before it is put in the query text.
+    accepted_a = (
+        sql(f"select count(*) from quote_acceptances where quote_id = '{uuid.UUID(quote_id)}'")
+        if quote_id
+        else "no quote"
+    )
+    ok(
+        "B's 'Tính giá' is a new quote for B's intake with B's 3 kg -- not a revision of A's -- "
+        "and A's quote has no acceptance",
+        third["status"] == 201
+        and body_3.get("quote_id") not in (None, quote_id)
+        and read_3.get("order_request_id") == b_intake
+        and _quantities(read_3) == [Decimal("3")]
+        and page.locator("#new-next").count() == 1
+        and accepted_a == "0",
+        f"{third['text'][:160]} accepted_a={accepted_a}",
+    )
+
+    # C2, another step-1 press while a waiting customer is being resumed (round-9 verifier, round
+    # 2): B (3 kg, priced) waits. X := B is tapped in "Khách đang chờ", its quote search held; a
+    # walk-in C is pressed, its intake write held. In both landing orders C's screen is C's: no
+    # lines, no price, no "Tiếp tục" -- so nothing can be accepted on B's quote under C's ticket.
+    quote_b = str(body_3.get("quote_id") or "")
+    for resume_first in (True, False):
+        seen = _walk_in_during_resume(console, b_intake, resume_first)
+        order = "X's read lands, then the walk-in" if resume_first else "walk-in lands, then X's"
+        _race_shot(console, f"c2-walk-in-during-resume-{'x' if resume_first else 'c'}-first")
+        accepted_b = (
+            sql(f"select count(*) from quote_acceptances where quote_id = '{uuid.UUID(quote_b)}'")
+            if quote_b
+            else "no quote"
+        )
+        ok(
+            f"C2 (waiting X resumed, walk-in C pressed; {order}): the screen is C's new ticket -- "
+            "no lines, no price, no 'Tiếp tục' -- and X's quote has no acceptance",
+            seen.get("walk_in_open") is True
+            and bool(seen.get("intake"))
+            and seen.get("intake") != b_intake
+            and "Phiếu" in str(seen.get("hero"))
+            and seen.get("lines") == 0
+            and seen.get("next") == 0
+            and "3 kg" not in str(seen.get("receipt"))
+            and accepted_b == "0",
+            f"{seen} accepted_b={accepted_b}",
+        )
+
+    # --- C3 -------------------------------------------------------------------------------------
+    if not arguments.database_url:
+        ok("the part-QR checks publish the bank account with the owner's script", False)
+        return
+    published_here = (
+        sql("select count(*) from configuration_versions where config_type='BANK_TRANSFER_ACCOUNT'")
+        == "0"
+    )
+    if published_here:
+        done = _publish_bank_account(*VIETQR_DEMO_ACCOUNT, "--test-transfer-confirmed")
+        ok(
+            "the owner publishes the bank account (scripts/publish_bank_account.py)",
+            done.returncode == 0,
+        )
+    order = console.build_order(kg="7", stop="active")
+    order_id = order["order_id"]
+
+    def read() -> dict[str, Any]:
+        return console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}
+
+    owed = int(read().get("remaining_vnd") or 0)
+    part = _qr_read(console, order_id, 20_000)
+    over = _qr_read(console, order_id, owed + 1)
+    zero = _qr_read(console, order_id, 0)
+    malformed = console.call("GET", f"/internal/v1/orders/{order_id}/vietqr?amount_vnd=-5")
+    ok(
+        "C3 (server): a typed part gets a QR for exactly that amount; above what remains is "
+        "refused AMOUNT_ABOVE_REMAINING; 0 AMOUNT_INVALID; a negative is a 422",
+        part.get("refusal") is None
+        and part.get("amount_vnd") == 20_000
+        and part.get("amount_source") == "PART_OF_BALANCE_DUE"
+        and over.get("refusal") == "AMOUNT_ABOVE_REMAINING"
+        and over.get("modules") is None
+        and zero.get("refusal") == "AMOUNT_INVALID"
+        and malformed["status"] == 422,
+        {
+            "part": part.get("amount_vnd"),
+            "over": over.get("refusal"),
+            "zero": zero.get("refusal"),
+            "malformed": malformed["status"],
+        },
+    )
+    _open_payment_transfer(console, order_id)
+    scope = "#payment-qr"
+    whole = page.locator(f"{scope} [data-field=qr-amount]")
+    whole_text = whole.first.inner_text() if whole.count() else ""
+    page.locator("#payment-edit").click()
+    touched("orderDetail.payment-edit")
+    page.wait_for_timeout(300)
+    withdrawn = page.locator(f"{scope} svg.vietqr__symbol").count() == 0
+    ok(
+        "C3: the whole remaining's QR first; 'một phần' withdraws it at once and asks for the "
+        "amount",
+        _digits(whole_text) == str(owed)
+        and withdrawn
+        and "Gõ số tiền khách chuyển" in console.dialog_text(),
+        f"{whole_text} withdrawn={withdrawn}",
+    )
+    console.type_into("#payment-amount", "20.000", "orderDetail.payment-amount")
+    with contextlib.suppress(Exception):
+        page.wait_for_selector(f"{scope} svg.vietqr__symbol", timeout=8000)
+    page.wait_for_timeout(400)
+    drawn_text = page.locator(f"{scope} [data-field=qr-amount]")
+    _race_shot(console, "c3-part-qr")
+    ok(
+        "C3: the QR drawn is the server's for 20.000 ₫ -- its amount and exactly its modules",
+        drawn_text.count() == 1
+        and _digits(drawn_text.first.inner_text()) == "20000"
+        and _drawn_cells(console, scope) == _server_cells(part.get("modules") or []),
+        drawn_text.first.inner_text() if drawn_text.count() else "no QR",
+    )
+    decoded = _decoded(console, scope)
+    if decoded is not None:
+        ok(
+            "a real QR decoder reads the drawn 20.000 ₫ symbol back as the server's payload",
+            decoded == part.get("payload"),
+            decoded[:80],
+        )
+    console.type_into("#payment-amount", _vnd_text(owed + 1_000), "orderDetail.payment-amount")
+    page.wait_for_timeout(1500)
+    _race_shot(console, "c3-above-remaining")
+    ok(
+        "C3: typed above what remains -- no QR, and the sheet says why",
+        page.locator(f"{scope} svg.vietqr__symbol").count() == 0
+        and "lớn hơn số còn lại" in console.dialog_text(),
+        console.dialog_text()[:200],
+    )
+    console.type_into("#payment-amount", "20.000", "orderDetail.payment-amount")
+    page.wait_for_timeout(1500)
+    page.locator("#payment-transfer-seen").check()
+    touched("orderDetail.payment-transfer-seen")
+    (paid,) = console.press_capturing(page.locator("#payment-submit"), "/payments")
+    touched("orderDetail.payment-submit")
+    page.wait_for_timeout(1200)
+    after_part = read()
+    ok(
+        "C3: the deposit recorded is the amount the QR asked for",
+        paid["status"] == 201
+        and (paid["body"] or {}).get("amount_vnd") == 20_000
+        and after_part.get("remaining_vnd") == owed - 20_000,
+        paid["text"][:200],
+    )
+    page.keyboard.press("Escape")
+
+    # --- C4: Thu tiền -----------------------------------------------------------------------------
+    console.open_order(order_id)
+    control = console.step_control("TAKE_PAYMENT")
+    if control is None:
+        ok("C4: the order offers Thu tiền", False, console.primary_step())
+        return
+    control.click()
+    page.wait_for_timeout(800)
+    shown_version = after_part.get("row_version")
+    other = console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/payments",
+        {
+            "amount_vnd": 10_000,
+            "method": "TIEN_MAT",
+            "transfer_seen": False,
+            "bank_ref_last": None,
+            "collected_by_customer": False,
+        },
+        if_match=shown_version,
+    )
+    (refused,) = console.press_capturing(page.locator("#payment-submit"), "/payments")
+    page.wait_for_timeout(800)
+    stale_said = "người khác đổi" in console.dialog_text()
+    _race_shot(console, "c4-payment-stale")
+    reload = page.locator("dialog[open]").get_by_role("button", name="Đơn vừa đổi — tải lại")
+    if reload.count():
+        reload.first.click()
+        touched("orderDetail.stale-reload")
+    page.wait_for_timeout(1800)
+    _race_shot(console, "c4-payment-reloaded")
+    hero = page.locator("dialog[open] [data-field=payment-hero] .money-hero__amount")
+    hero_text = hero.first.inner_text() if hero.count() else ""
+    ok(
+        "C4 Thu tiền: another device took 10.000 ₫ behind the open sheet -- the press is refused "
+        "STALE_VERSION, and 'tải lại' leaves the sheet open on the fresh remaining",
+        other["status"] == 201
+        and refused["status"] == 409
+        and "STALE_VERSION" in refused["text"]
+        and stale_said
+        and _digits(hero_text) == str(owed - 30_000)
+        and "Đã tải lại đơn" in console.dialog_text(),
+        f"other={other['status']} refused={refused['status']} hero={hero_text!r}",
+    )
+    (landed,) = console.press_capturing(page.locator("#payment-submit"), "/payments")
+    page.wait_for_timeout(1200)
+    final = read()
+    ok(
+        "and the next press lands: the fresh remaining is taken and the order is paid, no overpay",
+        landed["status"] == 201
+        and (landed["body"] or {}).get("amount_vnd") == owed - 30_000
+        and final.get("balance") == "PAID"
+        and final.get("remaining_vnd") == 0,
+        landed["text"][:200],
+    )
+    page.keyboard.press("Escape")
+
+    # --- C4: Hẹn lại ------------------------------------------------------------------------------
+    promised_order = console.build_order(kg="4", stop="created")
+    promised_id = promised_order["order_id"]
+    _clear_of_minute_edge()
+    _open_receive(console, promised_id)
+    received = _press_receive(console)
+    body = received.get("body") if received["status"] == 200 else {}
+    if not (body or {}).get("current_promise_at"):
+        note("Hẹn lại skipped: the turnaround policy is not published on this stack")
+        return
+    console.open_order(promised_id)
+    change = page.locator("#promise-change")
+    if not change.count():
+        ok("C4: the order page offers Hẹn lại", False)
+        return
+    change.click()
+    touched("orderDetail.promise-change")
+    page.wait_for_timeout(600)
+    from datetime import datetime, timedelta, timezone
+
+    from nha_trang_laundry_domain.promise import parse_turnaround_policy
+
+    policy_row = sql(
+        "select payload::text from configuration_versions where config_type='TURNAROUND_POLICY' "
+        "and lifecycle='PUBLISHED' order by version desc limit 1"
+    )
+    policy = None
+    with contextlib.suppress(Exception):
+        policy = parse_turnaround_policy(json.loads(policy_row))
+    base_day = datetime.fromisoformat(
+        str(body["current_promise_at"]).replace("Z", "+00:00")
+    ).astimezone(timezone(timedelta(hours=7)))
+
+    def open_day(days: int) -> datetime:
+        day = base_day + timedelta(days=days)
+        while policy is not None and policy.is_closed(day.date()):
+            day += timedelta(days=1)
+        return day
+
+    mine, theirs = open_day(2), open_day(1)
+    picked = f"{mine:%Y-%m-%d}T15:00"
+    page.locator("#promise-change-at").fill(picked)
+    touched("orderDetail.promise-change-at")
+    page.locator("dialog[open] .choice-chip[title=WORKLOAD]").click()
+    touched("orderDetail.promise-change-reason")
+    page.wait_for_timeout(200)
+    moved = console.call(
+        "POST",
+        f"/internal/v1/orders/{promised_id}/promise",
+        {"promise_at": f"{theirs:%Y-%m-%d}T10:00:00+07:00", "reason": "CUSTOMER_REQUEST"},
+        if_match=body["row_version"],
+    )
+    (refused,) = console.press_capturing(page.locator("#promise-change-submit"), "/promise")
+    page.wait_for_timeout(800)
+    reload = page.locator("dialog[open]").get_by_role("button", name="Đơn vừa đổi — tải lại")
+    if reload.count():
+        reload.first.click()
+        touched("orderDetail.stale-reload")
+    page.wait_for_timeout(1800)
+    _race_shot(console, "c4-promise-reloaded")
+    now_line = page.locator("dialog[open] [data-field=promise-now]")
+    now_text = now_line.first.inner_text() if now_line.count() else ""
+    ok(
+        "C4 Hẹn lại: moved by another device behind the open sheet -- refused STALE_VERSION; "
+        "'tải lại' shows the time they set, and the time picked here stays",
+        moved["status"] == 200
+        and refused["status"] == 409
+        and "STALE_VERSION" in refused["text"]
+        and now_text.startswith("Đang hẹn: 10:00")
+        and page.locator("#promise-change-at").input_value() == picked,
+        f"moved={moved['status']} refused={refused['status']} now={now_text!r}",
+    )
+    (saved,) = console.press_capturing(page.locator("#promise-change-submit"), "/promise")
+    touched("orderDetail.promise-change-submit")
+    page.wait_for_timeout(1200)
+    saved_body = saved["body"] if saved["status"] == 200 else {}
+    ok(
+        "and the next press lands: the customer is told the time picked here",
+        saved["status"] == 200
+        and _promise_text(str(saved_body.get("current_promise_at") or "")).startswith("15:00")
+        and sql(f"select count(*) from order_promise_changes where order_id='{promised_id}'")
+        == "2",
+        saved["text"][:200],
+    )
+    if published_here:
+        _publish_bank_account("--withdraw")
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -10942,6 +11532,10 @@ SCENARIOS = {
     "invoice_requests": scenario_invoice_requests,
     # INVOICE-TRUTH-009 (round 9, slice C): after invoice_requests, which publishes the notice.
     "invoice_truth": scenario_invoice_truth,
+    # COUNTER-UI-RACE-009 (C2, C3, C4). Late: it needs the bank account the vietqr scenario
+    # publishes (publishing it itself, and withdrawing it again, only when run alone) and the
+    # turnaround policy the promise scenario leaves published (the stack publishes one too).
+    "counter_race": scenario_counter_race,
     # PLATFORM-SECURITY-009 (slice G). Publishes nothing and reads nothing another scenario counts;
     # it adds two pending export requests, after export_range has made its own before/after count.
     "platform_bounds": scenario_platform_bounds,

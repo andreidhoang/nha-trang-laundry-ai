@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 from uuid import UUID
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from nha_trang_laundry_domain.catalog import CommercialOrderStatus, OrderBalanceStatus
+from nha_trang_laundry_domain.settlement import MAX_SETTLEMENT_VND
 from nha_trang_laundry_domain.vietqr import (
     AccountMonthTransferCode,
     BankAccountError,
@@ -368,3 +370,72 @@ def test_the_same_account_confirmed_again_is_the_same_account() -> None:
     moved = parse_bank_account(_document(account_number="0123456789"))
     assert same_account(first, again)
     assert not same_account(first, moved)
+
+
+# --- COUNTER-UI-RACE-009 (C3): a QR for a typed part payment ------------------------------------
+#
+# The counter types a deposit ("Khách trả một phần (đặt cọc)"); the QR must ask for exactly that
+# amount or for nothing. The matrix: every part against every order state, and every part that
+# the payment route would refuse.
+
+
+@pytest.mark.parametrize(
+    ("balance", "remaining", "part", "expected"),
+    [
+        # A part within what remains is asked for exactly -- never the whole balance.
+        (OrderBalanceStatus.UNPAID, 200_000, 50_000, 50_000),
+        (OrderBalanceStatus.UNPAID, 200_000, 1, 1),
+        (OrderBalanceStatus.UNPAID, 200_000, 199_999, 199_999),
+        (OrderBalanceStatus.PARTIALLY_PAID, 150_000, 50_000, 50_000),
+        # All of what remains, typed by hand, is still that amount.
+        (OrderBalanceStatus.UNPAID, 200_000, 200_000, 200_000),
+        (OrderBalanceStatus.PARTIALLY_PAID, 150_000, 150_000, 150_000),
+        # More than remains is refused by name, never clamped to the balance.
+        (OrderBalanceStatus.UNPAID, 200_000, 200_001, QrRefusal.AMOUNT_ABOVE_REMAINING),
+        (OrderBalanceStatus.PARTIALLY_PAID, 150_000, 200_000, QrRefusal.AMOUNT_ABOVE_REMAINING),
+        # Not a whole number of đồng from 1 to the ceiling.
+        (OrderBalanceStatus.UNPAID, 200_000, 0, QrRefusal.AMOUNT_INVALID),
+        (OrderBalanceStatus.UNPAID, 200_000, -50_000, QrRefusal.AMOUNT_INVALID),
+        (OrderBalanceStatus.UNPAID, 200_000, True, QrRefusal.AMOUNT_INVALID),
+        (OrderBalanceStatus.UNPAID, 200_000, 50_000.0, QrRefusal.AMOUNT_INVALID),
+        (OrderBalanceStatus.UNPAID, 200_000, 10_000_000_000, QrRefusal.AMOUNT_ABOVE_REMAINING),
+        (OrderBalanceStatus.UNPAID, 200_000, MAX_SETTLEMENT_VND + 1, QrRefusal.AMOUNT_INVALID),
+        # The order's own refusals come first, whatever the part.
+        (OrderBalanceStatus.PAID, 0, 50_000, QrRefusal.NOTHING_OWED),
+        (OrderBalanceStatus.ON_ACCOUNT, 0, 50_000, QrRefusal.NOTHING_OWED),
+        (OrderBalanceStatus.REFUNDED, 0, 50_000, QrRefusal.NOTHING_OWED),
+        (OrderBalanceStatus.UNPAID, 0, 50_000, QrRefusal.NOTHING_OWED),
+        (OrderBalanceStatus.UNPAID, None, 50_000, QrRefusal.NO_PRESENTABLE_TOTAL),
+    ],
+)
+def test_a_typed_part_is_asked_for_exactly_or_refused_by_name(
+    balance: OrderBalanceStatus, remaining: int | None, part: Any, expected: int | QrRefusal
+) -> None:
+    got = order_qr_amount(
+        commercial=ACTIVE, balance=balance, remaining_vnd=remaining, part_vnd=part
+    )
+    assert got == expected and type(got) is type(expected)
+
+
+@pytest.mark.parametrize("part", [None, 50_000])
+def test_a_part_on_an_order_that_is_not_running_has_no_qr(part: int | None) -> None:
+    assert (
+        order_qr_amount(
+            commercial=CommercialOrderStatus.CANCELLED,
+            balance=OrderBalanceStatus.UNPAID,
+            remaining_vnd=200_000,
+            part_vnd=part,
+        )
+        is QrRefusal.ORDER_NOT_ACTIVE
+    )
+
+
+def test_a_part_qr_payload_carries_the_typed_amount() -> None:
+    amount = order_qr_amount(
+        commercial=ACTIVE, balance=OrderBalanceStatus.UNPAID, remaining_vnd=200_000, part_vnd=50_000
+    )
+    assert amount == 50_000
+    payload = vietqr_payload(
+        bank_bin=BIN, account_number=ACCOUNT, amount_vnd=50_000, transfer_code="NTL2809012"
+    )
+    assert parse_payload(payload).amount_vnd == 50_000

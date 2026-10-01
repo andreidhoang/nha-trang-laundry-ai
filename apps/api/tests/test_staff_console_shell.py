@@ -283,7 +283,8 @@ for (const [name, who] of Object.entries(roles)) {{
     shown: plan.shown.map((entry) => ({{ path: entry.item.path, tab: entry.tab,
       fold: Boolean(entry.item.fold), phoneOnly: Boolean(entry.item.phoneOnly),
       deskOnly: Boolean(entry.item.deskOnly),
-      allowed: navVerdict(principal, entry.item).allowed }})),
+      allowed: navVerdict(principal, entry.item).allowed,
+      shut: entry.denied ? entry.denied.short || "" : null }})),
     denied: plan.denied.map((entry) => ({{ path: entry.item.path, short: entry.verdict.short || "",
       reason: entry.verdict.reason }})),
   }};
@@ -306,9 +307,19 @@ def _desk_top_level(plan: dict[str, Any]) -> list[str]:
 def test_the_navigation_shows_only_what_each_role_can_open() -> None:
     result = _plans()
     for name, plan in result["plans"].items():
-        shown = {entry["path"] for entry in plan["shown"]}
+        # CONSOLE-RESIDUAL-009B (K2): one shut entry is shown -- "Nhận đồ" for a counter role
+        # whose session lacks two-step verification, marked shut with that reason. Every other
+        # shown entry is one the person can open, and none of those is also listed as denied.
+        for entry in plan["shown"]:
+            if not entry["allowed"]:
+                assert entry["path"] == "/new" and entry["shut"] == "Cần xác thực hai bước", (
+                    name,
+                    entry,
+                )
+            else:
+                assert entry["shut"] is None, (name, entry)
+        shown = {entry["path"] for entry in plan["shown"] if entry["allowed"]}
         denied = {entry["path"] for entry in plan["denied"]}
-        assert all(entry["allowed"] for entry in plan["shown"]), name
         assert not shown & denied, (name, shown & denied)
         # A shut destination is never silently absent: it is on `#/more` with whom to ask.
         for entry in plan["denied"]:

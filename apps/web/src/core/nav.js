@@ -20,7 +20,8 @@ export const FOLD_GROUP = "Khác";
  * destinations, grouped, with "Nhận đồ" as its primary button. `phoneOnly` entries exist only on
  * the tab bar.
  *
- * CONSOLE-SHELL-009 (C6). The navigation lists only what this person can open (`navPlan`): a new
+ * CONSOLE-SHELL-009 (C6). The navigation lists only what this person can open (`navPlan`; one
+ * exception since CONSOLE-RESIDUAL-009B K2: "Nhận đồ" shut for a missing second step): a new
  * member of staff met 24 entries, half of them shut, and could not tell the ones that were their
  * job from the ones that were not. A shut destination is not silently absent: `#/more` lists each
  * one, disabled, with whom to ask, under a closed "Cần quyền khác" -- and a deep link to it still

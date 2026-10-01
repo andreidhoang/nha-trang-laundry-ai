@@ -108,6 +108,8 @@ function isActive(entry, shown, path) {
 /**
  * One nav destination. Only destinations this person can open are rendered (C6); a shut one is
  * listed with whom to ask on `#/more`, and its route still opens the guard screen with the reason.
+ * One exception (K2): "Nhận đồ" for a counter role whose session lacks two-step verification is
+ * rendered shut, its reason in words (`navPlan`'s `denied`).
  *
  * @param {import("./src/core/nav.js").NavEntry} entry
  * @param {import("./src/core/nav.js").NavEntry[]} shown

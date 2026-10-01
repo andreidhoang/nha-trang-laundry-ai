@@ -320,6 +320,10 @@ function announceSignOut() {
   }
 }
 
+// A channel keeps a Node process alive (the shell's rules are pinned under Node); a browser has
+// no `unref` and keeps listening for as long as the tab is open, which is the point.
+/** @type {any} */ (signOutChannel)?.unref?.();
+
 signOutChannel?.addEventListener("message", (event) => {
   if (event?.data?.type !== "signed-out") return;
   // Already out by its own press: nothing more to clear.

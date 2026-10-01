@@ -232,7 +232,8 @@
  * everything else is reached through "Thêm" (`#/more`). Desktop: the same destinations, grouped,
  * in a sidebar, with "＋ Nhận đồ" as the sidebar's one primary button and a closed "Khác" group
  * at the bottom (kit.css, CONSOLE-SHELL-009). Only destinations the role can open are listed
- * (C6); a shut one is on `#/more` under "Cần quyền khác", disabled with its reason. */
+ * (C6); a shut one is on `#/more` under "Cần quyền khác", disabled with its reason. The one shut
+ * entry listed here: "Nhận đồ" for a session without two-step verification (K2, kit.css). */
 
 .nav {
   background: color-mix(in srgb, var(--surface) 94%, transparent);

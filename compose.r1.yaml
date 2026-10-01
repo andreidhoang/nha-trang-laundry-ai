@@ -26,7 +26,7 @@ name: nha-trang-laundry-shop
 # `OPS-HARDENING-002`. Docker's default json-file driver keeps every line a container ever wrote, on
 # the same disk as `pgdata` -- and on the till that is the Mac's only disk. The volume check alerts at
 # 10% free; unbounded logs are one more way to get there. Three files of ten megabytes per service,
-# and five of twenty for the API (below): at most 250 MB across the six services, whatever happens.
+# and fifty of two for the API (below): at most 250 MiB across the six services, whatever happens.
 x-logging: &default-logging
   driver: json-file
   options:
@@ -34,18 +34,27 @@ x-logging: &default-logging
     max-file: "3"
 
 # `OPS-OBSERVABILITY-009`. The API's log is also the source `check_shop_operations.py --check app`
-# reads, and the only record of what the application did, so it keeps fourteen busy days. Measured
-# on a full daily walk: at most 553 bytes per request as json-file stores it. A busy day is 100
-# orders x 72 requests (the walk's own ratio, 503 requests for 7 orders) + three consoles polling
-# once a minute for 14 hours + `/readyz` every five minutes = 10,008 requests = 5.5 MB. Docker
-# drops the oldest file when it rotates, so the guaranteed history is (max-file - 1) x max-size =
-# 4 x 20 MiB = 80 MiB = 15 days. Still under the 100 MiB per-service bound
-# `test_ops_hardening_contract.py` holds for the disk the database lives on.
+# reads, and the only record of what the application did, so it keeps fourteen busy days. A busy
+# day, as json-file stores it (`test_ops_hardening_contract.py` computes every figure here):
+#   100 orders x 73 API lines (the daily walk: 506 lines for 7 orders)    7,300 lines
+#   three consoles polling once a minute for 14 hours                     2,520 lines
+#     -- all 9,820 costed at 593 bytes, the longest line any route can write
+#   the console check's `/readyz` every 5 minutes                           288 lines
+#   the image's own HEALTHCHECK, `/healthz` every 30 s, day and night     2,880 lines
+#     -- 3,168 at 441 bytes
+#   = 7,220,060 bytes a day; fourteen days = 101,080,840 bytes.
+# Docker drops the oldest file when it rotates, so the guaranteed history is (max-file - 1) x
+# max-size = 49 x 2 MiB = 102,760,448 bytes = 14.2 busy days. The first version said 4 x 20 MiB =
+# 15 days; it left out the healthcheck and costed a line at 553 bytes, and it was 11.6. Many small
+# files rather than a few large ones because the guarantee is always one file short of the bound
+# (the newest may have just been started), so the smaller the file, the more of the bound is
+# history. Exactly the 100 MiB per-service bound the same test holds for the disk the database
+# lives on.
 x-api-logging: &api-logging
   driver: json-file
   options:
-    max-size: "20m"
-    max-file: "5"
+    max-size: "2m"
+    max-file: "50"
 
 x-runtime-hardening: &runtime-hardening
   logging: *default-logging

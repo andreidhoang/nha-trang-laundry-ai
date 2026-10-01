@@ -41,6 +41,8 @@ from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent))
 
 import argparse
+import bisect
+import hashlib
 import json
 import os
 import shutil
@@ -330,41 +332,73 @@ def check_console_reachable(
 # on the shop host -- and counts three things.
 #
 # **The defaults, in one place.** `docs/runbooks/shop-pilot.md` §6 prints this table and a test
-# holds the two together. A count at or above its figure, inside the window, fails the check.
+# holds the two together. A count at or above its figure fails the check.
 #
-#   server_errors                 1   a 5xx other than 503. The console tells staff "Máy chủ gặp
-#                                     lỗi. Đừng thử lại": the outcome is unknown and somebody has
-#                                     to reconcile it, so one is enough.
+#   server_errors                 1   an answer 500-599, except the two 503s that are answers by
+#                                     design: one the API wrote `database.request_refused` for
+#                                     (same correlation id; counted below instead), and `/readyz`
+#                                     saying the database is gone, which is the console check's
+#                                     finding and held at night by `DEC-025`. Every other 503 --
+#                                     "staff identity unavailable", "operations unavailable" -- is
+#                                     an outage nothing else reports, so it counts here. A 500 tells
+#                                     staff "Máy chủ gặp lỗi. Đừng thử lại": the outcome is unknown
+#                                     and somebody has to reconcile it, so one is enough.
 #   database_refusals             5   `database.request_refused` (the designed 503: busy or
 #                                     unreachable database, nothing written, the console retries).
-#                                     One is a normal collision; five in a window is a database in
-#                                     trouble. Counted here and never again as a server error.
+#                                     One is a normal collision; five in five minutes is a database
+#                                     in trouble.
 #   browser_boundary_rejections  10   `auth.browser_boundary` (origin or CSRF refused). A tab left
-#                                     open across a deploy can produce a few; ten is somebody or
-#                                     something forging requests.
+#                                     open across a deploy can produce a few; ten in five minutes is
+#                                     somebody or something forging requests.
 #
-# **The window is the scheduler's interval** (five minutes, `deploy/shop-till/install.sh`), so one
-# incident alerts once rather than on every run that can still see it. **Liveness uses a longer
-# look-back:** the console check asks `/readyz` every five minutes, so a healthy API always has a
-# line in the last fifteen, and none at all means the stream is not reaching this check -- which
-# is not the same as nothing having failed.
+# **Every line is read by exactly one run.** The scheduler starts a run every five minutes, but the
+# window used to end at whatever moment this check got to run, after the flags and console checks;
+# two runs only met edge to edge when those took exactly as long both times, and a 500 in between
+# was counted by neither (round-9 verifier). A run delayed or skipped by launchd lost all of its
+# five minutes. Now each run saves the instant of the last line it counted (`AppSignalCursor`) and
+# the next one counts from there, however long ago that was. `server_errors` is the number of new
+# lines; the two rates are the most that fell in any five minutes ending at a new line -- reaching
+# back before the saved instant, so a burst split by a run boundary is still one burst, and an hour
+# of skipped runs does not turn a trickle into one. **Liveness uses a fixed look-back:** the
+# console check asks `/readyz` every five minutes and Docker's healthcheck asks `/healthz` every
+# thirty seconds, so a healthy API always has a line in the last fifteen, and none at all means the
+# stream is not reaching this check -- which is not the same as nothing having failed.
 APP_SIGNAL_THRESHOLDS: Mapping[str, int] = MappingProxyType(
     {"server_errors": 1, "database_refusals": 5, "browser_boundary_rejections": 10}
 )
 APP_SIGNAL_WINDOW_SECONDS = 5 * 60
 APP_LIVENESS_WINDOW_SECONDS = 15 * 60
 #: Lines written up to this far after `now` are accepted as clock skew between the container and
-#: the host; beyond it a line is from the future and cannot be counted in any window.
+#: the host; a line beyond it is left for the run whose clock has reached it.
 APP_CLOCK_SKEW_SECONDS = 60
+APP_SIGNAL_CURSOR_SCHEMA = "nha-trang-laundry.app-signal-cursor.v1"
+#: `/readyz` answering 503 is the console check's finding (`console_reachable`, quiet at night).
+_READINESS_ROUTE = "/readyz"
+
+
+@dataclass(frozen=True)
+class AppSignalCursor:
+    """Where the last run stopped: every API line up to `through` has been counted once.
+
+    `seen_at_through` names the lines *at* that instant already counted, so a second line written in
+    the same microsecond and read only by the next run is counted, and the first is not again.
+    """
+
+    through: datetime
+    seen_at_through: frozenset[str]
 
 
 @dataclass(frozen=True)
 class ApplicationSignalCounts:
     server_errors: int
+    #: The most refusals in any five minutes ending at a line this run counted.
     database_refusals: int
     browser_boundary_rejections: int
     api_lines_in_liveness_window: int
     unreadable_lines: int
+    counted_after: datetime
+    cursor: AppSignalCursor
+    cursor_was_ahead: bool = False
 
 
 @dataclass(frozen=True)
@@ -372,6 +406,8 @@ class _ApiEvent:
     event: str
     fields: dict[str, object]
     occurred_at: datetime
+    correlation_id: str
+    key: str
 
 
 class _Unreadable:
@@ -402,39 +438,107 @@ def _api_event(line: str) -> _ApiEvent | _Unreadable | None:
     if occurred.tzinfo is None:
         return _UNREADABLE
     fields = parsed.get("fields")
-    return _ApiEvent(parsed["event"], fields if isinstance(fields, dict) else {}, occurred)
+    correlation = parsed.get("correlation_id")
+    return _ApiEvent(
+        event=parsed["event"],
+        fields=fields if isinstance(fields, dict) else {},
+        occurred_at=occurred,
+        correlation_id=correlation if isinstance(correlation, str) else "",
+        # The line's own bytes: two different lines always differ (instant, correlation id).
+        key=hashlib.sha256(text.encode("utf-8")).hexdigest()[:32],
+    )
 
 
-def count_application_signals(lines: Iterable[str], *, now: datetime) -> ApplicationSignalCounts:
-    """Count the three signals in the window ending at `now`. Pure: the caller supplies `now`."""
+def _is_server_error(event: _ApiEvent, refused: frozenset[str]) -> bool:
+    status_code = event.fields.get("status_code")
+    if not isinstance(status_code, int) or isinstance(status_code, bool) or status_code < 500:
+        return False
+    if status_code != 503:
+        return True
+    if event.correlation_id and event.correlation_id in refused:
+        return False
+    return event.fields.get("route") != _READINESS_ROUTE
 
-    signal_start = now - timedelta(seconds=APP_SIGNAL_WINDOW_SECONDS)
-    liveness_start = now - timedelta(seconds=APP_LIVENESS_WINDOW_SECONDS)
+
+def _most_in_any_window(
+    new: list[_ApiEvent], every: list[_ApiEvent], name: str, window: timedelta
+) -> int:
+    """The most `name` events in any `window` ending at one of the `new` ones."""
+
+    instants = sorted(event.occurred_at for event in every if event.event == name)
+    most = 0
+    for event in new:
+        if event.event != name:
+            continue
+        end = event.occurred_at
+        inside = bisect.bisect_right(instants, end) - bisect.bisect_left(instants, end - window)
+        most = max(most, inside)
+    return most
+
+
+def count_application_signals(
+    lines: Iterable[str], *, now: datetime, cursor: AppSignalCursor | None = None
+) -> ApplicationSignalCounts:
+    """Count the signals in the lines after `cursor` (or the last window, on a first run).
+
+    Pure: the caller supplies `now` and the saved position, and stores the one this returns.
+    """
+
+    window = timedelta(seconds=APP_SIGNAL_WINDOW_SECONDS)
     latest = now + timedelta(seconds=APP_CLOCK_SKEW_SECONDS)
-    server_errors = refusals = rejections = alive = unreadable = 0
+    liveness_start = now - timedelta(seconds=APP_LIVENESS_WINDOW_SECONDS)
+    ahead = cursor is not None and cursor.through > latest
+    if cursor is None or ahead:
+        cursor = AppSignalCursor(through=now - window, seen_at_through=frozenset())
+
+    events: list[_ApiEvent] = []
+    unreadable = 0
     for line in lines:
         event = _api_event(line)
         if isinstance(event, _Unreadable):
             unreadable += 1
-            continue
-        if event is None or event.occurred_at > latest or event.occurred_at < liveness_start:
-            continue
-        alive += 1
-        if event.occurred_at < signal_start:
-            continue
-        if event.event == "http.request.completed":
-            status_code = event.fields.get("status_code")
-            if isinstance(status_code, int) and status_code >= 500 and status_code != 503:
-                server_errors += 1
-        elif event.event == "database.request_refused":
-            refusals += 1
-        elif event.event == "auth.browser_boundary":
-            rejections += 1
-    return ApplicationSignalCounts(server_errors, refusals, rejections, alive, unreadable)
+        elif event is not None and event.occurred_at <= latest:
+            events.append(event)
+
+    new = [
+        event
+        for event in events
+        if event.occurred_at > cursor.through
+        or (event.occurred_at == cursor.through and event.key not in cursor.seen_at_through)
+    ]
+    refused = frozenset(
+        event.correlation_id for event in events if event.event == "database.request_refused"
+    )
+    server_errors = sum(
+        1
+        for event in new
+        if event.event == "http.request.completed" and _is_server_error(event, refused)
+    )
+    alive = sum(1 for event in events if event.occurred_at >= liveness_start)
+
+    if new:
+        through = max(event.occurred_at for event in new)
+        seen = frozenset(event.key for event in new if event.occurred_at == through)
+        if through == cursor.through:
+            seen |= cursor.seen_at_through
+        moved = AppSignalCursor(through=through, seen_at_through=seen)
+    else:
+        moved = cursor
+    return ApplicationSignalCounts(
+        server_errors=server_errors,
+        database_refusals=_most_in_any_window(new, events, "database.request_refused", window),
+        browser_boundary_rejections=_most_in_any_window(
+            new, events, "auth.browser_boundary", window
+        ),
+        api_lines_in_liveness_window=alive,
+        unreadable_lines=unreadable,
+        counted_after=cursor.through,
+        cursor=moved,
+        cursor_was_ahead=ahead,
+    )
 
 
-def check_application_signals(lines: Iterable[str], *, now: datetime) -> CheckResult:
-    counts = count_application_signals(lines, now=now)
+def _application_result(counts: ApplicationSignalCounts) -> CheckResult:
     observed = {
         "server_errors": counts.server_errors,
         "database_refusals": counts.database_refusals,
@@ -444,7 +548,10 @@ def check_application_signals(lines: Iterable[str], *, now: datetime) -> CheckRe
         **observed,
         "api_lines": counts.api_lines_in_liveness_window,
         "window_s": APP_SIGNAL_WINDOW_SECONDS,
+        "counted_after": counts.counted_after.isoformat(),
     }
+    if counts.cursor_was_ahead:
+        fields["cursor_was_ahead"] = True
     if counts.api_lines_in_liveness_window == 0:
         return CheckResult(
             "application_signals",
@@ -461,20 +568,101 @@ def check_application_signals(lines: Iterable[str], *, now: datetime) -> CheckRe
         if observed[name] >= threshold
     ]
     summary = "; ".join(over) or ", ".join(f"{name} {count}" for name, count in observed.items())
+    since = counts.counted_after.astimezone(SHOP_TIMEZONE).strftime("%d/%m %H:%M:%S")
+    note = " (the saved position was ahead of this clock)" if counts.cursor_was_ahead else ""
     return CheckResult(
         "application_signals",
         passed=not over,
-        detail=f"in the last {APP_SIGNAL_WINDOW_SECONDS // 60} minutes: {summary}",
+        detail=(
+            f"since {since}{note}, rates per {APP_SIGNAL_WINDOW_SECONDS // 60} minutes: {summary}"
+        ),
         fields=fields,
     )
 
 
-def read_application_log(source: str, *, compose_file: str) -> list[str]:
-    """The API's log lines for the liveness window.
+def check_application_signals(
+    lines: Iterable[str], *, now: datetime, cursor: AppSignalCursor | None = None
+) -> CheckResult:
+    return _application_result(count_application_signals(lines, now=now, cursor=cursor))
+
+
+def load_app_signal_cursor(path: str) -> AppSignalCursor | None:
+    """The saved position; `None` when there is none yet (the first run reads the last window).
+
+    Anything else unreadable raises: starting over silently would skip whatever happened since.
+    """
+
+    file = _Path(path)
+    try:
+        text = file.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    recovery = (
+        f"the saved read position {path} is unreadable; delete it and the next run counts the "
+        f"last {APP_SIGNAL_WINDOW_SECONDS // 60} minutes (anything older has not been checked)"
+    )
+    try:
+        parsed = json.loads(text)
+        if not isinstance(parsed, dict) or parsed.get("schema") != APP_SIGNAL_CURSOR_SCHEMA:
+            raise ValueError("not a cursor document")
+        through = datetime.fromisoformat(str(parsed["through"]))
+        if through.tzinfo is None:
+            raise ValueError("no time zone")
+        seen = parsed.get("seen_at_through", [])
+        if not isinstance(seen, list) or not all(isinstance(key, str) for key in seen):
+            raise ValueError("seen_at_through is not a list of strings")
+    except (ValueError, KeyError) as error:
+        raise RuntimeError(recovery) from error
+    return AppSignalCursor(through=through, seen_at_through=frozenset(seen))
+
+
+def save_app_signal_cursor(path: str, cursor: AppSignalCursor) -> None:
+    """Replace the saved position in one step, so a run killed mid-write leaves the old one."""
+
+    file = _Path(path)
+    file.parent.mkdir(parents=True, exist_ok=True)
+    document = {
+        "schema": APP_SIGNAL_CURSOR_SCHEMA,
+        "through": cursor.through.isoformat(),
+        "seen_at_through": sorted(cursor.seen_at_through),
+    }
+    temporary = file.with_name(f".{file.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(document, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, file)
+
+
+def run_application_check(
+    source: str, *, compose_file: str, cursor_path: str, now: datetime
+) -> CheckResult:
+    """Read from the saved position, count, and save the new one -- only once the count is done.
+
+    A failed read raises before anything is saved, so the next run reads the same lines again.
+    """
+
+    cursor = load_app_signal_cursor(cursor_path)
+    latest = now + timedelta(seconds=APP_CLOCK_SKEW_SECONDS)
+    start = (
+        cursor.through
+        if cursor is not None and cursor.through <= latest
+        else now - timedelta(seconds=APP_SIGNAL_WINDOW_SECONDS)
+    )
+    since = min(
+        now - timedelta(seconds=APP_LIVENESS_WINDOW_SECONDS),
+        start - timedelta(seconds=APP_SIGNAL_WINDOW_SECONDS),
+    )
+    lines = read_application_log(source, compose_file=compose_file, since=since)
+    counts = count_application_signals(lines, now=now, cursor=cursor)
+    save_app_signal_cursor(cursor_path, counts.cursor)
+    return _application_result(counts)
+
+
+def read_application_log(source: str, *, compose_file: str, since: datetime) -> list[str]:
+    """The API's log lines from `since` on.
 
     `compose` reads the `api` service through `docker compose logs`, which is where the shop host
     keeps them (json-file, rotated by the compose `logging` options). Anything else is a file path,
-    for a host that ships the stream elsewhere, and for a drill.
+    for a host that ships the stream elsewhere, and for a drill; it is read whole, and the count
+    decides which lines are new.
     """
 
     if source == "compose":
@@ -488,7 +676,9 @@ def read_application_log(source: str, *, compose_file: str) -> list[str]:
                 "--no-color",
                 "--no-log-prefix",
                 "--since",
-                f"{APP_LIVENESS_WINDOW_SECONDS}s",
+                # Whole seconds, rounded down: a read that starts a fraction early only re-reads
+                # lines the count already knows; one that starts late loses them.
+                since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "api",
             ],
             capture_output=True,
@@ -547,6 +737,14 @@ def main() -> int:
             "`docker compose -f <--compose-file> logs`; anything else is a file path"
         ),
     )
+    parser.add_argument(
+        "--app-signal-cursor",
+        default=os.environ.get("R1_APP_SIGNAL_CURSOR"),
+        help=(
+            "the file where `--check app` keeps the instant of the last API line it counted, so "
+            "the next run counts from there and no line falls between two runs"
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="one JSON object, for a wrapper")
     parser.add_argument(
         "--emit-alert",
@@ -574,7 +772,15 @@ def main() -> int:
         ("base", "base_backup_age", arguments.base_backup_marker, "--base-backup-marker"),
         ("flags", "capability_flags", arguments.compose_file, "--compose-file"),
         ("console", "console_reachable", arguments.console_url, "--console-url"),
-        ("app", "application_signals", arguments.app_logs, "--app-logs"),
+        # Both, or the check cannot run: without a saved position a run can only look at a window
+        # ending at its own start, and a line written between two such windows is counted by
+        # neither (round-9 verifier).
+        (
+            "app",
+            "application_signals",
+            arguments.app_logs and arguments.app_signal_cursor,
+            "--app-signal-cursor" if arguments.app_logs else "--app-logs",
+        ),
     ]
 
     runners = {
@@ -587,8 +793,10 @@ def main() -> int:
         "console": lambda: check_console_reachable(
             str(arguments.console_url), ca_file=arguments.console_ca_file
         ),
-        "app": lambda: check_application_signals(
-            read_application_log(str(arguments.app_logs), compose_file=arguments.compose_file),
+        "app": lambda: run_application_check(
+            str(arguments.app_logs),
+            compose_file=arguments.compose_file,
+            cursor_path=str(arguments.app_signal_cursor),
             now=datetime.now(UTC),
         ),
     }
@@ -629,8 +837,8 @@ def main() -> int:
     if not results:
         raise SystemExit(
             "No check could run. Each one needs its input: --database-url, --volume-path, "
-            "--console-url, --app-logs. A check that silently does not run is worse than one "
-            "that fails."
+            "--console-url, --app-logs with --app-signal-cursor. A check that silently does not "
+            "run is worse than one that fails."
         )
 
     configure_structured_logging()

@@ -9169,6 +9169,90 @@ def _qr_read(console: Console, order_id: str, part: int | None = None) -> dict[s
     return answer.get("body") or {"status": answer["status"], "text": answer["text"][:200]}
 
 
+def _walk_in_during_resume(console: Console, x_request: str, resume_first: bool) -> dict[str, Any]:
+    """C2 (round-9 verifier, repro_walkin_during_resume.py): on a fresh Nhận đồ, waiting
+    customer X is tapped in "Khách đang chờ" with the resume's quote search held open, then
+    "Khách vãng lai" is pressed with its intake write held open. Both are let through in the
+    order asked for. Returns what the screen shows afterwards and the walk-in's intake id."""
+
+    page = console.page
+    console.open("#/new")
+    page.wait_for_timeout(800)
+    held_search: list[Any] = []
+    held_intake: list[Any] = []
+
+    def hold_search(route: Any) -> None:
+        if route.request.method == "GET":
+            held_search.append(route)
+        else:
+            route.continue_()
+
+    def hold_intake(route: Any) -> None:
+        if route.request.method == "POST":
+            held_intake.append(route)
+        else:
+            route.continue_()
+
+    row = page.locator(f"#new-waiting [data-request='{x_request}']")
+    with contextlib.suppress(Exception):
+        row.first.wait_for(timeout=8000)
+    if not row.count():
+        return {"error": "X is not in 'Khách đang chờ'"}
+    page.route("**/internal/v1/stores/*/quotes?*", hold_search)
+    page.route("**/internal/v1/stores/*/order-requests", hold_intake)
+    row.first.click()
+    touched("newOrder.resume")
+    for _ in range(40):
+        if held_search:
+            break
+        page.wait_for_timeout(100)
+    walk_in_open = page.locator("#new-walk-in").count() == 1
+    if walk_in_open:
+        page.locator("#new-walk-in").click()
+        touched("newOrder.walk-in")
+    for _ in range(80):
+        if held_intake:
+            break
+        page.wait_for_timeout(100)
+    intake: dict[str, Any] = {}
+
+    def let_search() -> None:
+        for route in held_search:
+            route.continue_()
+        held_search.clear()
+        page.unroute("**/internal/v1/stores/*/quotes?*", hold_search)
+        page.wait_for_timeout(2500)
+
+    def let_intake() -> None:
+        if held_intake:
+            with page.expect_response(
+                lambda r: (
+                    r.request.method == "POST" and r.url.split("?")[0].endswith("/order-requests")
+                ),
+                timeout=20000,
+            ) as waited:
+                for route in held_intake:
+                    route.continue_()
+            with contextlib.suppress(Exception):
+                intake.update(waited.value.json())
+        held_intake.clear()
+        page.unroute("**/internal/v1/stores/*/order-requests", hold_intake)
+        page.wait_for_timeout(2500)
+
+    for step in (let_search, let_intake) if resume_first else (let_intake, let_search):
+        step()
+    hero = page.locator("#new-ticket")
+    receipt = page.locator("#new-receipt")
+    return {
+        "walk_in_open": walk_in_open,
+        "intake": str(intake.get("order_request_id") or ""),
+        "hero": (hero.first.inner_text() if hero.count() else "").replace("\n", " "),
+        "lines": page.locator("input[id^='new-line-'][id$='-qty']").count(),
+        "next": page.locator("#new-next").count(),
+        "receipt": (receipt.first.inner_text() if receipt.count() else "")[:160],
+    }
+
+
 def scenario_counter_race(console: Console) -> None:
     """COUNTER-UI-RACE-009 against the real API. C2: the weight corrected across the 6 kg cliff
     while "Tính giá" is in flight (the request held open in the browser, then let through) never
@@ -9354,6 +9438,34 @@ def scenario_counter_race(console: Console) -> None:
         and accepted_a == "0",
         f"{third['text'][:160]} accepted_a={accepted_a}",
     )
+
+    # C2, another step-1 press while a waiting customer is being resumed (round-9 verifier, round
+    # 2): B (3 kg, priced) waits. X := B is tapped in "Khách đang chờ", its quote search held; a
+    # walk-in C is pressed, its intake write held. In both landing orders C's screen is C's: no
+    # lines, no price, no "Tiếp tục" -- so nothing can be accepted on B's quote under C's ticket.
+    quote_b = str(body_3.get("quote_id") or "")
+    for resume_first in (True, False):
+        seen = _walk_in_during_resume(console, b_intake, resume_first)
+        order = "X's read lands, then the walk-in" if resume_first else "walk-in lands, then X's"
+        _race_shot(console, f"c2-walk-in-during-resume-{'x' if resume_first else 'c'}-first")
+        accepted_b = (
+            sql(f"select count(*) from quote_acceptances where quote_id = '{uuid.UUID(quote_b)}'")
+            if quote_b
+            else "no quote"
+        )
+        ok(
+            f"C2 (waiting X resumed, walk-in C pressed; {order}): the screen is C's new ticket -- "
+            "no lines, no price, no 'Tiếp tục' -- and X's quote has no acceptance",
+            seen.get("walk_in_open") is True
+            and bool(seen.get("intake"))
+            and seen.get("intake") != b_intake
+            and "Phiếu" in str(seen.get("hero"))
+            and seen.get("lines") == 0
+            and seen.get("next") == 0
+            and "3 kg" not in str(seen.get("receipt"))
+            and accepted_b == "0",
+            f"{seen} accepted_b={accepted_b}",
+        )
 
     # --- C3 -------------------------------------------------------------------------------------
     if not arguments.database_url:

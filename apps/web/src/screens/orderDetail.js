@@ -1463,6 +1463,14 @@ export function render_(context) {
     let typed = "";
     let method = "TIEN_MAT";
     let seen = false;
+    /**
+     * The amount the payment would record when "Đã thấy tiền vào tài khoản" was last valid: the
+     * tick is said of that amount, and any other one asks it again (round-9 verifier, P2).
+     * @type {number|null|undefined}
+     */
+    let seenFor;
+    // Shown under the tick once a change of amount has cleared it.
+    const seenNote = h("p", { class: "hint", id: "payment-seen-cleared", role: "status" });
     let reference = "";
     let handOver = shown.payment_may_hand_over === true;
     // VIETQR-001: read when Chuyển khoản is shown, for exactly the amount the payment will record
@@ -1528,7 +1536,25 @@ export function render_(context) {
      */
     function askQr() {
       const part = editing ? parseDong(typed) : null;
+      unseeIfMoved(editing ? part : shown.remaining_vnd);
       transferQr.ask(!editing ? null : part === null ? undefined : part);
+    }
+
+    /**
+     * The amount the press would record changed ("một phần" opened or closed, the part retyped, a
+     * reload): "Đã thấy tiền" was said of the one before, so it is asked again -- never sent beside
+     * an amount nobody looked for in the account.
+     *
+     * @param {number|null} amount
+     */
+    function unseeIfMoved(amount) {
+      if (amount === seenFor) return;
+      seenFor = amount;
+      if (!seen) return;
+      seen = false;
+      const tick = transferHost.querySelector("#payment-transfer-seen");
+      if (tick instanceof HTMLInputElement) tick.checked = false;
+      seenNote.textContent = "Số tiền vừa đổi — xem lại tài khoản rồi đánh dấu lại.";
     }
 
     function drawHandOver() {
@@ -1567,6 +1593,7 @@ export function render_(context) {
         checked: seen,
         onChange: (event) => {
           seen = /** @type {HTMLInputElement} */ (event.target).checked;
+          if (seen) seenNote.textContent = "";
         },
       });
       const ref = h("input", {
@@ -1593,6 +1620,7 @@ export function render_(context) {
           tick,
           h("span", null, "Đã thấy tiền vào tài khoản"),
         ),
+        seenNote,
         ref,
       );
     }

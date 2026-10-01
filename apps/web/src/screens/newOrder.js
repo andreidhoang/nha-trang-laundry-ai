@@ -207,9 +207,10 @@ export function render_(context) {
     edits: 0,
     /**
      * COUNTER-UI-RACE-009 (C2): bumped when the screen moves to another customer or intake
-     * ("Khách khác", a waiting customer resumed, a quote reopened) -- `newContext`. An answer to a
-     * press made under an older value belongs to lines no longer on screen and is dropped whole:
-     * never held, never offered, never the revision a later "Tính lại" revises.
+     * ("Khách khác", and every step-1 press or boot address read -- `beginIntent`) by
+     * `newContext`. An answer to a press or read made under an older value belongs to a customer
+     * no longer on screen and is dropped whole: never shown, never held, never offered, never the
+     * revision a later "Tính lại" revises.
      */
     session: 0,
     /** @type {any|null} a remedy credit applied to the current revision */
@@ -291,32 +292,23 @@ export function render_(context) {
   }
 
   /**
-   * The screen is about to show another customer's or intake's lines. A press still in flight
-   * belongs to the ones leaving: it stops holding the screen (the next customer's presses work at
-   * once), and its answer is dropped when it arrives (C2).
+   * The screen is about to show another customer's or intake's lines. Everything that was about
+   * the one leaving goes with them -- the intake, the lines, the price, the acceptance, their keys
+   * -- so nothing of theirs can be shown, offered or sent under the next one. A press or read
+   * still in flight belongs to the one leaving: it stops holding the screen (the next customer's
+   * presses work at once), and its answer is dropped when it arrives (C2).
+   *
+   * Called by "Khách khác" (an explicit abandon) and by `beginIntent`, never otherwise.
+   * A ticket issued by a walk-in whose intake failed stays (`flow.ticket`): the next walk-in press
+   * resumes it with the same number.
    *
    * @returns {number} the new context, for an async caller to compare after each await
    */
   function newContext() {
     flow.session += 1;
     flow.busy = false;
-    return flow.session;
-  }
-
-  /** An answer to a press made for the customer before: say where it went, change nothing. */
-  function droppedAnswer() {
-    toast(
-      "Giá của khách trước đã về nhưng không dùng cho khách này — " +
-        "mở lại khách đó ở “Khách đang chờ”.",
-    );
-  }
-
-  /** Start over for the next customer. The last one's intake stays in the waiting list. */
-  function reset() {
-    newContext();
     Object.assign(flow, {
       request: null,
-      ticket: null,
       mode: "SELF_DROP_SELF_COLLECT",
       distance: "",
       fee: "",
@@ -331,6 +323,40 @@ export function render_(context) {
       acceptedAt: null,
       acceptedRevision: 0,
     });
+    quoteSub.reset();
+    orderSub.reset();
+    accepting = null;
+    render(resumeHost);
+    return flow.session;
+  }
+
+  /**
+   * Every step-1 press and every address read at boot that puts a customer on screen -- a walk-in,
+   * a regular found by phone, a channel customer tapped or typed, a waiting customer resumed,
+   * `?request=` / `?quote=` / `?contact=`. While a ticket or intake write is in flight it is not
+   * taken: that write is the customer being served and its answer must land on a screen still
+   * theirs. Otherwise it is a new context, and whatever an earlier one is still reading is dropped
+   * when it arrives -- the last press wins, and a late read never lands on another customer (C2).
+   *
+   * @returns {number|null} the context to compare after each await; null when not taken
+   */
+  function beginIntent() {
+    if (flow.busy) return null;
+    return newContext();
+  }
+
+  /** An answer to a press made for the customer before: say where it went, change nothing. */
+  function droppedAnswer() {
+    toast(
+      "Giá của khách trước đã về nhưng không dùng cho khách này — " +
+        "mở lại khách đó ở “Khách đang chờ”.",
+    );
+  }
+
+  /** Start over for the next customer. The last one's intake stays in the waiting list. */
+  function reset() {
+    newContext();
+    flow.ticket = null;
     for (const sub of [
       ticketSub,
       walkInRequestSub,
@@ -436,17 +462,21 @@ export function render_(context) {
    * @param {HTMLElement} alertHost
    */
   async function issueWalkIn(control, alertHost) {
-    if (flow.busy) return;
+    const session = beginIntent();
+    if (session === null) return;
     flow.busy = true;
     control.disabled = true;
     control.setAttribute("aria-busy", "true");
     render(alertHost, h("p", { class: "hint", role: "status" }, "Đang phát phiếu…"));
     try {
       if (!flow.ticket) {
-        flow.ticket = await request(
+        const ticket = await request(
           `/internal/v1/stores/${encodeURIComponent(store)}/counter-tickets`,
           { method: "POST", body: {}, idempotencyKey: ticketSub.key() },
         );
+        // "Khách khác" meanwhile: the ticket stays issued; its intake is not opened.
+        if (session !== flow.session) return;
+        flow.ticket = ticket;
         ticketSub.reset();
       }
       const created = await request(`/internal/v1/stores/${encodeURIComponent(store)}/order-requests`, {
@@ -455,6 +485,8 @@ export function render_(context) {
         idempotencyKey: walkInRequestSub.key(),
       });
       walkInRequestSub.reset();
+      // Abandoned meanwhile: the intake waits in "Khách đang chờ"; this screen is someone else's.
+      if (session !== flow.session) return;
       flow.request = {
         ...created,
         ticket_number: flow.ticket.ticket_number,
@@ -465,6 +497,7 @@ export function render_(context) {
       flow.busy = false;
       go(2);
     } catch (error) {
+      if (session !== flow.session) return;
       flow.busy = false;
       control.removeAttribute("aria-busy");
       if (control.getAttribute("data-denied") !== "true") control.disabled = false;
@@ -556,6 +589,8 @@ export function render_(context) {
     if (flow.busy) return;
     const customerId = String(customer?.customer_id || "");
     if (!UUID.test(customerId)) return;
+    const session = beginIntent();
+    if (session === null) return;
     if (customerKeyFor !== customerId) {
       customerRequestSub.reset();
       customerKeyFor = customerId;
@@ -567,6 +602,7 @@ export function render_(context) {
       const items = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/order-requests?limit=${WAITING_LIMIT}`,
       );
+      if (session !== flow.session) return;
       const waiting = (Array.isArray(items) ? items : []).find(
         (item) => item.customer_id === customerId && !item.order_id && item.status !== "CANCELLED",
       );
@@ -583,6 +619,7 @@ export function render_(context) {
       });
       customerRequestSub.reset();
       customerKeyFor = "";
+      if (session !== flow.session) return;
       flow.busy = false;
       render(alertHost);
       flow.request = {
@@ -592,6 +629,7 @@ export function render_(context) {
       };
       go(2);
     } catch (error) {
+      if (session !== flow.session) return;
       flow.busy = false;
       control?.removeAttribute("aria-busy");
       show(
@@ -626,7 +664,8 @@ export function render_(context) {
    * @returns {Promise<boolean>} whether the intake exists now
    */
   async function bindChannel(binding, alertHost, control) {
-    if (flow.busy) return false;
+    const session = beginIntent();
+    if (session === null) return false;
     if (channelKeyFor !== binding) {
       channelRequestSub.reset();
       channelKeyFor = binding;
@@ -642,12 +681,14 @@ export function render_(context) {
       });
       channelRequestSub.reset();
       channelKeyFor = "";
+      if (session !== flow.session) return false;
       flow.busy = false;
       render(alertHost);
       flow.request = { ...created, ticket_number: null, ticket_issued_on: null, order_id: null };
       go(2);
       return true;
     } catch (error) {
+      if (session !== flow.session) return false;
       flow.busy = false;
       control?.removeAttribute("aria-busy");
       show(
@@ -805,16 +846,20 @@ export function render_(context) {
     const waiting = String(item.waiting_order_request_id || "");
     if (UUID.test(waiting)) {
       // An intake is already open for this customer: resume it rather than open a second.
+      const session = beginIntent();
+      if (session === null) return;
       flow.busy = true;
       row.setAttribute("aria-busy", "true");
       try {
         const intake = await request(
           `/internal/v1/stores/${encodeURIComponent(store)}/order-requests/${encodeURIComponent(waiting)}`,
         );
+        if (session !== flow.session) return;
         flow.busy = false;
         render(alertHost);
         await resumeFromRequest(intake);
       } catch (error) {
+        if (session !== flow.session) return;
         flow.busy = false;
         row.removeAttribute("aria-busy");
         show(alertHost, errorNotice(error, { onRetry: () => void pickContact(item, row, alertHost) }));
@@ -916,6 +961,8 @@ export function render_(context) {
    * @param {string} binding
    */
   async function handOff(binding) {
+    const session = beginIntent();
+    if (session === null) return;
     render(
       resumeHost,
       h(
@@ -931,19 +978,24 @@ export function render_(context) {
       const items = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/order-requests?limit=${WAITING_LIMIT}`,
       );
+      // Another customer was put on screen meanwhile: this hand-off is not theirs.
+      if (session !== flow.session) return;
       waiting =
         (Array.isArray(items) ? items : []).find(
           (item) =>
             item.contact_binding_id === binding && !item.order_id && item.status !== "CANCELLED",
         ) || null;
     } catch (error) {
+      if (session !== flow.session) return;
       show(resumeHost, errorNotice(error, { onRetry: () => void handOff(binding) }));
       return;
     }
     if (waiting) {
       render(resumeHost);
       await resumeFromRequest(waiting);
-      settleAddress(waiting.order_request_id);
+      if (flow.request?.order_request_id === waiting.order_request_id) {
+        settleAddress(waiting.order_request_id);
+      }
       return;
     }
     if (await bindChannel(binding, resumeHost, null)) settleAddress(flow.request?.order_request_id);
@@ -994,10 +1046,9 @@ export function render_(context) {
             ? list(
                 waiting.slice(0, WAITING_SHOWN).map((item) =>
                   listRow({
-                    // Like every step-1 press: not while a ticket or intake is being written.
-                    onClick: () => {
-                      if (!flow.busy) void resumeFromRequest(item);
-                    },
+                    // Like every step-1 press: not while a ticket or intake is being written
+                    // (`beginIntent` refuses it then).
+                    onClick: () => void resumeFromRequest(item),
                     leading: "intake",
                     title: customerLabel(item),
                     meta: `lúc ${clock(item.created_at)}`,
@@ -1031,13 +1082,14 @@ export function render_(context) {
    * @param {any} item an order-request summary
    */
   async function resumeFromRequest(item) {
+    const session = beginIntent();
+    if (session === null) return;
     if (item.order_id) {
       // Converted already: nothing to resume, and binding it would offer a second order.
       go(1);
       show(resumeHost, convertedAlert(item));
       return;
     }
-    const session = newContext();
     flow.request = item;
     render(resumeHost, skeleton(1));
     try {
@@ -1053,7 +1105,7 @@ export function render_(context) {
         go(2);
         return;
       }
-      await resumeFromQuote(String(found.quote_id), item);
+      await adoptQuote(String(found.quote_id), item, session);
     } catch (error) {
       if (session !== flow.session) return;
       go(1);
@@ -1066,8 +1118,21 @@ export function render_(context) {
    * @param {any|null} known the intake, when the caller already read it
    */
   async function resumeFromQuote(quoteId, known) {
-    const session = newContext();
+    const session = beginIntent();
+    if (session === null) return;
     render(resumeHost, skeleton(1));
+    await adoptQuote(quoteId, known, session);
+  }
+
+  /**
+   * Read a quote and put its intake, lines and price on screen -- only while `session` is still
+   * the context that asked for it.
+   *
+   * @param {string} quoteId
+   * @param {any|null} known the intake, when the caller already read it
+   * @param {number} session from the `beginIntent` that started this resume
+   */
+  async function adoptQuote(quoteId, known, session) {
     try {
       const detail = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${encodeURIComponent(quoteId)}`,
@@ -2559,12 +2624,17 @@ export function render_(context) {
     else show(resumeHost, inlineAlert({ state: "warn", title: "Mã báo giá trong đường dẫn không hợp lệ" }));
   } else if (resumeRequest) {
     if (UUID.test(resumeRequest)) {
+      // A step-1 intent like any other: a walk-in pressed while this reads makes it moot (C2).
+      const session = beginIntent();
       render(resumeHost, skeleton(1));
       void request(
         `/internal/v1/stores/${encodeURIComponent(store)}/order-requests/${encodeURIComponent(resumeRequest)}`,
       ).then(
-        (item) => resumeFromRequest(item),
+        (item) => {
+          if (session === flow.session) void resumeFromRequest(item);
+        },
         (error) =>
+          session === flow.session &&
           show(
             resumeHost,
             /** @type {any} */ (error).kind === "MISSING"

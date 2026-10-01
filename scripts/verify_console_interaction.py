@@ -2523,6 +2523,19 @@ held_ticket_routes: list[Route] = []
 #: Section 27 (COUNTER-UI-RACE-009): a quote press, and a part-amount QR read, held open.
 held_quote_routes: list[Route] = []
 held_qr_routes: list[tuple[Route, dict[str, object]]] = []
+#: Section 27 (C2, round 2): step-1 reads and writes held open by name -- a waiting customer's
+#: resume, an intake write, the boot reads -- each with the answer it will be released with.
+held_step1: dict[str, list[tuple[Route, int, object]]] = {}
+
+
+def hold_step1(name: str, route: Route, status: int, body: object) -> bool:
+    """Hold `route` under `name` when section 27 asked for it; False to answer it now."""
+
+    if not state.get(f"hold_{name}"):
+        return False
+    held_step1.setdefault(name, []).append((route, status, body))
+    return True
+
 
 with sync_playwright() as playwright:
     # Real Chrome by default, because the staff console is opened in a real browser and the
@@ -3574,6 +3587,8 @@ with sync_playwright() as playwright:
                 )
                 return
             body = ORDER_REQUEST
+            if hold_step1("intake_read", route, 200, body):
+                return
         elif "/order-requests" in url:
             if route.request.method == "POST":
                 # CONTACT-PICK-001: which binding each intake was opened for, and under what key.
@@ -3584,24 +3599,27 @@ with sync_playwright() as playwright:
                     )
                 )
                 sent = json.loads(route.request.post_data or "{}")
+                # Section 27: another customer's intake (B), distinct from the waiting one (X).
+                created = {**ORDER_REQUEST_CREATED, **(state.get("intake_reply") or {})}
                 # CUSTOMER-001: an intake for a customer record is answered with the ticket the
                 # server issued for it in the same write.
-                route.fulfill(
-                    status=201,
-                    content_type="application/json",
-                    body=json.dumps(
-                        {
-                            **ORDER_REQUEST_CREATED,
-                            "customer_id": sent["customer_id"],
-                            "ticket_number": 31,
-                            "ticket_issued_on": "2026-09-25",
-                        }
-                        if sent.get("customer_id")
-                        else ORDER_REQUEST_CREATED
-                    ),
+                reply = (
+                    {
+                        **created,
+                        "customer_id": sent["customer_id"],
+                        "ticket_number": 31,
+                        "ticket_issued_on": "2026-09-25",
+                    }
+                    if sent.get("customer_id")
+                    else created
                 )
+                if hold_step1("intake", route, 201, reply):
+                    return
+                route.fulfill(status=201, content_type="application/json", body=json.dumps(reply))
                 return
             body = [ORDER_REQUEST]
+            if hold_step1("intake_list", route, 200, body):
+                return
         elif "/acceptance" in url and route.request.method == "POST":
             state.setdefault("accept_posts", []).append(
                 {
@@ -3670,6 +3688,25 @@ with sync_playwright() as playwright:
                 }
             else:
                 body = BAND_DETAIL
+            if hold_step1("quote_read", route, 200, body):
+                return
+        elif (
+            url.split("?")[0].endswith("/quotes")
+            and route.request.method == "GET"
+            and state.get("quotes_listed")
+        ):
+            # Section 27: the waiting customer X has a priced quote -- the search a resume makes.
+            state.setdefault("quote_list_reads", []).append(url)
+            body = [
+                {
+                    "quote_id": EXACT_QUOTE,
+                    "order_request_id": ORDER_REQUEST["order_request_id"],
+                    "revision": 1,
+                    "status": "PROVISIONAL",
+                }
+            ]
+            if hold_step1("quote_list", route, 200, body):
+                return
         elif url.split("?")[0].endswith("/quotes") and route.request.method == "POST":
             sent = json.loads(route.request.post_data or "{}")
             state.setdefault("quote_posts", []).append(sent)
@@ -10261,14 +10298,19 @@ with sync_playwright() as playwright:
         if callable(leave):
             leave()
 
-    def b_is_clean(label: str) -> None:
+    def b_is_clean(
+        label: str,
+        posts: int = 2,
+        foreign: tuple[str, str] = ("145.000", "5,8"),
+        whose: str = "A's 5,8 kg price",
+    ) -> None:
         text = receipt_text()
         check(
-            f"C2 ({label}): A's 5,8 kg price is not B's -- no lines, no receipt, no 'Tiếp tục'",
+            f"C2 ({label}): {whose} is not B's -- no lines, no receipt, no 'Tiếp tục'",
             lines_on_screen() == 0
             and page.locator("#new-next").count() == 0
-            and "145.000" not in text
-            and "5,8" not in text,
+            and foreign[0] not in text
+            and foreign[1] not in text,
             f"lines={lines_on_screen()} next={page.locator('#new-next').count()} "
             f"receipt={text[:120]!r}",
         )
@@ -10285,9 +10327,9 @@ with sync_playwright() as playwright:
         page.wait_for_timeout(1000)
         last = state["quote_posts"][-1] if state["quote_posts"] else {}
         check(
-            f"C2 ({label}): B's 'Tính giá' is a first price of B's 3 kg -- it does not revise A's "
-            "quote -- and only that answer offers 'Tiếp tục'",
-            len(state["quote_posts"]) == 2
+            f"C2 ({label}): B's 'Tính giá' is a first price of B's 3 kg -- it does not revise "
+            "another customer's quote -- and only that answer offers 'Tiếp tục'",
+            len(state["quote_posts"]) == posts
             and sent_quantity() == "3"
             and "quote_id" not in last
             and state["quote_headers"][-1]["if_match"] is None
@@ -10341,6 +10383,197 @@ with sync_playwright() as playwright:
     b_is_clean("a waiting customer resumed, then the answer")
     state["hold_quote"] = False
     held_quote_routes.clear()
+
+    # --- C2 (round 2): another step-1 press while a waiting customer X is being resumed ------
+    # Tapping X in "Khách đang chờ" reads X's quote; until it lands the screen is still step 1, so
+    # "Khách vãng lai", a regular found by phone, or a typed code can be pressed for customer B.
+    # Whatever lands in whatever order, B's screen never carries X's lines or price, and "Tiếp
+    # tục" is never offered for X's quote under B's ticket (round-9 verifier,
+    # repro_walkin_during_resume.py: X's quote was accepted under B's ticket). The same for the
+    # boot reads (?request=, ?quote=, ?contact=) that resume X while B is pressed.
+    X_ID = str(ORDER_REQUEST["order_request_id"])
+    INTAKE_B = {
+        "order_request_id": "33333333-4444-4333-8444-bbbbbbbbbbbb",
+        "contact_binding_id": "66666666-7777-4333-8444-aaaaaaaaaaaa",
+    }
+    X_FOREIGN = ("147.500", "5,9")
+    state["quotes_listed"] = True
+    state["intake_reply"] = INTAKE_B
+
+    def release_step1(name: str) -> None:
+        state[f"hold_{name}"] = False
+        for held_route, status, held_body in held_step1.pop(name, []):
+            held_route.fulfill(
+                status=status, content_type="application/json", body=json.dumps(held_body)
+            )
+
+    def fresh_new(query: str = "") -> None:
+        state["quote_posts"] = []
+        state["quote_headers"] = []
+        state["accept_posts"] = []
+        state["intake_posts"] = []
+        state["quote_list_reads"] = []
+        page.goto("about:blank")
+        # Not "networkidle": a held boot read keeps the network busy by design.
+        page.goto(f"http://localhost:{PORT}/#/new{query}", wait_until="domcontentloaded")
+        page.wait_for_timeout(1200)
+
+    def hero() -> str:
+        node = page.locator("#new-ticket")
+        return (node.first.text_content() or "") if node.count() else ""
+
+    def b_walked_in() -> bool:
+        return "Phiếu" in hero() and " 1" in hero() and X_ID not in hero()
+
+    # 0. Control: X resumed alone brings X's own lines and price, with "Tiếp tục" -- so the
+    #    checks below are about the race, not about a stub that never resumes anything.
+    fresh_new()
+    tap("#new-waiting [data-request]")
+    page.wait_for_timeout(1500)
+    check(
+        "C2 control: waiting customer X resumed alone brings X's 5,9 kg, its price and 'Tiếp tục'",
+        value_of("#new-line-0-qty") == "5.9" and "147.500" in receipt_text() and next_offered(),
+        f"qty={value_of('#new-line-0-qty')!r} receipt={receipt_text()[:80]!r}",
+    )
+
+    # 1-2. X's resume held, "Khách vãng lai" for B, then each order of landing.
+    for first, second, label in (
+        ("quote_list", "intake", "X resumed, walk-in B; X's read lands, then B's"),
+        ("intake", "quote_list", "X resumed, walk-in B; B's lands, then X's read"),
+    ):
+        fresh_new()
+        state["hold_quote_list"] = True
+        state["hold_intake"] = True
+        tap("#new-waiting [data-request]")
+        page.wait_for_timeout(300)
+        tap("#new-walk-in")
+        page.wait_for_timeout(700)
+        release_step1(first)
+        page.wait_for_timeout(1300)
+        release_step1(second)
+        page.wait_for_timeout(1300)
+        race_shot("c2-walk-in-during-resume-" + first)
+        check(
+            f"C2 ({label}): the screen is B's walk-in ticket, not X",
+            b_walked_in(),
+            hero()[:120],
+        )
+        b_is_clean(label, posts=1, foreign=X_FOREIGN, whose="X's 5,9 kg price")
+        check(
+            f"C2 ({label}): nothing was accepted on X's quote",
+            not state["accept_posts"],
+            repr(state["accept_posts"])[:160],
+        )
+
+    # 3. X's resume held, then a regular found by phone (B = chị Lan, ticket 31).
+    fresh_new()
+    state["hold_quote_list"] = True
+    state["hold_intake"] = True
+    tap("#new-waiting [data-request]")
+    page.wait_for_timeout(300)
+    if page.locator("#new-customer-search").count():
+        page.locator("#new-customer-search").click()
+        page.keyboard.type("3456", delay=20)
+        page.wait_for_timeout(900)
+    tap(f"#new-customer-search-list [data-customer='{CUSTOMER_ID}']")
+    page.wait_for_timeout(900)
+    release_step1("quote_list")
+    page.wait_for_timeout(1300)
+    release_step1("intake")
+    page.wait_for_timeout(1300)
+    check(
+        "C2 (X resumed, then a regular by phone): the screen is chị Lan's ticket 31, not X",
+        "chị Lan" in hero() and "31" in hero(),
+        hero()[:120],
+    )
+    b_is_clean(
+        "X resumed, then a regular by phone", posts=1, foreign=X_FOREIGN, whose="X's 5,9 kg price"
+    )
+
+    # 4. X's resume held, then a code typed under "Nhập mã thủ công".
+    typed_binding = "77777777-8888-4333-8444-dddddddddddd"
+    state["intake_reply"] = {**INTAKE_B, "contact_binding_id": typed_binding}
+    fresh_new()
+    state["hold_quote_list"] = True
+    state["hold_intake"] = True
+    tap("#new-waiting [data-request]")
+    page.wait_for_timeout(300)
+    tap("#new-channel-toggle")
+    page.wait_for_timeout(200)
+    if page.locator("#new-contact").count():
+        page.locator("#new-contact").fill(typed_binding)
+    tap("#new-contact-submit")
+    page.wait_for_timeout(700)
+    release_step1("quote_list")
+    page.wait_for_timeout(1300)
+    release_step1("intake")
+    page.wait_for_timeout(1300)
+    check(
+        "C2 (X resumed, then a typed code): the screen is the typed customer's intake, not X",
+        typed_binding in hero() and CONTACT not in hero(),
+        hero()[:160],
+    )
+    b_is_clean("X resumed, then a typed code", posts=1, foreign=X_FOREIGN, whose="X's 5,9 kg price")
+    state["intake_reply"] = INTAKE_B
+
+    # 5. The other way round: B's walk-in in flight, then X tapped -- the tap is not taken, so no
+    #    resume read is even made, and B lands clean.
+    fresh_new()
+    state["hold_intake"] = True
+    tap("#new-walk-in")
+    page.wait_for_timeout(500)
+    tap("#new-waiting [data-request]")
+    page.wait_for_timeout(1000)
+    read_during = list(state["quote_list_reads"])
+    release_step1("intake")
+    page.wait_for_timeout(1300)
+    check(
+        "C2 (walk-in B in flight, then X tapped): X is not resumed under B's write -- no read",
+        not read_during and b_walked_in(),
+        f"reads={read_during} hero={hero()[:80]!r}",
+    )
+    b_is_clean("walk-in B, then X tapped", posts=1, foreign=X_FOREIGN, whose="X's 5,9 kg price")
+
+    # 6-9. The boot reads: X named by the address, its read held, B walks in meanwhile.
+    for query, held, label in (
+        (f"?request={X_ID}", "intake_read", "?request=X held, walk-in B lands, then X's read"),
+        (f"?quote={EXACT_QUOTE}", "quote_read", "?quote=X held, walk-in B lands, then X's read"),
+        (f"?contact={CONTACT}", "intake_list", "?contact=X held, walk-in B lands, then X's read"),
+    ):
+        state[f"hold_{held}"] = True
+        fresh_new(query)
+        tap("#new-walk-in")
+        page.wait_for_timeout(1300)
+        release_step1(held)
+        page.wait_for_timeout(1500)
+        check(f"C2 ({label}): B stays on screen", b_walked_in(), hero()[:120])
+        check(
+            f"C2 ({label}): X's late read opens nothing -- no intake written for X's code",
+            all(post[0] != {"contact_binding_id": CONTACT} for post in state["intake_posts"]),
+            repr(state["intake_posts"])[:200],
+        )
+        b_is_clean(label, posts=1, foreign=X_FOREIGN, whose="X's 5,9 kg price")
+
+    # 9. ?request=X held; B's walk-in also held; X's read lands while B's write is in flight.
+    state["hold_intake_read"] = True
+    fresh_new(f"?request={X_ID}")
+    state["hold_intake"] = True
+    tap("#new-walk-in")
+    page.wait_for_timeout(600)
+    release_step1("intake_read")
+    page.wait_for_timeout(1300)
+    release_step1("intake")
+    page.wait_for_timeout(1300)
+    label = "?request=X held, walk-in B in flight, X's read lands, then B's"
+    check(f"C2 ({label}): B is on screen", b_walked_in(), hero()[:120])
+    b_is_clean(label, posts=1, foreign=X_FOREIGN, whose="X's 5,9 kg price")
+
+    for name in list(held_step1):
+        release_step1(name)
+    for name in ("quote_list", "intake", "intake_read", "quote_read", "intake_list"):
+        state[f"hold_{name}"] = False
+    state["quotes_listed"] = False
+    state["intake_reply"] = None
 
     # --- C3: the part transfer's QR -------------------------------------------------------
     state["vietqr"] = vietqr_read(60_000)
@@ -10449,6 +10682,56 @@ with sync_playwright() as playwright:
         "C3: 'Thu đủ' brings back the whole remaining's QR (no amount asked)",
         "60.000" in qr_amount() and (state["vietqr_reads"] or [""])[-1].endswith("/vietqr"),
         f"{qr_amount()} {state['vietqr_reads'][-1:]}",
+    )
+
+    # "Đã thấy tiền vào tài khoản" is said of the amount the QR asked for. Any change of that
+    # amount -- "một phần" opened, a retyped part, "Thu đủ" -- asks it again; it is never sent
+    # beside an amount nobody looked for (round-9 verifier, P2: the C3 mismatch in reverse).
+    def seen_ticked() -> bool:
+        node = page.locator("#payment-transfer-seen")
+        return node.count() == 1 and node.is_checked()
+
+    tap("#payment-transfer-seen")
+    ticked_full = seen_ticked()
+    tap("#payment-edit")
+    page.wait_for_timeout(300)
+    after_edit = seen_ticked()
+    typed_part("20.000")
+    page.wait_for_timeout(900)
+    tap("#payment-transfer-seen")
+    ticked_part = seen_ticked()
+    tap("#payment-full")
+    page.wait_for_timeout(900)
+    after_full = seen_ticked()
+    check(
+        "P2: the tick at 60.000 ₫ is cleared by opening 'một phần'; the tick at a typed 20.000 ₫ "
+        "is cleared by 'Thu đủ'",
+        ticked_full and not after_edit and ticked_part and not after_full,
+        f"full={ticked_full} edit={after_edit} part={ticked_part} back_to_full={after_full}",
+    )
+    tap("#payment-edit")
+    page.wait_for_timeout(300)
+    typed_part("20.000")
+    page.wait_for_timeout(900)
+    tap("#payment-transfer-seen")
+    ticked_20 = seen_ticked()
+    typed_part("25.000")
+    page.wait_for_timeout(900)
+    cleared_note = open_dialog_text()
+    check(
+        "P2: ticked at 20.000 ₫, retyped to 25.000 ₫ -- the tick is cleared and the sheet says "
+        "to look again",
+        ticked_20 and not seen_ticked() and "Số tiền vừa đổi" in cleared_note,
+        f"ticked_20={ticked_20} now={seen_ticked()} {cleared_note[-160:]!r}",
+    )
+    state["order_writes"] = []
+    tap("#payment-submit")
+    page.wait_for_timeout(1200)
+    sent27 = json.loads(state["order_writes"][-1]["body"]) if state["order_writes"] else {}
+    check(
+        "P2: the press records 25.000 ₫ without 'đã thấy tiền' -- nobody looked for that amount",
+        sent27.get("amount_vnd") == 25_000 and sent27.get("transfer_seen") is False,
+        repr(sent27),
     )
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)

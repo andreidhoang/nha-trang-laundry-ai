@@ -38,6 +38,7 @@ from nha_trang_laundry_db.daily_summary import DailySummaryRepository
 from nha_trang_laundry_db.idempotency import IdempotencyConflictError
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
+from nha_trang_laundry_db.payments import PaymentCommand, PaymentRepository
 from nha_trang_laundry_db.reports import shop_today
 from nha_trang_laundry_db.settlement import SettlementRepository
 from nha_trang_laundry_db.shop_capture import (
@@ -55,6 +56,9 @@ from nha_trang_laundry_domain.cash_count import (
 from nha_trang_laundry_domain.shop_capture import ExpenseCategory
 from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA
 from test_drawer_postgres import _the_day
+from test_export_payments import CASH, _received
+from test_order_step_repository import _read
+from test_order_step_repository import _staff as _operator
 from test_reports import _person
 from test_sanitized_export import _Shop
 
@@ -637,3 +641,56 @@ def test_an_expense_says_whether_it_came_from_the_drawer_and_never_changes_its_m
             "SELECT payload FROM domain_events WHERE aggregate_id = %s", (drawer.expense_id,)
         )
         assert cursor.fetchone()[0]["paid_from_drawer"] is True
+
+
+# --- the shop-local day boundary ---
+
+
+def test_the_drawer_day_turns_at_the_shops_midnight_not_utcs(connection: Any) -> None:
+    """A cash payment at 23:59:59 in Nha Trang is that day's drawer; one at 00:00:00 is the next
+    day's -- 17:00 UTC, not 00:00 UTC. A drawer expense counts on its own `spent_on` day."""
+    shop = _Shop(connection, datetime.now(UTC))
+    staff = _operator(connection, shop.store_id)
+    day = _today() - timedelta(days=3)
+    late = datetime(day.year, day.month, day.day, 16, 59, 59, tzinfo=UTC)  # 23:59:59 +07:00
+    turn = late + timedelta(seconds=1)  # 00:00:00 +07:00, the next shop day
+    for at, amount in ((late, 30_000), (turn, 70_000)):
+        order_id = _received(connection, shop, staff)
+        PaymentRepository().record(
+            connection,
+            PaymentCommand(
+                order_id=order_id,
+                expected_row_version=_read(connection, order_id, staff).row_version,
+                amount_vnd=amount,
+                method=CASH,
+                transfer_seen=False,
+                bank_ref_last=None,
+                collected_by_customer=False,
+                principal=staff,
+                correlation_id=uuid4(),
+                recorded_at=at,
+            ),
+        )
+    ExpenseRepository().record(
+        connection,
+        RecordExpenseCommand(
+            store_id=shop.store_id,
+            spent_on=day,
+            category=ExpenseCategory.HOA_CHAT,
+            amount_vnd=5_000,
+            note=None,
+            principal=shop.owner,
+            idempotency_key=f"expense-{uuid4().hex}",
+            correlation_id=uuid4(),
+            today=_today(),
+            paid_from_drawer=True,
+        ),
+    )
+    with connection.cursor() as cursor:
+        moved = cash_counts_module.drawer_movements(
+            cursor, store_id=shop.store_id, from_date=day, to_date=day + timedelta(days=1)
+        )
+    first, second = moved[day], moved[day + timedelta(days=1)]
+    assert (first.cash_in_vnd, first.cash_in_entries) == (30_000, 1)
+    assert (second.cash_in_vnd, second.cash_in_entries) == (70_000, 1)
+    assert (first.drawer_expenses_vnd, second.drawer_expenses_vnd) == (5_000, 0)

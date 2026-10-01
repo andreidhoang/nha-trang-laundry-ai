@@ -64,11 +64,13 @@ from nha_trang_laundry_domain.settlement import QuotedTotal
 from nha_trang_laundry_domain.unclaimed import (
     ContactChannel,
     ContactOutcome,
+    StorageClock,
+    StorageHold,
     StoragePolicy,
-    awaiting_pickup,
     days_waiting,
     order_storage_fee,
     shop_date,
+    storage_clock,
 )
 
 from nha_trang_laundry_db.consent_egress import (
@@ -83,7 +85,11 @@ from nha_trang_laundry_db.orders import OrderNotVisibleError
 from nha_trang_laundry_db.personal_data import open_phone
 from nha_trang_laundry_db.promise_policy import read_published_turnaround_policy
 from nha_trang_laundry_db.service_messaging import read_published_messaging_policy
-from nha_trang_laundry_db.storage_fees import read_published_storage_policy
+from nha_trang_laundry_db.storage_fees import (
+    STORAGE_HOLDS_SQL,
+    holds_from_column,
+    read_published_storage_policy,
+)
 from nha_trang_laundry_db.store_access import is_store_member, require_store_membership
 from nha_trang_laundry_db.unclaimed import (
     AWAITING_PICKUP_SQL,
@@ -188,7 +194,8 @@ class ReminderEgress:
 # --- the facts of one order -----------------------------------------------------------------------
 
 #: One waiting order's facts, for the text route and the attempt check. `%s` is the order id.
-_ORDER_FACTS_SQL: Final = """
+_ORDER_FACTS_SQL: Final = (
+    """
     SELECT o.store_id, o.commercial_status, o.production_status, o.fulfillment_mode,
            o.self_collection_recorded, o.production_ready_at, o.created_at, o.bound_contact_id,
            o.customer_id, t.ticket_number, t.issued_on,
@@ -201,7 +208,10 @@ _ORDER_FACTS_SQL: Final = """
            (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = o.id),
            EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id),
            (SELECT coalesce(sum(p.amount_vnd), 0) FROM order_payments p WHERE p.order_id = o.id),
-           st.name
+           st.name, o.production_resume_status,
+    """
+    + STORAGE_HOLDS_SQL
+    + """
     FROM orders o
     JOIN quote_revisions r
       ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
@@ -210,6 +220,7 @@ _ORDER_FACTS_SQL: Final = """
     LEFT JOIN customers cu ON cu.id = o.customer_id AND cu.store_id = o.store_id
     WHERE o.id = %s
 """
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +240,9 @@ class _OrderFacts:
     waived: bool
     paid_vnd: int
     shop_name: str | None
+    #: `DEC-047`: whether the fee's day count runs, and the hold bookkeeping it is counted with.
+    clock: StorageClock = StorageClock.STOPPED
+    holds: tuple[StorageHold, ...] = ()
 
 
 def _order_facts(cursor: Any, order_id: UUID) -> _OrderFacts | None:
@@ -236,15 +250,17 @@ def _order_facts(cursor: Any, order_id: UUID) -> _OrderFacts | None:
     row = cursor.fetchone()
     if row is None:
         return None
+    clock = storage_clock(
+        commercial=CommercialOrderStatus(str(row[1])),
+        production=ProductionStatus(str(row[2])),
+        resume_to=None if row[19] is None else ProductionStatus(str(row[19])),
+        fulfillment_mode=FulfillmentMode(str(row[3])),
+        self_collection_recorded=bool(row[4]),
+    )
     return _OrderFacts(
         order_id=order_id,
         store_id=_uuid(row[0]),
-        awaiting=awaiting_pickup(
-            commercial=CommercialOrderStatus(str(row[1])),
-            production=ProductionStatus(str(row[2])),
-            fulfillment_mode=FulfillmentMode(str(row[3])),
-            self_collection_recorded=bool(row[4]),
-        ),
+        awaiting=clock is StorageClock.RUNNING,
         ready_at=row[5] if isinstance(row[5], datetime) else None,
         created_at=row[6],
         bound_contact_id=_uuid(row[7]),
@@ -257,13 +273,16 @@ def _order_facts(cursor: Any, order_id: UUID) -> _OrderFacts | None:
         waived=bool(row[16]),
         paid_vnd=int(str(row[17])),
         shop_name=None if row[18] is None else str(row[18]),
+        clock=clock,
+        holds=holds_from_column(row[20]),
     )
 
 
 def _remaining(
     policy: StoragePolicy | None,
     *,
-    awaiting: bool,
+    clock: StorageClock,
+    holds: tuple[StorageHold, ...],
     ready_at: datetime | None,
     as_of: datetime,
     quoted_total: int | None,
@@ -276,13 +295,15 @@ def _remaining(
 
     fee = order_storage_fee(
         policy,
-        awaiting=awaiting,
+        clock=clock,
         ready_at=ready_at,
         as_of=as_of,
         quoted_total_vnd=quoted_total,
         waived=waived,
         settled=settled,
         fixed_vnd=fixed_vnd,
+        paid_vnd=paid_vnd,
+        holds=holds,
     )
     return payment_position(
         owed_charges(QuotedTotal(quoted_total, quoted_total), storage_fee_vnd=fee.amount_vnd),
@@ -542,7 +563,9 @@ class PickupReminderRepository:
                     phone_last4=None if erased else detail["phone_last4"],
                     remaining_vnd=_remaining(
                         policy,
-                        awaiting=True,
+                        # Every due row waits for pickup; lifted holds do not count (DEC-047).
+                        clock=StorageClock.RUNNING,
+                        holds=detail["holds"],
                         ready_at=ready_at,
                         as_of=as_of,
                         quoted_total=detail["quoted_total"],
@@ -613,7 +636,8 @@ class PickupReminderRepository:
                     days_waiting=days_waiting(facts.ready_at, as_of),
                     remaining_vnd=_remaining(
                         policy,
-                        awaiting=facts.awaiting,
+                        clock=facts.clock,
+                        holds=facts.holds,
                         ready_at=facts.ready_at,
                         as_of=as_of,
                         quoted_total=facts.quoted_total,
@@ -667,7 +691,10 @@ def _details(cursor: Any, order_ids: list[UUID]) -> dict[UUID, dict[str, Any]]:
                (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = o.id),
                EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id),
                (SELECT coalesce(sum(p.amount_vnd), 0) FROM order_payments p
-                 WHERE p.order_id = o.id)
+                 WHERE p.order_id = o.id),
+               """
+        + STORAGE_HOLDS_SQL
+        + """
         FROM orders o
         JOIN quote_revisions r
           ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
@@ -695,6 +722,7 @@ def _details(cursor: Any, order_ids: list[UUID]) -> dict[UUID, dict[str, Any]]:
             "fixed_vnd": None if row[13] is None else int(str(row[13])),
             "waived": bool(row[14]),
             "paid_vnd": int(str(row[15])),
+            "holds": holds_from_column(row[16]),
         }
     return found
 

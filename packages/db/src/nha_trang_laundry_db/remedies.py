@@ -117,6 +117,8 @@ REWASH_COMMANDED = "REWASH_COMMANDED"
 CREDIT_EXECUTED = "CREDIT_EXECUTED"
 REMEDY_PROPOSAL_RECORDED = "REMEDY_PROPOSAL_RECORDED"
 REMEDY_CREDIT_REDEEMED = "REMEDY_CREDIT_REDEEMED"
+#: `DEC-045` (`0066`): the refusal for a credit voided with the cancellation of its order.
+REMEDY_CREDIT_VOIDED_REFUSAL = "REMEDY_CREDIT_VOIDED"
 
 
 class RemedyAuthorizationError(PermissionError):
@@ -1049,7 +1051,7 @@ class RemedyCreditRepository:
             )
             cursor.execute(
                 """
-                SELECT amount_vnd, policy_version_id, redeemed_at, row_version, store_id
+                SELECT amount_vnd, policy_version_id, redeemed_at, row_version, store_id, voided_at
                 FROM remedy_credits WHERE id = %s AND store_id = %s
                 FOR UPDATE
                 """,
@@ -1068,6 +1070,13 @@ class RemedyCreditRepository:
                     "this credit has already been redeemed",
                     reason_code=RemedyRefusal.REMEDY_CREDIT_ALREADY_REDEEMED.value,
                     authority="DEC-015",
+                )
+            if credit_row[5] is not None:
+                # DEC-045: voided with the cancellation of the order it was issued from.
+                raise RemedyStateError(
+                    "this credit was voided when its order was cancelled without charge",
+                    reason_code=REMEDY_CREDIT_VOIDED_REFUSAL,
+                    authority="DEC-045",
                 )
             container = QuoteRepository.find_container_by_id(
                 cursor, command.store_id, command.quote_id
@@ -1117,10 +1126,16 @@ class RemedyCreditRepository:
             # have run in autocommit, where its lock ended with the statement; an order that spent
             # the credit in between must not be followed by a reservation of it.
             cursor.execute(
-                "SELECT redeemed_at FROM remedy_credits WHERE id = %s FOR UPDATE",
+                "SELECT redeemed_at, voided_at FROM remedy_credits WHERE id = %s FOR UPDATE",
                 (command.credit_id,),
             )
             row = cursor.fetchone()
+            if row is not None and row[1] is not None:
+                raise RemedyStateError(
+                    "this credit was voided when its order was cancelled without charge",
+                    reason_code=REMEDY_CREDIT_VOIDED_REFUSAL,
+                    authority="DEC-045",
+                )
             if row is None or row[0] is not None:
                 raise RemedyStateError(
                     "this credit has already been redeemed",
@@ -1192,7 +1207,7 @@ def read_reserved_remedy_credits(
     cursor.execute(
         """
         SELECT id FROM remedy_credits
-        WHERE id = ANY(%s) AND store_id = %s AND redeemed_at IS NULL
+        WHERE id = ANY(%s) AND store_id = %s AND redeemed_at IS NULL AND voided_at IS NULL
         """,
         ([credit.credit_id for credit in credits], store_id),
     )
@@ -1242,7 +1257,7 @@ def spend_reserved_remedy_credits(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT store_id, amount_vnd, policy_version_id, redeemed_at, row_version
+                SELECT store_id, amount_vnd, policy_version_id, redeemed_at, row_version, voided_at
                 FROM remedy_credits WHERE id = %s
                 FOR UPDATE
                 """,
@@ -1253,6 +1268,14 @@ def spend_reserved_remedy_credits(
             raise RemedyStateError(
                 "the quote carries a remedy credit this store never issued",
                 reason_code="REMEDY_CREDIT_NOT_FOUND",
+            )
+        if row[5] is not None:
+            # DEC-045: the order that issued it was cancelled without charge, so it was voided.
+            raise RemedyStateError(
+                "this quote carries a remedy credit that was voided when its order was cancelled; "
+                "price the bag again and the credit will be released from it",
+                reason_code=REMEDY_CREDIT_VOIDED_REFUSAL,
+                authority="DEC-045",
             )
         if row[3] is not None:
             raise RemedyStateError(
@@ -2095,6 +2118,7 @@ def _optional_datetime(value: object) -> datetime | None:
 __all__ = [
     "CREDIT_EXECUTED",
     "REMEDY_CREDIT_REDEEMED",
+    "REMEDY_CREDIT_VOIDED_REFUSAL",
     "REMEDY_PROPOSAL_RECORDED",
     "REMEDY_ROLES",
     "REWASH_COMMANDED",

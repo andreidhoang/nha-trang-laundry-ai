@@ -5012,3 +5012,21 @@ details.more-denied[open] > .more-denied__summary::after {
   background: var(--info-bg);
   color: var(--info-fg);
 }
+
+
+/* ===== MONEY-LIFECYCLE-009 (slice A, round 9): what a cancellation does to remedy credits ===== */
+.remedy-money__lines {
+  margin: 0;
+  padding-left: var(--space-4);
+  display: grid;
+  gap: var(--space-1);
+}
+
+.remedy-money__lines li {
+  overflow-wrap: anywhere;
+}
+
+.remedy-money__refund {
+  margin: 0;
+  font-weight: 600;
+}

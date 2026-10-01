@@ -379,8 +379,15 @@ def test_the_export_query_version_is_pinned_to_the_rule_it_names() -> None:
     # so -- and an order on account is named as owed, not paid (`PAYMENT-002`). v3
     # (`7b7e01eef9314061`) read the quoted total alone and refused a fee-settled day as
     # inconsistent.
-    assert EXPORT_QUERY.identifier == "store-day-orders-export-v4"
-    assert EXPORT_QUERY.label == "store-day-orders-export-v4:c2ce1e9e6379d784"
+    #
+    # v5 (round 9, MONEY-LIFECYCLE-009): the fee in `owed_vnd` is held where it stood while the
+    # order is on hold (`DEC-047`) and never below the part already paid, and a refund's remedy
+    # netting (`DEC-045`) is its own column -- the signed sentence about `owed_vnd` said the fee
+    # applied only while the laundry waited, which stopped being true. v4 is retired: its label is
+    # pinned here so a later edit cannot quietly bring it back.
+    assert EXPORT_QUERY.identifier == "store-day-orders-export-v5"
+    assert EXPORT_QUERY.label == "store-day-orders-export-v5:85a2da5b6016d97f"
+    assert EXPORT_QUERY.label != "store-day-orders-export-v4:c2ce1e9e6379d784"
 
 
 # --- refusals -----------------------------------------------------------------------------------

@@ -57,6 +57,7 @@ import { errorNotice } from "../ui/components.js";
 import { clock, serviceName, unitShort } from "../ui/quoting.js";
 import { actionBar, button, infoButton, page, skeletonRows } from "../ui/kit.js";
 // UNCLAIMED-001 (DEC-036): the storage rule's one line, once the owner published it.
+import { receiptCancellationMoney } from "../ui/remedyMoney.js";
 import { readStorage, receiptStorageLine, storageCharge } from "../ui/unclaimed.js";
 // The same helper the order list and page use, so the paper cannot word the ticket differently.
 import { orderName } from "./orders.js";
@@ -194,6 +195,8 @@ function lineAmount(line) {
  *   once anything is paid -- or / Ghi công nợ, once the order left on the customer's account
  * @property {string} closing
  * @property {string|null} storage the storage rule's one line, once published (`DEC-036`)
+ * @property {{refund: string|null, netted: string|null, lines: string[]}|null} remedy what the
+ *   cancellation did to the remedy credits (`DEC-045`/`DEC-046`), the server's figures and words
  * @property {any|null} qr the server's VietQR while money is owed (`VIETQR-001`), else null
  *
  * @param {any} order an `OrderViewResponse`
@@ -257,6 +260,8 @@ function receiptModel(order, detail, catalog, storage = null, qr = null) {
         : receiptStorageLine(storage),
     // VIETQR-001: only a QR the server built (no refusal); the amount is the server's remaining.
     qr: qr && !qr.refusal && Array.isArray(qr.modules) ? qr : null,
+    // MONEY-LIFECYCLE-009: a cancelled order's slip says what went back and what was netted.
+    remedy: receiptCancellationMoney(order),
   };
 }
 
@@ -277,6 +282,9 @@ export function receiptText(model) {
     `Tổng cộng: ${model.total}`,
     model.paid ? `Đã trả: ${model.paid.paid}` : null,
     model.paid ? `${model.paid.remainingLabel}: ${model.paid.remaining}` : null,
+    model.remedy?.refund ? `Đã hoàn: ${model.remedy.refund}` : null,
+    model.remedy?.netted ? `Trừ khoản khách đã dùng: ${model.remedy.netted}` : null,
+    ...(model.remedy?.lines || []),
     `Nhận đơn: ${model.taken}`,
     `Mã đơn: ${model.reference}`,
     model.closing,
@@ -372,6 +380,17 @@ function paper(model, linesFallback) {
           { class: "receipt-paper__adjustments", dataPaid: "true" },
           row("Đã trả", model.paid.paid, { field: "paid" }),
           row(model.paid.remainingLabel, model.paid.remaining, { field: "remaining" }),
+        )
+      : null,
+    model.remedy
+      ? h(
+          "div",
+          { class: "receipt-paper__adjustments", dataRemedyMoney: "true" },
+          model.remedy.refund ? row("Đã hoàn", model.remedy.refund, { field: "refunded" }) : null,
+          model.remedy.netted
+            ? row("Trừ khoản khách đã dùng", model.remedy.netted, { field: "netted" })
+            : null,
+          model.remedy.lines.map((line) => h("p", { class: "receipt-paper__note" }, line)),
         )
       : null,
     model.qr

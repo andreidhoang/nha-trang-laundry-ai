@@ -69,6 +69,7 @@ import {
   stepVi,
 } from "../core/i18n.js";
 import { modeBadge, orderProgress, orderStatus } from "../core/orderStatus.js";
+import { cancellationMoneyBlock } from "../ui/remedyMoney.js";
 import { can } from "../core/rbac.js";
 import { navigate } from "../core/router.js";
 import { principal, storeId } from "../core/session.js";
@@ -207,6 +208,24 @@ const REASON_STEPS = {
 /** Steps that end the visit; offered straight away in a sheet's success state when primary. */
 const CLOSING = new Set(["HAND_OVER", "COMPLETE"]);
 
+// --- MONEY-LIFECYCLE-009 (M1/A2): Tất toán ---------------------------------------------------
+
+/** What "Thu tiền" reads when nothing is left to take: 0 ₫ settles the order. */
+const SETTLE_LABEL = "Tất toán";
+
+/**
+ * Whether the order's ledger already covers everything it owes while its balance still reads
+ * partly paid -- the storage fee fell after a part payment covered some of it (a waiver, a hold,
+ * a rewash, a withdrawn policy). Then 0 ₫ settles it on the payments route and the goods may
+ * leave. Both figures are the server's; this compares them, it never computes money.
+ *
+ * @param {any} order
+ * @returns {boolean}
+ */
+function settlesWithoutMoney(order) {
+  return order?.balance === "PARTIALLY_PAID" && order?.remaining_vnd === 0;
+}
+
 /**
  * `PAYMENT-001` / `DEC-035`: how the counter takes money. A policy statement bound to the decision
  * register (`console-disclosures-v1.yaml`, POLICY_BOUND); its text is the slot and must not be
@@ -279,6 +298,10 @@ function acquisitionSourceText(value) {
 function creditItem(credit) {
   const id = String(credit.credit_id || "");
   const unused = credit.status === "UNUSED";
+  // MONEY-LIFECYCLE-009: voided with the cancellation of this order (DEC-045), or a credit issued
+  // again because an order that spent the earlier one was cancelled without charge (DEC-046).
+  const voided = credit.status === "VOIDED";
+  const again = credit.reissue_of ? " · cấp lại" : "";
   return h(
     "li",
     { class: "rows__item credit-row", dataCreditId: id, dataCreditStatus: String(credit.status) },
@@ -289,15 +312,17 @@ function creditItem(credit) {
       statusPill(
         unused
           ? { state: "ok", text: "Chưa dùng", token: "UNUSED" }
-          : { state: "neutral", text: "Đã dùng", token: String(credit.status || UNKNOWN) },
+          : voided
+            ? { state: "neutral", text: "Đã huỷ cùng đơn", token: "VOIDED" }
+            : { state: "neutral", text: "Đã dùng", token: String(credit.status || UNKNOWN) },
       ),
     ),
     h(
       "p",
       { class: "credit-row__meta" },
-      `${CREDIT_KIND_LABEL[credit.kind] || String(credit.kind || UNKNOWN)} · ` +
+      `${CREDIT_KIND_LABEL[credit.kind] || String(credit.kind || UNKNOWN)}${again} · ` +
         `phát hành ${dateTime(credit.issued_at)}` +
-        (unused ? "" : ` · dùng ${dateTime(credit.redeemed_at)}`),
+        (unused ? "" : voided ? ` · huỷ ${dateTime(credit.voided_at)}` : ` · dùng ${dateTime(credit.redeemed_at)}`),
     ),
     unused
       ? h("div", { class: "credit-row__code" }, copyable({ value: id }))
@@ -537,7 +562,9 @@ export function render_(context) {
       : order.balance === "REFUNDED"
         ? "Đã hoàn tiền cho khách."
         : partly
-          ? "Khách trả đủ phần còn lại thì mới giao đồ."
+          ? settlesWithoutMoney(order)
+            ? "Khách đã trả đủ — bấm “Tất toán” rồi giao đồ."
+            : "Khách trả đủ phần còn lại thì mới giao đồ."
           : order.balance === "UNPAID"
             ? cancelled
               ? "Đơn đã huỷ — không thu tiền."
@@ -608,6 +635,8 @@ export function render_(context) {
       }),
       split,
       ledger,
+      // MONEY-LIFECYCLE-009 (DEC-045/046): what the cancellation did to the remedy credits.
+      cancellationMoneyBlock(order, "DONE"),
       take ? stepControl(take) : null,
     );
   }
@@ -902,7 +931,8 @@ export function render_(context) {
    */
   function stepControl(entry, options = {}) {
     const step = String(entry.step);
-    const label = stepVi(step);
+    const label =
+      step === "TAKE_PAYMENT" && settlesWithoutMoney(current) ? SETTLE_LABEL : stepVi(step);
     const variant = DESTRUCTIVE.has(step) ? "danger" : options.primary ? "primary" : "secondary";
     let control;
     if (step === "HOLD") {
@@ -926,7 +956,10 @@ export function render_(context) {
           closeMore();
           const opener = /** @type {HTMLButtonElement} */ (event.currentTarget);
           if (step === "RECEIVE") openReceive(entry);
-          else if (step === "TAKE_PAYMENT") openPayment();
+          else if (step === "TAKE_PAYMENT") {
+            if (settlesWithoutMoney(current)) openSettle();
+            else openPayment();
+          }
           else if (step === "COLLECT") openCollect();
           else if (step === "DELIVERY_PICKUP" || step === "DELIVERY_RETURN") openLeg(entry);
           else if (step === "CANCEL") openCancel(entry);
@@ -1578,6 +1611,102 @@ export function render_(context) {
     drawTransfer();
   }
 
+  /**
+   * Tất toán (`MONEY-LIFECYCLE-009`, M1/A2): the ledger already covers everything the order owes
+   * but the balance still reads partly paid. 0 ₫ on the payments route settles it -- no money is
+   * taken and no ledger row is written -- with "Khách lấy đồ luôn" when the server says the goods
+   * may be handed over in the same press. Every figure shown is the server's.
+   */
+  function openSettle() {
+    const order = current;
+    if (!order) return;
+    const alertHost = h("div");
+    let handOver = order.payment_may_hand_over === true;
+    const tick =
+      order.payment_may_hand_over === true
+        ? h(
+            "label",
+            { class: "check-line", for: "settle-hand-over" },
+            h("input", {
+              type: "checkbox",
+              id: "settle-hand-over",
+              checked: handOver,
+              onChange: (event) => {
+                handOver = /** @type {HTMLInputElement} */ (event.target).checked;
+              },
+            }),
+            h("span", null, "Khách lấy đồ luôn"),
+          )
+        : null;
+    const submit = button({
+      label: SETTLE_LABEL,
+      variant: "primary",
+      block: true,
+      network: true,
+      id: "settle-submit",
+      onClick: () => void send(),
+    });
+
+    async function send() {
+      // The order as it stands now, not as it stood when the sheet opened: after "Đơn vừa đổi —
+      // tải lại" the next press carries the version just read (review C4's rule, from the start).
+      const now = current || order;
+      const body = {
+        amount_vnd: 0,
+        method: "TIEN_MAT",
+        transfer_seen: false,
+        bank_ref_last: null,
+        collected_by_customer: handOver && now.payment_may_hand_over === true,
+      };
+      render(alertHost);
+      await pressing(submit, async () => {
+        try {
+          const recorded = await request(`/internal/v1/orders/${id}/payments`, {
+            method: "POST",
+            body,
+            ifMatch: now.row_version,
+            idempotencyKey: keyFor(`settle|${now.row_version}|${JSON.stringify(body)}`),
+          });
+          releaseKey();
+          toast(`Đã tất toán · ${orderName(now)}`);
+          const view = await reread();
+          successState(
+            made,
+            "Đã tất toán — không thu thêm tiền.",
+            recorded.self_collection_recorded
+              ? "Đã ghi khách nhận đồ."
+              : "Khi đưa đồ cho khách, bấm “Khách đã nhận đồ”.",
+            view,
+          );
+        } catch (error) {
+          show(alertHost, refusal(error));
+        }
+      });
+    }
+
+    const made = openFresh({
+      id: "order-settle",
+      title: SETTLE_LABEL,
+      body: h(
+        "div",
+        { class: "stack" },
+        moneyHero({
+          label: "Còn lại",
+          amount: money(order.remaining_vnd),
+          caption: `Tổng ${money(order.owed_vnd)} · đã trả ${money(order.paid_vnd)}`,
+          state: "ok",
+        }),
+        inlineAlert({
+          state: "ok",
+          title: "Khách đã trả đủ — bấm “Tất toán”, không thu thêm tiền.",
+        }),
+        tick,
+        alertHost,
+      ),
+      actions: gated(submit, writeVerdict),
+    });
+  }
+
   /** Khách đã nhận đồ: the pickup of an order paid in advance at the counter (`DEC-032`). */
   function openCollect() {
     const order = current;
@@ -1881,6 +2010,8 @@ export function render_(context) {
               ),
             )
           : h("p", null, "Khách đổi ý trước khi tiệm làm gì với đồ: đơn được huỷ ngay."),
+        // MONEY-LIFECYCLE-009 (DEC-045/046): stated before the press, in the server's words.
+        cancellationMoneyBlock(current, "PREVIEW"),
         alertHost,
       ),
       actions: gated(confirm, writeVerdict),
@@ -1965,6 +2096,8 @@ export function render_(context) {
         }),
         h("p", { class: "hint" }, spec.note),
         machineHost,
+        // Không nhận đồ ends the order without charge: the same statement as Huỷ đơn.
+        DESTRUCTIVE.has(step) ? cancellationMoneyBlock(current, "PREVIEW") : null,
         alertHost,
       ),
       actions: gated(confirm, writeVerdict),

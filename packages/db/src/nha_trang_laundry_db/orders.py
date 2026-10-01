@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
 from uuid import UUID, uuid4
@@ -47,9 +47,22 @@ from nha_trang_laundry_domain.payments import (
 )
 from nha_trang_laundry_domain.promise import PromiseChoice
 from nha_trang_laundry_domain.settlement import QuotedTotal, SettlementShape
-from nha_trang_laundry_domain.unclaimed import awaiting_pickup, order_storage_fee
+from nha_trang_laundry_domain.unclaimed import (
+    HoldMove,
+    hold_move,
+    order_storage_fee,
+    storage_clock,
+)
 from nha_trang_laundry_domain.vietqr import OrderIdTransferCode, TicketTransferCode
 
+from nha_trang_laundry_db.cancellation_money import (
+    CancellationMoneyError,
+    CancellationMoneyView,
+    plan_cancellation_money,
+    plan_document,
+    read_order_cancellation_money,
+    write_cancellation_credit_moves,
+)
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.payments import PAYMENT_VIEW_COLUMNS, PaymentView, payment_views
@@ -64,7 +77,11 @@ from nha_trang_laundry_db.promise_policy import (
 from nha_trang_laundry_db.quotes import PRICED_FULFILLMENT_MODE_SQL
 from nha_trang_laundry_db.remedies import RemedyStateError, spend_reserved_remedy_credits
 from nha_trang_laundry_db.shop_capture import apply_cycle_effect, require_cycle_machine
-from nha_trang_laundry_db.storage_fees import STORAGE_VIEW_COLUMNS, policy_from_column
+from nha_trang_laundry_db.storage_fees import (
+    STORAGE_VIEW_COLUMNS,
+    holds_from_column,
+    policy_from_column,
+)
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -333,6 +350,10 @@ class OrderView:
     #: Whether the payment that settles the order may also record that the customer takes the
     #: goods now (`order_steps.payment_may_hand_over`), so the console knows to offer that tick.
     payment_may_hand_over: bool = False
+    #: `MONEY-LIFECYCLE-009` (`DEC-045`, `DEC-046`): what a cancellation without charge does, or
+    #: did, to the remedy credits on this order -- on the read by id only, `None` when no credit
+    #: touches the order (the board never carries it).
+    cancellation_money: CancellationMoneyView | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,7 +406,8 @@ _PROMISE_VIEW_COLUMNS: Final = """,
 _VIEW_PROMISED_READY_AT: Final = 27
 #: `PAYMENT-001`: the payment ledger's sum and rows, after the customer's three (35 and 36).
 _VIEW_PAID_VND: Final = 35
-#: `UNCLAIMED-001`: the fixed storage fee, the waiver flag and the storage policy (37 to 39).
+#: `UNCLAIMED-001`: the fixed storage fee, the waiver flag and the storage policy (37 to 39), and
+#: `DEC-047`'s holds of finished laundry (40).
 _VIEW_STORAGE_FEE_FIXED: Final = 37
 #: `CUSTOMER-001` (columns 32-34, after the promise's five): the customer the order was taken for,
 #: read live. The name is personal data an erasure removes, so it is never copied into a stored
@@ -1049,6 +1071,28 @@ class OrderRepository:
             and next_state.balance is OrderBalanceStatus.REFUNDED
             else None
         )
+        # MONEY-LIFECYCLE-009 (M3, M7): `DEC-045` then `DEC-046`. A cancellation charges the
+        # customer nothing, so an unspent credit issued from this order is voided, one spent
+        # elsewhere is netted from the refund (never below 0), and a credit this bill spent is
+        # reissued. Read and locked under the order lock the caller holds, before anything is
+        # written; carried out in this transaction after the order's own write.
+        remedy_money = (
+            plan_cancellation_money(
+                connection,
+                order_id=command.order_id,
+                resolution=command.custody_resolution,
+                refundable_vnd=0 if refund is None else refund.amount_vnd,
+            )
+            if next_state.commercial is CommercialOrderStatus.CANCELLED
+            and current.commercial is not CommercialOrderStatus.CANCELLED
+            else None
+        )
+        if refund is not None and remedy_money is not None and remedy_money.plan.netted_vnd:
+            refund = replace(
+                refund,
+                amount_vnd=remedy_money.plan.refund_vnd,
+                netted_remedy_vnd=remedy_money.plan.netted_vnd,
+            )
         closed_at = (
             occurred_at if next_state.commercial is CommercialOrderStatus.COMPLETED else None
         )
@@ -1106,20 +1150,37 @@ class OrderRepository:
             resume_to=next_state.production_resume_status,
             moment=occurred_at,
         )
+        # DEC-047: a hold of finished laundry pauses the storage fee (a hold row begins); lifting
+        # it ends the row and the count continues. Only these two production moves write it.
+        storage_hold = (
+            hold_move(
+                before=current.production,
+                after=next_state.production,
+                resume_to=next_state.production_resume_status,
+            )
+            if command.production_target is not None
+            else None
+        )
 
         def mutation(cursor: Any) -> None:
             # The refund row first: `order_refund_consistency` refuses to let the order read
             # REFUNDED unless one exists, and the deferred check on `order_refunds` refuses to
             # commit one beside an order that is not cancelled. Either write alone fails.
             if refund is not None:
+                # DEC-045: `netted_remedy_vnd` is named only when something is netted (0 is the
+                # column's default), so a refund with nothing to net writes what it always wrote.
+                netted = refund.netted_remedy_vnd
                 cursor.execute(
                     """
                     INSERT INTO order_refunds (
                         id, order_id, store_id, settlement_id, refunded_amount_vnd,
                         direction, custody_resolution, attested_by_staff_id, refunded_at,
-                        created_at
-                    ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s)
-                    """,
+                        created_at"""
+                    + (", netted_remedy_vnd" if netted else "")
+                    + """
+                    ) VALUES (%s, %s, %s, %s, %s, 'TO_CUSTOMER', %s, %s, %s, %s"""
+                    + (", %s" if netted else "")
+                    + ")",
                     (
                         refund.refund_id,
                         command.order_id,
@@ -1130,6 +1191,7 @@ class OrderRepository:
                         command.principal.staff_user_id,
                         occurred_at,
                         occurred_at,
+                        *((netted,) if netted else ()),
                     ),
                 )
             cursor.execute(
@@ -1167,6 +1229,22 @@ class OrderRepository:
             )
             if cursor.fetchone() is None:
                 raise OrderStateError("STALE_VERSION: order transition lost concurrency race")
+            if storage_hold is HoldMove.START:
+                cursor.execute(
+                    """
+                    INSERT INTO order_storage_holds (id, order_id, store_id, held_at)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (uuid4(), command.order_id, _uuid(row[0]), occurred_at),
+                )
+            elif storage_hold is HoldMove.END:
+                cursor.execute(
+                    """
+                    UPDATE order_storage_holds SET resumed_at = %s
+                    WHERE order_id = %s AND resumed_at IS NULL
+                    """,
+                    (occurred_at, command.order_id),
+                )
             # A cancelled order ends its intake request with it. Without this the request stays
             # `SUBMITTED` in "Tiếp nhận gần đây" and reads as live intake for a customer who
             # has gone home -- the console cannot tell the difference, because until
@@ -1197,9 +1275,15 @@ class OrderRepository:
             step_note["rejection_reason"] = command.rejection_reason.value
         if step_note and command.step is not None:
             step_note["step"] = command.step.value
+        remedy_note: dict[str, object] = (
+            {"remedy_credits": plan_document(remedy_money.plan)}
+            if remedy_money is not None and remedy_money.plan.moves_remedy_money
+            else {}
+        )
         audit_details: dict[str, object] = {
             **({} if refund is None else {"refund": refund.document()}),
             **step_note,
+            **remedy_note,
         }
 
         commit_material_change(
@@ -1224,6 +1308,7 @@ class OrderRepository:
                         "custody_resolution": command.custody_resolution.value,
                         **({} if refund is None else {"refund": refund.document()}),
                         **step_note,
+                        **remedy_note,
                     }
                 ),
                 audit_action="ORDER_STATE_TRANSITION",
@@ -1261,6 +1346,20 @@ class OrderRepository:
             ),
             mutation,
         )
+        if remedy_money is not None and remedy_money.plan.moves_remedy_money:
+            try:
+                write_cancellation_credit_moves(
+                    connection,
+                    remedy_money,
+                    order_id=command.order_id,
+                    refund_id=None if refund is None else refund.refund_id,
+                    resolution=command.custody_resolution,
+                    actor_id=command.principal.staff_user_id,
+                    correlation_id=command.correlation_id,
+                    occurred_at=occurred_at,
+                )
+            except CancellationMoneyError as error:
+                raise OrderStateError(str(error)) from error
         if command.production_target is not None:
             # SHOP-CAPTURE-001 (DEC-038): into IN_PROCESS opens the order's wash cycle, into
             # QUALITY_CHECK closes it -- in this transaction, as its own WASH_CYCLE aggregate, so
@@ -1551,7 +1650,15 @@ class OrderRepository:
             store_id=_uuid(row[1]),
             error=OrderNotVisibleError,
         )
-        return _order_view_row(row)
+        view = _order_view_row(row)
+        money = read_order_cancellation_money(
+            cursor,
+            order_id=order_id,
+            commercial=view.commercial.value,
+            balance=view.balance.value,
+            paid_vnd=view.paid_vnd or 0,
+        )
+        return view if money is None else replace(view, cancellation_money=money)
 
 
 @dataclass(frozen=True)
@@ -1565,6 +1672,8 @@ class _CancellationRefund:
     store_id: UUID
     amount_vnd: int
     resolution: CustodyResolution
+    #: `DEC-045`: the face value of credits from this order already spent, taken off the refund.
+    netted_remedy_vnd: int = 0
 
     def document(self) -> dict[str, object]:
         return {
@@ -1573,6 +1682,7 @@ class _CancellationRefund:
             "refunded_amount_vnd": self.amount_vnd,
             "direction": "TO_CUSTOMER",
             "custody_resolution": self.resolution.value,
+            **({"netted_remedy_vnd": self.netted_remedy_vnd} if self.netted_remedy_vnd else {}),
         }
 
 
@@ -1784,9 +1894,10 @@ def _storage_fee_of_row(row: tuple[object, ...], facts: StepFacts, as_of: dateti
     quoted = facts.quoted_total
     return order_storage_fee(
         None if published is None else published.policy,
-        awaiting=awaiting_pickup(
+        clock=storage_clock(
             commercial=state.commercial,
             production=state.production,
+            resume_to=state.production_resume_status,
             fulfillment_mode=state.fulfillment_mode,
             self_collection_recorded=state.self_collection_recorded,
         ),
@@ -1800,6 +1911,10 @@ def _storage_fee_of_row(row: tuple[object, ...], facts: StepFacts, as_of: dateti
         waived=bool(row[_VIEW_STORAGE_FEE_FIXED + 1]),
         settled=facts.settlement_shape is not None,
         fixed_vnd=None if fixed is None else int(str(fixed)),
+        # MONEY-LIFECYCLE-009: never below the part of the fee the ledger already holds.
+        paid_vnd=int(str(row[_VIEW_PAID_VND])),
+        # DEC-047: a hold pauses the fee where it stood (`STORAGE_VIEW_COLUMNS`' last).
+        holds=holds_from_column(row[_VIEW_STORAGE_FEE_FIXED + 3]),
     ).amount_vnd
 
 

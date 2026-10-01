@@ -30,11 +30,13 @@ from nha_trang_laundry_domain.catalog import (
 from nha_trang_laundry_domain.unclaimed import (
     STORAGE_POLICY_CONFIG_TYPE,
     OrderStorageFee,
+    StorageClock,
+    StorageHold,
     StoragePolicy,
     StoragePolicyError,
-    awaiting_pickup,
     order_storage_fee,
     parse_storage_policy,
+    storage_clock,
     validate_storage_document,
 )
 
@@ -132,6 +134,19 @@ def published_from_document(
     )
 
 
+#: `DEC-047`: the order's holds of finished laundry since it was last ready, oldest first, as one
+#: JSON array of `[held_at, resumed_at]` -- what `unclaimed.counted_days` counts the fee's days
+#: from. Served by `order_storage_holds_order_idx`; `[]` for nearly every order.
+STORAGE_HOLDS_SQL: Final = """
+    (
+        SELECT coalesce(
+            jsonb_agg(jsonb_build_array(h.held_at, h.resumed_at) ORDER BY h.held_at), '[]'::jsonb
+        )
+        FROM order_storage_holds h
+        WHERE h.order_id = o.id AND h.held_at >= o.production_ready_at
+    )
+"""
+
 #: The latest published storage policy as one JSON value, for reads that want it beside each row.
 #: Uncorrelated, so PostgreSQL evaluates it once per statement (an InitPlan), not once per order.
 _POLICY_DOCUMENT_SQL: Final = f"""
@@ -147,12 +162,14 @@ _POLICY_DOCUMENT_SQL: Final = f"""
 """
 
 #: `UNCLAIMED-001`'s three columns on the order read, appended after the payment columns: the fee a
-#: settling payment fixed (null when none), whether the fee was waived, and the policy in force.
+#: settling payment fixed (null when none), whether the fee was waived, and the policy in force --
+#: then `DEC-047`'s holds of finished laundry (`STORAGE_HOLDS_SQL`).
 STORAGE_VIEW_COLUMNS: Final = f"""
     , (SELECT f.amount_vnd FROM order_storage_fees f WHERE f.order_id = o.id)
         AS storage_fee_fixed_vnd
     , EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id) AS storage_fee_waived
     , {_POLICY_DOCUMENT_SQL} AS storage_policy
+    , {STORAGE_HOLDS_SQL} AS storage_holds
 """
 
 
@@ -177,6 +194,24 @@ def read_published_storage_policy(cursor: Any) -> PublishedStoragePolicy | None:
     return None if row is None else policy_from_column(row[0])
 
 
+def holds_from_column(value: object) -> tuple[StorageHold, ...]:
+    """`STORAGE_HOLDS_SQL`'s JSON array as the domain's holds (`DEC-047`)."""
+
+    if not isinstance(value, list):
+        return ()
+    holds: list[StorageHold] = []
+    for item in value:
+        if not isinstance(item, list) or len(item) != 2 or item[0] is None:
+            raise ValueError("a stored storage hold is malformed")
+        holds.append(
+            StorageHold(
+                held_at=datetime.fromisoformat(str(item[0])),
+                resumed_at=None if item[1] is None else datetime.fromisoformat(str(item[1])),
+            )
+        )
+    return tuple(holds)
+
+
 @dataclass(frozen=True, slots=True)
 class LockedStorageFee:
     """What one order owes for storage at one instant, and the policy it was computed under."""
@@ -185,6 +220,10 @@ class LockedStorageFee:
     published: PublishedStoragePolicy | None
     awaiting: bool
     ready_at: datetime | None
+    #: `MONEY-LIFECYCLE-009`: the facts the fee was measured against, for the waiver's effect.
+    quoted_total_vnd: int | None = None
+    paid_vnd: int = 0
+    waived: bool = False
 
 
 def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> LockedStorageFee:
@@ -205,6 +244,12 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
                EXISTS (SELECT 1 FROM storage_fee_waivers w WHERE w.order_id = o.id),
         """
         + _POLICY_DOCUMENT_SQL
+        + """,
+               (SELECT coalesce(sum(p.amount_vnd), 0) FROM order_payments p
+                 WHERE p.order_id = o.id),
+               o.production_resume_status,
+        """
+        + STORAGE_HOLDS_SQL
         + """
         FROM orders o
         JOIN quote_revisions r
@@ -217,24 +262,89 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
     if row is None:
         raise LookupError("order is missing")
     published = policy_from_column(row[9])
-    awaiting = awaiting_pickup(
+    clock = storage_clock(
         commercial=CommercialOrderStatus(str(row[0])),
         production=ProductionStatus(str(row[1])),
+        resume_to=None if row[11] is None else ProductionStatus(str(row[11])),
         fulfillment_mode=FulfillmentMode(str(row[2])),
         self_collection_recorded=bool(row[3]),
     )
+    awaiting = clock is StorageClock.RUNNING
     ready_at = row[4] if isinstance(row[4], datetime) else None
+    quoted = None if row[5] is None else int(str(row[5]))
+    paid = int(str(row[10]))
     fee = order_storage_fee(
         None if published is None else published.policy,
-        awaiting=awaiting,
+        clock=clock,
         ready_at=ready_at,
         as_of=moment,
-        quoted_total_vnd=None if row[5] is None else int(str(row[5])),
+        quoted_total_vnd=quoted,
         waived=bool(row[8]),
         settled=bool(row[6]),
         fixed_vnd=None if row[7] is None else int(str(row[7])),
+        paid_vnd=paid,
+        holds=holds_from_column(row[12]),
     )
-    return LockedStorageFee(fee=fee, published=published, awaiting=awaiting, ready_at=ready_at)
+    return LockedStorageFee(
+        fee=fee,
+        published=published,
+        awaiting=awaiting,
+        ready_at=ready_at,
+        quoted_total_vnd=quoted,
+        paid_vnd=paid,
+        waived=bool(row[8]),
+    )
+
+
+def insert_fixed_storage_fee(
+    cursor: Any,
+    *,
+    order_id: UUID,
+    store_id: UUID,
+    settlement_id: UUID,
+    storage: LockedStorageFee,
+    amount_vnd: int,
+    fixed_by_staff_id: UUID,
+    fixed_at: datetime,
+) -> str:
+    """Fix the order's storage fee beside the settlement that pays it; return the basis (`0066`).
+
+    `ACCRUED` when the amount is the fee the published policy computed now -- the trace (days,
+    chargeable days, policy version) is recorded as `0060` always has. `ALREADY_PAID` when it is the
+    part of the fee the ledger had already covered before the fee fell (`MONEY-LIFECYCLE-009`):
+    there is no accrual behind that figure, so no trace is written for it.
+    """
+
+    trace = storage.fee.fee
+    accrued = (
+        trace is not None
+        and storage.published is not None
+        and trace.chargeable_days > 0
+        and trace.amount_vnd == amount_vnd
+    )
+    basis = "ACCRUED" if accrued else "ALREADY_PAID"
+    cursor.execute(
+        """
+        INSERT INTO order_storage_fees (
+            id, order_id, store_id, settlement_id, amount_vnd, days_waiting,
+            chargeable_days, policy_version_id, fixed_by_staff_id, fixed_at, basis
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            uuid4(),
+            order_id,
+            store_id,
+            settlement_id,
+            amount_vnd,
+            trace.days_waiting if accrued and trace is not None else None,
+            trace.chargeable_days if accrued and trace is not None else None,
+            storage.published.version_id if accrued and storage.published is not None else None,
+            fixed_by_staff_id,
+            fixed_at,
+            basis,
+        ),
+    )
+    return basis
 
 
 def _require_active_owner(cursor: Any, actor_id: UUID) -> None:
@@ -254,11 +364,14 @@ def _require_active_owner(cursor: Any, actor_id: UUID) -> None:
 
 
 __all__ = [
+    "STORAGE_HOLDS_SQL",
     "STORAGE_POLICY_UNPUBLISHED",
     "STORAGE_VIEW_COLUMNS",
     "LockedStorageFee",
     "PublishedStoragePolicy",
     "StoragePolicyAuthorizationError",
+    "holds_from_column",
+    "insert_fixed_storage_fee",
     "policy_from_column",
     "publish_storage_policy",
     "published_from_document",

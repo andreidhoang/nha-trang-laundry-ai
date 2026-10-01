@@ -265,7 +265,7 @@ CUSTOMER_CREDITS_SQL: Final = (
     JOIN remedy_proposals p ON p.id = c.remedy_proposal_id
     JOIN orders o ON o.id = c.issued_from_order_id AND o.store_id = c.store_id
     LEFT JOIN counter_tickets t ON t.id = o.bound_contact_id AND t.store_id = o.store_id
-    WHERE c.store_id = %(store)s AND c.redeemed_at IS NULL AND"""
+    WHERE c.store_id = %(store)s AND c.redeemed_at IS NULL AND c.voided_at IS NULL AND"""
     + _CUSTOMER_ORDERS
     + """
     ORDER BY c.issued_at DESC, c.id DESC

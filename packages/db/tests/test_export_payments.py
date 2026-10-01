@@ -199,6 +199,8 @@ def test_the_signed_statement_names_each_money_column_s_ledger_and_cut() -> None
         "paid_transfer_vnd",
         "paid_vnd",
         "remaining_vnd",
+        # MONEY-LIFECYCLE-009 (DEC-045): the part of a refund netted for a spent remedy credit.
+        "refund_netted_remedy_vnd",
     ]
     assert sorted(source.column for source in EXPORT_MONEY_SOURCES) == sorted(money_columns)
     ledgers = {source.column: source.ledger for source in EXPORT_MONEY_SOURCES}
@@ -227,6 +229,13 @@ def test_the_signed_statement_names_each_money_column_s_ledger_and_cut() -> None
         assert "order_payments.recorded_at" in text
         assert "chỉ có khi đơn đã trả đủ" in text
         assert "không phải theo lúc thu tiền" in text
+        # Round 9 (brief decision 5): `owed_vnd`'s sentence covers the fee held on hold and the
+        # part already paid; the retired wording said the fee applied only while the order waited.
+        assert "đơn đang tạm giữ thì phí dừng ở mức lúc bắt đầu giữ" in text
+        assert "phần phí khách đã trả" in text and "luôn được giữ nguyên" in text
+        assert "(phí đã chốt khi trả đủ hoặc khi ghi công nợ; đơn còn chờ thì phí tính tới" not in (
+            text
+        )
     # The tier-1 line: at most 25 words, beside a control.
     assert len(EXPORT_MONEY_LINE_VI.split()) <= 25
 

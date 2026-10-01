@@ -62,10 +62,12 @@ from nha_trang_laundry_db.remedies import (
 )
 from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
 
-#: `remedy_credits` has no expiry column and no state beyond "spent or not": a credit is unspent
-#: until `redeemed_at` is written by the order that spends it, and nothing else moves it.
+#: `remedy_credits` has no expiry column: a credit is unspent until `redeemed_at` is written by the
+#: order that spends it -- or, since `0066` (`DEC-045`), until the cancellation of the order it was
+#: issued from voids it, unspent.
 CREDIT_UNUSED: Final = "UNUSED"
 CREDIT_REDEEMED: Final = "REDEEMED"
+CREDIT_VOIDED: Final = "VOIDED"
 
 #: What the counter can do next with a recorded proposal, decided here from stored state so the
 #: console renders it rather than working it out (`REMEDY-OWNER-DECIDE-001`).
@@ -113,12 +115,17 @@ class OrderRemedyCredit:
     incident_id: UUID
     kind: str
     amount_vnd: int
-    #: `UNUSED` or `REDEEMED`. There is no expired state because the schema records no expiry.
+    #: `UNUSED`, `REDEEMED` or `VOIDED` (`DEC-045`). There is no expired state because the schema
+    #: records no expiry.
     status: str
     issued_at: datetime
     redeemed_at: datetime | None
     redeemed_quote_id: UUID | None
     redeemed_quote_revision: int | None
+    #: `DEC-045`: when the cancellation of this order voided the credit, unspent.
+    voided_at: datetime | None = None
+    #: `DEC-046`: the credit this one reissues, when an order that spent it was cancelled.
+    reissue_of: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,7 +251,7 @@ STORE_CREDITS_SQL: Final = """
     JOIN remedy_proposals p ON p.id = c.remedy_proposal_id
     JOIN orders o ON o.id = c.issued_from_order_id AND o.store_id = c.store_id
     LEFT JOIN counter_tickets t ON t.id = o.bound_contact_id AND t.store_id = o.store_id
-    WHERE c.store_id = %(store)s AND c.redeemed_at IS NULL
+    WHERE c.store_id = %(store)s AND c.redeemed_at IS NULL AND c.voided_at IS NULL
       AND (%(ticket)s::integer IS NULL OR t.ticket_number = %(ticket)s::integer)
     ORDER BY c.issued_at DESC, c.id DESC
     LIMIT %(limit)s
@@ -300,7 +307,8 @@ class RemedyReadRepository:
         cursor.execute(
             """
             SELECT c.id, c.remedy_proposal_id, p.incident_id, p.kind, c.amount_vnd, c.issued_at,
-                   c.redeemed_at, c.redeemed_quote_id, c.redeemed_quote_revision
+                   c.redeemed_at, c.redeemed_quote_id, c.redeemed_quote_revision,
+                   c.voided_at, c.reissue_of
             FROM remedy_credits c
             JOIN remedy_proposals p ON p.id = c.remedy_proposal_id
             WHERE c.store_id = %s AND c.issued_from_order_id = %s
@@ -319,11 +327,19 @@ class RemedyReadRepository:
                     incident_id=_uuid(row[2]),
                     kind=str(row[3]),
                     amount_vnd=int(row[4]),
-                    status=CREDIT_UNUSED if row[6] is None else CREDIT_REDEEMED,
+                    status=(
+                        CREDIT_VOIDED
+                        if row[9] is not None
+                        else CREDIT_UNUSED
+                        if row[6] is None
+                        else CREDIT_REDEEMED
+                    ),
                     issued_at=row[5],
                     redeemed_at=row[6],
                     redeemed_quote_id=None if row[7] is None else _uuid(row[7]),
                     redeemed_quote_revision=None if row[8] is None else int(row[8]),
+                    voided_at=row[9],
+                    reissue_of=None if row[10] is None else _uuid(row[10]),
                 )
                 for row in rows[:REMEDY_READ_LIMIT]
             ),
@@ -427,7 +443,7 @@ class RemedyReadRepository:
             JOIN staff_users s ON s.id = p.proposed_by
             LEFT JOIN approval_requests ar ON ar.id = p.approval_id
             LEFT JOIN approval_request_states st ON st.approval_request_id = p.approval_id
-            LEFT JOIN remedy_credits c ON c.remedy_proposal_id = p.id
+            LEFT JOIN remedy_credits c ON c.remedy_proposal_id = p.id AND c.reissue_of IS NULL
             WHERE p.store_id = %s AND p.incident_id = %s
             ORDER BY p.proposed_at, p.id
             LIMIT %s
@@ -482,7 +498,7 @@ class RemedyReadRepository:
             JOIN orders o ON o.id = p.order_id
             LEFT JOIN counter_tickets t ON t.id = o.bound_contact_id AND t.store_id = o.store_id
             LEFT JOIN customer_incident_evidence e ON e.incident_id = p.incident_id
-            LEFT JOIN remedy_credits c ON c.remedy_proposal_id = p.id
+            LEFT JOIN remedy_credits c ON c.remedy_proposal_id = p.id AND c.reissue_of IS NULL
             WHERE p.id = %s AND p.store_id = %s
             """,
             (proposal_id, store_id),
@@ -669,6 +685,7 @@ def _uuid(value: object) -> UUID:
 __all__ = [
     "CREDIT_REDEEMED",
     "CREDIT_UNUSED",
+    "CREDIT_VOIDED",
     "NEXT_STEP_AWAIT_OWNER",
     "NEXT_STEP_EXECUTE",
     "NEXT_STEP_NONE",

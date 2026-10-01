@@ -78,6 +78,9 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0063", "invoice_requests"),
         ("0064", "late_delivery_decisions"),
         ("0065", "reminder_steps"),
+        # Round 9, MONEY-LIFECYCLE-009: a fee part already paid stays owed-for (M1), a hold
+        # pauses the fee (DEC-047), a cancellation voids, nets or reissues credits (DEC-045/046).
+        ("0066", "money_lifecycle"),
         # Round 9 slice H (OPS-OBSERVABILITY-009, review P7); 0066-0069 are reserved for A, B, C, G.
         ("0070", "event_aggregate_id_indexes"),
     ]

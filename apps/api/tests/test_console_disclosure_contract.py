@@ -970,7 +970,12 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   ALREADY_DECIDED, LATE_DELIVERY_NOT_MEASURABLE, LATE_DELIVERY_REASON_REQUIRED) and two hints
     #   on Giao trễ cần xử lý; the FR-RPT-006 gap's three texts re-keyed (now the self-collect gap).
     # All four round-8 console slices merged: 554 + 3 + 21 + 5 + 6 = 589.
-    assert sum(counts.values()) == _registry()["total"] == 589
+    # MONEY-LIFECYCLE-009 (round 9, slice A): 589 + 1 = 590 -- one REASON_NOTE,
+    #   REMEDY_CREDIT_VOIDED (DEC-045: a credit voided with its order's cancellation);
+    #   NO_STORAGE_FEE_OWED reworded in place (its slot re-keyed, none retired). The two refusal
+    #   notes of round 9's first answer (CANCEL_AFTER_MONEY_REMEDY, CANCEL_WOULD_LOSE_SPENT_CREDIT)
+    #   are gone with the refusals: DEC-045/DEC-046 void, net and reissue instead.
+    assert sum(counts.values()) == _registry()["total"] == 590
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

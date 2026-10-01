@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 548
+  DESCRIPTIVE: 549
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 19
   SERVER_GATE: 15
-total: 589
+total: 590
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1627,10 +1627,10 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.NO_STORAGE_FEE_OWED:31dc56821231
+- slot_id: core/i18n.js#REASON_NOTE.NO_STORAGE_FEE_OWED:16e4658a55ea
   module: core/i18n.js
   key: REASON_NOTE.NO_STORAGE_FEE_OWED
-  text: Đơn này chưa có phí lưu kho nào để miễn (còn trong những ngày miễn phí).
+  text: Đơn này không còn phí lưu kho chưa trả để miễn (còn trong ngày miễn phí, hoặc khách đã trả).
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1804,6 +1804,14 @@ disclosures:
   module: core/i18n.js
   key: REASON_NOTE.INVOICE_CANCEL_NOTE_REQUIRED
   text: Lý do khác cần vài chữ ghi rõ (tối đa 200 ký tự).
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_CREDIT_VOIDED:6f3223eb2d0b
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_CREDIT_VOIDED
+  text: Khoản này đã bị huỷ khi đơn phát hành nó bị huỷ không thu tiền, nên không dùng được nữa.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

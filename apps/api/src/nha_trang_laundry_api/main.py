@@ -910,6 +910,27 @@ class PaymentViewResponse(BaseModel):
     recorded_by_name: str | None
 
 
+class CancellationMoneyResponse(BaseModel):
+    """`DEC-045` then `DEC-046` on one order, every figure and sentence the server's."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: `PREVIEW` before the order is cancelled, `DONE` after.
+    stage: Literal["PREVIEW", "DONE"]
+    #: What a refunding cancellation returns before netting (the ledger's sum); 0 when unpaid.
+    refundable_vnd: int = Field(ge=0)
+    #: The face value of credits from this order already spent elsewhere, taken off the refund.
+    netted_vnd: int = Field(ge=0)
+    #: What goes (or went) back to the customer.
+    refund_vnd: int = Field(ge=0)
+    #: Unspent credits from this order, voided with the cancellation.
+    voided_vnd: int = Field(ge=0)
+    #: Credits this order's bill spent, reissued at their face value.
+    reissued_vnd: int = Field(ge=0)
+    #: One sentence per credit movement, in the order they apply.
+    lines_vi: list[str]
+
+
 class OrderViewResponse(OrderResponse):
     """An order as the counter reads it: the command result's fields, plus what pickup needs.
 
@@ -984,6 +1005,10 @@ class OrderViewResponse(OrderResponse):
     payments: list[PaymentViewResponse] = Field(default_factory=list)
     payments_truncated: bool = False
     payment_may_hand_over: bool = False
+    #: `MONEY-LIFECYCLE-009` (`DEC-045`, `DEC-046`): on the read by id, when a remedy credit touches
+    #: the order -- what a cancellation without charge will do to it (`PREVIEW`, which the refund
+    #: sheet states before the press) or did (`DONE`, which the order page and the receipt print).
+    cancellation_money: CancellationMoneyResponse | None = None
 
 
 class ApprovalResponse(BaseModel):
@@ -5937,13 +5962,19 @@ class OrderRemedyCreditResponse(BaseModel):
     incident_id: UUID
     kind: str
     amount_vnd: int
-    #: `UNUSED` until an order spends it, then `REDEEMED`. There is no expired state: the schema
-    #: records no expiry for a credit, and this read does not invent one.
-    status: Literal["UNUSED", "REDEEMED"]
+    #: `UNUSED` until an order spends it, then `REDEEMED`; `VOIDED` when the cancellation of this
+    #: order voided it unspent (`DEC-045`). There is no expired state: the schema records no expiry
+    #: for a credit, and this read does not invent one.
+    status: Literal["UNUSED", "REDEEMED", "VOIDED"]
     issued_at: datetime
     redeemed_at: datetime | None
     redeemed_quote_id: UUID | None
     redeemed_quote_revision: int | None
+    #: `DEC-045`: when the cancellation of the order it was issued from voided it, unspent.
+    voided_at: datetime | None = None
+    #: `DEC-046`: the credit this one reissues, after an order that spent that one was cancelled
+    #: without charge.
+    reissue_of: UUID | None = None
 
 
 class OrderRemedyCreditsResponse(BaseModel):
@@ -5991,11 +6022,19 @@ def list_order_remedy_credits(
                 incident_id=credit.incident_id,
                 kind=credit.kind,
                 amount_vnd=credit.amount_vnd,
-                status="UNUSED" if credit.status == "UNUSED" else "REDEEMED",
+                status=(
+                    "VOIDED"
+                    if credit.status == "VOIDED"
+                    else "UNUSED"
+                    if credit.status == "UNUSED"
+                    else "REDEEMED"
+                ),
                 issued_at=credit.issued_at,
                 redeemed_at=credit.redeemed_at,
                 redeemed_quote_id=credit.redeemed_quote_id,
                 redeemed_quote_revision=credit.redeemed_quote_revision,
+                voided_at=credit.voided_at,
+                reissue_of=credit.reissue_of,
             )
             for credit in result.credits
         ],
@@ -6567,6 +6606,19 @@ def _order_view_response(view: OrderView, *, replayed: bool = False) -> OrderVie
         ],
         payments_truncated=view.payments_truncated,
         payment_may_hand_over=view.payment_may_hand_over,
+        cancellation_money=(
+            None
+            if view.cancellation_money is None
+            else CancellationMoneyResponse(
+                stage=view.cancellation_money.stage,
+                refundable_vnd=view.cancellation_money.refundable_vnd,
+                netted_vnd=view.cancellation_money.netted_vnd,
+                refund_vnd=view.cancellation_money.refund_vnd,
+                voided_vnd=view.cancellation_money.voided_vnd,
+                reissued_vnd=view.cancellation_money.reissued_vnd,
+                lines_vi=list(view.cancellation_money.lines_vi),
+            )
+        ),
     )
 
 
@@ -8643,14 +8695,32 @@ class StorageFeeResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    #: `FIXED`, `WAIVED`, `POLICY_UNPUBLISHED`, `NOT_WAITING`, `NO_SINGLE_TOTAL`, `FREE_PERIOD`,
-    #: `ACCRUING`.
+    #: `FIXED`, `ALREADY_PAID`, `WAIVED`, `POLICY_UNPUBLISHED`, `NOT_WAITING`, `NO_SINGLE_TOTAL`,
+    #: `FREE_PERIOD`, `ACCRUING`, `PAUSED` (`DEC-047`: on hold; the fee accrued up to the hold).
     status: str
     amount_vnd: int = Field(ge=0)
     chargeable_days: int | None
     fee_per_started_day_vnd: int | None
     cap_vnd: int | None
     capped: bool
+    #: `MONEY-LIFECYCLE-009`: the part of the fee the order's payments already cover. It stays
+    #: owed-for whatever happens to the fee later (`ALREADY_PAID` when it is more than the fee now).
+    already_paid_vnd: int = Field(default=0, ge=0)
+
+
+class WaiverEffectResponse(BaseModel):
+    """What *Miễn phí lưu kho* would do now (`MONEY-LIFECYCLE-009`, A3): stated before the press."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    waived_vnd: int = Field(ge=0)
+    #: The part of the fee already paid, kept: a waiver never lowers what is owed below what is
+    #: paid.
+    kept_vnd: int = Field(ge=0)
+    owed_after_vnd: int = Field(ge=0)
+    remaining_after_vnd: int = Field(ge=0)
+    #: Nothing is owed once waived, so the waiver settles the order in the same transaction.
+    settles: bool
 
 
 class DisposalVerdictResponse(BaseModel):
@@ -8770,6 +8840,8 @@ class OrderStorageResponse(BaseModel):
     attempts_truncated: bool
     disposal_verdict: DisposalVerdictResponse
     disposal: DisposalRecordResponse | None
+    #: `MONEY-LIFECYCLE-009` (A3): what the waiver would do now; null when nothing unpaid is left.
+    waiver_effect: WaiverEffectResponse | None = None
 
 
 class ContactAttemptRequest(StrictRequest):
@@ -8830,6 +8902,7 @@ def _storage_fee_response(fee: OrderStorageFee) -> StorageFeeResponse:
         fee_per_started_day_vnd=None if trace is None else trace.fee_per_started_day_vnd,
         cap_vnd=None if trace is None else trace.cap_vnd,
         capped=trace is not None and trace.capped,
+        already_paid_vnd=fee.already_paid_vnd,
     )
 
 
@@ -8985,6 +9058,15 @@ def read_order_storage(
         attempts_total=found.attempts_total,
         attempts_truncated=found.attempts_total > len(found.attempts),
         disposal_verdict=_disposal_verdict_response(found.disposal_verdict),
+        waiver_effect=None
+        if found.waiver_effect is None
+        else WaiverEffectResponse(
+            waived_vnd=found.waiver_effect.waived_vnd,
+            kept_vnd=found.waiver_effect.kept_vnd,
+            owed_after_vnd=found.waiver_effect.owed_after_vnd,
+            remaining_after_vnd=found.waiver_effect.remaining_after_vnd,
+            settles=found.waiver_effect.settles,
+        ),
         disposal=None
         if disposal is None
         else DisposalRecordResponse(

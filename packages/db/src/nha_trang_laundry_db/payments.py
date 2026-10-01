@@ -61,7 +61,7 @@ from nha_trang_laundry_db.settlement import (
     SettlementAuthorizationError,
     collected_by_for_shape,
 )
-from nha_trang_laundry_db.storage_fees import storage_fee_for_order
+from nha_trang_laundry_db.storage_fees import insert_fixed_storage_fee, storage_fee_for_order
 from nha_trang_laundry_db.store_access import require_store_membership
 from nha_trang_laundry_db.transactions import MaterialChange, OutboxEvent, commit_material_change
 
@@ -339,27 +339,19 @@ class PaymentRepository:
                     ),
                 )
             if fee_fixed:
-                # UNCLAIMED-001: the fee this settlement includes, fixed now and never again.
-                assert storage.fee.fee is not None and storage.published is not None
-                cursor.execute(
-                    """
-                    INSERT INTO order_storage_fees (
-                        id, order_id, store_id, settlement_id, amount_vnd, days_waiting,
-                        chargeable_days, policy_version_id, fixed_by_staff_id, fixed_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        uuid4(),
-                        command.order_id,
-                        store_id,
-                        settlement_id,
-                        storage_fee_vnd,
-                        storage.fee.fee.days_waiting,
-                        storage.fee.fee.chargeable_days,
-                        storage.published.version_id,
-                        command.principal.staff_user_id,
-                        recorded_at,
-                    ),
+                # UNCLAIMED-001: the fee this settlement includes, fixed now and never again --
+                # the policy's accrual, or (`MONEY-LIFECYCLE-009`) the part of it the ledger already
+                # held when the fee fell, which a 0 đồng settlement fixes (`0066`'s basis).
+                assert settlement_id is not None
+                insert_fixed_storage_fee(
+                    cursor,
+                    order_id=command.order_id,
+                    store_id=store_id,
+                    settlement_id=settlement_id,
+                    storage=storage,
+                    amount_vnd=storage_fee_vnd,
+                    fixed_by_staff_id=command.principal.staff_user_id,
+                    fixed_at=recorded_at,
                 )
             if payment_id is not None:
                 cursor.execute(

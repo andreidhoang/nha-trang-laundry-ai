@@ -40,6 +40,7 @@ from nha_trang_laundry_domain.settlement import QuotedTotal
 from nha_trang_laundry_domain.unclaimed import (
     DisposalRefusal,
     OrderStorageFee,
+    StorageClock,
     StorageFeeStatus,
     StoragePolicy,
     StoragePolicyError,
@@ -153,13 +154,17 @@ def test_the_quoted_total_must_be_whole_dong() -> None:
 
 def fee_for(**overrides: object) -> OrderStorageFee:
     arguments: dict[str, object] = {
-        "awaiting": True,
+        # DEC-047: whether the count runs, and the holds of finished laundry; waiting, never held.
+        "clock": StorageClock.RUNNING,
+        "holds": (),
         "ready_at": READY,
         "as_of": day(25),
         "quoted_total_vnd": 120_000,
         "waived": False,
         "settled": False,
         "fixed_vnd": None,
+        # MONEY-LIFECYCLE-009: the ledger's sum is an input now; nothing paid, as before.
+        "paid_vnd": 0,
     }
     arguments.update(overrides)
     policy = arguments.pop("policy", POLICY)
@@ -186,7 +191,7 @@ def test_order_fee_states() -> None:
     assert fee_for(settled=True, fixed_vnd=15_000).status is StorageFeeStatus.FIXED
     assert fee_for(settled=True, as_of=day(90)).amount_vnd == 0
     # Not waiting for the customer (a delivery order, in the machine, collected): nothing.
-    assert fee_for(awaiting=False).status is StorageFeeStatus.NOT_WAITING
+    assert fee_for(clock=StorageClock.STOPPED).status is StorageFeeStatus.NOT_WAITING
     assert fee_for(ready_at=None).status is StorageFeeStatus.NOT_WAITING
     # No single total, no cap to measure against: no fee (fail closed).
     assert fee_for(quoted_total_vnd=None).status is StorageFeeStatus.NO_SINGLE_TOTAL

@@ -661,7 +661,7 @@ def test_an_export_window_approved_for_one_week_releases_that_week_and_no_other(
         "2026-09-07",
     )
     assert week_body["window_days"] == 7
-    assert week_body["query_version"].startswith("store-window-orders-export-v3:")
+    assert week_body["query_version"].startswith("store-window-orders-export-v4:")
     assert "từ 2026-09-01 đến hết 2026-09-07 (7 ngày" in week_body["statement_vi"]
     next_week = _post(
         client,
@@ -794,8 +794,10 @@ def test_a_one_day_export_request_answers_exactly_as_before(
         assert body["window_days"] == 1
         # `EXPORT-PAYMENTS-001` moved the one-day rule to v3 (the payment ledger's columns);
         # v2 (`3f884e227d6a2d05`) is retired, and an envelope bound to it is refused by name.
-        # v4 since the round 7 wave 2 integration: `owed_vnd` includes the storage fee.
-        assert body["query_version"] == "store-day-orders-export-v4:c2ce1e9e6379d784"
+        # v4 since the round 7 wave 2 integration: `owed_vnd` includes the storage fee. v5 since
+        # round 9 (MONEY-LIFECYCLE-009): the fee held on hold and kept once paid, and the refund's
+        # remedy netting in its own column.
+        assert body["query_version"] == "store-day-orders-export-v5:85a2da5b6016d97f"
         assert body["shape_retired"] is False
         assert [item["column"] for item in body["money_sources"]] == [
             "expected_total_vnd",
@@ -806,6 +808,7 @@ def test_a_one_day_export_request_answers_exactly_as_before(
             "paid_transfer_vnd",
             "paid_vnd",
             "remaining_vnd",
+            "refund_netted_remedy_vnd",
         ]
         assert body["money_line_vi"].startswith("Tiền trong tệp:")
         assert body["statement_vi"].startswith(

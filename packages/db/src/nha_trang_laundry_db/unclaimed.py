@@ -239,6 +239,9 @@ class AwaitingPickupRow:
     fee: OrderStorageFee
     remaining_vnd: int | None
     disposal: DisposalVerdict
+    #: `DEC-050`: the shop days the shop held the order since it was ready, left out of
+    #: `days_waiting`; the list says so beside the count (verification round 1, P2).
+    held_days: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,6 +520,7 @@ class UnclaimedRepository:
                     has_phone=sealed is not None and not erased,
                     ready_at=ready_at,
                     days_waiting=None if clock is None else clock.days,
+                    held_days=0 if clock is None else clock.held_days,
                     attempts_count=int(str(row[16])),
                     last_attempt_at=(
                         None if last is None else datetime.fromisoformat(str(last["at"]))

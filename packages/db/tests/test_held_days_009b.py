@@ -195,6 +195,8 @@ def test_days_waiting_the_count_and_the_fee_skip_every_lifted_hold(
     connection.rollback()
     # The list, the order and the fee read the same days, and the order says how many were held.
     assert row.days_waiting == waited, label
+    # So does Đồ chờ lấy's row (verification round 1, P2: the list printed "Chờ N ngày" alone).
+    assert row.held_days == held, label
     assert (storage.days_waiting, storage.held_days) == (waited, held), label
     assert storage.fee.fee is not None and storage.fee.fee.days_waiting == waited, label
     expected_fee = min(max(0, waited - 20) * 5_000, 55_000)  # capped at half of 110.000 ₫
@@ -307,6 +309,8 @@ def test_a_hold_spanning_a_reminder_step_moves_the_step_to_the_counted_day(
     _hold(connection, order_id, shop, held_ago, resumed_ago)
     due = _due(connection, shop)[order_id]
     assert (due.step, due.days_waiting) == (step, waited)
+    # The reminders row names the held days beside its count (verification round 1, P2).
+    assert due.held_days == held_ago - resumed_ago
     # The attempt check reads the same clock: the calendar's step is refused, the counted one
     # is the one due.
     publish_test_messaging_policy(connection)
@@ -316,7 +320,23 @@ def test_a_hold_spanning_a_reminder_step_moves_the_step_to_the_counted_day(
     )
     connection.rollback()
     if step is not ReminderStep.READY:
-        assert f"đến nay đã {waited} ngày" in message.text
+        # Verification round 1 (P2): the text pairs the count with the calendar ready day, so it
+        # names the held days it leaves out -- the ready day, plus the count, plus the held days,
+        # is today. v1 printed "đến nay đã 12 ngày" beside a ready day 22 calendar days back.
+        ready = (_ready_at(connection, order_id) + VN).date()
+        held = (_today() - ready).days - waited
+        assert held > 0
+        assert f"xong từ ngày {ready.day:02d}/{ready.month:02d}/{ready.year}" in message.text
+        assert f"đến nay đã {waited} ngày (không tính {held} ngày tiệm giữ đơn)." in message.text
+        assert message.template == "pickup-reminder-v2"
+
+
+def _ready_at(connection: Any, order_id: UUID) -> datetime:
+    [(ready_at,)] = _rows(
+        connection, "SELECT production_ready_at FROM orders WHERE id = %s", order_id
+    )
+    connection.rollback()
+    return ready_at  # type: ignore[no-any-return]
 
 
 def test_before_fee_names_the_fee_day_past_the_held_days(
@@ -345,6 +365,8 @@ def test_before_fee_names_the_fee_day_past_the_held_days(
     assert f"Từ ngày {starts.day:02d}/{starts.month:02d}/{starts.year} tiệm tính phí" in (
         message.text
     )
+    # And it says why the fee day is later than the ready day suggests (verification P2).
+    assert "Không tính 6 ngày tiệm giữ đơn vào thời gian chờ." in message.text
 
 
 def test_a_hold_then_a_rewash_counts_from_the_new_ready_time_only(
@@ -366,5 +388,7 @@ def test_a_hold_then_a_rewash_counts_from_the_new_ready_time_only(
     row = _row(connection, shop, order_id)
     connection.rollback()
     assert (storage.days_waiting, storage.held_days, row.days_waiting) == (4, 0, 4)
+    assert row.held_days == 0
     assert storage.disposal_verdict.eligible_on == _today() + timedelta(days=56)
     assert _due(connection, shop)[order_id].step is ReminderStep.DAY_3
+    assert _due(connection, shop)[order_id].held_days == 0

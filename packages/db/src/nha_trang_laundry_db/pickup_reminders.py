@@ -10,7 +10,7 @@ over facts read here:
   -- for the roles that call customers only, as `UNCLAIMED-001`'s list returns its number -- the
   national number for *Gọi* and the `zalo.me` link, both derived here from the sealed column at
   read time. Unreachable orders are rows too, and counted (`unreachable_count`).
-* **The text** (`pickup-reminder-v1`) for (order, step), only after the egress guard
+* **The text** (`pickup-reminder-v2`) for (order, step), only after the egress guard
   (`consent_egress.check_egress_allowed`, TRANSACTIONAL) allows it, inside the transaction that
   reads the facts. Refusals: `NO_CONTACT`, then the guard's codes -- `SUPPRESSED`,
   `PENDING_REVIEW`, `SUPPRESSION_UNKNOWN`, `MESSAGING_POLICY_UNPUBLISHED`, `NO_SERVICE_BASIS`.
@@ -142,6 +142,9 @@ class ReminderRow:
     remaining_vnd: int | None
     #: What the text route would answer now, as advice (no lock): None when it would give the text.
     message_refusal: str | None
+    #: `DEC-050`: the shop days the shop held the order since it was ready, left out of
+    #: `days_waiting`; the list says so beside the ready day (verification round 1, P2).
+    held_days: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -562,6 +565,7 @@ class PickupReminderRepository:
                 else None
             )
             ready_at: datetime = detail["ready_at"]
+            clock = waiting_clock(ready_at, as_of, holds=detail["holds"])
             rows.append(
                 ReminderRow(
                     order_id=order_id,
@@ -573,7 +577,8 @@ class PickupReminderRepository:
                     customer_name=None if erased else detail["customer_name"],
                     step=step,
                     ready_at=ready_at,
-                    days_waiting=waiting_clock(ready_at, as_of, holds=detail["holds"]).days,
+                    days_waiting=clock.days,
+                    held_days=clock.held_days,
                     reachable=reach,
                     phone=national,
                     zalo_url=zalo_url(national),
@@ -622,7 +627,7 @@ class PickupReminderRepository:
         principal: StaffPrincipal,
         as_of: datetime,
     ) -> ReminderMessage:
-        """The `pickup-reminder-v1` text for (order, step), after the egress guard allows it.
+        """The `pickup-reminder-v2` text for (order, step), after the egress guard allows it.
 
         404-shaped for a stranger's order, as the order read is. Writes nothing: the guard's lock is
         held for the read's own transaction, and the attempt that records the send runs it again.
@@ -652,6 +657,7 @@ class PickupReminderRepository:
                     received_on=shop_date(facts.created_at),
                     ready_on=ready_on,
                     days_waiting=clock.days,
+                    held_days=clock.held_days,
                     remaining_vnd=_remaining(
                         policy,
                         clock=facts.clock,

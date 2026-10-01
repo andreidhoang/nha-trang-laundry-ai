@@ -360,7 +360,7 @@ def test_the_text_is_refused_until_the_owner_publishes_then_given_without_name_o
         "WHERE o.id = %s",
         order_id,
     )[0][0]
-    assert message.template == "pickup-reminder-v1" and message.basis == "OPEN_ORDER"
+    assert message.template == "pickup-reminder-v2" and message.basis == "OPEN_ORDER"
     assert message.text.startswith("Cửa hàng thử nghiệm xin báo: đồ giặt phiếu số " + str(ticket))
     assert "Số tiền còn lại:" in message.text
     assert phone not in message.text and "Tuấn" not in message.text

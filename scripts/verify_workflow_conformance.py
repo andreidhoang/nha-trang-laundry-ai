@@ -8438,9 +8438,9 @@ def scenario_pickup_reminders(console: Console) -> None:
     _reminder_shot(console, "02-copied")
     body = answer.get("body") or {}
     ok(
-        "Chép tin nhắn puts the server's pickup-reminder-v1 text on the clipboard, exactly",
+        "Chép tin nhắn puts the server's pickup-reminder-v2 text on the clipboard, exactly",
         answer["status"] == 200
-        and body.get("template") == "pickup-reminder-v1"
+        and body.get("template") == "pickup-reminder-v2"
         and copied == body.get("text")
         and "xin báo: đồ giặt phiếu số" in copied
         and "Mời anh/chị qua tiệm lấy đồ." in copied,
@@ -11653,9 +11653,34 @@ def scenario_money_residual(console: Console) -> None:
         {},
     )
     ok(
-        "Đồ chờ lấy counts the same ten days",
-        row.get("days_waiting") == 10,
+        "Đồ chờ lấy counts the same ten days, and names the twenty held days",
+        row.get("days_waiting") == 10 and row.get("held_days") == 20,
         json.dumps(row)[:200],
+    )
+    # Verification round 1 (P2): the lists put the count beside the ready day, so they say the
+    # held days too; the reminder row reads the same clock.
+    console.open("#/pickup", settle=1800)
+    pickup_waiting = console.page.locator(f".pickup-row[data-order='{held}'] [data-field=waiting]")
+    ok(
+        "Đồ chờ lấy's row says 'Chờ 10 ngày (không tính 20 ngày tiệm giữ đơn)'",
+        pickup_waiting.count() == 1
+        and pickup_waiting.inner_text().startswith("Chờ 10 ngày (không tính 20 ngày tiệm giữ đơn)"),
+        pickup_waiting.inner_text() if pickup_waiting.count() else console.text()[:200],
+    )
+    reminders = console.call("GET", f"/internal/v1/stores/{STORE}/pickup-reminders?limit=200")
+    reminder = next(
+        (
+            item
+            for item in (reminders.get("body") or {}).get("orders") or []
+            if item.get("order_id") == held
+        ),
+        {},
+    )
+    ok(
+        "the reminder due is the counted day 10's (DAY_7), with the twenty held days named",
+        (reminder.get("step"), reminder.get("days_waiting"), reminder.get("held_days"))
+        == ("DAY_7", 10, 20),
+        json.dumps(reminder)[:200],
     )
 
     head("33b", "KHÁCH CÔNG NỢ GIAO TẬN NƠI — Ghi vào công nợ beside Thu tiền, then the trip (J5)")

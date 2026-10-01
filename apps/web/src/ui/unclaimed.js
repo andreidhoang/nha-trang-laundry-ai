@@ -91,6 +91,18 @@ export function waitingText(days) {
 }
 
 /**
+ * DEC-050 (MONEY-RESIDUAL-009B J1): the days the shop held the laundry, which the server leaves
+ * out of `days_waiting` — said wherever the count stands beside the ready day, so a count shorter
+ * than the calendar is not read as a slip. Empty for an order never held.
+ *
+ * @param {number|null|undefined} held
+ * @returns {string}
+ */
+export function heldDaysText(held) {
+  return Number.isInteger(held) && held > 0 ? `không tính ${held} ngày tiệm giữ đơn` : "";
+}
+
+/**
  * The fee in words, from the server's `storage_fee` (status and amount) and the published figures.
  *
  * A fixed fee is "đã thu" once the order is paid, and "đã ghi công nợ" while it sits on the
@@ -424,7 +436,7 @@ export function storageSection(spec) {
             `${waitingText(storage.days_waiting)}${storage.ready_at ? ` (xong ${dateOnly(storage.ready_at)})` : ""}`,
             // DEC-050 (MONEY-RESIDUAL-009B J1): the server counts the days the shop held the
             // laundry for nothing; said so, so the count shorter than the calendar is not a slip.
-            storage.held_days ? ` · không tính ${storage.held_days} ngày tiệm giữ đơn` : "",
+            storage.held_days ? ` · ${heldDaysText(storage.held_days)}` : "",
           ),
         ]
       : null,

@@ -2843,7 +2843,7 @@ with sync_playwright() as playwright:
             body = {
                 "order_id": PICKUP_ORDER_ID,
                 "step": "READY",
-                "template": "pickup-reminder-v1",
+                "template": "pickup-reminder-v2",
                 "text": REMINDER_TEXT,
                 "evaluated_at": "2026-09-27T03:00:00+00:00",
                 "policy_version": 1,
@@ -14300,6 +14300,84 @@ with sync_playwright() as playwright:
         waiting28,
     )
     state["storage"] = None
+
+    # J1 (verification round 1, P2): Đồ chờ lấy and Nhắc khách lấy đồ put the same count beside the
+    # ready day, so they say the held days too -- and say nothing for an order never held.
+    state["pickup_list"] = pickup_list(
+        {
+            **pickup_row(
+                PICKUP_ORDER_ID,
+                ticket=12,
+                days=12,
+                fee=0,
+                status="FREE_PERIOD",
+                attempts=0,
+                allowed=False,
+            ),
+            "held_days": 9,
+        },
+        pickup_row(
+            UNCLAIMED_OTHER_ID,
+            ticket=17,
+            days=25,
+            fee=25_000,
+            status="ACCRUING",
+            attempts=1,
+            allowed=False,
+        ),
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/pickup", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    held_pickup = text_of(f".pickup-row[data-order='{PICKUP_ORDER_ID}'] [data-field=waiting]")
+    plain_pickup = text_of(f".pickup-row[data-order='{UNCLAIMED_OTHER_ID}'] [data-field=waiting]")
+    check(
+        "J1 Đồ chờ lấy: 'Chờ 12 ngày (không tính 9 ngày tiệm giữ đơn)'; a row never held says "
+        "nothing of it",
+        held_pickup.startswith("Chờ 12 ngày (không tính 9 ngày tiệm giữ đơn)")
+        and plain_pickup.startswith("Chờ 25 ngày")
+        and "giữ đơn" not in plain_pickup,
+        f"{held_pickup!r} / {plain_pickup!r}",
+    )
+    race_shot("j1-pickup-held-days")
+    state["pickup_list"] = None
+    state["reminder_list"] = reminder_list(
+        {
+            **reminder_row(
+                PICKUP_ORDER_ID,
+                ticket=12,
+                step="DAY_7",
+                days=12,
+                reachable="PHONE",
+                phone="0905123456",
+            ),
+            "held_days": 9,
+        },
+        reminder_row(REMINDER_CHAT_ID, ticket=None, step="DAY_3", days=3, reachable="CHAT"),
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/reminders", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    held_row = text_of(f"#reminder-list tr[data-reminder='{PICKUP_ORDER_ID}'] .reminders__order")
+    plain_row = text_of(f"#reminder-list tr[data-reminder='{REMINDER_CHAT_ID}'] .reminders__order")
+    check(
+        "J1 Nhắc khách lấy đồ: 'Chờ 12 ngày · xong 02/08 · không tính 9 ngày tiệm giữ đơn'; a row "
+        "never held says nothing of it",
+        "Chờ 12 ngày · xong " in held_row
+        and text_of(
+            f"#reminder-list tr[data-reminder='{PICKUP_ORDER_ID}'] [data-field=held-days]"
+        ).strip()
+        == "· không tính 9 ngày tiệm giữ đơn"
+        and "Chờ 3 ngày" in plain_row
+        and "giữ đơn" not in plain_row
+        and page.locator(
+            f"#reminder-list tr[data-reminder='{REMINDER_CHAT_ID}'] [data-field=held-days]"
+        ).count()
+        == 0,
+        f"{held_row!r} / {plain_row!r}",
+    )
+    race_shot("j1-reminders-held-days")
+    state["reminder_list"] = None
 
     # J6: invoices.
     state["invoice_writes"] = []

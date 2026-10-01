@@ -34,7 +34,7 @@ import {
   skeletonRows,
   statusPill,
 } from "../ui/kit.js";
-import { contactSheet, feeText, shelfSwitch, waitingText } from "../ui/unclaimed.js";
+import { contactSheet, feeText, heldDaysText, shelfSwitch, waitingText } from "../ui/unclaimed.js";
 import { orderName } from "./orders.js";
 
 /** One page of the waiting list; the server says when there are more (`truncated`). */
@@ -204,7 +204,12 @@ export function render_() {
         title,
         meta: [
           h("span", null, label),
-          h("span", { dataField: "waiting" }, `${waitingText(item.days_waiting)} · ${attempts}`),
+          h(
+            "span",
+            { dataField: "waiting" },
+            // DEC-050: the count leaves the held days out; said beside it (P2).
+            `${waitingText(item.days_waiting)}${item.held_days ? ` (${heldDaysText(item.held_days)})` : ""} · ${attempts}`,
+          ),
           item.disposal?.allowed
             ? statusPill({ state: "danger", text: "Thanh lý được", token: "DISPOSAL_ALLOWED" })
             : item.balance === "PAID"

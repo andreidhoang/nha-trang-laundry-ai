@@ -1,7 +1,7 @@
 """`PICKUP-REMIND-001` (`DEC-043`): the reminder schedule, the newest-due rule and the fixed text.
 
 Golden texts are pinned whole: a change to any sentence is a new template version
-(`pickup-reminder-v1` -> v2), never an edit that slips through.
+(`pickup-reminder-v1` -> v2, `DEC-050`'s held days), never an edit that slips through.
 """
 
 from __future__ import annotations
@@ -223,7 +223,9 @@ def _facts(**overrides: object) -> ReminderFacts:
 
 
 def test_golden_ready() -> None:
-    assert PICKUP_REMINDER_TEMPLATE == "pickup-reminder-v1"
+    # v2 (`DEC-050`): the day sentence and BEFORE_FEE name the held days they leave out. The
+    # sentences for an order never held are v1's, word for word (the goldens below).
+    assert PICKUP_REMINDER_TEMPLATE == "pickup-reminder-v2"
     assert reminder_text(ReminderStep.READY, _facts()) == (
         "Giặt sấy Hoa Sen xin báo: đồ giặt phiếu số 17 (nhận ngày 30/08/2026) đã xong ngày "
         "01/09/2026.\n"
@@ -267,6 +269,62 @@ def test_golden_before_fee_quotes_the_published_figures() -> None:
         reminder_text(ReminderStep.BEFORE_FEE, _facts(days_waiting=20))
 
 
+@pytest.mark.parametrize(
+    ("step", "days", "held"),
+    [(ReminderStep.DAY_3, 3, 1), (ReminderStep.DAY_7, 12, 10), (ReminderStep.DAY_14, 14, 30)],
+)
+def test_golden_day_steps_name_the_held_days_they_leave_out(
+    step: ReminderStep, days: int, held: int
+) -> None:
+    """`DEC-050` (verification round 1, P2): the count leaves the held days out, so the sentence
+    that pairs it with the calendar ready day says how many -- ready day + count + held days is
+    today, never a count that contradicts the date beside it."""
+
+    assert reminder_text(step, _facts(days_waiting=days, held_days=held)) == (
+        "Giặt sấy Hoa Sen xin nhắc: đồ giặt phiếu số 17 (nhận ngày 30/08/2026) đã xong từ ngày "
+        f"01/09/2026, đến nay đã {days} ngày (không tính {held} ngày tiệm giữ đơn).\n"
+        "Mời anh/chị sắp xếp qua tiệm lấy đồ.\n"
+        "Số tiền còn lại: 45.000 ₫.\n"
+        "Giờ mở cửa: từ 08:00 đến 20:00.\n"
+        "Cảm ơn anh/chị!"
+    )
+
+
+def test_golden_before_fee_names_the_held_days_that_moved_the_fee_day() -> None:
+    fee = ReminderFee(
+        fee_per_started_day_vnd=POLICY.fee_per_started_day_vnd,
+        fee_cap_percent=POLICY.fee_cap_percent,
+        starts_on=date(2026, 9, 28),
+    )
+    assert reminder_text(
+        ReminderStep.BEFORE_FEE, _facts(days_waiting=20, held_days=6, fee=fee)
+    ) == (
+        "Giặt sấy Hoa Sen xin nhắc: đồ giặt phiếu số 17 (nhận ngày 30/08/2026) đã xong từ ngày "
+        "01/09/2026 và đang chờ anh/chị qua lấy.\n"
+        "Không tính 6 ngày tiệm giữ đơn vào thời gian chờ.\n"
+        "Từ ngày 28/09/2026 tiệm tính phí lưu kho 5.000 ₫/ngày (tối đa 50% tiền giặt).\n"
+        "Mời anh/chị qua lấy trước ngày đó.\n"
+        "Số tiền còn lại: 45.000 ₫.\n"
+        "Giờ mở cửa: từ 08:00 đến 20:00.\n"
+        "Cảm ơn anh/chị!"
+    )
+
+
+@given(
+    days=st.integers(min_value=0, max_value=400),
+    held=st.integers(min_value=0, max_value=400),
+    step=st.sampled_from([ReminderStep.DAY_3, ReminderStep.DAY_7, ReminderStep.DAY_14]),
+)
+def test_property_the_day_sentence_names_held_days_exactly_when_there_are_some(
+    days: int, held: int, step: ReminderStep
+) -> None:
+    text = reminder_text(step, _facts(days_waiting=days, held_days=held))
+    assert f"đến nay đã {days} ngày" in text
+    assert ("tiệm giữ đơn" in text) is (held > 0)
+    if held:
+        assert f"(không tính {held} ngày tiệm giữ đơn)." in text
+
+
 def test_golden_chat_order_paid_unnamed_shop_no_hours() -> None:
     assert reminder_text(
         ReminderStep.READY,
@@ -292,3 +350,5 @@ def test_the_text_has_no_field_for_a_name_or_a_phone() -> None:
     assert not {"customer_name", "display_name", "phone"} & set(ReminderFacts.__dataclass_fields__)
     with pytest.raises(ValueError):
         reminder_text(ReminderStep.READY, _facts(remaining_vnd=-1))
+    with pytest.raises(ValueError):
+        reminder_text(ReminderStep.DAY_3, _facts(days_waiting=3, held_days=-1))

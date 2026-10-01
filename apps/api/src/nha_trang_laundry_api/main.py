@@ -8893,6 +8893,8 @@ class AwaitingPickupItemResponse(BaseModel):
     has_phone: bool
     ready_at: datetime | None
     days_waiting: int | None
+    #: `DEC-050`: the shop days the shop held the order, left out of `days_waiting` (0 for most).
+    held_days: int = 0
     attempts_count: int
     last_attempt_at: datetime | None
     last_attempt_outcome: str | None
@@ -9136,6 +9138,7 @@ def list_awaiting_pickup(
                 has_phone=item.has_phone,
                 ready_at=item.ready_at,
                 days_waiting=item.days_waiting,
+                held_days=item.held_days,
                 attempts_count=item.attempts_count,
                 last_attempt_at=item.last_attempt_at,
                 last_attempt_outcome=item.last_attempt_outcome,
@@ -9342,7 +9345,7 @@ def dispose_unclaimed_order(
 # --- PICKUP-REMIND-001: pickup reminders (DEC-043) -------------------------------------------
 #
 # *Nhắc khách lấy đồ*: which reminder is due for which waiting order, and the fixed
-# `pickup-reminder-v1` text behind the egress guard. Recording *Đã nhắc* is the contact-attempt
+# `pickup-reminder-v2` text behind the egress guard. Recording *Đã nhắc* is the contact-attempt
 # route above, with `reminder_step`. Every decision is the domain's (`pickup_reminders`).
 
 
@@ -9368,8 +9371,11 @@ class PickupReminderItemResponse(BaseModel):
     #: The newest reminder due and not yet done: `READY`, `DAY_3`, `DAY_7`, `DAY_14`, `BEFORE_FEE`.
     step: ReminderStep
     ready_at: datetime
-    #: Shop days since the laundry was ready, as *Đồ chờ lấy* counts them.
+    #: Shop days since the laundry was ready, as *Đồ chờ lấy* counts them (`DEC-050`: held days
+    #: left out).
     days_waiting: int
+    #: `DEC-050`: the shop days the shop held the order, left out of `days_waiting` (0 for most).
+    held_days: int = 0
     #: `PHONE` (a number on the customer's record), `CHAT` (the order came in on a chat channel) or
     #: `NONE` (a ticket alone: counted, nobody to message).
     reachable: Reachability
@@ -9412,7 +9418,7 @@ class PickupReminderMessageResponse(BaseModel):
 
     order_id: UUID
     step: ReminderStep
-    #: `pickup-reminder-v1`.
+    #: `pickup-reminder-v2`.
     template: str
     text: str
     evaluated_at: datetime
@@ -9466,6 +9472,7 @@ def list_pickup_reminders(
                 step=item.step,
                 ready_at=item.ready_at,
                 days_waiting=item.days_waiting,
+                held_days=item.held_days,
                 reachable=item.reachable,
                 phone=item.phone,
                 zalo_url=item.zalo_url,
@@ -9488,7 +9495,7 @@ def read_pickup_reminder(
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[PickupReminderService | None, Depends(get_pickup_reminder_service)] = None,
 ) -> PickupReminderMessageResponse:
-    """Chép tin nhắn: the fixed `pickup-reminder-v1` text for (order, step), behind the guard.
+    """Chép tin nhắn: the fixed `pickup-reminder-v2` text for (order, step), behind the guard.
 
     `step` must be the reminder due now (422 `REMINDER_STEP_NOT_DUE` / `NO_REMINDER_DUE`). Then
     `NO_CONTACT` for a ticket with nobody to message, and the TRANSACTIONAL egress guard's refusals

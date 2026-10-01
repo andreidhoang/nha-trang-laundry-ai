@@ -5,8 +5,9 @@ archive, the disk, the flags, whether the console answers -- and none at what th
 doing. Payments could return 500 all afternoon and the only record was a log line nobody read,
 kept on a rotation that dropped it within days.
 
-The check reads the API's structured log lines (the same stream the shop deployment keeps in
-Docker's json-file log) and counts three things over a window: 5xx answers,
+The check reads the API's structured log lines (the stream the API also appends to its host file,
+`STRUCTURED_LOG_FILE`, so it outlives the container -- `PLATFORM-RESIDUAL-009B` L4) and counts
+three things over a window: 5xx answers,
 `database.request_refused` and `auth.browser_boundary`. Every test here feeds synthetic lines in
 exactly the shape `SafeStructuredLogger` writes, and the API-side test
 (`apps/api/tests/test_application_signal_logging.py`) feeds lines the real API wrote, so the parser

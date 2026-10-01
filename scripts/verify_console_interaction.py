@@ -1519,7 +1519,7 @@ DAILY_SUMMARY_LINES = [
 DAILY_SUMMARY = {
     "store_id": STORE,
     "date": "2026-09-25",
-    "template_version": "daily-summary-v4:0123456789abcdef",
+    "template_version": "daily-summary-v5:0123456789abcdef",
     "evaluated_at": "2026-09-25T12:30:00+00:00",
     "so_far": True,
     "lines": [

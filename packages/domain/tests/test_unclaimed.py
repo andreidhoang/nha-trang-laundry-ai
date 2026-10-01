@@ -254,6 +254,7 @@ def test_the_disposal_table(
         ready_at=READY,
         as_of=day(n),
         attempt_times=[day(d) for d in attempt_days],
+        holds=(),
     )
     assert verdict.refusals == expected
     assert verdict.allowed is (expected == ())
@@ -263,11 +264,11 @@ def test_the_disposal_table(
 def test_disposal_needs_the_policy_and_the_waiting_state() -> None:
     times = [day(50), day(51), day(52)]
     unpublished = disposal_verdict(
-        None, awaiting=True, ready_at=READY, as_of=day(90), attempt_times=times
+        None, awaiting=True, ready_at=READY, as_of=day(90), attempt_times=times, holds=()
     )
     assert unpublished.refusals == (DisposalRefusal.STORAGE_POLICY_UNPUBLISHED,)
     collected = disposal_verdict(
-        POLICY, awaiting=False, ready_at=READY, as_of=day(90), attempt_times=times
+        POLICY, awaiting=False, ready_at=READY, as_of=day(90), attempt_times=times, holds=()
     )
     assert collected.refusals == (DisposalRefusal.NOT_AWAITING_PICKUP,)
 
@@ -280,6 +281,7 @@ def test_attempts_before_the_laundry_was_last_ready_do_not_count() -> None:
         ready_at=day(5),
         as_of=day(70),
         attempt_times=[day(1), day(2), day(2), day(40)],
+        holds=(),
     )
     assert verdict.attempts_counted == 1
     assert DisposalRefusal.CONTACT_ATTEMPTS_TOO_FEW in verdict.refusals
@@ -290,7 +292,12 @@ def test_disposal_attempt_days_are_shop_local() -> None:
     first = (datetime(2026, 10, 20, 23, 30) - VN).replace(tzinfo=UTC)
     second = (datetime(2026, 10, 21, 0, 30) - VN).replace(tzinfo=UTC)
     verdict = disposal_verdict(
-        POLICY, awaiting=True, ready_at=READY, as_of=day(61), attempt_times=[first, first, second]
+        POLICY,
+        awaiting=True,
+        ready_at=READY,
+        as_of=day(61),
+        attempt_times=[first, first, second],
+        holds=(),
     )
     assert verdict.attempt_days == 2 and verdict.allowed
 

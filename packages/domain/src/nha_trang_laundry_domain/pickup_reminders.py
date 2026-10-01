@@ -29,11 +29,11 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date, time, timedelta
+from datetime import date, time
 from enum import StrEnum
 from typing import Final
 
-from nha_trang_laundry_domain.unclaimed import StoragePolicy
+from nha_trang_laundry_domain.unclaimed import StoragePolicy, WaitingClock
 
 #: The template's version. A change to any sentence below is a new version, never an edit.
 PICKUP_REMINDER_TEMPLATE: Final = "pickup-reminder-v1"
@@ -99,37 +99,33 @@ def schedule(policy: StoragePolicy | None) -> tuple[tuple[ReminderStep, int], ..
     return (*kept, (ReminderStep.BEFORE_FEE, last_day))
 
 
-def _waited(ready_on: date, today: date) -> int:
-    return max(0, (today - ready_on).days)
-
-
-def reminder_steps(
-    ready_on: date, today: date, storage_policy: StoragePolicy | None
-) -> tuple[ReminderStep, ...]:
+def reminder_steps(waited: int, storage_policy: StoragePolicy | None) -> tuple[ReminderStep, ...]:
     """The steps whose day has come, in schedule order -- none once the storage fee has started.
 
-    `ready_on` and `today` are shop-local calendar days (`unclaimed.shop_date`). A clock that
-    reads earlier than the ready day counts as the ready day, as `unclaimed.days_waiting` does.
+    `waited` is `unclaimed.waiting_clock`'s day count (`DEC-050`): shop-local days since the
+    laundry was ready, the days the shop held it not counted -- the same days the fee and the list
+    count, so a step never falls on a day the shop was holding the laundry.
     """
 
-    waited = _waited(ready_on, today)
+    if waited < 0:
+        raise ValueError("a day count is never negative")
     if storage_policy is not None and waited > storage_policy.free_days:
         return ()
     return tuple(step for step, day in schedule(storage_policy) if day <= waited)
 
 
 def current_reminder(
-    ready_on: date,
-    today: date,
+    waited: int,
     storage_policy: StoragePolicy | None,
     done: Iterable[ReminderStep],
 ) -> ReminderStep | None:
     """The one reminder to show now: the newest due step, unless an attempt already did it.
 
-    An earlier step nobody did is superseded by a later one, so it never comes back.
+    An earlier step nobody did is superseded by a later one, so it never comes back. `waited` is
+    `unclaimed.waiting_clock`'s day count.
     """
 
-    due = reminder_steps(ready_on, today, storage_policy)
+    due = reminder_steps(waited, storage_policy)
     if not due:
         return None
     newest = due[-1]
@@ -142,10 +138,15 @@ def step_day(step: ReminderStep, storage_policy: StoragePolicy | None) -> int | 
     return next((day for named, day in schedule(storage_policy) if named is step), None)
 
 
-def fee_starts_on(ready_on: date, policy: StoragePolicy) -> date:
-    """The first shop day a fee is charged for: the day after the free days end (`DEC-036`)."""
+def fee_starts_on(clock: WaitingClock, policy: StoragePolicy) -> date:
+    """The first shop day a fee is charged for: the day the count reaches the day after the free
+    days end (`DEC-036`), past every hold already lifted (`DEC-050`). A waiting order is never
+    paused; a paused clock has no such day yet and is refused."""
 
-    return ready_on + timedelta(days=policy.free_days + 1)
+    starts = clock.falls_on(policy.free_days + 1)
+    if starts is None:
+        raise ValueError("laundry on hold has no fee day yet")
+    return starts
 
 
 def reachability(*, has_phone: bool, has_chat: bool) -> Reachability:

@@ -8903,7 +8903,11 @@ class OrderStorageResponse(BaseModel):
     policy: StoragePolicyResponse | None
     awaiting_pickup: bool
     ready_at: datetime | None
+    #: `DEC-050`: the days the laundry has waited -- the days the shop held it not counted, frozen
+    #: while it is on hold. The fee, disposal and the reminders count the same days.
     days_waiting: int | None
+    #: `DEC-050`: the shop days the lifted holds took out of `days_waiting` (0 for most orders).
+    held_days: int = 0
     storage_fee: StorageFeeResponse
     waiver: StorageWaiverResponse | None
     #: Oldest first, the latest `ATTEMPT_READ_LIMIT`; `attempts_total` counts all of them.
@@ -9101,6 +9105,7 @@ def read_order_storage(
         awaiting_pickup=found.awaiting,
         ready_at=found.ready_at,
         days_waiting=found.days_waiting,
+        held_days=found.held_days,
         storage_fee=_storage_fee_response(found.fee),
         waiver=None
         if waiver is None

@@ -63,12 +63,12 @@ from nha_trang_laundry_domain.unclaimed import (
     WaiverEffect,
     awaiting_pickup,
     clean_note,
-    days_waiting,
     disposal_money,
     disposal_rule_vi,
     disposal_verdict,
     order_storage_fee,
     receipt_line_vi,
+    waiting_clock,
     waiver_effect,
 )
 
@@ -92,6 +92,7 @@ from nha_trang_laundry_db.settlement import collected_by_for_shape
 from nha_trang_laundry_db.storage_fees import (
     STORAGE_HOLDS_SQL,
     STORAGE_POLICY_UNPUBLISHED,
+    WAITING_SINCE_SQL,
     PublishedStoragePolicy,
     holds_from_column,
     insert_fixed_storage_fee,
@@ -146,16 +147,18 @@ WAITING_COUNT_READ_LIMIT: Final = 5000
 #: The count's statement: the waiting population of the list, exactly (`AWAITING_PICKUP_SQL`), and
 #: each order's ready time, from which the domain counts the days.
 _WAITING_COUNT_SQL: Final = f"""
-    SELECT o.production_ready_at
+    SELECT o.production_ready_at, {STORAGE_HOLDS_SQL}
     FROM orders o
     WHERE o.store_id = %s AND {AWAITING_PICKUP_SQL}
     ORDER BY o.production_ready_at ASC NULLS FIRST, o.id
     LIMIT %s
 """
 
-#: The published version of the count, carried among the evening summary's sources.
+#: The published version of the count, carried among the evening summary's sources. v2
+#: (`DEC-050`, round 9b): the days are `waiting_clock`'s -- the days the shop held the laundry no
+#: longer count towards "chờ quá 20 ngày".
 WAITING_COUNT_QUERY: Final[QueryVersion] = query_version(
-    "awaiting-pickup-count-v1",
+    "awaiting-pickup-count-v2",
     _WAITING_COUNT_SQL,
     ",".join(str(days) for days in WAITING_SUMMARY_THRESHOLDS),
     str(WAITING_COUNT_READ_LIMIT),
@@ -318,6 +321,9 @@ class OrderStorageRead:
     #: part kept because it was paid, and whether it settles the order -- or `None` when nothing
     #: unpaid is left to waive. The waiver sheet states it before the press.
     waiver_effect: WaiverEffect | None = None
+    #: `DEC-050`: the shop days the lifted holds took out of `days_waiting` (0 for nearly every
+    #: order), so the page can say why the count is shorter than the calendar.
+    held_days: int = 0
 
 
 # --- commands -------------------------------------------------------------------------------------
@@ -450,7 +456,7 @@ class UnclaimedRepository:
             LEFT JOIN counter_tickets t ON t.id = o.bound_contact_id AND t.store_id = o.store_id
             LEFT JOIN customers cu ON cu.id = o.customer_id AND cu.store_id = o.store_id
             WHERE o.store_id = %s AND {AWAITING_PICKUP_SQL}
-            ORDER BY o.production_ready_at ASC NULLS FIRST, o.id
+            ORDER BY {WAITING_SINCE_SQL} ASC NULLS FIRST, o.id
             LIMIT %s
             """,
             (store_id, limit + 1),
@@ -472,6 +478,9 @@ class UnclaimedRepository:
             )
             quoted = None if row[11] is None else int(str(row[11]))
             paid = int(str(row[15]))
+            holds = holds_from_column(row[23])
+            # DEC-050: one clock for the days, disposal and the fee -- held days do not count.
+            clock = None if ready_at is None else waiting_clock(ready_at, as_of, holds=holds)
             fee = order_storage_fee(
                 policy,
                 # Every row here waits for pickup (`AWAITING_PICKUP_SQL`); the days of the holds
@@ -484,7 +493,7 @@ class UnclaimedRepository:
                 settled=bool(row[12]),
                 fixed_vnd=None if row[13] is None else int(str(row[13])),
                 paid_vnd=paid,
-                holds=holds_from_column(row[23]),
+                holds=holds,
             )
             times = tuple(datetime.fromisoformat(str(value)) for value in (row[17] or []))
             last = row[18] if isinstance(row[18], dict) else None
@@ -507,7 +516,7 @@ class UnclaimedRepository:
                     phone_last4=None if erased or row[8] is None else str(row[8]),
                     has_phone=sealed is not None and not erased,
                     ready_at=ready_at,
-                    days_waiting=None if ready_at is None else days_waiting(ready_at, as_of),
+                    days_waiting=None if clock is None else clock.days,
                     attempts_count=int(str(row[16])),
                     last_attempt_at=(
                         None if last is None else datetime.fromisoformat(str(last["at"]))
@@ -524,9 +533,13 @@ class UnclaimedRepository:
                         ready_at=ready_at,
                         as_of=as_of,
                         attempt_times=times,
+                        holds=holds,
                     ),
                 )
             )
+        # Longest-waiting first by the clock's own days (`DEC-050`); the SQL chose the page by the
+        # held-time-skipped ready instant, and a stable sort keeps its order between equal days.
+        found.sort(key=lambda item: -1 if item.days_waiting is None else -item.days_waiting)
         return AwaitingPickupList(
             store_id=store_id,
             evaluated_at=as_of,
@@ -550,10 +563,10 @@ class UnclaimedRepository:
         """The waiting list's population, counted past the summary's thresholds at `as_of`.
 
         The list's own conditions (`AWAITING_PICKUP_SQL`) and the list's own day rule
-        (`unclaimed.days_waiting`): an order is "over 20 days" exactly when the list would print
-        more than 20 beside it. Counts only -- no customer, no phone -- under the list's own gate.
-        `thresholds` defaults to the summary's two; `SUMMARY-ATTENTION-001` also asks for the days
-        just before the published storage fee starts.
+        (`unclaimed.waiting_clock`, `DEC-050`): an order is "over 20 days" exactly when the list
+        would print more than 20 beside it. Counts only -- no customer, no phone -- under the list's
+        own gate. `thresholds` defaults to the summary's two; `SUMMARY-ATTENTION-001` also asks for
+        the days just before the published storage fee starts.
         """
 
         _require(principal, UNCLAIMED_READ_ROLES, "counting laundry waiting for pickup")
@@ -567,7 +580,7 @@ class UnclaimedRepository:
         rows = cursor.fetchall()
         truncated = len(rows) > WAITING_COUNT_READ_LIMIT
         waited = [
-            days_waiting(row[0], as_of)
+            waiting_clock(row[0], as_of, holds=holds_from_column(row[1])).days
             for row in rows[:WAITING_COUNT_READ_LIMIT]
             if isinstance(row[0], datetime)
         ]
@@ -1040,6 +1053,8 @@ class UnclaimedRepository:
                 ready_at=storage.ready_at,
                 as_of=occurred_at,
                 attempt_times=times,
+                holds=storage.holds,
+                paused=storage.paused,
             )
             if not verdict.allowed:
                 codes = tuple(refusal.value for refusal in verdict.refusals)
@@ -1335,7 +1350,10 @@ def _storage_read(
     )
     disposal_row = cursor.fetchone()
     policy = None if published is None else published.policy
+    # DEC-050: the days waiting, frozen while the shop holds the laundry, held days not counted.
+    clock = storage.waiting(as_of)
     return OrderStorageRead(
+        held_days=0 if clock is None else clock.held_days,
         waiver_effect=(
             None
             if storage.waived
@@ -1350,7 +1368,7 @@ def _storage_read(
         policy=_summary(published),
         awaiting=storage.awaiting,
         ready_at=storage.ready_at,
-        days_waiting=None if storage.ready_at is None else days_waiting(storage.ready_at, as_of),
+        days_waiting=None if clock is None else clock.days,
         fee=storage.fee,
         waiver=(
             None
@@ -1384,6 +1402,8 @@ def _storage_read(
             ready_at=storage.ready_at,
             as_of=as_of,
             attempt_times=times,
+            holds=storage.holds,
+            paused=storage.paused,
         ),
         disposal=(
             None

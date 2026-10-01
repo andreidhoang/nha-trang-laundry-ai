@@ -34,10 +34,12 @@ from nha_trang_laundry_domain.unclaimed import (
     StorageHold,
     StoragePolicy,
     StoragePolicyError,
+    WaitingClock,
     order_storage_fee,
     parse_storage_policy,
     storage_clock,
     validate_storage_document,
+    waiting_clock,
 )
 
 from nha_trang_laundry_db.configurations import (
@@ -147,6 +149,25 @@ STORAGE_HOLDS_SQL: Final = """
     )
 """
 
+#: `DEC-050`: the instant an order's laundry would have been ready had the shop never held it --
+#: the ready time moved on by every lifted hold since. The waiting reads order by it so the page
+#: they read is the longest-waiting by wall time, held time skipped; each page is then ordered by
+#: `unclaimed.waiting_clock`'s own day count (shop-local days, which wall time can round apart).
+#: Used only to order, never to count.
+WAITING_SINCE_SQL: Final = """
+    (
+        o.production_ready_at + coalesce(
+            (
+                SELECT sum(h.resumed_at - h.held_at)
+                FROM order_storage_holds h
+                WHERE h.order_id = o.id AND h.held_at >= o.production_ready_at
+                  AND h.resumed_at IS NOT NULL
+            ),
+            interval '0'
+        )
+    )
+"""
+
 #: The latest published storage policy as one JSON value, for reads that want it beside each row.
 #: Uncorrelated, so PostgreSQL evaluates it once per statement (an InitPlan), not once per order.
 _POLICY_DOCUMENT_SQL: Final = f"""
@@ -224,6 +245,18 @@ class LockedStorageFee:
     quoted_total_vnd: int | None = None
     paid_vnd: int = 0
     waived: bool = False
+    #: `DEC-050`: the order's holds of finished laundry since it was ready, and whether one is open
+    #: on finished laundry the customer still has to collect (the storage clock is `PAUSED`) --
+    #: what `unclaimed.waiting_clock` counts the days waiting, disposal and reminders from.
+    holds: tuple[StorageHold, ...] = ()
+    paused: bool = False
+
+    def waiting(self, as_of: datetime) -> WaitingClock | None:
+        """`DEC-050`'s clock for this order at `as_of`; `None` when no ready time is recorded."""
+
+        if self.ready_at is None:
+            return None
+        return waiting_clock(self.ready_at, as_of, holds=self.holds, paused=self.paused)
 
 
 def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> LockedStorageFee:
@@ -273,6 +306,7 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
     ready_at = row[4] if isinstance(row[4], datetime) else None
     quoted = None if row[5] is None else int(str(row[5]))
     paid = int(str(row[10]))
+    holds = holds_from_column(row[12])
     fee = order_storage_fee(
         None if published is None else published.policy,
         clock=clock,
@@ -283,7 +317,7 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
         settled=bool(row[6]),
         fixed_vnd=None if row[7] is None else int(str(row[7])),
         paid_vnd=paid,
-        holds=holds_from_column(row[12]),
+        holds=holds,
     )
     return LockedStorageFee(
         fee=fee,
@@ -293,6 +327,8 @@ def storage_fee_for_order(cursor: Any, *, order_id: UUID, moment: datetime) -> L
         quoted_total_vnd=quoted,
         paid_vnd=paid,
         waived=bool(row[8]),
+        holds=holds,
+        paused=clock is StorageClock.PAUSED,
     )
 
 
@@ -367,6 +403,7 @@ __all__ = [
     "STORAGE_HOLDS_SQL",
     "STORAGE_POLICY_UNPUBLISHED",
     "STORAGE_VIEW_COLUMNS",
+    "WAITING_SINCE_SQL",
     "LockedStorageFee",
     "PublishedStoragePolicy",
     "StoragePolicyAuthorizationError",

@@ -49,7 +49,7 @@ from typing import Final
 #: v4 (round 9, GOODS-AND-DRAWER-009, review M4): the money line says how refunds went back and
 #: what the drawer did -- cash in minus cash handed back -- beside "Thu trừ hoàn" (every method),
 #: and names the refunds of unknown method (written before `0067`) that the drawer figure excludes.
-DAILY_SUMMARY_TEMPLATE_IDENTIFIER: Final = "daily-summary-v4"
+DAILY_SUMMARY_TEMPLATE_IDENTIFIER: Final = "daily-summary-v5"
 
 #: `Asia/Ho_Chi_Minh` weekday names, Monday first, as the counter says them.
 _WEEKDAY_VI: Final = ("thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy", "Chủ nhật")

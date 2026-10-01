@@ -67,10 +67,11 @@ from nha_trang_laundry_domain.unclaimed import (
     StorageClock,
     StorageHold,
     StoragePolicy,
-    days_waiting,
+    WaitingClock,
     order_storage_fee,
     shop_date,
     storage_clock,
+    waiting_clock,
 )
 
 from nha_trang_laundry_db.consent_egress import (
@@ -87,6 +88,7 @@ from nha_trang_laundry_db.promise_policy import read_published_turnaround_policy
 from nha_trang_laundry_db.service_messaging import read_published_messaging_policy
 from nha_trang_laundry_db.storage_fees import (
     STORAGE_HOLDS_SQL,
+    WAITING_SINCE_SQL,
     holds_from_column,
     read_published_storage_policy,
 )
@@ -244,6 +246,18 @@ class _OrderFacts:
     clock: StorageClock = StorageClock.STOPPED
     holds: tuple[StorageHold, ...] = ()
 
+    def waiting(self, as_of: datetime) -> WaitingClock | None:
+        """`DEC-050`'s clock for this order: the days the reminders count, held days not counted."""
+
+        if self.ready_at is None:
+            return None
+        return waiting_clock(
+            self.ready_at,
+            as_of,
+            holds=self.holds,
+            paused=self.clock is StorageClock.PAUSED,
+        )
+
 
 def _order_facts(cursor: Any, order_id: UUID) -> _OrderFacts | None:
     cursor.execute(_ORDER_FACTS_SQL, (order_id,))
@@ -388,9 +402,10 @@ def newest_due_step(
 ) -> ReminderStep | None:
     """The newest step whose day has come, done or not; None when none is due."""
 
-    if not facts.awaiting or facts.ready_at is None:
+    clock = facts.waiting(as_of)
+    if not facts.awaiting or clock is None:
         return None
-    due = reminder_steps(shop_date(facts.ready_at), shop_date(as_of), policy)
+    due = reminder_steps(clock.days, policy)
     return due[-1] if due else None
 
 
@@ -464,21 +479,23 @@ def _scan_due(
                    '{{}}'::text[]),
                (cu.phone_ciphertext IS NOT NULL AND cu.erased_at IS NULL),
                EXISTS (SELECT 1 FROM contact_channel_bindings b
-                       WHERE b.contact_binding_id = o.bound_contact_id)
+                       WHERE b.contact_binding_id = o.bound_contact_id),
+               {STORAGE_HOLDS_SQL}
         FROM orders o
         LEFT JOIN customers cu ON cu.id = o.customer_id AND cu.store_id = o.store_id
         WHERE o.store_id = %s AND {AWAITING_PICKUP_SQL} AND o.production_ready_at IS NOT NULL
-        ORDER BY o.production_ready_at ASC, o.id
+        ORDER BY {WAITING_SINCE_SQL} ASC, o.id
         LIMIT %s
         """,
         (store_id, SCAN_LIMIT + 1),
     )
     scanned = cursor.fetchall()
     scan_truncated = len(scanned) > SCAN_LIMIT
-    today = shop_date(as_of)
     due: list[tuple[UUID, ReminderStep, Reachability]] = []
     for row in scanned[:SCAN_LIMIT]:
-        step = current_reminder(shop_date(row[1]), today, policy, _steps(row[2] or []))
+        # DEC-050: the steps fall on the clock's days -- a day the shop held the laundry is none.
+        waited = waiting_clock(row[1], as_of, holds=holds_from_column(row[5])).days
+        step = current_reminder(waited, policy, _steps(row[2] or []))
         if step is not None:
             reach = reachability(has_phone=bool(row[3]), has_chat=bool(row[4]))
             due.append((_uuid(row[0]), step, reach))
@@ -556,7 +573,7 @@ class PickupReminderRepository:
                     customer_name=None if erased else detail["customer_name"],
                     step=step,
                     ready_at=ready_at,
-                    days_waiting=days_waiting(ready_at, as_of),
+                    days_waiting=waiting_clock(ready_at, as_of, holds=detail["holds"]).days,
                     reachable=reach,
                     phone=national,
                     zalo_url=zalo_url(national),
@@ -622,7 +639,8 @@ class PickupReminderRepository:
             policy = None if published is None else published.policy
             _require_step(facts, step, policy=policy, as_of=as_of)
             egress = _require_message_allowed(cursor, facts, at=as_of)
-            assert facts.ready_at is not None
+            clock = facts.waiting(as_of)
+            assert facts.ready_at is not None and clock is not None
             turnaround = read_published_turnaround_policy(cursor)
             ready_on = shop_date(facts.ready_at)
             text = reminder_text(
@@ -633,7 +651,7 @@ class PickupReminderRepository:
                     ticket_issued_on=facts.ticket_issued_on,
                     received_on=shop_date(facts.created_at),
                     ready_on=ready_on,
-                    days_waiting=days_waiting(facts.ready_at, as_of),
+                    days_waiting=clock.days,
                     remaining_vnd=_remaining(
                         policy,
                         clock=facts.clock,
@@ -655,7 +673,7 @@ class PickupReminderRepository:
                         ReminderFee(
                             fee_per_started_day_vnd=policy.fee_per_started_day_vnd,
                             fee_cap_percent=policy.fee_cap_percent,
-                            starts_on=fee_starts_on(ready_on, policy),
+                            starts_on=fee_starts_on(clock, policy),
                         )
                         if step is ReminderStep.BEFORE_FEE and policy is not None
                         else None

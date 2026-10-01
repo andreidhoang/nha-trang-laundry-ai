@@ -84,7 +84,10 @@ from test_reports import AS_OF, DAY, _Order, _person, _seeded_shop, _store
 #: `daily-summary-v2:13441b651e00127d`.
 #: v4 (round 9, GOODS-AND-DRAWER-009, review M4): the money line says how refunds went back and what
 #: the drawer did -- cash in minus cash handed back. v3 was `daily-summary-v3:b73120eb9bf3c640`.
-PINNED_TEMPLATE_VERSION = "daily-summary-v4:c8b8abadb5e4578f"
+#: v5 (round 9b, MONEY-RESIDUAL-009B J1, `DEC-050`): "chờ quá N ngày" and the reminder steps count
+#: the days the laundry waited, not the days the shop held it (`awaiting-pickup-count-v2`, the
+#: reminder rules over `unclaimed.waiting_clock`). v4 was `daily-summary-v4:c8b8abadb5e4578f`.
+PINNED_TEMPLATE_VERSION = "daily-summary-v5:d0cbea0c5eb30373"
 
 
 def _database_url() -> str:
@@ -165,7 +168,7 @@ def _as_json(summary: DailySummary) -> str:
 
 def test_the_template_version_is_pinned() -> None:
     version = daily_summary_template_version()
-    assert version.identifier == "daily-summary-v4"
+    assert version.identifier == "daily-summary-v5"
     assert version.label == PINNED_TEMPLATE_VERSION
 
 

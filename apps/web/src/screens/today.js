@@ -792,9 +792,18 @@ export function render_() {
       // REPORT-DASHBOARD-001: the owner's way from today's figure to the period report. Offered
       // only to the roles that may open it; the counter still sees the entry, disabled with its
       // reason, under "Thêm".
-      action: can(state.principal, "REPORTS_READ").allowed
-        ? h("a", { class: "group__link", href: "#/reports", dataReportLink: "true" }, "Báo cáo")
-        : null,
+      // CASH-COUNT-009 (DEC-049): the drawer's count is one tap from the drawer's figure. Shown
+      // to the counter roles that record it; the report link stays the readers' as before.
+      action: h(
+        "div",
+        { class: "today__money-links" },
+        can(state.principal, "CASH_COUNT").allowed
+          ? h("a", { class: "group__link", href: "#/cash-count", dataCashCountLink: "true" }, "Đếm két")
+          : null,
+        can(state.principal, "REPORTS_READ").allowed
+          ? h("a", { class: "group__link", href: "#/reports", dataReportLink: "true" }, "Báo cáo")
+          : null,
+      ),
       children: takingsHost,
     }),
     summaryCard

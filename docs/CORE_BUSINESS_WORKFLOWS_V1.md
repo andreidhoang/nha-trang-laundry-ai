@@ -314,16 +314,21 @@ already paid stays owed-for.
 - **Tóm tắt cuối ngày** (`DAILY-SUMMARY-001`, `DEC-039`) is the owner's evening card on Hôm nay,
   for the report's four readers. After 18:00 shop-local it reads by itself; before, **Xem tóm tắt**
   reads it on demand ("tính đến" the time in its first line). `GET …/reports/daily-summary?date=`
-  returns short Vietnamese sentences a versioned Python template (`daily-summary-v3:<digest>`)
+  returns short Vietnamese sentences a versioned Python template (`daily-summary-v5:<digest>`)
   writes from the report's one-day figures and the live lists. It opens with **Cần chú ý**
-  (`SUMMARY-ATTENTION-001`, `DEC-044`): at most five computed lines, each only when it fires:
+  (`SUMMARY-ATTENTION-001`, `DEC-044`; the sixth line `DEC-049`): at most six computed lines, each
+  only when it fires:
   - deliveries late and undecided;
   - orders late against their promise;
   - pickup reminders due and laundry whose free-storage days end within 3 days;
   - invoice requests waiting over 3 days;
   - the day's money or orders outside 70–130% of the same weekday over the previous four weeks,
     with both figures, from closing time and with at least 3 weeks of trade; after the 10th, last
-    month's missing cost categories.
+    month's missing cost categories;
+  - the day's **recorded** closing cash count when it is thừa or thiếu (both figures; the refunds of
+    unknown method its expected figure left out), or when it could not be compared (no float, or
+    books below nothing) — read by the owner only; another reader gets the line omitted by role and
+    no "nothing needs attention" (`daily-summary-v5`).
 
   It says "Không có việc cần chú ý" only when every source answered. Then the day's figures: orders taken in, completed and
   cancelled; money in split cash / transfer (and refunds when any); finished on time against the
@@ -339,6 +344,24 @@ already paid stays owed-for.
   account, "late against promise" while no turnaround policy and no promise exist.
   **Sao chép** copies the server's text; **Chia sẻ** opens the phone's share sheet (Zalo). Nothing
   is sent by itself and no model is involved.
+- **`#/cash-count` Đếm két** (`CASH-COUNT-009`, `DEC-049`; reached from Hôm nay beside the drawer
+  figure, and listed under Thêm → Khác): the counter records the **opening float** before the
+  first sale and the **closing count** at closing, each once per store per shop-local day
+  (`OWNER_ADMIN`, `OPS_APPROVER`, `OPERATOR`, MFA — the drawer route's gate). **Két phải có** is the
+  server's (`cash-count-v1:<digest>`): float + cash taken (`order_payments` `TIEN_MAT`) − cash
+  handed back (`order_refunds` `TIEN_MAT`) − Sổ thu chi lines marked **Trả từ két** and not voided,
+  on that day; the payment and refund predicates are `collected-today-v4`'s, so it cannot disagree
+  with Hôm nay. No float recorded → no figure (`FLOAT_MISSING`, never 0); refunds of unknown method
+  (`DEC-048`) are left out, counted and named, and the figure is `INCOMPLETE`; books that put the
+  drawer below nothing → no figure (`BOOKS_BELOW_ZERO`) with the gap. The closing count stores the
+  expected figure, the difference as a size and a word (`EVEN` khớp, `OVER` thừa, `SHORT` thiếu —
+  never a minus sign) and its RFC 8785 trace + hash, so the recorded difference is reproducible from
+  the row; the screen says **Sổ đã thay đổi sau lúc đếm** when the books move after it. A wrong
+  figure is corrected by **Sửa** (a new superseding entry with **Vì sao sửa?**); the first stays
+  listed as **Đã thay**. A second phone's entry turns the press into a re-read
+  (`CASH_COUNT_ALREADY_RECORDED` / `CASH_COUNT_STALE`, 409). Nothing happens automatically: no
+  adjustment, no money moved. The owner (alone) reads every day's count on **Báo cáo → Đếm két**
+  (`GET …/cash-counts?from=&to=`, the report's window rules) and in the evening summary.
 - **`#/orders`** is the board: four labels per order, read as four answers.
 - **`#/orders/{id}`** is the working surface: the audit timeline, the settlement panel, the delivery
   legs.
@@ -361,8 +384,10 @@ already paid stays owed-for.
   (fuel is also in Sổ thu chi). Labour minutes are not captured, by decision.
 - **`#/expenses` Sổ thu chi** (`OWNER_ADMIN`, `ACCOUNTANT` write; `AUDITOR` reads): one month at a
   time, the total and each category's total summed by PostgreSQL, one tier-1 line naming the core
-  categories margin still waits for, **Ghi khoản chi** (date, category, amount, note ≤ 120), and a
-  wrong line voided with two presses and its row version — never edited.
+  categories margin still waits for, **Ghi khoản chi** (date, category, amount, note ≤ 120, and the
+  tick **Trả từ két** — default no, every line before `0072` no — for money handed out of the
+  drawer, which the day's cash count then expects less of), and a wrong line voided with two
+  presses and its row version — never edited (the tick included).
 - **`#/machines` Máy giặt, sấy** (under Hệ thống): the machine list `scripts/seed_machines.py`
   registers from `templates/machine-master.csv`; the owner adds, renames or retires a machine.
 - **The network drops.** The console says so, disables every control that would write, and queues

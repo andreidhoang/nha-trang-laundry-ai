@@ -718,6 +718,16 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         # switch that makes Nhắc khách lấy đồ the other half of Đồ chờ lấy.
         "Cần quyền khác",
         "Nhắc khách lấy đồ",
+        # CASH-COUNT-009 (DEC-049): the morning float, the closing count, its correction, the
+        # figure it is held against, and the Sổ thu chi tick that feeds it.
+        "Đếm két",
+        "Ghi tiền đầu ngày",
+        "Ghi số đếm cuối ngày",
+        "Két phải có",
+        "Sửa số đếm",
+        "Vì sao sửa?",
+        "Trả từ két",
+        "Người khác vừa ghi số này",
     ]
 
     absent_from_guide = [phrase for phrase in quoted if phrase not in guide]

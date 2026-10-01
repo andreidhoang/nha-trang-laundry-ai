@@ -235,6 +235,15 @@ DECLARED_CONTROLS = (
     "expenses.category",
     "expenses.save",
     "expenses.void",
+    # CASH-COUNT-009 (DEC-049): Đếm két from Hôm nay, its two entries, the drawer tick in Sổ thu
+    # chi, and the owner's days on Báo cáo.
+    "today.cash-count",
+    "cashCount.float-amount",
+    "cashCount.float-save",
+    "cashCount.close-amount",
+    "cashCount.close-save",
+    "expenses.drawer",
+    "reports.cash-count",
     "shell.nav.machines",
     "machines.add",
     "machines.rename",
@@ -11456,6 +11465,224 @@ def scenario_counter_race(console: Console) -> None:
         _publish_bank_account("--withdraw")
 
 
+# --- CASH-COUNT-009 (DEC-049): đếm két, float to the owner's evening -----------------------------
+
+
+def _cash_sheet(console: Console) -> dict[str, Any]:
+    answer = console.call("GET", f"/internal/v1/stores/{STORE}/cash-count")
+    return answer["body"] or {} if answer["status"] == 200 else {}
+
+
+def _cash_shot(console: Console, name: str) -> None:
+    shots = os.environ.get("CASH_COUNT_SHOTS")
+    if not shots:
+        return
+    os.makedirs(shots, exist_ok=True)
+    viewport = os.environ.get("CONSOLE_VIEWPORT", "desk")
+    console.page.screenshot(path=os.path.join(shots, f"{name}-{viewport}.png"), full_page=True)
+
+
+def _cash_entry(console: Console, kind: str, amount: int, reason: str) -> dict[str, Any]:
+    """Record `kind` the way the counter does: the first entry's form, or -- on a stack where it
+    is already recorded today (a second run) -- Sửa with a reason. Returns the server's answer."""
+
+    prefix = "cash-float" if kind == "OPENING_FLOAT" else "cash-close"
+    form = console.page.locator(f"#{prefix}-amount")
+    if form.count():
+        console.type_into(f"#{prefix}-amount", str(amount))
+        touched(f"cashCount.{prefix.split('-')[1]}-amount")
+        (answer,) = console.press_capturing(console.page.locator(f"#{prefix}-save"), "/cash-count")
+        touched(f"cashCount.{prefix.split('-')[1]}-save")
+    else:
+        console.page.locator(f"button[data-cash-correct={kind}]").click()
+        console.page.wait_for_selector("#cash-correct[open]")
+        console.type_into("#cash-correct-amount", str(amount))
+        console.type_into("#cash-correct-reason", reason)
+        (answer,) = console.press_capturing(
+            console.page.locator("#cash-correct-save"), "/cash-count"
+        )
+        touched("cashCount.correct")
+    console.page.wait_for_timeout(1200)
+    return answer
+
+
+def scenario_cash_count(console: Console) -> None:
+    """CASH-COUNT-009 (DEC-049): float -> sales -> a cash refund -> an expense paid from the drawer
+    -> the count is 10.000 short -> the owner sees it on Báo cáo and in the evening summary."""
+
+    head("K1", "ĐẾM KÉT — tiền đầu ngày, từ Hôm nay")
+    console.sign_in("demo-operations")
+    console.open("#/")
+    link = console.page.locator("a[data-cash-count-link]").first
+    ok(
+        "Hôm nay offers Đếm két beside the drawer figure",
+        link.count() == 1 and link.get_attribute("href") == "#/cash-count",
+    )
+    if link.count():
+        link.click()
+        touched("today.cash-count")
+        console.page.wait_for_timeout(1500)
+    ok("the counter reaches Đếm két", console.page.url.endswith("#/cash-count"), console.page.url)
+    sheet = _cash_sheet(console)
+    day = sheet.get("business_day")
+    ok(
+        "the sheet is today's, under its versioned rule",
+        bool(day) and str(sheet.get("query_version", "")).startswith("cash-count-v1:"),
+        str(sheet.get("query_version")),
+    )
+    opened = _cash_entry(console, "OPENING_FLOAT", 500_000, "đếm lại tiền lẻ đầu ngày")
+    float_entry = (opened.get("body") or {}).get("entry") or {}
+    ok(
+        "the float is recorded as typed, for the sheet's own day",
+        opened["status"] == 201
+        and float_entry.get("counted_vnd") == 500_000
+        and float_entry.get("business_day") == day,
+        opened["text"][:160],
+    )
+    before = (opened.get("body") or {}).get("expected") or {}
+    _cash_shot(console, "k1-float")
+
+    head("K2", "BÁN, HOÀN TIỀN MẶT, CHI TỪ KÉT — the books the count is held against")
+    sale = console.build_order(kg="3", stop="active")
+    console.pay(sale["order_id"])
+    cash_in_order = console.call("GET", f"/internal/v1/orders/{sale['order_id']}")["body"] or {}
+    refunded = console.build_order(kg="3", stop="active")
+    console.pay(refunded["order_id"], "20.000")
+    said = console.step(
+        refunded["order_id"], "CANCEL", custody="RETURNED_UNWASHED_REFUNDED", refund="TIEN_MAT"
+    )
+    note(f"cancelled with 20.000 handed back in cash: {said[:80]}")
+    console.sign_in("demo-owner")
+    console.open(f"#/expenses?month={str(day)[:7]}")
+    console.page.locator("button[data-expense-add]").first.click()
+    console.page.wait_for_selector("#expense-add[open]")
+    console.page.locator("#expense-category [data-value=HOA_CHAT]").click()
+    console.type_into("#expense-amount", "50000")
+    tick = console.page.locator("#expense-drawer")
+    unticked = tick.count() == 1 and not tick.is_checked()
+    tick.check()
+    touched("expenses.drawer")
+    (spent,) = console.press_capturing(console.page.locator("#expense-save"), "/expenses")
+    console.page.wait_for_timeout(1200)
+    ok(
+        "Sổ thu chi records 50.000 for chemicals 'Trả từ két' (unticked until ticked)",
+        unticked
+        and spent["status"] == 201
+        and (spent.get("body") or {}).get("paid_from_drawer") is True,
+        spent["text"][:160],
+    )
+    if READS_DATABASE:
+        expense_id = (spent.get("body") or {}).get("expense_id")
+        ok(
+            "the line is stored as from the drawer",
+            sql(f"select paid_from_drawer from expenses where id='{expense_id}'") == "t",
+        )
+
+    head("K3", "ĐẾM CUỐI NGÀY — 10.000 thiếu, in words")
+    console.sign_in("demo-operations")
+    console.open("#/cash-count", settle=1500)
+    after = _cash_sheet(console).get("expected") or {}
+
+    def moved(key: str) -> int:
+        return int(after.get(key) or 0) - int(before.get(key) or 0)
+
+    paid_cash = int(cash_in_order.get("paid_vnd") or 0)
+    ok(
+        "the server's parts moved by exactly this scenario's cash, refund and drawer expense",
+        moved("cash_refunded_vnd") == 20_000
+        and moved("drawer_expenses_vnd") == 50_000
+        and moved("cash_in_vnd") >= 20_000
+        and (not paid_cash or moved("cash_in_vnd") == paid_cash + 20_000),
+        {k: moved(k) for k in ("cash_in_vnd", "cash_refunded_vnd", "drawer_expenses_vnd")},
+    )
+    parts_agree = after.get("expected_vnd") == (
+        int(after.get("float_vnd") or 0)
+        + int(after.get("cash_in_vnd") or 0)
+        - int(after.get("cash_refunded_vnd") or 0)
+        - int(after.get("drawer_expenses_vnd") or 0)
+    )
+    ok(
+        "két phải có is float + cash in - cash back - drawer expenses, as the server sent it",
+        after.get("status") in ("COMPLETE", "INCOMPLETE") and parts_agree,
+        {k: after.get(k) for k in ("status", "expected_vnd", "float_vnd")},
+    )
+    expected = int(after.get("expected_vnd") or 0)
+    closed = _cash_entry(console, "CLOSING_COUNT", expected - 10_000, "đếm lại cuối ngày")
+    entry = (closed.get("body") or {}).get("entry") or {}
+    ok(
+        "the count is recorded 10.000 short of what the books say",
+        closed["status"] == 201
+        and entry.get("difference_direction") == "SHORT"
+        and entry.get("difference_vnd") == 10_000
+        and entry.get("expected_vnd") == expected,
+        closed["text"][:200],
+    )
+    shown = console.text().replace("\xa0", " ")
+    grouped = f"{expected:,}".replace(",", ".")
+    ok(
+        "the screen says 'Thiếu 10.000 ₫' against the expected figure, with no minus sign",
+        "Thiếu 10.000 ₫" in shown
+        and f"két phải có {grouped} ₫" in shown
+        and "-10.000" not in shown
+        and chr(0x2212) not in shown,
+        shown[:240].replace("\n", " | "),
+    )
+    _cash_shot(console, "k3-short")
+    refused = console.call("GET", f"/internal/v1/stores/{STORE}/cash-counts?from={day}&to={day}")
+    ok("the counter may not read the owner's history", refused["status"] == 403)
+    if READS_DATABASE and entry.get("entry_id"):
+        entry_id = entry["entry_id"]
+        ok(
+            "the count is stored with its event, audit and outbox row, and its trace hash",
+            sql(
+                f"select (select count(*) from domain_events where aggregate_id='{entry_id}')"
+                f"||','||(select count(*) from audit_events where aggregate_id='{entry_id}')"
+                f"||','||(select count(*) from outbox_events where aggregate_id='{entry_id}')"
+            )
+            == "1,1,1"
+            and sql(
+                f"select difference_direction||','||difference_vnd from cash_counts "
+                f"where id='{entry_id}'"
+            )
+            == "SHORT,10000"
+            and sql(
+                f"select trace_hash like 'JCS-SHA256-V1:%' from cash_counts where id='{entry_id}'"
+            )
+            == "t",
+        )
+
+    head("K4", "CHỦ TIỆM THẤY — Báo cáo and the evening summary")
+    console.sign_in("demo-owner")
+    console.open(f"#/reports?from={day}&to={day}", settle=2500)
+    touched("reports.cash-count")
+    row = console.page.locator(f"[data-cash-count-day='{day}']").first
+    row_text = row.inner_text().replace("\xa0", " ") if row.count() else ""
+    ok(
+        "Báo cáo lists the day with 'Thiếu 10.000 ₫' and both figures",
+        "Thiếu 10.000 ₫" in row_text and f"phải có {grouped} ₫" in row_text,
+        row_text.replace("\n", " | ") or "absent",
+    )
+    _cash_shot(console, "k4-report")
+    history = console.call("GET", f"/internal/v1/stores/{STORE}/cash-counts?from={day}&to={day}")
+    days = (history.get("body") or {}).get("days") or []
+    ok(
+        "the owner's history read says the same",
+        history["status"] == 200
+        and len(days) == 1
+        and (days[0].get("closing_count") or {}).get("difference_direction") == "SHORT",
+        history["text"][:160],
+    )
+    summary = console.call("GET", f"/internal/v1/stores/{STORE}/reports/daily-summary?date={day}")
+    text = str((summary.get("body") or {}).get("text", ""))
+    counted = f"{expected - 10_000:,}".replace(",", ".")
+    ok(
+        "the evening summary's Cần chú ý names the shortfall with both figures",
+        "Cần chú ý:" in text
+        and f"Đếm két cuối ngày thiếu 10.000đ (phải có {grouped}đ, đếm được {counted}đ)." in text,
+        text[:400],
+    )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -11539,6 +11766,10 @@ SCENARIOS = {
     # PLATFORM-SECURITY-009 (slice G). Publishes nothing and reads nothing another scenario counts;
     # it adds two pending export requests, after export_range has made its own before/after count.
     "platform_bounds": scenario_platform_bounds,
+    # CASH-COUNT-009 (DEC-049). Late: the day's float and closing count are recorded once a day,
+    # and its 10.000 shortfall adds a Cần chú ý line nothing above expects. On a stack that already
+    # counted today it corrects the entries (with a reason) instead of recording them.
+    "cash_count": scenario_cash_count,
     # OPS-OBSERVABILITY-009 (review P6). Last: it reads the outbox every scenario above wrote to.
     "queue_pending": scenario_queue_pending,
 }

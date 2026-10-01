@@ -1697,6 +1697,70 @@ def expense_month(month: str) -> dict[str, object]:
     }
 
 
+# --- CASH-COUNT-009 (DEC-049): Đếm két, as the server answers it ----------------------------------
+
+#: The sheet's day is deliberately not the browser's: the console must send the day it showed.
+CASH_DAY = "2026-09-30"
+CASH_FLOAT_ID = "cccccccc-0000-4000-8000-000000000001"
+CASH_CLOSE_ID = "cccccccc-0000-4000-8000-000000000002"
+
+
+def cash_entry(kind: str, counted: int, entry_id: str, **more: object) -> dict[str, object]:
+    closing = kind == "CLOSING_COUNT"
+    return {
+        "entry_id": entry_id,
+        "business_day": CASH_DAY,
+        "kind": kind,
+        "counted_vnd": counted,
+        "supersedes_id": None,
+        "correction_reason": None,
+        "expected_status": "INCOMPLETE" if closing else None,
+        "expected_vnd": 600_000 if closing else None,
+        "difference_vnd": 10_000 if closing else None,
+        "difference_direction": "SHORT" if closing else None,
+        "trace_hash": "JCS-SHA256-V1:" + "a" * 64 if closing else None,
+        "recorded_by": "11111111-aaaa-4333-8444-555555555555",
+        "recorded_by_name": "Lan",
+        "recorded_at": "2026-09-30T13:00:00+00:00",
+        "superseded": False,
+        **more,
+    }
+
+
+def cash_sheet(
+    *, opening: dict | None = None, closing: dict | None = None, **more: object
+) -> dict[str, object]:
+    """Today's sheet. Expected 600.000 = 500.000 + 210.000 - 60.000 - 50.000, computed by the
+    server; one refund of unknown method (40.000) left out. The console must print, not add."""
+
+    entries = [entry for entry in (opening, closing) if entry]
+    return {
+        "store_id": STORE,
+        "business_day": CASH_DAY,
+        "business_timezone": "Asia/Ho_Chi_Minh",
+        "opening_float": opening,
+        "closing_count": closing,
+        "entries": entries,
+        "expected": {
+            "status": "INCOMPLETE" if opening else "FLOAT_MISSING",
+            "expected_vnd": 600_000 if opening else None,
+            "float_vnd": opening["counted_vnd"] if opening else None,
+            "cash_in_vnd": 210_000,
+            "cash_in_count": 3,
+            "cash_refunded_vnd": 60_000,
+            "cash_refunded_count": 1,
+            "drawer_expenses_vnd": 50_000,
+            "drawer_expenses_count": 1,
+            "excluded_unknown_refunds_vnd": 40_000,
+            "excluded_unknown_refunds_count": 1,
+            "books_over_vnd": None,
+        },
+        "changed_since_count": False,
+        "query_version": "cash-count-v1:0123456789abcdef",
+        **more,
+    }
+
+
 def report_kpis(start: str, end: str) -> list[dict[str, object]]:
     def kpi(key, numerator, denominator=None, unit="ORDERS", quality="COMPLETE", **extra):
         return {
@@ -2955,6 +3019,38 @@ with sync_playwright() as playwright:
                 "suggested_vehicle": None,
                 "weight_kg": None,
                 "weight_basis": "UNKNOWN",
+            }
+        # CASH-COUNT-009 (DEC-049): today's sheet, its writes (captured with their key; a section
+        # may answer with a refusal), and the owner's days on Báo cáo.
+        elif url.split("?")[0].endswith("/cash-count") and route.request.method == "GET":
+            state.setdefault("cash_reads", []).append(url)
+            body = state.get("cash_sheet") or cash_sheet()
+        elif url.split("?")[0].endswith("/cash-count") and route.request.method == "POST":
+            state.setdefault("cash_writes", []).append(
+                {
+                    "body": json.loads(route.request.post_data or "{}"),
+                    "key": route.request.headers.get("idempotency-key"),
+                }
+            )
+            reply = state.get("cash_write_reply") or (201, state.get("cash_after_write") or {})
+            route.fulfill(
+                status=reply[0], content_type="application/json", body=json.dumps(reply[1])
+            )
+            return
+        elif url.split("?")[0].endswith("/cash-counts") and route.request.method == "GET":
+            state.setdefault("cash_history_reads", []).append(url)
+            body = state.get("cash_history") or {
+                "store_id": STORE,
+                "from_date": CASH_DAY,
+                "to_date": CASH_DAY,
+                "truncated": False,
+                "days": [
+                    cash_sheet(
+                        opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID),
+                        closing=cash_entry("CLOSING_COUNT", 590_000, CASH_CLOSE_ID),
+                    )
+                ],
+                "query_version": "cash-count-v1:0123456789abcdef",
             }
         elif "/expenses" in url and route.request.method == "POST":
             state.setdefault("expense_writes", []).append(
@@ -13962,6 +14058,300 @@ with sync_playwright() as playwright:
     state["order_write_reply"] = None
     state["order_view"] = None
     state["storage"] = None
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+
+    # ============================================================================================
+    # 29. CASH-COUNT-009 (DEC-049) -- Đếm két: reached from Hôm nay; the float and the closing count
+    #     sent as typed (integers, the sheet's own day, a key); the server's expected figure and
+    #     its thừa / thiếu printed as words, never a minus sign; a correction needs a reason; a
+    #     second phone's entry turns the press into a re-read; the owner reads the days on Báo cáo.
+    # ============================================================================================
+    print()
+    print("[29] Đếm két: tiền đầu ngày, két phải có, đếm cuối ngày, thừa thiếu")
+    SESSION_OK["roles"] = ["OPERATOR"]
+    state["cash_sheet"] = cash_sheet()
+    state["cash_writes"] = []
+    state["cash_reads"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    link = page.locator("a[data-cash-count-link]")
+    check(
+        "Hôm nay offers Đếm két beside the drawer figure",
+        link.count() == 1 and link.get_attribute("href") == "#/cash-count",
+    )
+    link.click()
+    page.wait_for_timeout(1000)
+    expected_cell = page.locator("[data-cash-expected]")
+    main_text = page.locator("main").inner_text()
+    check(
+        "with no float the sheet says the figure cannot be computed, never 0",
+        expected_cell.get_attribute("data-cash-expected") == "FLOAT_MISSING"
+        and "Chưa tính được" in expected_cell.inner_text()
+        and "Chưa ghi tiền đầu ngày nên chưa tính được két phải có." in main_text,
+        main_text[:200].replace("\n", " | "),
+    )
+    check(
+        "the drawer's parts are the server's, each with its count",
+        "Thu tiền mặt (3)" in main_text
+        and "210.000" in main_text
+        and "Hoàn tiền mặt (1)" in main_text
+        and "Chi từ két (1)" in main_text,
+    )
+    page.locator("#cash-float-amount").fill("12,5")
+    page.locator("#cash-float-save").click()
+    page.wait_for_timeout(300)
+    check(
+        "an amount that is not whole đồng is refused here and nothing is sent",
+        not state["cash_writes"] and "Gõ số tiền đếm được" in page.locator("main").inner_text(),
+    )
+    state["cash_after_write"] = cash_sheet(
+        opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID),
+        entry=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID),
+        replayed=False,
+    )
+    page.locator("#cash-float-amount").fill("500.000")
+    page.locator("#cash-float-save").click()
+    page.wait_for_timeout(900)
+    writes = state["cash_writes"]
+    check(
+        "Ghi tiền đầu ngày sends the float as an integer, for the day the sheet showed, with a key",
+        len(writes) == 1
+        and writes[0]["body"]
+        == {"business_day": CASH_DAY, "kind": "OPENING_FLOAT", "counted_vnd": 500_000}
+        and bool(writes[0]["key"]),
+        repr(writes),
+    )
+    main_text = page.locator("main").inner_text().replace("\xa0", " ")
+    check(
+        "then the server's expected figure, with the unknown-method refund named apart",
+        "600.000" in page.locator("[data-cash-expected]").inner_text()
+        and "Chưa tính 1 lần hoàn chưa rõ cách hoàn (40.000 ₫)" in main_text
+        and page.locator("[data-cash-float]").count() == 1,
+        main_text[:300].replace("\n", " | "),
+    )
+    # A refusal keeps the key (the same press, retried, is the same request); an edit makes a new
+    # one.
+    state["cash_writes"] = []
+    state["cash_write_reply"] = (422, {"detail": {"reason_code": "CASH_COUNT_DAY_NOT_TODAY"}})
+    page.locator("#cash-close-amount").fill("590.000")
+    page.locator("#cash-close-save").click()
+    page.wait_for_timeout(700)
+    page.locator("#cash-close-save").click()
+    page.wait_for_timeout(700)
+    page.locator("#cash-close-amount").fill("590000")
+    page.locator("#cash-close-save").click()
+    page.wait_for_timeout(700)
+    keys = [write["key"] for write in state["cash_writes"]]
+    check(
+        "a refused count says why in Vietnamese; a retry reuses its key, an edited one does not",
+        "Đã sang ngày mới" in page.locator("main").inner_text()
+        and len(keys) == 3
+        and keys[0] == keys[1]
+        and keys[2] != keys[1],
+        repr(keys),
+    )
+    state["cash_write_reply"] = None
+    state["cash_writes"] = []
+    closed = cash_sheet(
+        opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID),
+        closing=cash_entry("CLOSING_COUNT", 590_000, CASH_CLOSE_ID),
+    )
+    state["cash_after_write"] = {
+        **closed,
+        "entry": cash_entry("CLOSING_COUNT", 590_000, CASH_CLOSE_ID),
+        "replayed": False,
+    }
+    page.locator("#cash-close-save").click()
+    page.wait_for_timeout(900)
+    writes = state["cash_writes"]
+    shown = page.locator("main").inner_text().replace("\xa0", " ")
+    check(
+        "Ghi số đếm cuối ngày sends the count; the screen says Thiếu 10.000 ₫ in words",
+        len(writes) == 1
+        and writes[0]["body"]
+        == {"business_day": CASH_DAY, "kind": "CLOSING_COUNT", "counted_vnd": 590_000}
+        and page.locator("[data-cash-difference=SHORT]").count() == 1
+        and "Thiếu 10.000 ₫ so với két phải có 600.000 ₫." in shown,
+        shown[:300].replace("\n", " | "),
+    )
+    check(
+        "no minus sign anywhere a figure is shown",
+        "-10" not in shown and chr(0x2212) not in shown and "- 10" not in shown,
+    )
+    state["cash_sheet"] = closed
+    page.locator("button[data-cash-correct=CLOSING_COUNT]").click()
+    page.wait_for_timeout(400)
+    page.locator("#cash-correct-amount").fill("600.000")
+    page.locator("#cash-correct-save").click()
+    page.wait_for_timeout(300)
+    check(
+        "a correction without a reason is refused before anything is sent",
+        len(state["cash_writes"]) == 1 and "Ghi lý do sửa" in open_dialog_text(),
+    )
+    corrected = cash_entry(
+        "CLOSING_COUNT",
+        600_000,
+        "cccccccc-0000-4000-8000-000000000003",
+        supersedes_id=CASH_CLOSE_ID,
+        correction_reason="đếm sót tờ 10.000",
+        difference_vnd=0,
+        difference_direction="EVEN",
+    )
+    state["cash_after_write"] = {
+        **cash_sheet(
+            opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID),
+            closing=corrected,
+        ),
+        "entries": [
+            cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID),
+            cash_entry("CLOSING_COUNT", 590_000, CASH_CLOSE_ID, superseded=True),
+            corrected,
+        ],
+        "entry": corrected,
+        "replayed": False,
+    }
+    page.locator("#cash-correct-reason").fill("đếm sót tờ 10.000")
+    page.locator("#cash-correct-save").click()
+    page.wait_for_timeout(900)
+    sent = state["cash_writes"][-1]["body"] if len(state["cash_writes"]) == 2 else {}
+    shown = page.locator("main").inner_text()
+    check(
+        "Sửa số đếm supersedes the current entry with its reason; both stay listed",
+        sent.get("supersedes_entry_id") == CASH_CLOSE_ID
+        and sent.get("reason") == "đếm sót tờ 10.000"
+        and sent.get("counted_vnd") == 600_000
+        and page.locator("[data-cash-difference=EVEN]").count() == 1
+        and page.locator("[data-cash-entry]").count() == 3
+        and "Lý do sửa: đếm sót tờ 10.000" in shown
+        and "Đã thay" in shown,
+        repr(sent),
+    )
+    # A second phone already recorded the float: the press re-reads, it never records twice.
+    state["cash_sheet"] = cash_sheet()
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/cash-count", wait_until="networkidle")
+    page.wait_for_timeout(800)
+    state["cash_sheet"] = cash_sheet(opening=cash_entry("OPENING_FLOAT", 450_000, CASH_FLOAT_ID))
+    state["cash_write_reply"] = (
+        409,
+        {"detail": "CASH_COUNT_ALREADY_RECORDED: this entry is already recorded today"},
+    )
+    state["cash_reads"] = []
+    page.locator("#cash-float-amount").fill("500000")
+    page.locator("#cash-float-save").click()
+    page.wait_for_timeout(1000)
+    shown = page.locator("main").inner_text().replace("\xa0", " ")
+    check(
+        "an entry another phone recorded first is re-read and said in one line",
+        len(state["cash_reads"]) == 1
+        and "Người khác vừa ghi số này" in shown
+        and "450.000" in page.locator("[data-cash-float]").inner_text(),
+        shown[:200].replace("\n", " | "),
+    )
+    state["cash_write_reply"] = None
+    state["cash_sheet"] = {**closed, "changed_since_count": True}
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/cash-count", wait_until="networkidle")
+    page.wait_for_timeout(800)
+    check(
+        "books that moved after the count are said above it; the recorded count stays",
+        "Sổ đã thay đổi sau lúc đếm" in page.locator("main").inner_text()
+        and page.locator("[data-cash-difference=SHORT]").count() == 1,
+    )
+    unnamed = page.evaluate(
+        """() => [...document.querySelectorAll('main input, main select, main textarea')]
+            .filter((n) => !n.labels?.length && !n.getAttribute('aria-label')).length"""
+    )
+    check("every input on Đếm két has an accessible name", unnamed == 0, f"unnamed={unnamed}")
+    state["cash_sheet"] = cash_sheet(opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID))
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/cash-count", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    wide = page.evaluate("() => document.documentElement.scrollWidth")
+    check("at 390 px Đếm két does not scroll sideways", wide <= 390, f"scrollWidth={wide}")
+    if os.environ.get("CONSOLE_SHOTS_DIR"):
+        shots = os.environ["CONSOLE_SHOTS_DIR"]
+        os.makedirs(shots, exist_ok=True)
+        page.screenshot(path=os.path.join(shots, "r9bi-cash-open-phone.png"), full_page=True)
+        page.set_viewport_size({"width": 1366, "height": 900})
+        page.wait_for_timeout(300)
+        page.screenshot(path=os.path.join(shots, "r9bi-cash-open-desk.png"), full_page=True)
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    # Roles: the auditor is refused the screen with who may, and nothing is asked.
+    SESSION_OK["roles"] = ["AUDITOR"]
+    state["cash_reads"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/cash-count", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    check(
+        "an auditor is refused Đếm két with who may, and the sheet is never read",
+        not state["cash_reads"]
+        and "KHÔNG ĐỦ QUYỀN" in rendered_text()
+        and "Vai trò được phép" in rendered_text(),
+        rendered_text()[:160],
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/more", wait_until="networkidle")
+    page.wait_for_timeout(600)
+    check(
+        "under Thêm the auditor sees Đếm két shut, naming who may open it",
+        page.locator("[data-nav-denied='/cash-count']").count() == 1,
+    )
+
+    # Sổ thu chi: "Trả từ két" is a tick, unticked by default, sent as a boolean.
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    state["expense_writes"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/expenses?month=2026-09", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    page.locator("button[data-expense-add]").click()
+    page.wait_for_timeout(400)
+    tick = page.locator("#expense-drawer")
+    unticked = tick.count() == 1 and not tick.is_checked()
+    page.locator("#expense-category [data-value=HOA_CHAT]").click()
+    page.locator("#expense-amount").fill("50.000")
+    tick.check()
+    page.locator("#expense-save").click()
+    page.wait_for_timeout(900)
+    writes = state["expense_writes"]
+    sent = json.loads(writes[0]["body"] or "{}") if writes else {}
+    check(
+        "Ghi khoản chi offers Trả từ két unticked, and sends it as true when ticked",
+        unticked and sent.get("paid_from_drawer") is True and sent.get("amount_vnd") == 50_000,
+        repr(sent),
+    )
+
+    # Báo cáo: the owner reads each day's thừa / thiếu; an approver sees the section shut.
+    state["cash_history_reads"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/reports", wait_until="networkidle")
+    page.wait_for_timeout(1500)
+    day_row = page.locator(f"[data-cash-count-day='{CASH_DAY}']")
+    row_text = day_row.inner_text().replace("\xa0", " ") if day_row.count() else ""
+    check(
+        "the owner's report lists the day: counted, expected, and Thiếu 10.000 ₫ as a word",
+        "Thiếu 10.000 ₫" in row_text
+        and "Đếm được 590.000 ₫ · phải có 600.000 ₫" in row_text
+        and len(state["cash_history_reads"]) == 1,
+        row_text.replace("\n", " | ") or "absent",
+    )
+    SESSION_OK["roles"] = ["OPS_APPROVER"]
+    state["cash_history_reads"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/reports", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    shut = page.locator("[data-cash-count-report] [data-refused]")
+    check(
+        "an approver reads the report with Đếm két shut and its reason, and nothing is asked",
+        shut.count() == 1
+        and "chỉ chủ tiệm" in shut.inner_text()
+        and not state["cash_history_reads"],
+    )
+    state["cash_sheet"] = None
+    state["cash_after_write"] = None
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
 
     print()

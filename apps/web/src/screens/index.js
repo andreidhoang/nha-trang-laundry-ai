@@ -15,6 +15,7 @@
 
 import { screen as accountStatement } from "./accountStatement.js";
 import { screen as approvals } from "./approvals.js";
+import { screen as cashCount } from "./cashCount.js";
 import { detailScreen as customerDetail, screen as customers } from "./customers.js";
 import { screen as assistant } from "./assistant.js";
 import { screen as exceptions } from "./exceptions.js";
@@ -70,6 +71,8 @@ export const ROUTES = [
   exports_,
   reports,
   expenses,
+  // CASH-COUNT-009 (DEC-049): Đếm két.
+  cashCount,
   // EINVOICE-REQUEST-001 (DEC-040): Hóa đơn cần xuất.
   invoices,
   machines,

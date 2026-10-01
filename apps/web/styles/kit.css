@@ -5056,3 +5056,35 @@ details.more-denied[open] > .more-denied__summary::after {
   min-width: 0;
   padding: 0;
 }
+
+/* === CASH-COUNT-009 (slice I, round 9b) =================================================================
+ * Đếm két: the float, what the drawer should hold, the closing count and its thừa / thiếu. Today's
+ * "Tiền hôm nay" section carries two quiet links (Đếm két, Báo cáo) side by side. */
+
+.today__money-links {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+}
+
+.cash__refresh {
+  align-items: center;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.cash__refresh .updated {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.cash__form {
+  max-width: 28rem;
+}
+
+.cash .money-hero__caption {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

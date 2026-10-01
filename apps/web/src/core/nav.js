@@ -188,6 +188,19 @@ export const NAV_ITEMS = [
     fold: true,
     hint: "Báo giá đã lập, sửa giá",
   },
+  // CASH-COUNT-009 (DEC-049). The counter's way in is Hôm nay: "Đếm két" sits beside the drawer
+  // figure it is counted against, twice a day. The entry here is the index one (Thêm, the closed
+  // group) so the screen is listed for those who may open it -- and an operator's desk list stays
+  // at the fourteen C6 measured (a fifteenth top-level row for a twice-a-day job breaks it).
+  {
+    path: "/cash-count",
+    label: NAV.cashCount,
+    capability: "CASH_COUNT",
+    icon: "cash",
+    group: FOLD_GROUP,
+    fold: true,
+    hint: "Tiền đầu ngày, đếm cuối ngày, thừa thiếu — mở từ Hôm nay",
+  },
   {
     path: "/machines",
     label: NAV.machines,

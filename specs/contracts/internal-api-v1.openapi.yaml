@@ -2063,7 +2063,7 @@ paths:
   /internal/v1/stores/{store_id}/invoice-requests/export:
     post:
       operationId: export_invoice_requests
-      summary: '*Tải danh sách cho kế toán*: every open request as CSV (`invoice-requests-export-v1`).'
+      summary: '*Tải danh sách cho kế toán*: open requests and flagged issued ones as CSV (export v2).'
       x-authorization-dependencies:
       - require_invoice_closer
       - get_invoice_request_service

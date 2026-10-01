@@ -17,17 +17,22 @@ invoice. It decides:
   note when the reason is ``OTHER``); both are terminal.
 
 No tax is split, no rate is named and nothing is called a *hóa đơn* that the software prints: the
-amounts a request carries are the ones the order and the account statement already publish, read at
-the moment the request is read. Pure: no clock, no database, no environment.
+amounts a request carries are the ones the order and the account charges already publish. An open
+request reads them at the moment it is read; an issued one carries the figure fixed when it was
+issued (`INVOICE-TRUTH-009`, `0068`), and what happened to its orders afterwards is said beside it
+as a flag (`issued_flags`) rather than folded into that figure. Pure: no clock, no database, no
+environment.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
 from typing import Final
+from uuid import UUID
 
 from nha_trang_laundry_domain.unclaimed import PHONE_LIKE
 
@@ -85,8 +90,9 @@ class InvoiceRefusal(StrEnum):
     #: future, or has nothing charged in it.
     INVOICE_SUBJECT_UNAVAILABLE = "INVOICE_SUBJECT_UNAVAILABLE"
     #: A live request (REQUESTED or ISSUED) already covers this subject -- or covers it through the
-    #: other kind: an order charged to an account month that has a request, or an account month one
-    #: of whose orders has its own.
+    #: other kind: an order that an account month's live request covers (the month's open request,
+    #: or the orders its issued invoice listed), or an account month every one of whose charged
+    #: orders has its own request (`INVOICE-TRUTH-009`: one with some left covers the rest).
     INVOICE_REQUEST_EXISTS = "INVOICE_REQUEST_EXISTS"
     INVOICE_TAX_CODE_SHAPE = "INVOICE_TAX_CODE_SHAPE"
     #: A tax code was given without an address.
@@ -103,6 +109,15 @@ class InvoiceRefusal(StrEnum):
     INVOICE_ISSUED_DETAILS_INVALID = "INVOICE_ISSUED_DETAILS_INVALID"
     #: Another request of this store already records this symbol and number.
     INVOICE_NUMBER_TAKEN = "INVOICE_NUMBER_TAKEN"
+    #: *Ghi số hóa đơn* named orders the request does not cover now (`orders_on_invoice`): one
+    #: that took a request of its own since the sheet was read, one that is not this request's, a
+    #: repeated one, or none. Nothing is fixed; the owner reads the request again.
+    INVOICE_AMOUNT_MOVED = "INVOICE_AMOUNT_MOVED"
+    #: The total typed off the invoice is not what the orders it lists cost the customer now
+    #: (`orders_on_invoice`): a typing slip, an order ticked that the invoice does not list, or the
+    #: order's figure moved since the invoice was made. Nothing is fixed. `field` is
+    #: ``invoice_total_vnd``.
+    INVOICE_TOTAL_MISMATCH = "INVOICE_TOTAL_MISMATCH"
     #: A cancellation for ``OTHER`` says what, in 1-200 characters.
     INVOICE_CANCEL_NOTE_REQUIRED = "INVOICE_CANCEL_NOTE_REQUIRED"
 
@@ -260,6 +275,117 @@ def require_open(status: InvoiceRequestStatus) -> None:
         raise InvoiceRuleError(InvoiceRefusal.INVOICE_REQUEST_CLOSED)
 
 
+class InvoiceFlag(StrEnum):
+    """Something that happened to an issued request's orders after the invoice was issued.
+
+    `INVOICE-TRUTH-009` (review M6). An issued invoice is a document the bookkeeper already gave the
+    customer; its figure never moves. When the order moves afterwards, the request says so, by name,
+    and the bookkeeper decides what the provider's portal needs (an adjusting invoice is theirs).
+    """
+
+    #: A covered order's money went back to the customer after the invoice was issued.
+    REFUNDED_AFTER_ISSUE = "REFUNDED_AFTER_ISSUE"
+    #: A covered order was cancelled after the invoice was issued, with no money going back.
+    CANCELLED_AFTER_ISSUE = "CANCELLED_AFTER_ISSUE"
+    #: What the covered orders cost, read now, is not the figure on the invoice (a storage fee
+    #: accrued or was settled after it, or the invoice predates the figure's fixing).
+    AMOUNT_CHANGED_AFTER_ISSUE = "AMOUNT_CHANGED_AFTER_ISSUE"
+    #: An account month: orders charged to the month that its invoice does not list and that no
+    #: request covers now -- charged after the issue, or left off it because each had a request of
+    #: its own then, cancelled since. The flag says only that (review round 9: it once said "charged
+    #: after", untrue of the second). Each can be requested on its own.
+    MONTH_ORDERS_NOT_ON_INVOICE = "MONTH_ORDERS_NOT_ON_INVOICE"
+
+
+@dataclass(frozen=True, slots=True)
+class CoveredOrderState:
+    """One covered order's state that an invoice cares about: cancelled, and money given back."""
+
+    cancelled: bool
+    refunded: bool
+
+
+def issued_flags(
+    *,
+    fixed_total_vnd: int | None,
+    live_total_vnd: int | None,
+    at_issue: Mapping[UUID, CoveredOrderState],
+    now: Mapping[UUID, CoveredOrderState],
+    uninvoiced_month_orders: int,
+) -> tuple[InvoiceFlag, ...]:
+    """What happened to an issued request's orders since it was issued, in a fixed order.
+
+    `at_issue` is each covered order's state recorded with the snapshot; `now` the same orders read
+    now (an order missing from `now` is read as unchanged). A refund implies the cancellation it
+    came with, so an order refunded after the issue is flagged once, as refunded.
+    """
+
+    if uninvoiced_month_orders < 0:
+        raise ValueError("a count of charges is never negative")
+    refunded = cancelled = False
+    for order_id, before in at_issue.items():
+        after = now.get(order_id, before)
+        if after.refunded and not before.refunded:
+            refunded = True
+        elif after.cancelled and not before.cancelled:
+            cancelled = True
+    flags: list[InvoiceFlag] = []
+    if refunded:
+        flags.append(InvoiceFlag.REFUNDED_AFTER_ISSUE)
+    if cancelled:
+        flags.append(InvoiceFlag.CANCELLED_AFTER_ISSUE)
+    if fixed_total_vnd != live_total_vnd:
+        flags.append(InvoiceFlag.AMOUNT_CHANGED_AFTER_ISSUE)
+    if uninvoiced_month_orders:
+        flags.append(InvoiceFlag.MONTH_ORDERS_NOT_ON_INVOICE)
+    return tuple(flags)
+
+
+def orders_on_invoice(
+    *,
+    kind: InvoiceSubjectKind,
+    invoice_total_vnd: int | None,
+    invoice_order_ids: Sequence[UUID],
+    request_total_vnd: int | None,
+    lines: Sequence[tuple[UUID, int | None]],
+) -> tuple[UUID, ...]:
+    """Which of an open request's orders the issued invoice lists, from what *Ghi số hóa đơn* sent.
+
+    Review round 9 (M5, M6): an issued request is fixed at what the INVOICE says -- the total the
+    owner types off it and the orders it lists -- never at what the sheet happened to read when it
+    was opened. `lines` are the request's orders now, read under the store's lock, each with what it
+    cost the customer; `request_total_vnd` is the request's figure now.
+
+    * The orders sent are a non-empty set of the request's orders now, each once; anything else is
+      `INVOICE_AMOUNT_MOVED` (the sheet is stale or the input is not this request's).
+    * An account month may be fixed at some of its orders -- the invoice was made before others
+      went on the month. The rest stay on no invoice: the issued month says so
+      (`MONTH_ORDERS_NOT_ON_INVOICE`) and each can be requested on its own.
+    * The total is exactly what the orders sent cost: the order's figure for an order, the sum of
+      the lines sent for a month. Anything else is `INVOICE_TOTAL_MISMATCH` on
+      ``invoice_total_vnd``. No figure is adjusted to match: an invoice made for a figure the shop
+      does not charge now is not recorded here (fail-closed; see the round-9 report).
+
+    Returns the orders sent, in the request's order.
+    """
+
+    sent = list(invoice_order_ids)
+    covered = [order_id for order_id, _amount in lines]
+    if not sent or len(set(sent)) != len(sent) or not set(sent) <= set(covered):
+        raise InvoiceRuleError(InvoiceRefusal.INVOICE_AMOUNT_MOVED)
+    chosen = tuple(order_id for order_id in covered if order_id in set(sent))
+    if kind is InvoiceSubjectKind.ORDER:
+        total = request_total_vnd
+    else:
+        amounts = [amount for order_id, amount in lines if order_id in set(chosen)]
+        if any(amount is None for amount in amounts):
+            raise ValueError("an account month's line always has an amount")
+        total = sum(amount for amount in amounts if amount is not None)
+    if invoice_total_vnd != total:
+        raise InvoiceRuleError(InvoiceRefusal.INVOICE_TOTAL_MISMATCH, field="invoice_total_vnd")
+    return chosen
+
+
 #: The unit words the bookkeeper's list prints beside a quantity.
 UNIT_VI: Final = {
     "KG": "kg",
@@ -281,7 +407,9 @@ __all__ = [
     "UNIT_NAME_MAX",
     "UNIT_VI",
     "BuyerDetails",
+    "CoveredOrderState",
     "InvoiceCancelReason",
+    "InvoiceFlag",
     "InvoiceRefusal",
     "InvoiceRequestStatus",
     "InvoiceRuleError",
@@ -291,6 +419,8 @@ __all__ = [
     "clean_cancel_note",
     "clean_issued",
     "clean_tax_code",
+    "issued_flags",
+    "orders_on_invoice",
     "request_code",
     "require_open",
 ]

@@ -84,6 +84,8 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         # Round 9: 0066 is reserved for MONEY-LIFECYCLE-009 (slice A); GOODS-AND-DRAWER-009 records
         # how a refund's money went back (review M4).
         ("0067", "refund_method"),
+        # Round 9 (numbers reserved per slice; 0066/0067 are slices A and B): INVOICE-TRUTH-009.
+        ("0068", "invoice_snapshots"),
         # Round 9 slice H (OPS-OBSERVABILITY-009, review P7); 0066-0069 are reserved for A, B, C, G.
         ("0070", "event_aggregate_id_indexes"),
     ]

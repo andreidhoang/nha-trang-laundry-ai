@@ -950,6 +950,8 @@ def order_view(
 
 INVOICE_ID = "abababab-1111-4000-8000-000000000031"
 INVOICE_OTHER_ID = "abababab-1111-4000-8000-000000000032"
+#: Review round 9: the month's second order, charged after the invoice for the first was made.
+INVOICE_LATE_ORDER_ID = "77777777-8888-4333-8444-aaaaaaaaaac2"
 
 
 def invoice_request(
@@ -997,12 +999,45 @@ def invoice_request(
         "closed_at": None,
         "row_version": 1 if status == "REQUESTED" else 2,
         "amount": {
-            "source": "ORDER_CHARGES" if kind == "ORDER" else "ACCOUNT_STATEMENT",
+            "source": "ORDER_CHARGES" if kind == "ORDER" else "ACCOUNT_MONTH_ORDERS",
             "total_vnd": 110_000 if kind == "ORDER" else 245_000,
             "storage_fee_vnd": None,
             "charge_count": None if kind == "ORDER" else 2,
             "month_ended": None if kind == "ORDER" else False,
+            # INVOICE-TRUTH-009: fixed once issued; a month's deposits and own-request orders.
+            "fixed_at": "2026-09-27T03:00:00+00:00" if status == "ISSUED" else None,
+            "deposit_vnd": None if kind == "ORDER" else 0,
+            "own_request_order_count": None if kind == "ORDER" else 0,
         },
+        "flags": [],
+        "live_total_vnd": None,
+        "uninvoiced_charge_count": None,
+        # Review round 9: the orders it covers, and a month's lines Ghi số hóa đơn ticks.
+        "covered_order_ids": []
+        if status == "CANCELLED"
+        else [PICKUP_ORDER_ID]
+        if kind == "ORDER"
+        else [PICKUP_ORDER_ID, INVOICE_LATE_ORDER_ID],
+        "lines": []
+        if status == "CANCELLED" or kind == "ORDER"
+        else [
+            {
+                "order_id": PICKUP_ORDER_ID,
+                "ticket_number": 12,
+                "ticket_issued_on": "2026-09-25",
+                "charged_at": "2026-09-25T03:00:00+00:00",
+                "amount_vnd": 110_000,
+                "deposit_vnd": 0,
+            },
+            {
+                "order_id": INVOICE_LATE_ORDER_ID,
+                "ticket_number": 15,
+                "ticket_issued_on": "2026-09-27",
+                "charged_at": "2026-09-27T03:00:00+00:00",
+                "amount_vnd": 135_000,
+                "deposit_vnd": 0,
+            },
+        ],
         "replayed": False,
     }
 
@@ -2677,7 +2712,8 @@ with sync_playwright() as playwright:
             from urllib.parse import parse_qs, urlsplit
 
             asked = parse_qs(urlsplit(url).query).get("status", ["REQUESTED"])[0]
-            body = invoice_list(asked)
+            # INVOICE-TRUTH-009: a section may answer a tab with its own list.
+            body = (state.get("invoice_lists") or {}).get(asked) or invoice_list(asked)
         elif route.request.method == "POST" and "/invoice-requests" in url:
             path = url.split("?")[0]
             state.setdefault("invoice_writes", []).append(
@@ -2699,11 +2735,12 @@ with sync_playwright() as playwright:
                             "filename": "yeu-cau-hoa-don-20260927-1000.csv",
                             "content_csv": "\ufeffPhiên bản truy vấn,v1\r\n",
                             "content_hash": "sha256:" + "0" * 64,
-                            "query_version": "invoice-requests-export-v1:0000000000000000",
-                            "request_count": 2,
+                            "query_version": "invoice-requests-export-v2:0000000000000000",
+                            "request_count": state.get("invoice_export_count", 2),
                             "row_count": 3,
                             "truncated": False,
                             "produced_at": "2026-09-27T03:00:00+00:00",
+                            "flagged_issued_count": state.get("invoice_export_flagged", 0),
                         }
                     ),
                 )
@@ -10274,10 +10311,20 @@ with sync_playwright() as playwright:
     )
     page.locator(f"[data-record-issued='{INVOICE_ID}']").click()
     page.wait_for_selector("#invoice-issued-sheet[open]")
+    check(
+        "the issued sheet asks for the total typed off the invoice, empty, not the screen's figure",
+        page.locator("#invoice-total").count() == 1
+        and page.locator("#invoice-total").input_value() == ""
+        and "Chép tổng tiền in trên hóa đơn, không chép số trên màn hình" in open_dialog_text()
+        and page.locator("#invoice-issued-sheet input[type=checkbox]").count() == 0,
+        open_dialog_text()[:300],
+    )
     page.locator("#invoice-symbol").click()
     page.keyboard.type("1c26tyy", delay=4)
     page.locator("#invoice-number").click()
     page.keyboard.type("0000123", delay=4)
+    page.locator("#invoice-total").click()
+    page.keyboard.type("110.000", delay=4)
     page.locator("#invoice-issued-save").click()
     page.wait_for_timeout(900)
     issued = [item for item in state["invoice_writes"] if item["path"].endswith("/issued")]
@@ -10291,6 +10338,103 @@ with sync_playwright() as playwright:
         and issued[0]["if_match"] == '"1"'
         and bool(issued[0]["key"]),
         repr(issued)[:300],
+    )
+    check(
+        "Ghi số hóa đơn sends what the invoice says: the total typed off it, its order (round 9)",
+        body.get("invoice_total_vnd") == 110_000
+        and body.get("invoice_order_ids") == [PICKUP_ORDER_ID]
+        and "expected_total_vnd" not in body,
+        repr(body)[:300],
+    )
+
+    def fill_issued(number: str, total: str) -> None:
+        page.locator("#invoice-symbol").click()
+        page.keyboard.type("1c26tyy", delay=4)
+        page.locator("#invoice-number").click()
+        page.keyboard.type(number, delay=4)
+        page.locator("#invoice-total").click()
+        page.keyboard.type(total, delay=4)
+
+    # Review round 9: the total typed is not what the order costs -- marked at the field.
+    state["invoice_refuse"] = {
+        "detail": {"reason_code": "INVOICE_TOTAL_MISMATCH", "field": "invoice_total_vnd"}
+    }
+    page.locator(f"[data-record-issued='{INVOICE_ID}']").click()
+    page.wait_for_selector("#invoice-issued-sheet[open]")
+    fill_issued("0000124", "100.000")
+    page.locator("#invoice-issued-save").click()
+    page.wait_for_timeout(900)
+    sent = [item for item in state["invoice_writes"] if item["path"].endswith("/issued")]
+    check(
+        "a total the orders do not add up to is not saved: said at the total, the sheet stays",
+        json.loads(sent[-1]["body"] or "{}").get("invoice_total_vnd") == 100_000
+        and page.locator("#invoice-total").get_attribute("aria-invalid") == "true"
+        and "Chưa lưu: tổng tiền gõ vào khác tổng của các đơn đã chọn" in open_dialog_text()
+        and page.locator("#invoice-issued-save").is_enabled(),
+        open_dialog_text()[-400:],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    # An order sent is no longer the request's: nothing saved, the sheet cannot be pressed again.
+    state["invoice_refuse"] = {
+        "detail": {"reason_code": "INVOICE_AMOUNT_MOVED", "field": None, "decision": "DEC-040"}
+    }
+    page.locator(f"[data-record-issued='{INVOICE_ID}']").click()
+    page.wait_for_selector("#invoice-issued-sheet[open]")
+    fill_issued("0000125", "110.000")
+    page.locator("#invoice-issued-save").click()
+    page.wait_for_timeout(900)
+    check(
+        "an order that left the request is not saved: the sheet says so and cannot be pressed",
+        "Chưa lưu: có đơn đã chọn không còn thuộc yêu cầu này" in open_dialog_text()
+        and page.locator("#invoice-issued-save").is_disabled(),
+        open_dialog_text()[-400:],
+    )
+    state["invoice_refuse"] = None
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # The verifier's case: the invoice was made for the first order; a second went on the month
+    # since. The month's orders are ticked; the owner unticks the one the invoice does not list.
+    page.locator(f"[data-record-issued='{INVOICE_OTHER_ID}']").click()
+    page.wait_for_selector("#invoice-issued-sheet[open]")
+    ticks = page.locator("#invoice-issued-sheet input[type=checkbox]")
+    check(
+        "a month's issued sheet lists its orders, each ticked, with its ticket and what it cost",
+        ticks.count() == 2
+        and all(ticks.nth(index).is_checked() for index in range(2))
+        and "Phiếu 12" in open_dialog_text()
+        and "110.000" in open_dialog_text()
+        and "Phiếu 15" in open_dialog_text()
+        and "135.000" in open_dialog_text()
+        and "Bỏ chọn đơn hóa đơn không ghi" in open_dialog_text(),
+        open_dialog_text()[:400],
+    )
+    before = len(state["invoice_writes"])
+    for index in range(2):
+        ticks.nth(index).uncheck()
+    fill_issued("0000126", "110.000")
+    page.locator("#invoice-issued-save").click()
+    page.wait_for_timeout(600)
+    check(
+        "with no order ticked nothing is sent and the sheet says to tick the invoice's orders",
+        len(state["invoice_writes"]) == before and "Chưa chọn đơn nào" in open_dialog_text(),
+        open_dialog_text()[-300:],
+    )
+    page.locator(f"#invoice-line-{PICKUP_ORDER_ID}").check()
+    page.locator("#invoice-issued-save").click()
+    page.wait_for_timeout(900)
+    month_sent = [
+        item for item in state["invoice_writes"][before:] if item["path"].endswith("/issued")
+    ]
+    month_body = json.loads(month_sent[0]["body"] or "{}") if month_sent else {}
+    check(
+        "the month is sent with only the ticked order and the invoice's total",
+        len(month_sent) == 1
+        and INVOICE_OTHER_ID in month_sent[0]["path"]
+        and month_body.get("invoice_order_ids") == [PICKUP_ORDER_ID]
+        and month_body.get("invoice_total_vnd") == 110_000,
+        repr(month_sent)[:300],
     )
     page.locator(f"[data-cancel-invoice='{INVOICE_OTHER_ID}']").click()
     page.wait_for_selector("#invoice-cancel-sheet[open]")
@@ -11223,6 +11367,133 @@ with sync_playwright() as playwright:
         bool(stamp) and all(re.fullmatch(r"Cập nhật lúc \d{2}:\d{2}", item) for item in stamp),
         repr(stamp),
     )
+    # Slice C's section runs on the desk size and owner session it was written against.
+    page.set_viewport_size({"width": 1280, "height": 900})
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    state["order_view"] = None
+    state["invoice_subject"] = None
+
+    # ============================================================================================
+    # 27b. INVOICE-TRUTH-009 (review M5, M6) -- an issued invoice shows the figure it was issued
+    #      for and, in tier 1, what moved on its order after it; Đã xuất says the same; the
+    #      download is offered for issued requests alone and says how many need the bookkeeper;
+    #      a month's row says the deposits it includes and the orders it leaves out.
+    # ============================================================================================
+    print()
+    print("=" * 74)
+    print("27b. HÓA ĐƠN ĐÃ XUẤT — the figure stays, what moved after it is said")
+    print("=" * 74)
+    flagged = invoice_request("abababab-1111-4000-8000-000000000034", status="ISSUED")
+    flagged.update(
+        {
+            "flags": ["REFUNDED_AFTER_ISSUE", "AMOUNT_CHANGED_AFTER_ISSUE"],
+            "live_total_vnd": 165_000,
+        }
+    )
+    state["order_view"] = order_view("SELF_DROP_SELF_COLLECT", balance="UNPAID", collected=False)
+    state["invoice_subject"] = invoice_subject(refusal="INVOICE_REQUEST_EXISTS", live=flagged)
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders/{PICKUP_ORDER_ID}", wait_until="networkidle")
+    page.wait_for_timeout(1400)
+    row_text = page.locator("#invoice-section").inner_text()
+    check(
+        "the order's issued invoice shows the figure it was issued for and each flag in tier 1",
+        "Số trên hóa đơn: 110.000" in row_text
+        and "Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán." in row_text
+        and "Số tiền của đơn nay là 165.000" in row_text
+        and "khác số trên hóa đơn — báo kế toán." in row_text
+        and page.locator("#invoice-section [data-field='invoice-flag']").count() == 2,
+        row_text[:300].replace("\n", " | "),
+    )
+    state["invoice_lists"] = {
+        "REQUESTED": {
+            **invoice_list("REQUESTED"),
+            "requests": [],
+            "total_count": 0,
+            "counts": {"REQUESTED": 0, "ISSUED": 1, "CANCELLED": 0},
+        },
+        "ISSUED": {
+            **invoice_list("ISSUED"),
+            "requests": [flagged],
+            "counts": {"REQUESTED": 0, "ISSUED": 1, "CANCELLED": 0},
+        },
+    }
+    state["invoice_export_count"] = 1
+    state["invoice_export_flagged"] = 1
+    state["invoice_writes"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/invoices", wait_until="networkidle")
+    page.wait_for_timeout(1400)
+    check(
+        "with nothing open but an issued request, the download is still offered to the owner",
+        page.locator("#invoices-download").is_enabled(),
+    )
+    page.locator("#invoices-download").click()
+    page.wait_for_timeout(900)
+    check(
+        "the download says how many issued invoices need the bookkeeper",
+        "1 hóa đơn đã xuất cần báo kế toán" in page.locator("main").inner_text(),
+        page.locator("main").inner_text()[-200:],
+    )
+    page.locator("#invoices-tabs [data-value='ISSUED']").click()
+    page.wait_for_timeout(900)
+    issued_row = page.locator("tr[data-invoice='abababab-1111-4000-8000-000000000034']")
+    issued_text = issued_row.inner_text() if issued_row.count() else ""
+    check(
+        "Đã xuất: the figure on the invoice, and under it what moved since",
+        "110.000" in issued_text
+        and "số trên hóa đơn" in issued_text
+        and "Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán." in issued_text,
+        issued_text[:300].replace("\n", " | "),
+    )
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.wait_for_timeout(500)
+    wide = page.evaluate("document.documentElement.scrollWidth")
+    check("at 390 px the flagged row still fits the screen", wide <= 390, wide)
+    page.set_viewport_size({"width": 1280, "height": 900})
+    state["invoice_lists"] = None
+    state["invoice_export_count"] = 2
+    state["invoice_export_flagged"] = 0
+
+    month_subject = invoice_subject()
+    month_subject.update(
+        {
+            "subject_kind": "ACCOUNT_MONTH",
+            "order_id": None,
+            "period_month": "2026-09",
+            "customer_id": ACCOUNT_CUSTOMER_ID,
+            "ticket_number": None,
+            "ticket_issued_on": None,
+            "amount": {
+                **invoice_request(kind="ACCOUNT_MONTH")["amount"],
+                "total_vnd": 220_000,
+                "deposit_vnd": 40_000,
+                "own_request_order_count": 1,
+            },
+        }
+    )
+    state["invoice_subject"] = month_subject
+    page.goto("about:blank")
+    page.goto(
+        f"http://localhost:{PORT}/#/customers/{ACCOUNT_CUSTOMER_ID}/statement/2026-09",
+        wait_until="networkidle",
+    )
+    page.wait_for_timeout(1600)
+    month_text = (
+        page.locator("#invoice-section").inner_text()
+        if page.locator("#invoice-section").count()
+        else ""
+    )
+    check(
+        "a month's Hóa đơn row says the deposits it includes and the orders it leaves out",
+        "Gồm 40.000" in month_text
+        and "khách trả trước khi ghi công nợ" in month_text
+        and "1 đơn đã có yêu cầu riêng, không tính vào tháng" in month_text,
+        month_text[:300].replace("\n", " | "),
+    )
+    state["invoice_subject"] = None
+    state["order_view"] = None
+
     # Slice A's section runs on the desk size and owner session it was written against.
     page.set_viewport_size({"width": 1280, "height": 900})
     SESSION_OK["roles"] = ["OWNER_ADMIN"]

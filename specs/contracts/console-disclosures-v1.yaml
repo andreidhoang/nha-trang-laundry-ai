@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 552
+  DESCRIPTIVE: 556
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 19
   SERVER_GATE: 15
-total: 593
+total: 597
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1812,6 +1812,24 @@ disclosures:
   module: core/i18n.js
   key: REASON_NOTE.INVOICE_NUMBER_TAKEN
   text: Ký hiệu và số hóa đơn này đã ghi cho một yêu cầu khác. Kiểm tra lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_AMOUNT_MOVED:d204b44cdab9
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_AMOUNT_MOVED
+  text: 'Chưa lưu: có đơn đã chọn không còn thuộc yêu cầu này (vừa có yêu cầu riêng). Đóng, mở lại để
+    xem danh sách mới rồi chọn đúng các đơn trên hóa đơn.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_TOTAL_MISMATCH:16b4f6468193
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_TOTAL_MISMATCH
+  text: 'Chưa lưu: tổng tiền gõ vào khác tổng của các đơn đã chọn. Chép đúng tổng trên hóa đơn và chỉ
+    chọn các đơn hóa đơn ghi. Nếu hóa đơn ghi số khác số của tiệm, báo chủ tiệm và kế toán.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -5118,6 +5136,23 @@ disclosures:
   module: ui/invoice.js
   key: hint
   text: Chép đúng ký hiệu, số và ngày trên hóa đơn kế toán đã xuất. Ghi rồi không sửa được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/invoice.js#hint:4985b5ff927f
+  module: ui/invoice.js
+  key: hint
+  text: 'Bỏ chọn đơn hóa đơn không ghi. Đơn bỏ ra chưa có hóa đơn: lập yêu cầu riêng cho đơn đó.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/invoice.js#hint:a2c992fee3f2
+  module: ui/invoice.js
+  key: hint
+  text: Chép tổng tiền in trên hóa đơn, không chép số trên màn hình. Lưu khi tổng này đúng bằng các đơn
+    đã chọn; lưu rồi số này giữ nguyên.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

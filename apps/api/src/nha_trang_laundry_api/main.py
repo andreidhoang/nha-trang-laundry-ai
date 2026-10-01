@@ -185,6 +185,7 @@ from nha_trang_laundry_domain.customers import (
 from nha_trang_laundry_domain.invoice_requests import (
     INVOICE_DECISION,
     InvoiceCancelReason,
+    InvoiceFlag,
     InvoiceRequestStatus,
     InvoiceRuleError,
     InvoiceSubjectKind,
@@ -9490,11 +9491,14 @@ class InvoiceBuyerResponse(BaseModel):
 
 
 class InvoiceAmountResponse(BaseModel):
-    """What the request is for, read now from the ledgers -- never stored with the request.
+    """What the request is for: read now from the ledgers while it is open, fixed once issued.
 
     `source` is `ORDER_CHARGES` (the order's quoted total, and its storage fee when there is one)
-    or `ACCOUNT_STATEMENT` (the month's account charges, as the statement reads them). Amounts as
-    the shop charged them; no tax is split out.
+    or `ACCOUNT_MONTH_ORDERS` (each order the month covers at what it cost the customer, a deposit
+    taken before it went on the account included -- `deposit_vnd`; orders with a request of their
+    own are left out -- `own_request_order_count`). `fixed_at` is set once the request is issued:
+    the figure is then the one it was issued for (`INVOICE-TRUTH-009`, `0068`). Amounts as the shop
+    charged them; no tax is split out.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -9504,6 +9508,23 @@ class InvoiceAmountResponse(BaseModel):
     storage_fee_vnd: int | None
     charge_count: int | None
     month_ended: bool | None
+    fixed_at: datetime | None = None
+    deposit_vnd: int | None = None
+    own_request_order_count: int | None = None
+
+
+class InvoiceLineResponse(BaseModel):
+    """One order on an account month's request (`INVOICE-TRUTH-009`): what it cost the customer
+    (`amount_vnd`, a deposit taken before it went on the account included -- `deposit_vnd`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: UUID
+    ticket_number: int | None
+    ticket_issued_on: date | None
+    charged_at: datetime
+    amount_vnd: int
+    deposit_vnd: int
 
 
 class InvoiceRequestResponse(BaseModel):
@@ -9538,6 +9559,18 @@ class InvoiceRequestResponse(BaseModel):
     closed_at: datetime | None
     row_version: int
     amount: InvoiceAmountResponse
+    #: An issued request: what moved on its orders after it was issued -- said, never folded into
+    #: `amount` (`INVOICE-TRUTH-009`). `live_total_vnd` with `AMOUNT_CHANGED_AFTER_ISSUE`;
+    #: `uninvoiced_charge_count` with `MONTH_ORDERS_NOT_ON_INVOICE`.
+    flags: list[InvoiceFlag] = []
+    live_total_vnd: int | None = None
+    uninvoiced_charge_count: int | None = None
+    #: The orders the request covers: an order's own; an open month's charged orders without a
+    #: request of their own; an issued request's fixed list.
+    covered_order_ids: list[UUID] = []
+    #: An account month's orders, each at what it cost the customer, as the request is for them
+    #: (fixed once issued). *Ghi số hóa đơn* lists them to tick the ones the invoice lists.
+    lines: list[InvoiceLineResponse] = []
     replayed: bool = False
 
 
@@ -9608,6 +9641,13 @@ class InvoiceIssuedRequest(StrictRequest):
     invoice_symbol: str = Field(max_length=100)
     invoice_number: str = Field(max_length=100)
     invoice_date: date
+    #: What the INVOICE says (review round 9), never what the sheet read: the total typed off it
+    #: (null only for an order whose quote presents no single total) and the orders it lists -- an
+    #: order request's one, or the account month's orders the invoice lists. The request is fixed at
+    #: exactly these: 422 `INVOICE_TOTAL_MISMATCH` (field `invoice_total_vnd`) when the total is not
+    #: what those orders cost; 422 `INVOICE_AMOUNT_MOVED` when an order is not the request's now.
+    invoice_total_vnd: StrictInt | None = Field(ge=0)
+    invoice_order_ids: list[UUID] = Field(max_length=10000)
 
 
 class InvoiceCancelRequest(StrictRequest):
@@ -9631,6 +9671,8 @@ class InvoiceExportResponse(BaseModel):
     row_count: int
     truncated: bool
     produced_at: datetime
+    #: Issued requests listed again because something moved after they were issued.
+    flagged_issued_count: int = 0
 
 
 def _invoice_buyer_response(buyer: InvoiceBuyerView) -> InvoiceBuyerResponse:
@@ -9651,6 +9693,9 @@ def _invoice_amount_response(amount: InvoiceAmount) -> InvoiceAmountResponse:
         storage_fee_vnd=amount.storage_fee_vnd,
         charge_count=amount.charge_count,
         month_ended=amount.month_ended,
+        fixed_at=amount.fixed_at,
+        deposit_vnd=amount.deposit_vnd,
+        own_request_order_count=amount.own_request_order_count,
     )
 
 
@@ -9685,6 +9730,22 @@ def _invoice_request_response(
         closed_at=view.closed_at,
         row_version=view.row_version,
         amount=_invoice_amount_response(view.amount),
+        flags=list(view.flags),
+        live_total_vnd=view.live_total_vnd,
+        uninvoiced_charge_count=view.uninvoiced_charge_count,
+        covered_order_ids=list(view.covered_order_ids),
+        lines=[
+            InvoiceLineResponse(
+                order_id=line.order_id,
+                ticket_number=line.ticket_number,
+                ticket_issued_on=line.ticket_issued_on,
+                charged_at=line.charged_at,
+                amount_vnd=line.amount_vnd,
+                deposit_vnd=line.deposit_vnd,
+            )
+            for line in view.month_lines
+            if view.status is not InvoiceRequestStatus.CANCELLED
+        ],
         replayed=replayed,
     )
 
@@ -9920,7 +9981,10 @@ def export_invoice_requests(
     principal: Annotated[StaffPrincipal, Depends(require_invoice_closer)],
     service: Annotated[InvoiceRequestService, Depends(get_invoice_request_service)],
 ) -> InvoiceExportResponse:
-    """*Tải danh sách cho kế toán*: every open request as CSV (`invoice-requests-export-v1`).
+    """*Tải danh sách cho kế toán*: open requests and flagged issued ones as CSV (export v2).
+
+    `invoice-requests-export-v2`: every open request, then every issued request something moved on
+    after it was issued, from its fixed figure, with what to tell the bookkeeper.
 
     Owner or approver, MFA. Audited: who, when, how many rows and the digest of the exact bytes.
     **This route deliberately does not honour `Idempotency-Key`**, as the round-6 export release
@@ -9942,6 +10006,7 @@ def export_invoice_requests(
         row_count=produced.row_count,
         truncated=produced.truncated,
         produced_at=produced.produced_at,
+        flagged_issued_count=produced.flagged_issued_count,
     )
 
 
@@ -9980,7 +10045,10 @@ def record_invoice_issued(
 
     Owner or approver, MFA, `If-Match` the request's row version. Refusals:
     `INVOICE_ISSUED_DETAILS_INVALID` (with the field), `INVOICE_NUMBER_TAKEN`,
-    `INVOICE_REQUEST_CLOSED`; 409 `STALE_VERSION`.
+    `INVOICE_REQUEST_CLOSED`, `INVOICE_TOTAL_MISMATCH` (the total typed off the invoice is not what
+    the orders it lists cost), `INVOICE_AMOUNT_MOVED` (an order sent is not the request's now: read
+    it again); nothing is fixed on any of them; 409 `STALE_VERSION`. An account month may be fixed
+    at some of its orders: the rest stay on no invoice and the month says so.
     """
     expected = _parse_if_match(if_match)
     try:
@@ -9993,6 +10061,8 @@ def record_invoice_issued(
             invoice_symbol=request.invoice_symbol,
             invoice_number=request.invoice_number,
             invoice_date=request.invoice_date,
+            invoice_total_vnd=request.invoice_total_vnd,
+            invoice_order_ids=tuple(request.invoice_order_ids),
         )
     except _INVOICE_ERRORS as error:
         _raise_invoice_error(error)

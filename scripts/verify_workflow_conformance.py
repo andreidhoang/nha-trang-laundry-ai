@@ -43,7 +43,9 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import csv
 import hashlib
+import io
 import json
 import os
 import re
@@ -316,6 +318,9 @@ DECLARED_CONTROLS = (
     "invoices.record-issued",
     "invoice.issued-symbol",
     "invoice.issued-number",
+    # Review round 9: the total typed off the invoice, and a month's orders ticked as it lists them.
+    "invoice.issued-total",
+    "invoice.issued-line",
     "invoice.issued-save",
     "invoices.tabs",
     "invoices.cancel",
@@ -8881,10 +8886,11 @@ def scenario_invoice_requests(console: Console) -> None:
     console.page.wait_for_timeout(1800)
     month_request = month_created.get("body") or {}
     ok(
-        "the month's request reads the statement's charges (ACCOUNT_STATEMENT); the row shows it",
+        "the month's request reads each order at what it cost (ACCOUNT_MONTH_ORDERS, "
+        "INVOICE-TRUTH-009); the row shows it",
         month_created["status"] == 201
         and month_request.get("period_month") == month
-        and month_request.get("amount", {}).get("source") == "ACCOUNT_STATEMENT"
+        and month_request.get("amount", {}).get("source") == "ACCOUNT_MONTH_ORDERS"
         and (month_request.get("amount", {}).get("total_vnd") or 0) > 0
         and "Chờ kế toán xuất" in console.page.locator("#invoice-section").inner_text(),
         f"{month_created['status']} {month_created['text'][:160]}",
@@ -8939,7 +8945,7 @@ def scenario_invoice_requests(console: Console) -> None:
         "'Số tiền theo giá tiệm đã thu (chưa tách thuế)', both requests",
         exported["status"] == 200
         and content.startswith("﻿")
-        and str(produced.get("query_version", "")).startswith("invoice-requests-export-v1:")
+        and str(produced.get("query_version", "")).startswith("invoice-requests-export-v2:")
         and "Số tiền theo giá tiệm đã thu (chưa tách thuế)" in content
         and str(order_request.get("request_code")) in content
         and str(month_request.get("request_code")) in content,
@@ -8961,6 +8967,12 @@ def scenario_invoice_requests(console: Console) -> None:
     console.page.wait_for_selector("#invoice-issued-sheet[open]", timeout=8000)
     console.type_into("#invoice-symbol", "1c26tyy", "invoice.issued-symbol")
     console.type_into("#invoice-number", "0000123", "invoice.issued-number")
+    # Review round 9: the total printed on the invoice the bookkeeper made from this request.
+    console.type_into(
+        "#invoice-total",
+        str((order_request.get("amount") or {}).get("total_vnd")),
+        "invoice.issued-total",
+    )
     (issued,) = console.press_capturing(console.page.locator("#invoice-issued-save"), "/issued")
     touched("invoice.issued-save")
     console.page.wait_for_timeout(1500)
@@ -9019,6 +9031,430 @@ def scenario_invoice_requests(console: Console) -> None:
     )
     ok("no buyer detail in any event, audit, outbox or idempotency row", leaked == "0", leaked)
     console.sign_in("demo-owner")
+
+
+# --- INVOICE-TRUTH-009 (review M5, M6): what an invoice request is for --------------------------
+
+
+def _invoice_number() -> str:
+    """A number no earlier run on this stack recorded (a stack may be walked more than once)."""
+
+    return str(uuid.uuid4().int)[:7]
+
+
+def _pay_order(console: Console, order_id: str, amount: int) -> dict[str, Any]:
+    version = (console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}).get(
+        "row_version"
+    )
+    return console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/payments",
+        {"amount_vnd": amount, "method": "TIEN_MAT", "transfer_seen": False},
+        if_match=version,
+    )
+
+
+def _record_issued(console: Console, request: dict[str, Any]) -> dict[str, Any]:
+    return console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/invoice-requests/{request.get('invoice_request_id')}/issued",
+        {
+            "invoice_symbol": "1C26TYY",
+            "invoice_number": _invoice_number(),
+            "invoice_date": time.strftime("%Y-%m-%d", time.gmtime(time.time() + 7 * 3600 - 86400)),
+            # Review round 9: an invoice made for everything the request reads.
+            "invoice_total_vnd": (request.get("amount") or {}).get("total_vnd"),
+            "invoice_order_ids": request.get("covered_order_ids") or [],
+        },
+        if_match=request.get("row_version"),
+    )
+
+
+def scenario_invoice_truth(console: Console) -> None:
+    """`INVOICE-TRUTH-009` (review M5, M6), on the real API and the console.
+
+    A month invoice lists each order at what it cost (a deposit taken before the order went on the
+    account included, and said on the statement's Hóa đơn row); an order charged to a month after
+    the month's invoice was issued is still invoiceable on its own; an issued invoice keeps its
+    figure, and a refund after it is said on the order page, on *Đã xuất* and in the bookkeeper's
+    download -- never a new figure.
+    """
+
+    head("31", "HÓA ĐƠN THÁNG — each order at what it cost, a deposit included (review M5)")
+    if not arguments.database_url:
+        ok("publishing the notice uses the owner's script, which needs --database-url", False)
+        return
+    console.sign_in("demo-owner")
+    notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
+    if (notice.get("body") or {}).get("published") is not True:
+        published = _publish_script("publish_privacy_notice.py")
+        note("the privacy notice was unpublished (only with --only): " + published.stdout[:80])
+    if (
+        sql("SELECT count(*) FROM configuration_versions WHERE config_type = 'ACCOUNT_TERMS'")
+        == "0"
+    ):
+        terms = _publish_script("publish_account_terms.py")
+        note("the account terms were unpublished (only with --only): " + terms.stdout[:80])
+    customer_id, last4 = _account_customer(console, "Homestay Sóng Biển")
+    opened = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/customers/{customer_id}/account",
+        {"credit_limit_vnd": 5_000_000},
+    )
+    first = _account_order(console, customer_id, last4, "7")
+    deposit = _pay_order(console, str(first["order_id"]), 40_000)
+    owed = int(
+        (
+            (console.call("GET", f"/internal/v1/orders/{first['order_id']}").get("body") or {}).get(
+                "owed_vnd"
+            )
+        )
+        or 0
+    )
+    charged = console.call(
+        "POST",
+        f"/internal/v1/orders/{first['order_id']}/account-charge",
+        {"collected_by_customer": True},
+        if_match=console.current_version(str(first["order_id"]), first["row_version"]),
+    )
+    ok(
+        "a homestay on công nợ: one order, 40.000 ₫ deposit at the counter, the rest on the "
+        "account",
+        opened["status"] == 201
+        and deposit["status"] == 201
+        and charged["status"] < 300
+        and owed > 40_000,
+        f"{opened['status']} {deposit['status']} {charged['status']} {charged['text'][:120]}",
+    )
+    month = time.strftime("%Y-%m", time.gmtime(time.time() + 7 * 3600))
+    month_path = f"/internal/v1/stores/{STORE}/customers/{customer_id}/account/statements/{month}"
+    subject = _invoice_subject(console, f"{month_path}/invoice")
+    amount = subject.get("amount") or {}
+    ok(
+        "the month's invoice is for what the order cost (the deposit included), not what went on "
+        "the account",
+        subject.get("refusal") is None
+        and amount.get("source") == "ACCOUNT_MONTH_ORDERS"
+        and amount.get("total_vnd") == owed
+        and amount.get("deposit_vnd") == 40_000,
+        amount,
+    )
+    console.sign_in("demo-operations")
+    console.open(f"#/customers/{customer_id}/statement/{month}", settle=2600)
+    row_text = console.page.locator("#invoice-section").inner_text()
+    ok(
+        "the statement's Hóa đơn row says the deposit it includes",
+        "Gồm 40.000" in row_text and "khách trả trước khi ghi công nợ" in row_text,
+        row_text[:200].replace("\n", " | "),
+    )
+
+    head("31b", "THÁNG ĐÃ XUẤT — an order charged afterwards is invoiced on its own (review M5)")
+    console.sign_in("demo-owner")
+    month_request = (
+        console.call(
+            "POST", f"{month_path}/invoice-requests", {"buyer_unit_name": "Homestay Sóng Biển"}
+        ).get("body")
+        or {}
+    )
+    issued_month = _record_issued(console, month_request)
+    second = _account_order(console, customer_id, last4, "5")
+    late = console.call(
+        "POST",
+        f"/internal/v1/orders/{second['order_id']}/account-charge",
+        {"collected_by_customer": True},
+        if_match=console.current_version(str(second["order_id"]), second["row_version"]),
+    )
+    fixed = (
+        console.call(
+            "GET",
+            f"/internal/v1/stores/{STORE}/invoice-requests/"
+            f"{month_request.get('invoice_request_id')}",
+        ).get("body")
+        or {}
+    )
+    ok(
+        "the month's invoice is issued and keeps its figure; the later order is flagged on it",
+        issued_month["status"] == 200
+        and late["status"] < 300
+        and (fixed.get("amount") or {}).get("total_vnd") == owed
+        and (fixed.get("amount") or {}).get("fixed_at") is not None
+        and fixed.get("flags") == ["MONTH_ORDERS_NOT_ON_INVOICE"],
+        {key: fixed.get(key) for key in ("flags", "uninvoiced_charge_count")},
+    )
+    console.sign_in("demo-operations")
+    console.open_order(str(second["order_id"]), settle=2400)
+    press = console.page.locator("#invoice-request-open")
+    later = _invoice_subject(
+        console, f"/internal/v1/stores/{STORE}/orders/{second['order_id']}/invoice"
+    )
+    ok(
+        "the order charged after the month's invoice may still be requested on its own "
+        "('Khách cần hóa đơn' is on)",
+        later.get("refusal") is None and press.count() == 1 and press.is_enabled(),
+        later.get("refusal"),
+    )
+    covered = _invoice_subject(
+        console, f"/internal/v1/stores/{STORE}/orders/{first['order_id']}/invoice"
+    )
+    ok(
+        "the order the month's invoice listed stays covered by it (INVOICE_REQUEST_EXISTS)",
+        covered.get("refusal") == "INVOICE_REQUEST_EXISTS",
+        covered.get("refusal"),
+    )
+
+    head("31c", "ĐÃ XUẤT RỒI HOÀN TIỀN — the figure stays, the refund is said (review M6)")
+    console.sign_in("demo-owner")
+    # Taken in and accepted (the RECEIVE step's landing): paid in full at the counter, the laundry
+    # not yet washed -- a cancellation then hands the money back (DEC-024).
+    walk_in = console.build_order(stop="active")
+    order_id = str(walk_in["order_id"])
+    paid_body = console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}
+    paid = _pay_order(console, order_id, int(paid_body.get("remaining_vnd") or 0))
+    request = (
+        console.call(
+            "POST",
+            f"/internal/v1/stores/{STORE}/orders/{order_id}/invoice-requests",
+            {"buyer_unit_name": "Công ty TNHH Sóng Biển"},
+        ).get("body")
+        or {}
+    )
+    issued = _record_issued(console, request)
+    figure = ((issued.get("body") or {}).get("amount") or {}).get("total_vnd")
+    ok(
+        "a paid order's request is issued with its figure fixed",
+        paid["status"] == 201 and issued["status"] == 200 and figure,
+        f"{paid['status']} {issued['status']} {issued['text'][:120]}",
+    )
+    said = console.step(order_id, "CANCEL", custody="RETURNED_UNWASHED_REFUNDED")
+    console.page.wait_for_timeout(1500)
+    after = (
+        console.call(
+            "GET",
+            f"/internal/v1/stores/{STORE}/invoice-requests/{request.get('invoice_request_id')}",
+        ).get("body")
+        or {}
+    )
+    ok(
+        "the order is cancelled and refunded; the issued request keeps its figure and says "
+        "REFUNDED_AFTER_ISSUE",
+        stored(order_id, "balance_status") == "REFUNDED"
+        and (after.get("amount") or {}).get("total_vnd") == figure
+        and after.get("flags") == ["REFUNDED_AFTER_ISSUE"],
+        f"{said[:80]} {after.get('flags')}",
+    )
+    console.open_order(order_id, settle=2400)
+    order_row = console.page.locator("#invoice-section").inner_text()
+    ok(
+        "the order page says it in tier 1: 'Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán'",
+        "Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán" in order_row
+        and "Số trên hóa đơn" in order_row,
+        order_row[:240].replace("\n", " | "),
+    )
+    _nav_to(console, "Hóa đơn cần xuất", "/invoices")
+    console.page.wait_for_timeout(1500)
+    console.page.locator("#invoices-tabs [data-value='ISSUED']").click()
+    touched("invoices.tabs")
+    console.page.wait_for_timeout(1500)
+    issued_row = console.page.locator(f"tr[data-invoice='{request.get('invoice_request_id')}']")
+    issued_text = issued_row.inner_text() if issued_row.count() else ""
+    ok(
+        "Đã xuất shows the invoice's figure and the refund under it",
+        "Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán" in issued_text
+        and "số trên hóa đơn" in issued_text,
+        issued_text[:240].replace("\n", " | "),
+    )
+    (exported,) = console.press_capturing(
+        console.page.locator("#invoices-download"), "/invoice-requests/export"
+    )
+    touched("invoices.download")
+    console.page.wait_for_timeout(900)
+    produced = exported.get("body") or {}
+    content = str(produced.get("content_csv") or "")
+    rows = list(csv.reader(io.StringIO(content.lstrip("\ufeff"))))
+    header = next((at for at, cells in enumerate(rows) if "Cần báo kế toán" in cells), None)
+    mine = [
+        row
+        for row in (rows[header + 1 :] if header is not None else [])
+        if row and row[0] == request.get("request_code")
+    ]
+    ok(
+        "the bookkeeper's download lists the refunded invoice again, at its issued figure, with "
+        "'Cần báo kế toán'",
+        exported["status"] == 200
+        and str(produced.get("query_version", "")).startswith("invoice-requests-export-v2:")
+        and (produced.get("flagged_issued_count") or 0) >= 1
+        and bool(mine)
+        and mine[0][12] == str(figure)
+        and "Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán." in mine[0][14],
+        (mine[0] if mine else content[:200]),
+    )
+    both = (request.get("invoice_request_id"), month_request.get("invoice_request_id"))
+    snapshots = sql(
+        "SELECT count(*) FROM invoice_request_snapshots WHERE origin = 'AT_ISSUE' "
+        f"AND request_id IN ('{both[0]}', '{both[1]}')"
+    )
+    ok(
+        "both issued requests carry their snapshot (0068), written at issue",
+        snapshots == "2",
+        snapshots,
+    )
+    _invoice_moved_before_the_press(console)
+
+
+def _invoice_moved_before_the_press(console: Console) -> None:
+    """Review round 9, the verifier's case: the bookkeeper downloads the month (1 order) and makes
+    the invoice for it; a second order goes on the month; the owner opens *Ghi số hóa đơn* -- which
+    now reads 2 orders -- and records the invoice. It is fixed at what the invoice lists (1 order,
+    its total), never at what the month reads at the press; the second stays requestable."""
+
+    head("31d", "GHI SỐ SAU KHI THÁNG ĐỔI — fixed at what the invoice lists (round 9)")
+    console.sign_in("demo-owner")
+    customer_id, last4 = _account_customer(console, "Homestay Hải Âu")
+    console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/customers/{customer_id}/account",
+        {"credit_limit_vnd": 5_000_000},
+    )
+    orders = []
+    for kg in ("4", "3"):
+        placed = _account_order(console, customer_id, last4, kg)
+        orders.append(placed)
+    first, late = orders
+    charge = console.call(
+        "POST",
+        f"/internal/v1/orders/{first['order_id']}/account-charge",
+        {"collected_by_customer": True},
+        if_match=console.current_version(str(first["order_id"]), first["row_version"]),
+    )
+    month = time.strftime("%Y-%m", time.gmtime(time.time() + 7 * 3600))
+    month_path = f"/internal/v1/stores/{STORE}/customers/{customer_id}/account/statements/{month}"
+    request = (
+        console.call(
+            "POST", f"{month_path}/invoice-requests", {"buyer_unit_name": "Homestay Hải Âu"}
+        ).get("body")
+        or {}
+    )
+    request_id = str(request.get("invoice_request_id"))
+    on_invoice = (request.get("amount") or {}).get("total_vnd")
+    _nav_to(console, "Hóa đơn cần xuất", "/invoices")
+    console.page.wait_for_timeout(1500)
+    (exported,) = console.press_capturing(
+        console.page.locator("#invoices-download"), "/invoice-requests/export"
+    )
+    content = str((exported.get("body") or {}).get("content_csv") or "")
+    downloaded = [
+        row
+        for row in csv.reader(io.StringIO(content.lstrip("\ufeff")))
+        if row and row[0] == request.get("request_code")
+    ]
+    ok(
+        "the bookkeeper's download lists the month with its 1 order at its total",
+        charge["status"] < 300
+        and request.get("covered_order_ids") == [str(first["order_id"])]
+        and len(downloaded) == 1
+        and downloaded[0][12] == str(on_invoice),
+        f"{charge['status']} {request.get('covered_order_ids')} {downloaded}",
+    )
+    # The invoice is made for that one order; meanwhile the second goes on the month.
+    charged_late = console.call(
+        "POST",
+        f"/internal/v1/orders/{late['order_id']}/account-charge",
+        {"collected_by_customer": True},
+        if_match=console.current_version(str(late["order_id"]), late["row_version"]),
+    )
+    console.page.reload()
+    console.page.wait_for_timeout(1500)
+    console.page.locator(f"[data-record-issued='{request_id}']").click()
+    touched("invoices.record-issued")
+    console.page.wait_for_selector("#invoice-issued-sheet[open]", timeout=8000)
+    ticks = console.page.locator("#invoice-issued-sheet input[type=checkbox]")
+    sheet = console.page.locator("#invoice-issued-sheet").inner_text()
+    ok(
+        "the sheet opened now lists the month's 2 orders, both ticked, and asks for the invoice's "
+        "total, empty",
+        charged_late["status"] < 300
+        and ticks.count() == 2
+        and all(ticks.nth(index).is_checked() for index in range(2))
+        and console.page.locator("#invoice-total").input_value() == ""
+        and "Chép tổng tiền in trên hóa đơn" in sheet,
+        sheet[:300].replace("\n", " | "),
+    )
+    console.type_into("#invoice-symbol", "1c26tyy", "invoice.issued-symbol")
+    console.type_into("#invoice-number", _invoice_number(), "invoice.issued-number")
+    console.type_into("#invoice-total", str(on_invoice), "invoice.issued-total")
+    _invoice_shot(console, "31d-issued-sheet-month-both-ticked")
+    (mismatch,) = console.press_capturing(console.page.locator("#invoice-issued-save"), "/issued")
+    touched("invoice.issued-save")
+    console.page.wait_for_timeout(1200)
+    said = console.page.locator("#invoice-issued-sheet").inner_text()
+    detail = (mismatch.get("body") or {}).get("detail") or {}
+    ok(
+        "the invoice's total with both ticked: 422 INVOICE_TOTAL_MISMATCH at the total, nothing "
+        "fixed",
+        mismatch["status"] == 422
+        and detail.get("reason_code") == "INVOICE_TOTAL_MISMATCH"
+        and detail.get("field") == "invoice_total_vnd"
+        and console.page.locator("#invoice-total").get_attribute("aria-invalid") == "true"
+        and "Chưa lưu: tổng tiền gõ vào khác tổng của các đơn đã chọn" in said
+        and stored_invoice(request_id) == "REQUESTED|1|0|0",
+        f"{mismatch['status']} {detail} {stored_invoice(request_id)}",
+    )
+    _invoice_shot(console, "31d-issued-sheet-total-mismatch")
+    console.page.locator(f"#invoice-line-{late['order_id']}").uncheck()
+    touched("invoice.issued-line")
+    _invoice_shot(console, "31d-issued-sheet-late-unticked")
+    (issued,) = console.press_capturing(console.page.locator("#invoice-issued-save"), "/issued")
+    console.page.wait_for_timeout(1200)
+    body = issued.get("body") or {}
+    ok(
+        "the second unticked: fixed at the 1 order the invoice lists, at its total; the month says "
+        "1 order is on no invoice",
+        issued["status"] == 200
+        and body.get("covered_order_ids") == [str(first["order_id"])]
+        and (body.get("amount") or {}).get("total_vnd") == on_invoice
+        and body.get("flags") == ["MONTH_ORDERS_NOT_ON_INVOICE"]
+        and body.get("uninvoiced_charge_count") == 1
+        and stored_invoice(request_id).startswith("ISSUED|2|1|1")
+        and sql(
+            f"SELECT order_count FROM invoice_request_snapshots WHERE request_id = '{request_id}'"
+        )
+        == "1",
+        f"{issued['status']} {body.get('covered_order_ids')} {body.get('flags')} "
+        f"{stored_invoice(request_id)}",
+    )
+    own = (
+        console.call("GET", f"/internal/v1/stores/{STORE}/orders/{late['order_id']}/invoice").get(
+            "body"
+        )
+        or {}
+    )
+    ok(
+        "the second order is on no invoice and can be requested on its own",
+        own.get("refusal") is None,
+        str(own.get("refusal")),
+    )
+
+
+def _invoice_shot(console: Console, name: str) -> None:
+    """The issued sheet as the owner sees it, when `INVOICE_TRUTH_SHOTS` names a directory."""
+
+    directory = os.environ.get("INVOICE_TRUTH_SHOTS", "")
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+        size = "phone" if os.environ.get("CONSOLE_VIEWPORT") == "phone" else "desk"
+        console.page.screenshot(path=os.path.join(directory, f"{size}-{name}.png"), full_page=True)
+
+
+def stored_invoice(request_id: str) -> str:
+    """status|row_version|snapshots|issued events of one invoice request, read from the database."""
+
+    return sql(
+        "SELECT r.status || '|' || r.row_version || '|' || "
+        "(SELECT count(*) FROM invoice_request_snapshots s WHERE s.request_id = r.id) || '|' || "
+        "(SELECT count(*) FROM domain_events e WHERE e.aggregate_id = r.id "
+        "AND e.event_type = 'INVOICE_REQUEST_ISSUED_RECORDED') "
+        f"FROM invoice_requests r WHERE r.id = '{request_id}'"
+    )
 
 
 # --- VIETQR-001 ---------------------------------------------------------------------------------
@@ -10504,6 +10940,8 @@ SCENARIOS = {
     # invoice refusal while the notice is unpublished; this one proves the feature, and publishes
     # the notice itself only with --only on a fresh stack (after proving the refusal).
     "invoice_requests": scenario_invoice_requests,
+    # INVOICE-TRUTH-009 (round 9, slice C): after invoice_requests, which publishes the notice.
+    "invoice_truth": scenario_invoice_truth,
     # PLATFORM-SECURITY-009 (slice G). Publishes nothing and reads nothing another scenario counts;
     # it adds two pending export requests, after export_range has made its own before/after count.
     "platform_bounds": scenario_platform_bounds,

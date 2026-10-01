@@ -12,6 +12,11 @@
  * On a desk the list is a table; on a phone each row stands as a card (`kit.css`, the invoices
  * block). Nothing here issues an invoice, names a tax or computes an amount.
  *
+ * INVOICE-TRUTH-009: *Đã xuất* shows the figure each invoice was issued for, and under its invoice
+ * what moved on its orders since ("Đơn đã hoàn tiền sau khi xuất hóa đơn — báo kế toán"). The
+ * download lists those issued requests again for the bookkeeper, so it is offered whenever the
+ * store has open or issued requests.
+ *
  * @module screens/invoices
  */
 
@@ -39,6 +44,7 @@ import {
   INVOICE_HOW,
   amountText,
   cancelSheet,
+  flagTexts,
   issuedSheet,
   issuedText,
   roleVerdict,
@@ -68,6 +74,17 @@ function download(produced) {
   const anchor = h("a", { href: url, download: String(produced.filename || "yeu-cau-hoa-don.csv") });
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * Whether the bookkeeper's download has anything to carry: an open request, or an issued one that
+ * may be listed again because its orders moved after it was issued.
+ *
+ * @param {any} payload an `InvoiceRequestListResponse`
+ * @returns {boolean}
+ */
+function downloadable(payload) {
+  return Boolean((payload?.counts?.REQUESTED ?? 0) || (payload?.counts?.ISSUED ?? 0));
 }
 
 /**
@@ -136,7 +153,7 @@ export function render_() {
     const open = payload?.counts?.REQUESTED ?? 0;
     subtitle.textContent = open ? `${open} yêu cầu chờ kế toán xuất` : "Không có yêu cầu nào chờ xuất";
     drawTabs(payload);
-    exportButton.disabled = !open || !closeVerdict.allowed;
+    exportButton.disabled = !downloadable(payload) || !closeVerdict.allowed;
     render(
       techHost,
       techDetails([["Phiên bản truy vấn", String(payload?.query_version || "")]]),
@@ -253,6 +270,8 @@ export function render_() {
           item.amount?.storage_fee_vnd
             ? h("span", { class: "invoices__sub" }, "gồm phí lưu kho")
             : null,
+          item.amount?.deposit_vnd ? h("span", { class: "invoices__sub" }, "gồm tiền trả trước") : null,
+          item.status === "ISSUED" ? h("span", { class: "invoices__sub" }, "số trên hóa đơn") : null,
         ),
       ),
       h("td", { dataLabel: "", class: "invoices__last" }, lastCell(item)),
@@ -267,6 +286,9 @@ export function render_() {
         { class: "invoices__issued" },
         statusOf(item),
         h("span", null, issuedText(item)),
+        flagTexts(item).map((text) =>
+          h("span", { class: "invoices__flag", dataField: "invoice-flag" }, text),
+        ),
       );
     }
     if (item.status === "CANCELLED") {
@@ -339,6 +361,9 @@ export function render_() {
           "p",
           { class: "hint", dataField: "invoices-exported" },
           `Đã tải ${produced.request_count} yêu cầu · ${produced.filename}`,
+          produced.flagged_issued_count
+            ? ` · ${produced.flagged_issued_count} hóa đơn đã xuất cần báo kế toán`
+            : "",
           produced.truncated ? " · chưa hết danh sách, tải tiếp sau khi ghi số" : "",
         ),
       );
@@ -346,7 +371,7 @@ export function render_() {
       exportSubmission.reset();
       show(exportHost, errorNotice(/** @type {any} */ (error)));
     } finally {
-      exportButton.disabled = !(last?.counts?.REQUESTED ?? 0) || !closeVerdict.allowed;
+      exportButton.disabled = !downloadable(last) || !closeVerdict.allowed;
     }
   }
 

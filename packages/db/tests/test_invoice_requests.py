@@ -188,7 +188,14 @@ def _issue(
     number: str = "00000123",
     on: date | None = None,
     principal: StaffPrincipal | None = None,
+    checked: tuple[int | None, tuple[UUID, ...]] | None = None,
 ) -> Any:
+    """*Ghi số hóa đơn*. `checked` is what the invoice says: its total and the orders it lists; by
+    default an invoice made for everything the request reads just before the press."""
+
+    if checked is None:
+        view = _read(shop, request_id)
+        checked = (view.amount.total_vnd, view.covered_order_ids)
     return InvoiceRequestRepository().record_issued(
         shop.connection,
         RecordIssuedCommand(
@@ -198,6 +205,8 @@ def _issue(
             invoice_symbol=symbol,
             invoice_number=number,
             invoice_date=on or datetime.now(UTC).date() - timedelta(days=1),
+            invoice_total_vnd=checked[0],
+            invoice_order_ids=checked[1],
             principal=principal or shop.owner,
             idempotency_key=f"issued-{uuid4().hex}",
             correlation_id=uuid4(),
@@ -733,7 +742,7 @@ def test_the_download_lists_open_requests_line_by_line_and_is_audited(shop: Shop
     content = produced.content_csv
     assert content.startswith("﻿")
     assert produced.query_version == INVOICE_EXPORT_QUERY.label
-    assert produced.query_version.startswith("invoice-requests-export-v1:")
+    assert produced.query_version.startswith("invoice-requests-export-v2:")
     rows = list(csv.reader(io.StringIO(content.lstrip("﻿"))))
     header_at = rows.index(list(EXPORT_COLUMNS))
     assert rows[0] == ["Phiên bản truy vấn", produced.query_version]

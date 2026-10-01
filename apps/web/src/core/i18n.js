@@ -627,6 +627,12 @@ export const REASON_NOTE = {
   INVOICE_ISSUED_DETAILS_INVALID:
     "Ký hiệu gồm chữ in và số (tối đa 12), số hóa đơn tối đa 8 chữ số, ngày không sau hôm nay.",
   INVOICE_NUMBER_TAKEN: "Ký hiệu và số hóa đơn này đã ghi cho một yêu cầu khác. Kiểm tra lại.",
+  INVOICE_AMOUNT_MOVED:
+    "Chưa lưu: có đơn đã chọn không còn thuộc yêu cầu này (vừa có yêu cầu riêng). Đóng, mở lại " +
+    "để xem danh sách mới rồi chọn đúng các đơn trên hóa đơn.",
+  INVOICE_TOTAL_MISMATCH:
+    "Chưa lưu: tổng tiền gõ vào khác tổng của các đơn đã chọn. Chép đúng tổng trên hóa đơn và chỉ " +
+    "chọn các đơn hóa đơn ghi. Nếu hóa đơn ghi số khác số của tiệm, báo chủ tiệm và kế toán.",
   INVOICE_CANCEL_NOTE_REQUIRED: "Lý do khác cần vài chữ ghi rõ (tối đa 200 ký tự).",
   // MONEY-LIFECYCLE-009 (DEC-045): a credit voided with the cancellation of its order.
   REMEDY_CREDIT_VOIDED:

@@ -174,6 +174,49 @@ def _locked(row: Sequence[object]) -> _LockedCredit:
     )
 
 
+#: How many times the credits may move under the cancellation's locks before it gives up (each
+#: round is a concurrent cancellation that reissued a credit this one touches; a chain is short).
+_LOCK_ROUNDS: Final = 8
+
+
+def _read_rows(cursor: Any, sql: str, order_id: UUID, *, lock: bool = False) -> list[_LockedCredit]:
+    cursor.execute(sql + (" FOR UPDATE OF c" if lock else ""), (order_id,))
+    return [_locked(row) for row in cursor.fetchall()]
+
+
+def _locked_then_read(
+    cursor: Any, order_id: UUID
+) -> tuple[list[_LockedCredit], list[_LockedCredit]]:
+    """Lock the credits, then read them -- and J3's `issuer_uncovered` -- after the locks are held.
+
+    A `SELECT ... FOR UPDATE` that waits for another transaction's row lock returns what its own
+    snapshot saw, taken before it waited: under READ COMMITTED the row it then locks is re-read,
+    but the rest of the statement -- the issuer order's status, its refund, a reissue inserted
+    meanwhile -- is not. Verification round 1 (P1): counter A cancels X, which nets its credit c1
+    spent on Y; counter B cancels Y at the same moment and waits on c1; when A commits, B's plan
+    still saw X ACTIVE, so it reissued c1 in full and the customer was compensated twice.
+
+    So the locking read only takes the locks; the facts come from a second read, a new statement
+    whose snapshot starts after every lock is held and therefore sees whatever the holder of each
+    committed. Every cancellation that changes a fact this order's plan reads locks a credit this
+    order's plan locks (the issuer's cancellation locks the latest link of each credit issued from
+    it, which is the credit spent here), so the second read is exact. A credit that appeared since
+    the locking read (a reissue committed by the holder) is locked in another round.
+    """
+
+    held: set[UUID] = set()
+    for _ in range(_LOCK_ROUNDS):
+        for sql in (_ISSUED_SQL, _SPENT_SQL):
+            held.update(c.fact.credit_id for c in _read_rows(cursor, sql, order_id, lock=True))
+        issued = _read_rows(cursor, _ISSUED_SQL, order_id)
+        spent = _read_rows(cursor, _SPENT_SQL, order_id)
+        if all(credit.fact.credit_id in held for credit in (*issued, *spent)):
+            return issued, spent
+    raise CancellationMoneyError(
+        "STALE_VERSION: the remedy credits kept moving during the cancel; read the order again"
+    )
+
+
 def plan_cancellation_money(
     connection: Any,
     *,
@@ -184,7 +227,6 @@ def plan_cancellation_money(
 ) -> LockedCancellationMoney:
     """Read (and lock) the credits the cancellation touches, and ask the domain what happens."""
 
-    suffix = " FOR UPDATE OF c" if lock else ""
     with connection.cursor() as cursor:
         if not credits_touch_order(cursor, order_id):
             return LockedCancellationMoney(
@@ -197,10 +239,14 @@ def plan_cancellation_money(
                 credits={},
                 order_contact_id=None,
             )
-        cursor.execute(_ISSUED_SQL + suffix, (order_id,))
-        issued = [_locked(row) for row in cursor.fetchall()]
-        cursor.execute(_SPENT_SQL + suffix, (order_id,))
-        spent = [_locked(row) for row in cursor.fetchall()]
+        issued, spent = (
+            _locked_then_read(cursor, order_id)
+            if lock
+            else (
+                _read_rows(cursor, _ISSUED_SQL, order_id),
+                _read_rows(cursor, _SPENT_SQL, order_id),
+            )
+        )
         cursor.execute("SELECT bound_contact_id FROM orders WHERE id = %s", (order_id,))
         contact = cursor.fetchone()
     plan = cancellation_money_plan(

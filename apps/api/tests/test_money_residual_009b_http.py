@@ -22,6 +22,8 @@ from __future__ import annotations
 import itertools
 import os
 import sys
+import threading
+import time
 from collections.abc import Generator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,6 +49,8 @@ from test_money_lifecycle_009_http import (
     _remedied,
     _spend_on_new_order,
     _step,
+    _with_expected_money,
+    _with_refund_method,
 )
 from test_prepaid_dropoff_http import CSRF, _as, _post
 
@@ -612,3 +616,147 @@ def test_the_figures_are_part_of_the_cancellation_key(connection: Any, client: T
         client, path, {**body, "expected_cancellation_money": other}, key=key, if_match=version
     )
     assert conflict.status_code == 409 and conflict.json()["detail"] == "IDEMPOTENCY_CONFLICT"
+
+
+# --- J3 under concurrency: two counters cancel the two ends of a chain at the same moment -------
+#
+# Verification round 1 (P1): Y's credit read waited for X's row lock on c1 and then decided
+# "X still ACTIVE" from a snapshot taken before X committed, so both cancellations went through and
+# the customer was compensated twice (paid 30.000, refunded 0, live credit 80.000). The interleaving
+# is pinned without timing: X's transaction stops at a gate (an advisory lock a trigger takes) while
+# it holds its credit locks; the test waits until Y is blocked on X's row lock, then opens the gate.
+
+_GATE_KEY = 9_009_002
+
+
+def _wait_until(watcher: Any, sql: str, label: str) -> None:
+    deadline = datetime.now(UTC).timestamp() + 30
+    while datetime.now(UTC).timestamp() < deadline:
+        [(found,)] = _rows(watcher, sql)
+        if found:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"never reached: {label}")
+
+
+_AT_GATE = """
+    SELECT count(*) > 0 FROM pg_stat_activity
+    WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event = 'advisory'
+"""
+_ON_ROW_LOCK = """
+    SELECT count(*) > 0 FROM pg_stat_activity
+    WHERE datname = current_database() AND wait_event_type = 'Lock'
+      AND wait_event IN ('transactionid', 'tuple')
+"""
+
+
+def _racing(
+    connection: Any,
+    gated_table: str,
+    first: tuple[UUID, dict[str, Any], int],
+    second: tuple[UUID, dict[str, Any], int],
+) -> tuple[Any, Any]:
+    """POST `first`, hold it at the gate on its first insert into `gated_table` (its credit locks
+    taken), POST `second` until it waits on a row lock, then let `first` commit."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "CREATE OR REPLACE FUNCTION j3_race_gate() RETURNS trigger LANGUAGE plpgsql AS "
+            f"$$ BEGIN PERFORM pg_advisory_xact_lock_shared({_GATE_KEY}); RETURN NEW; END $$"
+        )
+        cursor.execute(
+            f"CREATE TRIGGER j3_race_gate AFTER INSERT ON {gated_table} "
+            "FOR EACH ROW EXECUTE FUNCTION j3_race_gate()"
+        )
+    results: dict[str, Any] = {}
+
+    def press(name: str, order_id: UUID, body: dict[str, Any], version: int) -> None:
+        counter = TestClient(app, cookies={"staff_session": "session-token", "staff_csrf": CSRF})
+        results[name] = _post(
+            counter, f"/internal/v1/orders/{order_id}/steps", body, if_match=version
+        )
+
+    threads = [
+        threading.Thread(target=press, args=("first", *first)),
+        threading.Thread(target=press, args=("second", *second)),
+    ]
+    with psycopg.connect(_database_url(), autocommit=True) as gate:
+        gate.execute("SELECT pg_advisory_lock(%s)", (_GATE_KEY,))
+        try:
+            threads[0].start()
+            _wait_until(gate, _AT_GATE, "the first cancellation holds its locks at the gate")
+            threads[1].start()
+            _wait_until(gate, _ON_ROW_LOCK, "the second cancellation waits on a credit row lock")
+        finally:
+            gate.execute("SELECT pg_advisory_unlock_all()")
+            for thread in threads:
+                if thread.is_alive() or thread.ident is not None:
+                    thread.join(timeout=60)
+            with connection.cursor() as cursor:
+                cursor.execute(f"DROP TRIGGER j3_race_gate ON {gated_table}")
+                cursor.execute("DROP FUNCTION j3_race_gate()")
+    return results["first"], results["second"]
+
+
+def _pressed(client: TestClient, order_id: UUID) -> tuple[UUID, dict[str, Any], int]:
+    """The CANCEL press the order's sheet would send now: its preview's figures and row version."""
+
+    view = _read(client, order_id)
+    resolution = (
+        {}
+        if view["intake"] == "AWAITING_HANDOFF" and view["production"] == "NOT_STARTED"
+        else SHOP_FAULT
+    )
+    body = _with_expected_money(
+        client, order_id, _with_refund_method(client, order_id, {"step": "CANCEL", **resolution})
+    )
+    return order_id, body, int(view["row_version"])
+
+
+def test_two_counters_cancelling_a_capped_chain_at_once_never_compensate_twice(
+    connection: Any, service: OperationsService, client: TestClient
+) -> None:
+    """X locks c1 and nets 30.000 of it; Y, blocked on c1 meanwhile, must decide after X's commit:
+    refused `CREDIT_CHAIN_NOT_NETTED`, exactly as when Y is pressed after X (sequential (0, 1))."""
+
+    (x_id, y_id), _ = _chain(connection, service, client, 2, capped=True)
+    x_answer, y_answer = _racing(
+        connection, "order_refunds", _pressed(client, x_id), _pressed(client, y_id)
+    )
+    assert x_answer.status_code == 200, x_answer.text
+    assert y_answer.status_code == 409, y_answer.text
+    assert y_answer.json()["detail"]["reason_code"] == "CREDIT_CHAIN_NOT_NETTED"
+    assert _read(client, y_id)["commercial"] != "CANCELLED"
+    assert _rows(
+        connection,
+        "SELECT count(*) FROM remedy_credits WHERE issued_from_order_id = %s "
+        "AND reissue_of IS NOT NULL",
+        x_id,
+    ) == [(0,)]
+    # The customer stands where the sequential order (X then Y) leaves them.
+    assert _customer_total(connection, (x_id, y_id)) == (30_000, 0, 0)
+
+
+def test_the_reverse_race_reads_the_reissued_credit_and_refuses_the_stale_sheet(
+    connection: Any, service: OperationsService, client: TestClient
+) -> None:
+    """Y reissues c1 as c1' while X waits on c1: X's plan is made over c1' (void it, refund the
+    30.000), not over the c1 X's sheet showed, so the press is refused CANCELLATION_MONEY_CHANGED;
+    the re-read sheet goes through and the customer ends at 0, as sequential (1, 0) does."""
+
+    (x_id, y_id), _ = _chain(connection, service, client, 2, capped=True)
+    x_press = _pressed(client, x_id)
+    shown = x_press[1]["expected_cancellation_money"]
+    assert (shown["netted_vnd"], shown["refund_vnd"]) == (30_000, 0)
+    y_answer, x_answer = _racing(connection, "remedy_credits", _pressed(client, y_id), x_press)
+    assert y_answer.status_code == 200, y_answer.text
+    assert x_answer.status_code == 409, x_answer.text
+    detail = x_answer.json()["detail"]
+    assert detail["reason_code"] == "CANCELLATION_MONEY_CHANGED"
+    fresh = {"refund_vnd": 30_000, "netted_vnd": 0, "voided_vnd": 80_000, "reissued_vnd": 0}
+    assert detail["cancellation_money"] == fresh
+    assert _figures(_read(client, x_id)["cancellation_money"]) == fresh
+    again = _cancel_any(client, x_id)
+    assert again.status_code == 200, again.text
+    paid, refunded, live = _customer_total(connection, (x_id, y_id))
+    assert paid - refunded - live == 0

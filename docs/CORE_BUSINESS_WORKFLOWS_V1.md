@@ -318,7 +318,10 @@ on Z) ends the customer at the same total — cash paid, less cash refunded, les
 value — whichever order is cancelled first, except where an earlier cancellation netted a credit
 short (worth more than that order's ledger): the later cancellation that would reissue it is
 refused `CREDIT_CHAIN_NOT_NETTED` (409, said on the refund sheet before the press; the owner
-decides). **The preview is the press**: CANCEL / REJECT_INTAKE / transition to CANCELLED carry the
+decides). The same holds when two counters cancel two orders of one chain at the same moment:
+the cancellation that waits on the other's credit lock decides only after that one committed (it
+re-reads the credits after its locks are held), so it is refused or re-planned exactly as if it
+had been pressed second. **The preview is the press**: CANCEL / REJECT_INTAKE / transition to CANCELLED carry the
 sheet's `expected_cancellation_money` (refund, netted, voided, reissued); a credit that moved under
 the sheet is refused `CANCELLATION_MONEY_CHANGED` (409, nothing written) and the sheet re-reads.
 

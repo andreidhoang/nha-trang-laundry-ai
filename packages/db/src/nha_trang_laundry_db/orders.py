@@ -1168,17 +1168,20 @@ class OrderRepository:
         # elsewhere is netted from the refund (never below 0), and a credit this bill spent is
         # reissued. Read and locked under the order lock the caller holds, before anything is
         # written; carried out in this transaction after the order's own write.
-        remedy_money = (
-            plan_cancellation_money(
-                connection,
-                order_id=command.order_id,
-                resolution=command.custody_resolution,
-                refundable_vnd=0 if refund is None else refund.amount_vnd,
+        try:
+            remedy_money = (
+                plan_cancellation_money(
+                    connection,
+                    order_id=command.order_id,
+                    resolution=command.custody_resolution,
+                    refundable_vnd=0 if refund is None else refund.amount_vnd,
+                )
+                if next_state.commercial is CommercialOrderStatus.CANCELLED
+                and current.commercial is not CommercialOrderStatus.CANCELLED
+                else None
             )
-            if next_state.commercial is CommercialOrderStatus.CANCELLED
-            and current.commercial is not CommercialOrderStatus.CANCELLED
-            else None
-        )
+        except CancellationMoneyError as error:
+            raise OrderStateError(str(error)) from error
         if refund is not None and remedy_money is not None and remedy_money.plan.netted_vnd:
             refund = replace(
                 refund,

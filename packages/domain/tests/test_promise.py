@@ -93,8 +93,8 @@ def promised(accepted: datetime, codes: list[str], **kwargs: object) -> datetime
 @pytest.mark.parametrize(
     ("accepted", "expected"),
     [
-        # DEC-037's own example: accepted at 17:00, promised 13:00 the next open day (thứ Sáu 25/9
-        # 2026 -> thứ Bảy 26/9), not 01:00.
+        # DEC-037's own example: accepted at 17:00, promised 13:00 the next open day (thứ Sáu 25/09
+        # 2026 -> thứ Bảy 26/09), not 01:00.
         (at(2026, 9, 25, 17), at(2026, 9, 26, 13)),
         (at(2026, 9, 25, 8), at(2026, 9, 25, 16)),
         # Ends exactly at closing: 20:00 is the promise, not tomorrow 08:00.

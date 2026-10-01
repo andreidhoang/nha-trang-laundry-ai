@@ -175,7 +175,7 @@ and refuses `PROMISE_REQUIRED` when the domain says a human must set it; the ord
 computed by the server at read time). `POST /orders/{id}/promise` changes it with a reason. SLA board
 ranks by the order's promise when present (falls back to the stated rule and says so).
 
-**Console:** Nhận đồ shows "Hẹn trả: 13:00 thứ Sáu 26/9" before the press, with 24/48h chips or a
+**Console:** Nhận đồ shows "Hẹn trả: 13:00 thứ Bảy 26/09" before the press, with 24/48h chips or a
 date-time picker when required; order page and list show the promise and a LATE pill; receipt
 prints it (update `RECEIPT-PRINT-001`'s R4 line accordingly); report on-time uses first promise.
 

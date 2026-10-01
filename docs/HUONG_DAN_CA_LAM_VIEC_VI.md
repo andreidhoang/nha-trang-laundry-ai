@@ -31,7 +31,7 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
 | 4 | Bấm **Tính giá**, đọc **Tổng khách trả** cho khách | Nhận đồ |
 | 5 | Bấm **Tiếp tục**, hỏi khách biết tiệm qua đâu (chưa hỏi thì để *Chưa biết*) | Nhận đồ |
 | 6 | Khách đồng ý → bấm **Khách đồng ý — tạo đơn**. Máy ghi lời đồng ý, tạo đơn, rồi mở luôn trang đơn | Nhận đồ |
-| 7 | Nhận túi đồ từ khách → bấm **Nhận đồ**. Màn hình hiện giờ hẹn, ví dụ *Hẹn trả: 13:00 thứ Sáu 26/09* — đọc cho khách. Có giày, rèm, chăn: chọn **24 giờ** hoặc **48 giờ** (máy chọn sẵn 48 giờ). Có gấu bông, túi, đồ da, gối, topper…: máy ghi *Bạn chọn ngày giờ trả cho đơn này* — chọn ngày giờ trong ô *Ngày giờ trả*. Tích **Tiệm làm kịp đơn này**, bấm **Nhận đồ** lần nữa | Chi tiết đơn |
+| 7 | Nhận túi đồ từ khách → bấm **Nhận đồ**. Màn hình hiện giờ hẹn, ví dụ *Hẹn trả: 13:00 thứ Bảy 26/09* — đọc cho khách. Có giày, rèm, chăn: chọn **24 giờ** hoặc **48 giờ** (máy chọn sẵn 48 giờ). Có gấu bông, túi, đồ da, gối, topper…: máy ghi *Bạn chọn ngày giờ trả cho đơn này* — chọn ngày giờ trong ô *Ngày giờ trả*. Tích **Tiệm làm kịp đơn này**, bấm **Nhận đồ** lần nữa | Chi tiết đơn |
 | 7a | Khách cần phiếu → bấm **In phiếu cho khách** ngay đầu trang đơn, rồi **In phiếu** (máy in nhiệt 80 mm, 58 mm hoặc giấy A5). Máy có nút **Chia sẻ** thì gửi được phiếu qua điện thoại. Khách có hồ sơ thì phiếu ghi tên khách. In **sau** khi bấm Nhận đồ thì phiếu ghi *Hẹn trả: …*; đơn chưa có giờ hẹn (chủ tiệm chưa công bố quy tắc hẹn trả) thì phiếu ghi *Tiệm sẽ báo khi đồ sẵn sàng* nếu tiệm có số điện thoại hoặc kênh chat của khách, còn khách vãng lai chỉ có số phiếu thì ghi *Giữ phiếu này để nhận đồ* | Phiếu cho khách |
 | 8 | Bỏ đồ vào máy → bấm **Bắt đầu giặt**, rồi bấm đúng máy vừa bỏ đồ vào (máy vừa dùng đứng đầu). Không kịp chọn thì bấm **Bỏ qua** — đơn vẫn bắt đầu giặt | Chi tiết đơn |
 | 9 | Giặt xong → **Giặt xong, kiểm tra đồ**; kiểm xong → **Báo đồ đã sẵn sàng** | Chi tiết đơn |
@@ -299,6 +299,8 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 7. Hết ca, bấm **Thoát** và đợi màn hình **Chưa đăng nhập** — lúc đó trên máy không còn tên hay
    số của khách nào. Nếu máy báo **Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại** thì bạn
    **vẫn đang đăng nhập**: kiểm tra mạng rồi bấm **Thoát** lần nữa, đừng để máy cho người khác.
+   Mở bảng vận hành ở nhiều thẻ trên cùng một máy thì **Thoát** ở một thẻ là mọi thẻ cùng thoát —
+   thẻ kia ghi *Đã thoát ở một thẻ khác của trình duyệt này* và không còn tên hay số của khách nào.
 
 ---
 
@@ -469,7 +471,10 @@ hạn thì bấm **Xin duyệt lại**. *Nhập mã thủ công* chỉ dùng cho
 | Huỷ một đơn đã nhận đồ | Phải nói đồ và tiền đã xử lý thế nào | **Khác** → **Huỷ đơn**, chọn một cách xử lý (đơn đã thu tiền: chọn cả **Trả lại tiền cho khách bằng** tiền mặt hay chuyển khoản), bấm hai lần |
 | Phiếu **Huỷ đơn** ghi *Huỷ không thu tiền thì các khoản giảm trừ, bồi thường của đơn này: …* | Đơn có khoản giảm trừ/bồi thường (DEC-045, DEC-046) | Đọc cho khách từng dòng trước khi bấm: khoản khách **chưa dùng** thì bị huỷ cùng đơn; khoản khách **đã dùng ở đơn khác** thì trừ vào tiền hoàn (ghi *Tiền hoàn cho khách: …*) — hoàn đúng số đó; khoản khách **đã dùng cho đơn này** thì được cấp lại. Sau khi huỷ, ô tiền của đơn và phiếu in ghi lại đúng những dòng đó |
 | **Khoản này đã bị huỷ khi đơn phát hành nó bị huỷ không thu tiền** | Khách đưa mã một khoản giảm trừ đã bị huỷ cùng đơn cũ | Không dùng được. Nói với khách khoản đó đã được tính khi huỷ đơn cũ |
-| **Phiên đăng nhập đã kết thúc** | Hết phiên | Đăng nhập lại. Không mất dữ liệu |
+| **Phiên đăng nhập đã kết thúc** | Hết phiên | Đăng nhập lại rồi bấm **Kiểm tra lại phiên**. Không mất dữ liệu: màn hình đang làm và thanh điều hướng vẫn còn. Bấm sang màn khác thì máy ghi *Màn hình này cần máy chủ* cho tới khi đăng nhập lại |
+| **Đã bỏ khách đang chờ … — vẫn còn trong danh sách** (Nhận đồ) | Máy đang mở một khách từ đường dẫn thì bạn bấm khách khác | Không mất gì: khách cũ vẫn ở **Tiếp tục một khách đang chờ**. Tải lại trang cũng không mở lại khách cũ |
+| Các dòng ở **Nhận đồ** mờ đi vài giây | Máy đang phát phiếu hoặc mở lượt tiếp nhận cho khách vừa bấm | Chờ khách đó hiện lên. Bấm vào dòng mờ thì máy nhắc *chờ xong rồi bấm lại* |
+| **＋ Nhận đồ** mờ, ghi **Cần xác thực hai bước** | Phiên đăng nhập này chưa qua xác thực hai bước | Thoát rồi đăng nhập lại (có bước xác thực thứ hai) |
 | **Chưa đăng xuất được — kiểm tra mạng rồi bấm Thoát lại** | Bấm **Thoát** mà máy chủ chưa nhận được. Bạn vẫn đang đăng nhập | Kiểm tra mạng rồi bấm **Thoát** lần nữa, tới khi thấy **Chưa đăng nhập** |
 | **Có bản mới** | Tiệm vừa cập nhật bảng vận hành | Làm xong việc đang nhập rồi bấm **Tải lại**. Máy không tự tải lại |
 | Mất điện thoại, hoặc quên thoát ở máy khác | Máy đó vẫn đang đăng nhập | Từ một máy khác, đăng nhập rồi **bấm tên mình** ở thanh trên cùng → **Thiết bị đang đăng nhập** → ở máy bị mất bấm **Đăng xuất thiết bị này** (bấm hai lần). Dòng **Thiết bị này** là máy đang cầm. Các máy khác vẫn làm việc bình thường. Chủ tiệm cũng làm được việc này cho người khác: **Nhân sự** → bấm tên người đó → cùng danh sách |

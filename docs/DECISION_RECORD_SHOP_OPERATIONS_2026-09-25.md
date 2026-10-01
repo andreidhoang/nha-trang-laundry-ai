@@ -189,7 +189,7 @@ It was never undecided. It was never wired.
 - **Changing a promise (hẹn lại)** needs a reason and is recorded. The on-time figure always counts
   against the **first** promise, so re-promising cannot improve the shop's score.
 - **Shown** on the order page, the SLA board (which now ranks by the order's own promise, not the
-  one generic rule), the receipt ("Hẹn trả: 13:00 thứ Sáu 26/9"), and the owner's on-time figure,
+  one generic rule), the receipt ("Hẹn trả: 13:00 thứ Bảy 26/09/2026" — paper prints the year), and the owner's on-time figure,
   whose data quality changes from `RULE_ASSUMED` to `COMPLETE` for promised orders.
 - **The late-delivery credit is not applied.** The owner's "late > 2 h vs the confirmed time →
   credit 10% of the next bill" is a delivery commitment. This round records it as a report line

@@ -543,8 +543,13 @@ function renderBanners() {
       h(
         "div",
         { class: "banner", dataState: "danger", role: "alert" },
-        "Mất liên lạc với máy chủ. Chưa biết phiên còn hay hết — đây không phải đã đăng xuất. " +
-          "Những gì bạn đang nhập vẫn còn trên màn hình; kiểm tra mạng rồi bấm gửi lại.",
+        // K2: the navigation stays through this, so the screen behind the banner may be the
+        // session screen a press opened -- then nothing typed is on show, and it is not said.
+        sessionScreenShown
+          ? "Mất liên lạc với máy chủ. Chưa biết phiên còn hay hết — đây không phải đã đăng xuất. " +
+              "Kiểm tra mạng rồi bấm “Kiểm tra lại phiên”."
+          : "Mất liên lạc với máy chủ. Chưa biết phiên còn hay hết — đây không phải đã đăng xuất. " +
+              "Những gì bạn đang nhập vẫn còn trên màn hình; kiểm tra mạng rồi bấm gửi lại.",
         h(
           "button",
           { type: "button", dataVariant: "quiet", onClick: () => void session.refresh() },
@@ -565,8 +570,11 @@ function renderBanners() {
         "div",
         { class: "banner", dataState: "danger", role: "alert" },
         state.lastError ||
-          "Phiên đăng nhập đã kết thúc. Những gì bạn đang nhập vẫn còn trên màn hình — " +
-            "đăng nhập lại rồi bấm gửi một lần nữa.",
+          // K2: "still on screen" only while it is -- not on the session screen a press opened.
+          (sessionScreenShown
+            ? "Phiên đăng nhập đã kết thúc. Đăng nhập lại rồi bấm “Kiểm tra lại phiên”."
+            : "Phiên đăng nhập đã kết thúc. Những gì bạn đang nhập vẫn còn trên màn hình — " +
+              "đăng nhập lại rồi bấm gửi một lần nữa."),
         h(
           "button",
           {

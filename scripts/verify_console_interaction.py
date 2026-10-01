@@ -14245,6 +14245,15 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(900)
     main_text = page.locator("main").inner_text()
     expired_line = page.locator("main [data-session-expired]")
+    banner_now = page.locator("#banners").inner_text()
+    check(
+        "K2 (idle expiry): before the press the banner said the typed input is still on screen; "
+        "after it, on the session screen, it no longer claims that",
+        "vẫn còn trên màn hình" in kept
+        and "Phiên đăng nhập đã kết thúc" in banner_now
+        and "vẫn còn trên màn hình" not in banner_now,
+        banner_now[:160],
+    )
     check(
         "K2 (idle expiry): a destination pressed says the session ended and that the screen needs "
         "the server -- not a bare 'Chưa đăng nhập', not an empty or broken screen",

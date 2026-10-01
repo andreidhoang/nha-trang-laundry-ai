@@ -11713,6 +11713,12 @@ def scenario_console_residual(console: Console) -> None:
         page.wait_for_timeout(1000)
         expired = page.locator("main [data-session-expired]")
         said = expired.first.inner_text() if expired.count() else ""
+        banner = page.locator("#banners").inner_text()
+        ok(
+            "and the banner no longer says the typed input is on screen (it is not, now)",
+            "Phiên đăng nhập đã kết thúc" in banner and "vẫn còn trên màn hình" not in banner,
+            banner[:160],
+        )
         ok(
             "a destination pressed says the session ended and needs the server",
             "Phiên đăng nhập đã kết thúc" in said and "cần máy chủ" in said,

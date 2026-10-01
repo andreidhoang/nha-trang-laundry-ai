@@ -50,6 +50,7 @@
 
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
+import { visibleMessage } from "../core/errors.js";
 import {
   UNKNOWN,
   UUID,
@@ -1212,7 +1213,7 @@ export function render_(context) {
           const fresh = await reread();
           const again = fresh ? stepEntry(fresh, step) : null;
           if (again && made.node.isConnected) refit?.(again, fresh);
-          show(alertHost, inlineAlert({ state: "warn", title: error.message }));
+          show(alertHost, inlineAlert({ state: "warn", title: visibleMessage(error) }));
           return;
         }
         show(

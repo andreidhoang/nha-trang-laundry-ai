@@ -691,3 +691,181 @@ def test_shop_admin_reads_the_dsn_inside_the_container_and_nowhere_else(tmp_path
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == f"{DSN}|{DSN}|scripts/x.py --a b"
+
+
+# --- PLATFORM-RESIDUAL-009B L4: an undelivered alert is sent again until it is delivered --------
+
+
+def _api_line(status: int, at: datetime, route: str = "/internal/v1/orders") -> str:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "occurred_at": at.isoformat(),
+            "severity": "INFO",
+            "component": "api",
+            "event": "http.request.completed",
+            "outcome": "completed",
+            "correlation_id": f"{route}:{status}:{at.isoformat()}",
+            "trace_id": "0" * 32,
+            "fields": {"method": "POST", "route": route, "status_code": status},
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _pending_files(credentials: dict[str, str]) -> list[Path]:
+    return sorted(Path(credentials["R1_ALERT_LOG_FILE"]).parent.glob("alert-pending-*.json"))
+
+
+def test_an_application_alert_that_was_not_delivered_is_sent_by_the_next_run(
+    telegram_stub: _Stub, credentials: dict[str, str], tmp_path: Path
+) -> None:
+    """The case L4 names. The app check counts each line once, so a 500 whose alert failed was
+    never mentioned again: the next run, with no new 500, passed and sent nothing."""
+
+    now = datetime.now(UTC)
+    log = tmp_path / "logs" / "api.jsonl"
+    log.parent.mkdir()
+    log.write_text(
+        "\n".join(
+            [
+                _api_line(200, now - timedelta(seconds=40), "/readyz"),
+                _api_line(500, now - timedelta(seconds=20)),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cursor = tmp_path / "state" / "app-signal-cursor.json"
+    command = _check("--check", "app", "--app-logs", str(log), "--app-signal-cursor", str(cursor))
+    environment = {**credentials, "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base}
+
+    telegram_stub.status = 502
+    first = _relay(command, environment, label="checks-host")
+    assert first.returncode == 3, first.stderr
+    assert "kept to resend next run" in first.stderr
+    assert len(_pending_files(credentials)) == 1
+
+    telegram_stub.status = 200
+    second = _relay(command, environment, label="checks-host")
+    assert second.returncode == 0, second.stderr  # the check itself passes now: no new 500
+    assert len(telegram_stub.requests) == 2
+    text = telegram_stub.requests[1]["form"]["text"]
+    assert text.startswith("Bảng vận hành — cần xem ngay:\nCảnh báo trước đó chưa gửi được:")
+    assert "application_signals" in text and "server_errors 1" in text
+    assert "(1 lần chưa gửi được)" in text
+    assert _pending_files(credentials) == []
+    assert "1 earlier alert(s) resent" in Path(credentials["R1_ALERT_LOG_FILE"]).read_text("utf-8")
+
+    third = _relay(command, environment, label="checks-host")
+    assert third.returncode == 0 and len(telegram_stub.requests) == 2  # delivered once, then quiet
+
+
+def test_alerts_wait_through_several_failed_runs_and_go_out_together(
+    telegram_stub: _Stub, credentials: dict[str, str], tmp_path: Path
+) -> None:
+    missing = tmp_path / "missing"
+    failing = _check("--check", "base", "--base-backup-marker", str(missing))
+    environment = {**credentials, "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base}
+
+    telegram_stub.status = 500
+    for _ in range(3):
+        assert _relay(failing, environment).returncode == 3
+    (pending,) = _pending_files(credentials)
+    saved = json.loads(pending.read_text("utf-8"))
+    # The same words three times are one waiting alert, tried three times -- not three alerts.
+    assert [alert["attempts"] for alert in saved["alerts"]] == [3]
+
+    telegram_stub.status = 200
+    marker = tmp_path / "last-success"
+    marker.write_text("base-20260925T023000Z 3001743", encoding="utf-8")
+    passing = _check("--check", "base", "--base-backup-marker", str(marker))
+    result = _relay(passing, environment)
+    assert result.returncode == 0, result.stderr
+    text = telegram_stub.requests[-1]["form"]["text"]
+    assert "base_backup_age: no base backup has ever completed" in text
+    assert "(3 lần chưa gửi được)" in text
+    assert _pending_files(credentials) == []
+
+
+def test_a_new_alert_and_an_old_one_go_in_one_message(
+    telegram_stub: _Stub, credentials: dict[str, str], tmp_path: Path
+) -> None:
+    environment = {**credentials, "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base}
+    telegram_stub.status = 500
+    assert (
+        _relay(
+            _check("--check", "base", "--base-backup-marker", str(tmp_path / "a")), environment
+        ).returncode
+        == 3
+    )
+
+    telegram_stub.status = 200
+    result = _relay(
+        _check("--check", "base", "--base-backup-marker", str(tmp_path / "b")), environment
+    )
+    assert result.returncode == 1  # the current check failed, and its alert (with the old) went out
+    text = telegram_stub.requests[-1]["form"]["text"]
+    current, _, earlier = text.partition("Cảnh báo trước đó chưa gửi được:")
+    assert str(tmp_path / "b") in current and str(tmp_path / "a") in earlier
+    assert _pending_files(credentials) == []
+
+
+def test_without_a_place_to_keep_it_the_log_says_it_will_not_be_retried(
+    telegram_stub: _Stub, credentials: dict[str, str], tmp_path: Path
+) -> None:
+    environment = {key: value for key, value in credentials.items() if key != "R1_ALERT_LOG_FILE"}
+    telegram_stub.status = 500
+    result = _relay(
+        _check("--check", "base", "--base-backup-marker", str(tmp_path / "missing")),
+        {**environment, "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base},
+    )
+    assert result.returncode == 3
+    assert "NOT kept for a retry" in result.stderr
+
+
+def test_a_full_message_leaves_the_rest_waiting_and_drops_are_reported() -> None:
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import shop_alert_pending as pending  # type: ignore[import-not-found]
+
+    moment = datetime(2026, 10, 1, 3, 0, tzinfo=UTC)
+    state = pending.PendingState()
+    for index in range(pending.MAX_PENDING + 5):
+        text = f"Bảng vận hành — cần xem ngay:\n• application_signals: burst {index} " + "x" * 300
+        state = pending.after_failure(state, text, ("application_signals",), now=moment)
+    assert len(state.alerts) == pending.MAX_PENDING and state.dropped == 5
+
+    message, carried, reported = pending.compose(None, state, limit=3800)
+    assert message is not None and len(message) <= 3800
+    assert 0 < carried < pending.MAX_PENDING and not reported
+    rest = pending.after_success(state, carried, reported)
+    assert len(rest.alerts) == pending.MAX_PENDING - carried and rest.dropped == 5
+    while rest.alerts:
+        message, carried, reported = pending.compose(None, rest, limit=3800)
+        assert message is not None and len(message) <= 3800
+        rest = pending.after_success(rest, carried, reported)
+    assert rest.empty and "5 cảnh báo cũ hơn" in str(message)
+
+
+def test_a_warning_is_logged_by_the_relay_and_sends_nothing(
+    telegram_stub: _Stub, credentials: dict[str, str]
+) -> None:
+    """`DEC-051`: past a million outbox rows the data checks warn. The relay writes it to the alert
+    log every run (where `launchctl`/cron mail and the owner's monthly look find it) and pages
+    nobody: it is a decision coming due, not an outage."""
+
+    document = {
+        "schema": "nha-trang-laundry.shop-alert.v1",
+        "passed": True,
+        "results": {"outbox_rows": {"passed": True, "detail": "1 500 000 outbox rows, past"}},
+        "alert": None,
+        "suppressed": [],
+        "warnings": {"outbox_rows": "1 500 000 outbox rows, past"},
+    }
+    fake_check = [sys.executable, "-c", f"print({json.dumps(json.dumps(document))})"]
+    result = _relay(fake_check, {**credentials, "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base})
+    assert result.returncode == 0, result.stderr
+    assert telegram_stub.requests == []
+    log = Path(credentials["R1_ALERT_LOG_FILE"]).read_text("utf-8")
+    assert "WARNING outbox_rows: 1 500 000 outbox rows" in log

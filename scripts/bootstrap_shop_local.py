@@ -495,6 +495,13 @@ def main() -> int:
     # The parent too: `mkdir(parents=True)` gives it the umask default, so `.shop/` itself came out
     # 0755 and world-listable around a 0700 directory of secrets.
     SECRET_DIRECTORY.parent.chmod(0o700)
+    # `PLATFORM-RESIDUAL-009B` L4: the folder the API container writes its log file to
+    # (compose.r1.yaml, `R1_API_LOG_DIRECTORY`), made here so Docker does not create it as root.
+    # 0755: the host-side check reads it; the lines carry no secret (the logger redacts).
+    api_logs = SECRET_DIRECTORY.parent / "logs" / "api"
+    api_logs.mkdir(parents=True, exist_ok=True)
+    api_logs.parent.chmod(0o755)
+    api_logs.chmod(0o755)
     existing: list[str] = []
 
     roles = {name: password() for name in ("laundry_migrate", "laundry_api", "laundry_worker")}

@@ -351,3 +351,14 @@ def test_the_runbooks_describe_dec_052_custody() -> None:
     assert "DEC-052" in section
     assert "keep it on a" not in section
     assert "is then deleted" in section, "DEC-052: the CA key is not kept, not even offline"
+
+
+def test_the_bootstrap_makes_the_api_log_folder_the_container_writes(
+    bootstrap: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`PLATFORM-RESIDUAL-009B` L4: the API's record lives in `.shop/logs/api` on the host."""
+
+    monkeypatch.setattr(sys, "argv", ["bootstrap_shop_local.py", "--backup-recipient", RECIPIENT])
+    assert bootstrap.main() == 0
+    folder = bootstrap.ROOT / ".shop/logs/api"
+    assert folder.is_dir() and folder.stat().st_mode & 0o777 == 0o755

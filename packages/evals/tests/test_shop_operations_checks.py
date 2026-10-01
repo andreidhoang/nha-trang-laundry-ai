@@ -394,3 +394,100 @@ def test_a_wal_chain_with_no_base_backup_is_reported(tmp_path: Path) -> None:
     stale = CHECKS.check_base_backup_age(str(marker), now=datetime.now(UTC) + timedelta(hours=27))
     assert stale.passed is False
     assert stale.fields["base_backup_age_s"] > CHECKS.MAX_BASE_BACKUP_AGE_SECONDS
+
+
+def test_a_direct_alert_that_failed_is_sent_by_the_next_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`PLATFORM-RESIDUAL-009B` L4 on the direct path (a check run with egress, not through the
+    relay): with `R1_ALERT_PENDING_DIRECTORY`, a failed send is kept and the next run -- even a
+    passing one -- sends it, then forgets it."""
+
+    token = tmp_path / "token"
+    token.write_text("probe-token", encoding="utf-8")
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_TOKEN_FILE", str(token))
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_CHAT_ID", "1234")
+    monkeypatch.setenv("R1_ALERT_PENDING_DIRECTORY", str(tmp_path / "pending"))
+    posted: list[str] = []
+    reachable = {"up": False}
+
+    def _post(request: object, timeout: float = 0) -> object:
+        if not reachable["up"]:
+            raise OSError("no route to host")
+        posted.append(getattr(request, "data", b"").decode())
+
+        class _Response:
+            status = 200
+
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+        return _Response()
+
+    monkeypatch.setattr(CHECKS.urllib.request, "urlopen", _post)
+    day = datetime(2026, 9, 3, 3, tzinfo=UTC)  # 10:00 in the shop
+    assert CHECKS.deliver_alert([_failure("application_signals")], now=day) is False
+    assert list((tmp_path / "pending").glob("*.json"))
+
+    reachable["up"] = True
+    assert CHECKS.deliver_alert([], now=day + timedelta(minutes=5)) is True
+    assert len(posted) == 1 and "application_signals" in CHECKS.urllib.parse.unquote_plus(posted[0])
+    assert not list((tmp_path / "pending").glob("*.json"))
+    assert CHECKS.deliver_alert([], now=day + timedelta(minutes=10)) is False
+    assert len(posted) == 1
+
+
+# --- PLATFORM-RESIDUAL-009B L5 / DEC-051: the outbox row count -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("rows", "warned"),
+    [(0, False), (56_000, False), (1_000_000, False), (1_000_001, True), (4_200_000, True)],
+)
+def test_the_outbox_row_count_is_reported_and_warns_past_a_million(
+    monkeypatch: pytest.MonkeyPatch, rows: int, warned: bool
+) -> None:
+    """`DEC-051` keeps record-only outbox rows (the trigger refuses deletion) and asks for the
+    count, with a warning past 1 000 000 rows -- when retention is decided again. A warning, not a
+    failure: it is a decision coming due, not something broken, so it never pages anybody."""
+
+    _archiver(monkeypatch, [(rows,)])
+    result = CHECKS.check_outbox_rows("postgresql://unused")
+    assert result.name == "outbox_rows"
+    assert result.passed is True
+    assert result.fields["outbox_rows"] == rows
+    assert result.warning is warned
+    assert f"{rows:,}".replace(",", " ") in result.detail
+    if warned:
+        assert "DEC-051" in result.detail and "1 000 000" in result.detail
+
+
+def test_the_outbox_count_runs_with_the_data_checks_and_its_warning_is_visible(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _archiver(monkeypatch, [(1_500_000,)])
+    monkeypatch.setattr(
+        CHECKS._sys,
+        "argv",
+        ["check_shop_operations.py", "--check", "outbox", "--database-url", "x", "--emit-alert"],
+    )
+    assert CHECKS.main() == 0  # a warning does not fail the run
+    captured = capsys.readouterr()
+    assert "WARN outbox_rows: 1 500 000 outbox rows" in captured.err
+    import json
+
+    document = json.loads(
+        next(line for line in captured.out.splitlines() if "shop-alert.v1" in line)
+    )
+    assert document["passed"] is True and document["alert"] is None
+    assert document["warnings"] == {"outbox_rows": document["results"]["outbox_rows"]["detail"]}
+
+
+def test_the_scheduled_data_checks_include_the_outbox_count() -> None:
+    install = (ROOT / "deploy/shop-till/install.sh").read_text("utf-8")
+    assert "--check wal --check base --check volume --check outbox --emit-alert" in install
+    runbook = (ROOT / "docs/runbooks/shop-pilot.md").read_text("utf-8")
+    assert "--check wal --check base --check volume --check outbox --emit-alert" in runbook

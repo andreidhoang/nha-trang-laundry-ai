@@ -21,16 +21,31 @@ one handler, one stream, one format, applied once.
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import os
 import sys
 from typing import TextIO
 
 STRUCTURED_LOGGER_NAME = "nha_trang_laundry.structured"
 _MARKER = "nha_trang_laundry.structured.handler"
+_FILE_MARKER = "nha_trang_laundry.structured.file"
+
+#: `PLATFORM-RESIDUAL-009B` L4. Where the process also appends its structured lines, when set: a
+#: file on a host directory, so the record outlives the container. Docker's json-file log -- the
+#: only copy before this -- is deleted with the container, and `docker compose up` recreates the
+#: API container on every image update, so each deploy erased the fourteen days the operations
+#: check and an investigation rely on. Unset (tests, the demo, the worker): stdout only.
+LOG_FILE_VARIABLE = "STRUCTURED_LOG_FILE"
+#: Size-rotated, oldest dropped: at most `(LOG_FILE_BACKUP_COUNT + 1) * LOG_FILE_MAX_BYTES` on the
+#: host disk (100 MiB), and at least `LOG_FILE_BACKUP_COUNT` full files of history -- the
+#: arithmetic for fourteen busy days is in `compose.r1.yaml` and held by
+#: `packages/evals/tests/test_ops_hardening_contract.py`.
+LOG_FILE_MAX_BYTES = 2 * 1024 * 1024
+LOG_FILE_BACKUP_COUNT = 49
 
 
 def configure_structured_logging(
-    *, stream: TextIO | None = None, level: str | None = None
+    *, stream: TextIO | None = None, level: str | None = None, log_file: str | None = None
 ) -> logging.Logger:
     """Attach one stdout handler to the structured logger, and return it.
 
@@ -71,6 +86,10 @@ def configure_structured_logging(
     # handler survives, the level survives, and not one line is written.
     logger.disabled = False
 
+    _configure_log_file(
+        logger, log_file if log_file is not None else os.environ.get(LOG_FILE_VARIABLE), resolved
+    )
+
     target = stream or sys.stdout
     for existing in list(logger.handlers):
         if getattr(existing, "_ntl_marker", None) != _MARKER:
@@ -91,6 +110,46 @@ def configure_structured_logging(
     handler._ntl_marker = _MARKER  # type: ignore[attr-defined]
     logger.addHandler(handler)
     return logger
+
+
+def _configure_log_file(logger: logging.Logger, path: str | None, level: str) -> None:
+    """Attach (or keep) the rotating file handler for `path`; `None` or "" removes it.
+
+    A file that cannot be opened -- a host directory the container cannot write -- is said on
+    stderr and the process carries on with stdout: the record is not a reason to refuse the shop
+    its console, and the operations check's liveness rule (no API line in fifteen minutes) is what
+    reports a file that stopped growing.
+    """
+
+    for existing in list(logger.handlers):
+        if getattr(existing, "_ntl_file_marker", None) != _FILE_MARKER:
+            continue
+        if path and getattr(existing, "baseFilename", None) == os.path.abspath(path):
+            existing.setLevel(level)
+            return
+        logger.removeHandler(existing)
+        existing.close()
+    if not path:
+        return
+    try:
+        handler = logging.handlers.RotatingFileHandler(
+            path,
+            maxBytes=LOG_FILE_MAX_BYTES,
+            backupCount=LOG_FILE_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+    except OSError as error:
+        print(
+            f"structured log file {path} cannot be opened ({error.strerror}); "
+            "the structured lines go to stdout only",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.setLevel(level)
+    handler._ntl_file_marker = _FILE_MARKER  # type: ignore[attr-defined]
+    logger.addHandler(handler)
 
 
 def structured_logging_is_live() -> bool:

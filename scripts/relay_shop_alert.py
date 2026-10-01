@@ -52,6 +52,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+import shop_alert_pending as pending_alerts
 import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 
 #: The document `check_shop_operations.py --emit-alert` prints. Anything else on stdout is the
@@ -94,6 +95,8 @@ class Outcome:
     text: str | None
     checks: tuple[str, ...]
     note: str
+    #: "name: detail" of checks that passed with something coming due (DEC-051): logged, not sent.
+    warnings: tuple[str, ...] = ()
 
 
 def resolve_api_base(value: str | None) -> str:
@@ -217,17 +220,20 @@ def interpret(label: str, returncode: int, stdout: str, stderr: str) -> tuple[Ou
         document = documents[0]
         alert = document.get("alert")
         passed = document.get("passed") is True and returncode == 0
+        raw_warnings = document.get("warnings")
+        warnings = tuple(
+            f"{name}: {detail}"
+            for name, detail in (raw_warnings.items() if isinstance(raw_warnings, dict) else ())
+        )
         if isinstance(alert, dict) and isinstance(alert.get("text"), str):
             checks = tuple(str(name) for name in alert.get("checks", []) if isinstance(name, str))
-            return Outcome(True, str(alert["text"]), checks, "check failed"), passthrough
+            return Outcome(True, str(alert["text"]), checks, "check failed", warnings), passthrough
         if passed:
-            return Outcome(False, None, (), "every check passed"), passthrough
+            return Outcome(False, None, (), "every check passed", warnings), passthrough
         if document.get("passed") is False:
             suppressed = document.get("suppressed") or []
-            return (
-                Outcome(True, None, (), f"check failed; held for quiet hours: {suppressed}"),
-                passthrough,
-            )
+            note = f"check failed; held for quiet hours: {suppressed}"
+            return Outcome(True, None, (), note, warnings), passthrough
         # A passing document with a failing exit status: something after the checks broke.
         reason = f"exited {returncode} after reporting a pass"
     elif not documents:
@@ -339,7 +345,21 @@ def main(argv: list[str] | None = None) -> int:
         _sys.stderr.write(stderr if stderr.endswith("\n") else stderr + "\n")
     _sys.stdout.flush()
 
-    if outcome.text is None:
+    for warning in outcome.warnings:
+        _log(label, f"WARNING {warning}", log_file)
+
+    # `PLATFORM-RESIDUAL-009B` L4: an alert that could not be sent is kept and sent again by every
+    # later run until one gets through -- the application check counts each line once, so its
+    # alert would otherwise never be repeated.
+    moment = datetime.now(UTC)
+    pending_file = pending_alerts.pending_path(label, dict(os.environ))
+    state = pending_alerts.PendingState()
+    if pending_file is not None:
+        state, problem = pending_alerts.load(pending_file, now=moment)
+        if problem:
+            _log(label, f"WARNING {problem}", log_file)
+
+    if outcome.text is None and state.empty:
         if outcome.failed:
             _log(label, outcome.note, log_file)
             return EXIT_CHECK_FAILED
@@ -350,17 +370,32 @@ def main(argv: list[str] | None = None) -> int:
             _log(label, f"WARNING alert delivery is not configured: {error}", log_file)
         return EXIT_PASSED
 
-    checks = ", ".join(outcome.checks) or label
+    message, carried, reported_dropped = pending_alerts.compose(
+        outcome.text, state, limit=MAX_MESSAGE_CHARACTERS
+    )
+    checks = ", ".join(outcome.checks) or (label if outcome.text is not None else "none now")
+    earlier = f"; {carried} earlier alert(s) resent" if carried else ""
     try:
         token, chat_id = load_credentials(dict(os.environ))
-        send_message(
-            outcome.text[:MAX_MESSAGE_CHARACTERS], token=token, chat_id=chat_id, api_base=api_base
-        )
+        if message is None:  # nothing fitted -- cannot happen with a non-empty state, kept safe
+            raise DeliveryError("nothing to send")
+        send_message(message, token=token, chat_id=chat_id, api_base=api_base)
     except DeliveryError as error:
-        _log(label, f"ALERT NOT DELIVERED: {error} -- failing: {checks}", log_file)
+        if pending_file is not None:
+            state = pending_alerts.after_failure(state, outcome.text, outcome.checks, now=moment)
+            pending_alerts.save(pending_file, state)
+            kept = f"; kept to resend next run ({len(state.alerts)} waiting in {pending_file})"
+        else:
+            kept = "; NOT kept for a retry: set R1_ALERT_PENDING_DIRECTORY or R1_ALERT_LOG_FILE"
+        _log(label, f"ALERT NOT DELIVERED: {error} -- failing: {checks}{kept}", log_file)
         return EXIT_NOT_DELIVERED
-    _log(label, f"ALERT DELIVERED -- failing: {checks}", log_file)
-    return EXIT_CHECK_FAILED
+    if pending_file is not None:
+        remaining = pending_alerts.after_success(state, carried, reported_dropped)
+        pending_alerts.save(pending_file, remaining)
+        if not remaining.empty:
+            earlier += f"; {len(remaining.alerts)} still waiting (message full)"
+    _log(label, f"ALERT DELIVERED -- failing: {checks}{earlier}", log_file)
+    return EXIT_CHECK_FAILED if outcome.failed else EXIT_PASSED
 
 
 if __name__ == "__main__":

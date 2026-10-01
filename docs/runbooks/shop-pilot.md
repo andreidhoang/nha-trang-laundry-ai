@@ -265,7 +265,7 @@ It used to be `-e DATABASE_URL="$(cat …)"`, which put the migration identity's
   -e R1_PGDATA_PATH=/pgdata -e R1_BASE_BACKUP_MARKER=/staging/last-success \
   --entrypoint python nha-trang-laundry-api:local \
   scripts/check_shop_operations.py --database-url-stdin \
-  --check wal --check base --check volume --emit-alert
+  --check wal --check base --check volume --check outbox --emit-alert
 
 # Every five minutes. The host checks: capability flags need the Docker socket, and the console
 # check has to reach the console the way a tablet does, by name, over TLS -- and asks `/readyz`,
@@ -279,25 +279,42 @@ It used to be `-e DATABASE_URL="$(cat …)"`, which put the migration identity's
   R1_CONSOLE_CA_FILE=$HOME/laundry/.shop/ca/ca.crt \
   R1_APP_SIGNAL_CURSOR=$HOME/laundry/.shop/app-signal-cursor.json \
   .venv/bin/python scripts/check_shop_operations.py --check flags --check console \
-  --check app --app-logs compose --emit-alert
+  --check app --app-logs $HOME/laundry/.shop/logs/api/api.jsonl --emit-alert
 ```
 
+**An alert that could not be sent is sent again** (`PLATFORM-RESIDUAL-009B` L4). The relay keeps
+it in `alert-pending-<label>.json` — in `R1_ALERT_PENDING_DIRECTORY`, or beside
+`R1_ALERT_LOG_FILE` when that is not set — and every later run, passing or failing, sends it under
+"Cảnh báo trước đó chưa gửi được:" with the time it was first raised and how many sends failed,
+until one gets through; then the file is gone. The same alert failing run after run is one entry,
+not a pile. Up to 24 wait (two hours); past that the oldest are dropped and the next message says
+how many. While any wait, the relay exits 3.
+
+**`--check outbox`** reports how many rows the outbox holds (`DEC-051`: record-only rows are kept,
+not deleted). Past 1 000 000 rows it **warns** — `WARN outbox_rows` in the schedule's log and a
+`WARNING` line in `alert-delivery.log` — without paging anybody: retention is then due to be
+decided, and nothing is broken.
+
 **`--check app` is the one that watches the application rather than the machine**
-(`OPS-OBSERVABILITY-009`). It reads the API's own structured log through `docker compose logs api`
-— the json-file log the host already keeps, fourteen busy days of it (`compose.r1.yaml`,
-`x-api-logging`, where the arithmetic is written out, Docker's own healthcheck included) — and fails
-when a count reaches its figure. **Each run counts from the last line the previous run counted**,
-whose instant it keeps in `R1_APP_SIGNAL_CURSOR` (on the till, `~/Library/Application
-Support/giatlasachcong/app-signal-cursor.json`, outside the checkout). So nothing written between two
-runs is missed, a run launchd delayed or skipped is caught up by the next one, and one incident
-alerts once. The two rates are judged over any 5 minutes, wherever a run boundary falls. If that
+(`OPS-OBSERVABILITY-009`). It reads the API's own structured log from the file the API writes on
+the host — `.shop/logs/api/api.jsonl` and its rotated `.1` … `.49`, about 17 busy days in 100 MiB
+(`compose.r1.yaml`, where the arithmetic is written out, Docker's own healthcheck included). Not
+`docker compose logs api`: Docker deletes that log with the container, and every image update
+recreates the container, so it is a live view and not the record (`PLATFORM-RESIDUAL-009B` L4). It
+fails when a count reaches its figure. **Each run counts what the previous runs have not**: it
+keeps its position in `R1_APP_SIGNAL_CURSOR` (on the till, `~/Library/Application
+Support/giatlasachcong/app-signal-cursor.json`, outside the checkout), re-reads the 15 minutes
+behind it for lines that arrived late, and knows a line by its event, request id and time rather
+than its bytes. So nothing written between two runs is missed, a line that arrives after a newer
+one is still counted, a run launchd delayed or skipped is caught up by the next one, and one
+incident alerts once. The two rates are judged over any 5 minutes, wherever a run boundary falls. If that
 file is ever unreadable the check fails and says so; deleting it makes the next run start from the
 last 5 minutes, and anything older than that is then never checked. The figures live in one place,
 `APP_SIGNAL_THRESHOLDS` in `scripts/check_shop_operations.py`; a test holds this table to them.
 
 | Signal | Alert at | What it is | What to do |
 |---|---|---|---|
-| `server_errors` | 1 | an answer 500–599, except a 503 the API wrote `database.request_refused` for (the next row) and `/readyz`'s 503 (the console check's finding, quiet at night by `DEC-025`). A 500 told staff "Máy chủ gặp lỗi. Đừng thử lại": the outcome is unknown. Any other 503 — "staff identity unavailable", "operations unavailable" — is an outage nothing else reports: nobody can sign in, or the API is missing a service it needs | Find the request by time in `docker compose logs api`. A 500: check the order it touched before anyone retries it. A 503 on `/internal/v1/auth/session`: the identity provider; anything else: the API's configuration |
+| `server_errors` | 1 | an answer 500–599, except a 503 the API wrote `database.request_refused` for (the next row) and `/readyz`'s 503 (the console check's finding, quiet at night by `DEC-025`). A 500 told staff "Máy chủ gặp lỗi. Đừng thử lại": the outcome is unknown. Any other 503 — "staff identity unavailable", "operations unavailable" — is an outage nothing else reports: nobody can sign in, or the API is missing a service it needs | Find the request by time in `.shop/logs/api/api.jsonl` (`grep '"status_code":500'`). A 500: check the order it touched before anyone retries it. A 503 on `/internal/v1/auth/session`: the identity provider; anything else: the API's configuration |
 | `database_refusals` | 5 in 5 minutes | `database.request_refused`: the database was busy or unreachable, nothing was written, the console asked staff to retry | One is a normal collision. Five in five minutes: `--check volume`, `--check wal`, then the database container |
 | `browser_boundary_rejections` | 10 in 5 minutes | `auth.browser_boundary`: a request refused for its origin or CSRF token | A tab left open across an update makes a few. Ten means something other than the console is sending requests |
 

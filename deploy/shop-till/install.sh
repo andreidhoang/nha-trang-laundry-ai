@@ -102,6 +102,7 @@ write_agent() {
     <key>R1_ALERT_TELEGRAM_TOKEN_FILE</key><string>$(xml "$ALERT_TOKEN_FILE")</string>
     <key>R1_ALERT_TELEGRAM_CHAT_ID_FILE</key><string>$(xml "$ALERT_CHAT_FILE")</string>
     <key>R1_ALERT_LOG_FILE</key><string>$(xml "$LOG_DIRECTORY/alert-delivery.log")</string>
+    <key>R1_ALERT_PENDING_DIRECTORY</key><string>$(xml "$STATE_DIRECTORY")</string>
     <key>R1_DATA_CHECKS_DATABASE_URL_FILE</key><string>$(xml "$SECRETS/migration_database_url")</string>
   </dict>
 </dict>
@@ -142,21 +143,23 @@ data_checks="$relay --label checks-data \
   -e R1_PGDATA_PATH=/pgdata -e R1_BASE_BACKUP_MARKER=/staging/last-success \
   --entrypoint python nha-trang-laundry-api:local \
   scripts/check_shop_operations.py --database-url-stdin \
-  --check wal --check base --check volume --emit-alert"
+  --check wal --check base --check volume --check outbox --emit-alert"
 
 # The host checks need the Docker socket and the console's own name over TLS, neither of which
 # exists inside the network. On the till the console is on loopback, so the name resolves through
 # /etc/hosts rather than the router. `/readyz`, not `/healthz`: the console answering while its
 # database is gone is the shop being closed (`OPS-HARDENING-002`).
-# `--check app` (OPS-OBSERVABILITY-009) reads the API's own log through the same Docker socket and
-# counts 5xx answers, database refusals and browser-boundary rejections since the last line the
-# previous run counted, whose instant it keeps in R1_APP_SIGNAL_CURSOR.
+# `--check app` (OPS-OBSERVABILITY-009) reads the API's own log file -- the host folder the API
+# container writes (`.shop/logs/api`, compose.r1.yaml), which outlives the container, unlike
+# `docker compose logs` (PLATFORM-RESIDUAL-009B L4) -- and counts 5xx answers, database refusals
+# and browser-boundary rejections not yet counted, whose position it keeps in R1_APP_SIGNAL_CURSOR.
+# An alert the relay could not send waits in R1_ALERT_PENDING_DIRECTORY and goes with the next run.
 host_checks="$relay --label checks-host -- \
   env R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/readyz \
   R1_CONSOLE_CA_FILE=\"$REPOSITORY/.shop/ca/ca.crt\" \
   R1_APP_SIGNAL_CURSOR=\"$STATE_DIRECTORY/app-signal-cursor.json\" \
   .venv/bin/python scripts/check_shop_operations.py --check flags --check console \
-  --check app --app-logs compose --emit-alert"
+  --check app --app-logs \"$REPOSITORY/.shop/logs/api/api.jsonl\" --emit-alert"
 
 base_backup="cd \"$REPOSITORY\" && docker compose \
   -f compose.r1.yaml -f compose.shop-local.yaml -f compose.shop-till.yaml \

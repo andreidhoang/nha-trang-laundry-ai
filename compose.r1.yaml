@@ -25,36 +25,37 @@ name: nha-trang-laundry-shop
 
 # `OPS-HARDENING-002`. Docker's default json-file driver keeps every line a container ever wrote, on
 # the same disk as `pgdata` -- and on the till that is the Mac's only disk. The volume check alerts at
-# 10% free; unbounded logs are one more way to get there. Three files of ten megabytes per service,
-# and fifty of two for the API (below): at most 250 MiB across the six services, whatever happens.
+# 10% free; unbounded logs are one more way to get there. Three files of ten megabytes per service:
+# at most 180 MiB across the six services, whatever happens -- plus the API's own record file
+# (below), 100 MiB at most.
 x-logging: &default-logging
   driver: json-file
   options:
     max-size: "10m"
     max-file: "3"
 
-# `OPS-OBSERVABILITY-009`. The API's log is also the source `check_shop_operations.py --check app`
-# reads, and the only record of what the application did, so it keeps fourteen busy days. A busy
-# day, as json-file stores it (`test_ops_hardening_contract.py` computes every figure here):
+# `OPS-OBSERVABILITY-009` / `PLATFORM-RESIDUAL-009B` L4. The API's log is the source
+# `check_shop_operations.py --check app` reads and the only record of what the application did. It
+# used to live only in Docker's json-file log, which is **deleted with the container** -- and
+# `docker compose up` recreates the API container on every image update, so each deploy erased the
+# fourteen days. So the API also appends its structured lines to a file on a host directory
+# (`STRUCTURED_LOG_FILE`, bind-mounted below), rotated by size inside the process
+# (`nha_trang_laundry_observability.logging_setup`: 2 MiB x 49 rotated files + the live one, so
+# 100 MiB at most). A host directory rather than the shop's journald: the till is a Mac, where
+# Docker runs in a VM with no host journal to send to, and a directory is something the host-side
+# check reads without Docker at all -- including when the API container is gone, which is when
+# somebody most needs to read it. A busy day, in the file's own bytes
+# (`test_ops_hardening_contract.py` computes every figure here):
 #   100 orders x 73 API lines (the daily walk: 506 lines for 7 orders)    7,300 lines
 #   three consoles polling once a minute for 14 hours                     2,520 lines
-#     -- all 9,820 costed at 593 bytes, the longest line any route can write
-#   the console check's `/readyz` every 5 minutes                           288 lines
-#   the image's own HEALTHCHECK, `/healthz` every 30 s, day and night     2,880 lines
-#     -- 3,168 at 441 bytes
-#   = 7,220,060 bytes a day; fourteen days = 101,080,840 bytes.
-# Docker drops the oldest file when it rotates, so the guaranteed history is (max-file - 1) x
-# max-size = 49 x 2 MiB = 102,760,448 bytes = 14.2 busy days. The first version said 4 x 20 MiB =
-# 15 days; it left out the healthcheck and costed a line at 553 bytes, and it was 11.6. Many small
-# files rather than a few large ones because the guarantee is always one file short of the bound
-# (the newest may have just been started), so the smaller the file, the more of the bound is
-# history. Exactly the 100 MiB per-service bound the same test holds for the disk the database
-# lives on.
-x-api-logging: &api-logging
-  driver: json-file
-  options:
-    max-size: "2m"
-    max-file: "50"
+#     -- all 9,820 costed at 481 bytes, the longest line any route can write
+#   the console check's `/readyz` every 5 minutes                 288 lines at 328 bytes
+#   the image's own HEALTHCHECK, `/healthz` every 30 s, day and night  2,880 lines at 329 bytes
+#   = 5,765,404 bytes a day; fourteen days = 80,715,656 bytes.
+# A rotation happens before the line that would pass 2 MiB, so every rotated file holds at least
+# 2 MiB minus one line, and the guaranteed history is 49 x (2,097,152 - 481) = 102,736,879 bytes =
+# 17.8 busy days. Docker's json-file log for the API is back to the default three 10 MiB files: a
+# live view for `docker compose logs`, not the record.
 
 x-runtime-hardening: &runtime-hardening
   logging: *default-logging
@@ -229,7 +230,6 @@ services:
 
   api:
     <<: *runtime-hardening
-    logging: *api-logging
     image: ${R1_API_IMAGE:-nha-trang-laundry-api:local}
     build:
       context: .
@@ -244,6 +244,14 @@ services:
       # `127.0.0.1` stays: the container healthcheck calls `/healthz` on the loopback address, and
       # `TrustedHostMiddleware` would reject it otherwise, leaving the container unhealthy forever.
       API_TRUSTED_HOSTS: "${R1_CONSOLE_HOST:-console.giatlasachcong.lan},localhost,127.0.0.1"
+      STRUCTURED_LOG_FILE: /var/log/laundry/api.jsonl
+    volumes:
+      # The record outlives the container (see the comment at the top). On the till Docker Desktop
+      # lets the container write a host folder; on a Linux host create it for the API's uid first:
+      # `sudo install -d -o 10001 -g 10001 -m 0755 <dir>` (docs/runbooks/deploy-today.md).
+      - type: bind
+        source: ${R1_API_LOG_DIRECTORY:-./.shop/logs/api}
+        target: /var/log/laundry
     secrets:
       - source: r1_api_database_url
         target: database_url

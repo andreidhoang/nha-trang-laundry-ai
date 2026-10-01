@@ -687,5 +687,167 @@ def test_the_runbook_states_the_same_thresholds_the_script_uses() -> None:
 
 
 def test_the_till_scheduler_runs_the_application_check() -> None:
+    """On the API's host file, not `docker compose logs`: Docker deletes a container's json-file log
+    with the container, and every image update recreates it (`PLATFORM-RESIDUAL-009B` L4). This
+    test used to pin `--app-logs compose`, the source that lost the record."""
+
     install = (ROOT / "deploy/shop-till/install.sh").read_text("utf-8")
-    assert "--check app --app-logs compose" in install
+    assert '--check app --app-logs \\"$REPOSITORY/.shop/logs/api/api.jsonl\\"' in install
+    assert "--app-logs compose" not in install
+    compose = (ROOT / "compose.r1.yaml").read_text("utf-8")
+    assert "${R1_API_LOG_DIRECTORY:-./.shop/logs/api}" in compose
+    assert "STRUCTURED_LOG_FILE: /var/log/laundry/api.jsonl" in compose
+
+
+# --- PLATFORM-RESIDUAL-009B L4: exactly once when lines arrive out of order ---------------------
+#
+# The position was an instant: everything at or before it was taken as counted. Lines do not arrive
+# in `occurred_at` order -- a request that began first can finish and log second, and a line read
+# again through another transport is the same event in other bytes -- so a late line behind the
+# instant was lost, and a re-serialised one at the instant was counted twice.
+
+HEARTBEAT = _request(200, at=T - timedelta(seconds=30), route="/readyz")
+
+
+@pytest.mark.parametrize("late_by", [1, 59, 299, 301, 600, CHECKS.APP_SIGNAL_OVERLAP_SECONDS - 1])
+def test_a_line_that_arrives_after_a_newer_one_was_counted_is_counted_once(late_by: int) -> None:
+    newer = _request(500, at=T + timedelta(seconds=late_by + 5))
+    late = _request(502, at=T + timedelta(seconds=5))
+    first_moment = T + timedelta(seconds=late_by + 10)
+    _, first, second, third = _runs(
+        (T, [HEARTBEAT]),  # a till that has been running: the position is already saved
+        (first_moment, [HEARTBEAT, newer]),
+        (first_moment + timedelta(seconds=300), [HEARTBEAT, newer, late]),
+        (first_moment + timedelta(seconds=600), [HEARTBEAT, newer, late]),
+    )
+    assert (first.server_errors, second.server_errors, third.server_errors) == (1, 1, 0)
+
+
+def test_a_line_later_than_the_overlap_is_beyond_the_guarantee() -> None:
+    """The documented edge: a line written more than the overlap behind the newest one counted."""
+
+    overlap = CHECKS.APP_SIGNAL_OVERLAP_SECONDS
+    newer = _request(500, at=T + timedelta(seconds=overlap + 10))
+    late = _request(502, at=T + timedelta(seconds=9))
+    first_moment = T + timedelta(seconds=overlap + 20)
+    _, first, second = _runs(
+        (T, [HEARTBEAT]),
+        (first_moment, [HEARTBEAT, newer]),
+        (first_moment + timedelta(seconds=300), [HEARTBEAT, newer, late]),
+    )
+    assert (first.server_errors, second.server_errors) == (1, 0)
+
+
+def _reserialised(line: str) -> str:
+    """The same event in other bytes: keys in another order, spaces after separators."""
+
+    parsed = json.loads(line)
+    return json.dumps(dict(reversed(list(parsed.items()))), ensure_ascii=False)
+
+
+@pytest.mark.parametrize("offset", [0, 1, 120], ids=lambda s: f"{s}s-before-the-position")
+def test_the_same_event_in_other_bytes_is_one_event(offset: int) -> None:
+    error = _request(500, at=T - timedelta(seconds=offset))
+    other = _request(200, at=T, route="/readyz")
+    first, second = _runs(
+        (T, [HEARTBEAT, error, other]),
+        (T + timedelta(seconds=300), [HEARTBEAT, _reserialised(error), other]),
+    )
+    assert (first.server_errors, second.server_errors) == (1, 0)
+
+
+def test_one_event_read_twice_in_one_run_is_counted_once() -> None:
+    """A rotated file and the live one both hold the line the rotation split."""
+
+    error = _request(500, at=T - timedelta(seconds=3))
+    counts = CHECKS.count_application_signals([HEARTBEAT, error, error], now=T)
+    assert counts.server_errors == 1
+
+
+def test_a_late_refusal_joins_the_burst_it_belongs_to() -> None:
+    threshold = CHECKS.APP_SIGNAL_THRESHOLDS["database_refusals"]
+    burst = [_refused(at=T - timedelta(seconds=60 - i)) for i in range(threshold - 1)]
+    late = _refused(at=T - timedelta(seconds=90))
+    first, second = _runs(
+        (T, [HEARTBEAT, *burst]),
+        (T + timedelta(seconds=300), [HEARTBEAT, *burst, late]),
+    )
+    assert first.database_refusals == threshold - 1
+    assert second.database_refusals == threshold
+
+
+def test_the_overlap_survives_the_position_file(tmp_path: Path) -> None:
+    log = tmp_path / "api.jsonl"
+    cursor = tmp_path / "cursor.json"
+    newer = _request(500, at=T + timedelta(seconds=20))
+    late = _request(502, at=T + timedelta(seconds=10))
+    log.write_text("\n".join([HEARTBEAT, newer]) + "\n", encoding="utf-8")
+    first = _scheduled_run(log, cursor, T + timedelta(seconds=30))
+    log.write_text("\n".join([HEARTBEAT, newer, late]) + "\n", encoding="utf-8")
+    second = _scheduled_run(log, cursor, T + timedelta(seconds=330))
+    third = _scheduled_run(log, cursor, T + timedelta(seconds=630))
+    assert [run.fields["server_errors"] for run in (first, second, third)] == [1, 1, 0]
+    saved = json.loads(cursor.read_text(encoding="utf-8"))
+    assert saved["schema"] == "nha-trang-laundry.app-signal-cursor.v2"
+    assert len(saved["recent"]) == 2  # both 5xx lines, kept for the overlap and no longer
+
+
+def test_a_round_9_position_is_read_and_its_instant_is_not_counted_again(tmp_path: Path) -> None:
+    """A till upgraded mid-week: the v1 file names the bytes of the line at its instant."""
+
+    log = tmp_path / "api.jsonl"
+    cursor = tmp_path / "cursor.json"
+    counted = _request(500, at=T)
+    log.write_text("\n".join([HEARTBEAT, counted]) + "\n", encoding="utf-8")
+    import hashlib
+
+    cursor.write_text(
+        json.dumps(
+            {
+                "schema": "nha-trang-laundry.app-signal-cursor.v1",
+                "through": T.isoformat(),
+                "seen_at_through": [hashlib.sha256(counted.encode()).hexdigest()[:32]],
+            }
+        ),
+        encoding="utf-8",
+    )
+    fresh = _request(500, at=T + timedelta(seconds=40))
+    log.write_text("\n".join([HEARTBEAT, counted, fresh]) + "\n", encoding="utf-8")
+    result = _scheduled_run(log, cursor, T + timedelta(seconds=300))
+    assert result.fields["server_errors"] == 1
+
+
+# --- L4: the log outlives the container ---------------------------------------------------------
+
+
+def test_the_file_source_reads_the_rotated_files_too(tmp_path: Path) -> None:
+    """The API rotates its file (`STRUCTURED_LOG_FILE`); a 500 written just before a rotation sits
+    in `api.jsonl.1` when the next run reads, and is counted once."""
+
+    log = tmp_path / "api.jsonl"
+    cursor = tmp_path / "cursor.json"
+    log.write_text(HEARTBEAT + "\n", encoding="utf-8")
+    first = _scheduled_run(log, cursor, T)
+    error = _request(500, at=T + timedelta(seconds=5))
+    (tmp_path / "api.jsonl.1").write_text(HEARTBEAT + "\n" + error + "\n", encoding="utf-8")
+    log.write_text(_request(200, at=T + timedelta(seconds=200), route="/readyz") + "\n")
+    second = _scheduled_run(log, cursor, T + timedelta(seconds=300))
+    third = _scheduled_run(log, cursor, T + timedelta(seconds=600))
+    assert [run.fields["server_errors"] for run in (first, second, third)] == [0, 1, 0]
+
+
+def test_lines_written_before_a_restart_are_read_after_it(tmp_path: Path) -> None:
+    """Container recreation: the old process's lines stay in the host file and the new process
+    appends; nothing before the restart is lost and nothing is counted twice."""
+
+    log = tmp_path / "api.jsonl"
+    cursor = tmp_path / "cursor.json"
+    before_restart = [HEARTBEAT, _request(500, at=T - timedelta(seconds=10))]
+    log.write_text("\n".join(before_restart) + "\n", encoding="utf-8")
+    first = _scheduled_run(log, cursor, T)
+    after_restart = [_request(200, at=T + timedelta(seconds=90), route="/healthz")]
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(after_restart) + "\n")
+    second = _scheduled_run(log, cursor, T + timedelta(seconds=300))
+    assert (first.fields["server_errors"], second.fields["server_errors"]) == (1, 0)
+    assert second.passed

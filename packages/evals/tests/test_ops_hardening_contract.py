@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -218,7 +219,7 @@ _IDENTIFIER = "ffffffff-ffff-4fff-bfff-ffffffffffff"
 _REDACTION_GROWTH_PER_IDENTIFIER = 3
 
 
-def _longest_request_line() -> tuple[int, str]:
+def _longest_request_line(stored: Callable[[str], int] = _stored_bytes) -> tuple[int, str]:
     from fastapi.routing import APIRoute
     from nha_trang_laundry_api import main as api_main
 
@@ -239,8 +240,7 @@ def _longest_request_line() -> tuple[int, str]:
     )
     return max(
         (
-            _stored_bytes(_request_line(method, path))
-            + identifiers * _REDACTION_GROWTH_PER_IDENTIFIER,
+            stored(_request_line(method, path)) + identifiers * _REDACTION_GROWTH_PER_IDENTIFIER,
             f"{method} {path}",
         )
         for method, path, identifiers in candidates
@@ -273,10 +273,18 @@ def _console_check_interval() -> int:
     return int(match.group(1))
 
 
-def _busy_day_bytes(api: dict[str, Any]) -> tuple[int, dict[str, int]]:
-    longest, _ = _longest_request_line()
-    healthz = _stored_bytes(_request_line("GET", "/healthz"))
-    readyz = _stored_bytes(_request_line("GET", "/readyz"))
+def _file_bytes(line: str) -> int:
+    """What the API's own log file holds for one line: the line and its newline, nothing else."""
+
+    return len((line + "\n").encode("utf-8"))
+
+
+def _busy_day_bytes(
+    api: dict[str, Any], stored: Callable[[str], int] = _stored_bytes
+) -> tuple[int, dict[str, int]]:
+    longest, _ = _longest_request_line(stored)
+    healthz = stored(_request_line("GET", "/healthz"))
+    readyz = stored(_request_line("GET", "/readyz"))
     lines = {
         "orders": ORDERS_PER_BUSY_DAY * API_LINES_PER_ORDER,
         "polls": CONSOLE_POLL_LINES_PER_DAY,
@@ -309,9 +317,55 @@ def test_the_retention_model_is_built_from_what_writes_the_log(
         assert lines["readyz"] == SECONDS_PER_DAY // 300, label
 
 
-def test_the_api_log_keeps_fourteen_busy_days(rendered: dict[str, dict[str, Any]]) -> None:
-    """Docker drops the oldest file on rotation, so what is guaranteed is (max-file - 1) files."""
+def _api_log_mount(api: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+    """The log file the API writes, and the mount its directory lives on (if any)."""
 
+    path = str((api.get("environment") or {}).get("STRUCTURED_LOG_FILE") or "")
+    directory = path.rsplit("/", 1)[0] if "/" in path else ""
+    for volume in api.get("volumes") or []:
+        if isinstance(volume, dict) and volume.get("target") == directory:
+            return path, volume
+    return path, None
+
+
+def test_the_api_log_outlives_its_container(rendered: dict[str, dict[str, Any]]) -> None:
+    """`PLATFORM-RESIDUAL-009B` L4. Docker's json-file log is removed with the container, and every
+    image update recreates it: the record has to be on the host. Each api service writes its
+    structured log to a file whose directory is a bind mount of a host path -- not a tmpfs, not an
+    anonymous volume, not the container's own (read-only) filesystem."""
+
+    wrong: list[str] = []
+    checked = 0
+    for label, document in rendered.items():
+        api = document["services"].get("api")
+        if api is None:
+            continue
+        checked += 1
+        path, mount = _api_log_mount(api)
+        if not path:
+            wrong.append(f"{label}: api sets no STRUCTURED_LOG_FILE")
+        elif mount is None:
+            wrong.append(f"{label}: {path} is not on a mounted directory")
+        elif mount.get("type") != "bind" or not str(mount.get("source", "")).startswith("/"):
+            wrong.append(f"{label}: {path} is on {mount}, not a host directory")
+        elif mount.get("read_only"):
+            wrong.append(f"{label}: the API cannot write {path}")
+    assert checked, "no rendered combination has an api service"
+    assert not wrong, "\n".join(wrong)
+
+
+def test_the_api_log_keeps_fourteen_busy_days(rendered: dict[str, dict[str, Any]]) -> None:
+    """The file rotates inside the process (`RotatingFileHandler`): it rolls over before the line
+    that would pass `LOG_FILE_MAX_BYTES`, so each of the `LOG_FILE_BACKUP_COUNT` rotated files holds
+    at least the maximum less one line -- that is the history guaranteed.
+
+    Round 9 held Docker's json-file log to this; it is deleted with the container, so the model now
+    holds the file that survives (L4)."""
+
+    from nha_trang_laundry_observability import logging_setup
+
+    longest, _ = _longest_request_line(_file_bytes)
+    kept = logging_setup.LOG_FILE_BACKUP_COUNT * (logging_setup.LOG_FILE_MAX_BYTES - longest)
     short: list[str] = []
     checked = 0
     for label, document in rendered.items():
@@ -319,10 +373,8 @@ def test_the_api_log_keeps_fourteen_busy_days(rendered: dict[str, dict[str, Any]
         if api is None:
             continue
         checked += 1
-        per_day, _ = _busy_day_bytes(api)
+        per_day, _ = _busy_day_bytes(api, _file_bytes)
         needed = per_day * API_LOG_RETENTION_DAYS
-        options = (api.get("logging") or {}).get("options") or {}
-        kept = _bytes(options.get("max-size", "0")) * (int(options.get("max-file", "1")) - 1)
         if kept < needed:
             short.append(
                 f"{label}: api keeps {kept} bytes for certain = {kept / per_day:.1f} busy days; "
@@ -330,6 +382,19 @@ def test_the_api_log_keeps_fourteen_busy_days(rendered: dict[str, dict[str, Any]
             )
     assert checked, "no rendered combination has an api service"
     assert not short, "\n".join(short)
+    # And the figures the compose comment states are the ones computed here.
+    assert (longest, _file_bytes(_request_line("GET", "/healthz"))) == (481, 329)
+    assert kept == 102_736_879
+    for compose in ("compose.r1.yaml", "compose.production.yaml"):
+        text = (ROOT / compose).read_text("utf-8")
+        assert "5,765,404 bytes a day" in text and "102,736,879" in text, compose
+
+
+def test_the_api_log_on_disk_is_bounded() -> None:
+    from nha_trang_laundry_observability import logging_setup
+
+    total = (logging_setup.LOG_FILE_BACKUP_COUNT + 1) * logging_setup.LOG_FILE_MAX_BYTES
+    assert total <= MAX_LOG_BYTES_PER_SERVICE
 
 
 # --- 5. The WAL staging area fits a segment ------------------------------------------------------

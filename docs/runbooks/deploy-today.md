@@ -216,6 +216,10 @@ docker compose -f compose.r1.yaml exec postgres psql -U laundry_migrate -d postg
   ALTER ROLE laundry_migrate CREATEROLE;"
 
 docker compose -f compose.r1.yaml up -d migrate          # runs once and exits; must exit 0
+# The API's own log file lives on the host so it outlives the container (PLATFORM-RESIDUAL-009B L4);
+# the folder must be writable by the API's uid before it starts, or the API logs to stdout only and
+# `check_shop_operations.py --check app` reports the silence. Override with R1_API_LOG_DIRECTORY.
+sudo install -d -o 10001 -g 10001 -m 0755 .shop/logs/api
 docker compose -f compose.r1.yaml --profile self-managed-database up -d api worker keycloak tls
 
 ./scripts/shop-admin apply_demo_grants.py

@@ -77,15 +77,31 @@ uv run python scripts/bootstrap_shop_local.py --backup-recipient 'age1...'
 That writes the database passwords, the OIDC settings and a private CA with a certificate for
 `console.giatlasachcong.lan`, all `0600` under `.shop/`, which is gitignored before it exists.
 The CA is **name-constrained** to that host (a tablet told to trust it still rejects a certificate
-it signs for any other site), and **its private key is never written to this machine**: it signs
-the console certificate in memory and is dropped (`PLATFORM-SECURITY-009` P4). To be able to renew
-the console certificate in 825 days without reinstalling the CA on every tablet, add
-`--export-ca-key /Volumes/<usb>/laundry-ca.key` — it asks for a passphrase, refuses a path inside
-the checkout, and a later run with `--ca-key` that file renews. Without it, renewal means moving
-`.shop/ca` aside, re-running, and reinstalling the new `ca.crt` on each tablet. A `.shop/ca/ca.key`
-left by an earlier version is reported on every run: that CA has no name constraints, so re-mint. It
-refuses to overwrite anything, so re-running after the shop has been trading cannot rotate a
-password out from under a live system. It prints the `CREATE ROLE` statements for §4.
+it signs for any other site), and **its private key is never kept** (`DEC-052`): it signs the
+console certificate in memory and is dropped — not written to this machine, not exported anywhere.
+`--export-ca-key` and `--ca-key` are refused, with this reason, whatever is already on disk. Every
+run reads `.shop/ca/ca.crt` and says what it is: a CA an earlier version made has no name
+constraints and is reported as **"CA cũ không giới hạn tên miền — hãy tạo lại"**; a `.shop/ca/ca.key`
+left by an earlier version is reported too. The script refuses to overwrite anything, so re-running
+after the shop has been trading cannot rotate a password out from under a live system. It prints
+the `CREATE ROLE` statements for §4.
+
+**Renewal, and when.** The console certificate lives 825 days (the most an iPad accepts). From 60
+days before it expires every run of this script says so ("Chứng chỉ console hết hạn ngày …"). Then:
+
+```bash
+uv run python scripts/bootstrap_shop_local.py --backup-recipient 'age1...' --new-ca
+docker compose -f compose.r1.yaml -f compose.shop-local.yaml -f compose.shop-till.yaml \
+  --profile self-managed-database up -d --force-recreate tls   # serve the new certificate
+```
+
+`--new-ca` moves the old `ca.crt` and the console's certificate and key to `.shop/retired/<time>/`
+(and deletes a legacy `ca.key` outright), mints a new CA and certificate, and changes nothing else.
+Install the new `.shop/ca/ca.crt` on **every** tablet and switch trust on, exactly as below (and in
+the till Mac's keychain, `shop-till-mac.md`); once
+every tablet opens the console, delete `.shop/retired/<time>/` and remove the old CA profile from
+each tablet. To undo before then, move the three retired files back. The new CA lives only as long
+as its one certificate (plus a month), so an old CA left on a tablet stops being trusted by itself.
 
 Then the two steps that turn into a mysterious morning if they are skipped:
 

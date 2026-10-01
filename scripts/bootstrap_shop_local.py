@@ -25,12 +25,12 @@ from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent))
 
 import argparse
-import getpass
 import re
 import secrets as _secrets
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from ipaddress import IPv4Network, IPv6Network
+from typing import NamedTuple
+from zoneinfo import ZoneInfo
 
 import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 from cryptography import x509
@@ -40,6 +40,8 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 ROOT = _Path(__file__).resolve().parents[1]
 SECRET_DIRECTORY = ROOT / ".shop/secrets"
+#: Expiry dates are shown in the shop's own calendar.
+_SHOP_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 #: `age` public keys are bech32 with this prefix. Checked because a mistyped recipient produces an
 #: archive nobody can read, and the first time anyone would find out is a restore.
@@ -69,11 +71,19 @@ def write(name: str, value: str, *, existing: list[str]) -> None:
 #: How long the console certificate lives. 825 days is the ceiling Apple platforms accept for a
 #: TLS server certificate from a private CA; longer and iPads refuse it.
 CONSOLE_CERTIFICATE_DAYS = 825
-#: The authority outlives several console certificates only if its key is kept (`--export-ca-key`).
-AUTHORITY_DAYS = 3650
+#: `DEC-052`: the CA's key is dropped once it has signed the one console certificate, so the CA can
+#: never sign again and has no reason to outlive that certificate. It used to be valid for ten
+#: years -- a trust anchor left on every tablet long after the certificate it vouched for had gone.
+#: A month's margin covers a renewal done late.
+AUTHORITY_DAYS = CONSOLE_CERTIFICATE_DAYS + 30
+#: When a run starts saying "renew now". Sixty days is two monthly owner check-ins: enough time to
+#: reach every tablet, which is the slow part of a renewal under `DEC-052`.
+RENEW_BEFORE_DAYS = 60
 
 
-def mint_console_authority(host: str) -> tuple[x509.Certificate, rsa.RSAPrivateKey]:
+def mint_console_authority(
+    host: str, *, now: datetime | None = None
+) -> tuple[x509.Certificate, rsa.RSAPrivateKey]:
     """A private CA that can vouch for the console's name and for nothing else.
 
     `PLATFORM-SECURITY-009` P4. The CA certificate is installed *and trusted* on every tablet, so
@@ -87,7 +97,7 @@ def mint_console_authority(host: str) -> tuple[x509.Certificate, rsa.RSAPrivateK
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Giat La Sach Cong Internal CA")])
-    now = datetime.now(UTC)
+    now = now or datetime.now(UTC)
     authority = (
         x509.CertificateBuilder()
         .subject_name(name)
@@ -128,12 +138,16 @@ def mint_console_authority(host: str) -> tuple[x509.Certificate, rsa.RSAPrivateK
 
 
 def issue_console_certificate(
-    host: str, authority: x509.Certificate, authority_key: rsa.RSAPrivateKey
+    host: str,
+    authority: x509.Certificate,
+    authority_key: rsa.RSAPrivateKey,
+    *,
+    now: datetime | None = None,
 ) -> tuple[bytes, bytes]:
     """(certificate PEM, private key PEM) for the console, signed by `authority`."""
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    now = datetime.now(UTC)
+    now = now or datetime.now(UTC)
     certificate = (
         x509.CertificateBuilder()
         .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)]))
@@ -186,32 +200,186 @@ def _write_secret(path: _Path, content: bytes) -> None:
     path.chmod(0o600)
 
 
+#: `DEC-052`. Said whenever somebody asks this script to keep a CA key, whatever else is on disk.
+CUSTODY_RULE = (
+    "DEC-052: khóa riêng của CA không được giữ lại sau khi ký -- kể cả bản xuất ra ổ USB. "
+    "(The shop CA's private key is never kept after it signs, not even exported.)"
+)
+RENEWAL_STEP = (
+    "Gia hạn: chạy lại với --new-ca, rồi cài .shop/ca/ca.crt mới lên từng máy và bật tin cậy "
+    "(docs/runbooks/shop-pilot.md §2). (To renew: run again with --new-ca, then install and trust "
+    "the new ca.crt on every tablet.)"
+)
+#: What the operator reads about an authority that does not limit itself to the console's name.
+LEGACY_AUTHORITY = "CA cũ không giới hạn tên miền — hãy tạo lại"
+
+
+def refuse_kept_ca_key(flag: str, *, certificate_exists: bool) -> CertificateRefused:
+    """The refusal for `--export-ca-key` / `--ca-key`: both ask to keep a key `DEC-052` drops.
+
+    `PLATFORM-SECURITY-009` P4 offered to export the key so a renewal could re-sign without touching
+    the tablets. `DEC-052` chose the other way -- no key, a new CA at renewal -- and the round-9b
+    verifier found the flag silently ignored whenever a certificate already existed, so an operator
+    who asked for a backup of the key believed they had one. Now it is refused every time, before
+    anything is written, and the message says what the operator does instead.
+    """
+
+    situation = (
+        "Chứng chỉ console đã có và được giữ nguyên; không có gì được ghi. "
+        "(A console certificate already exists and is left as it is; nothing was written.) "
+        if certificate_exists
+        else "Không có gì được ghi. (Nothing was written.) "
+    )
+    return CertificateRefused(f"{flag}: {CUSTODY_RULE} {situation}{RENEWAL_STEP}")
+
+
+class AuthorityStatus(NamedTuple):
+    """What the CA certificate on disk actually limits itself to -- read, never assumed.
+
+    A `NamedTuple` rather than a dataclass: the tests load this script by file path, and a
+    dataclass needs its module registered in `sys.modules`.
+    """
+
+    #: `constrained`, `legacy` (no name constraints at all), `other-host`, `absent`, `unreadable`.
+    kind: str
+    permitted: tuple[str, ...] = ()
+
+    @property
+    def vouches_only_for_console(self) -> bool:
+        return self.kind == "constrained"
+
+
+def authority_status(path: _Path, host: str) -> AuthorityStatus:
+    """Classify `.shop/ca/ca.crt`. A CA is called name-constrained only when it is, to `host`.
+
+    Constrained means: a critical `nameConstraints` whose DNS permits are exactly the console host
+    and which excludes every IP address, as `mint_console_authority` writes it. A CA made by an
+    earlier version of this script (or by hand with `openssl req -x509`) carries no constraint, and
+    every tablet that trusts it accepts a certificate it signs for any site.
+    """
+
+    if not path.exists():
+        return AuthorityStatus("absent")
+    try:
+        authority = x509.load_pem_x509_certificate(path.read_bytes())
+    except ValueError:
+        return AuthorityStatus("unreadable")
+    try:
+        extension = authority.extensions.get_extension_for_class(x509.NameConstraints)
+    except x509.ExtensionNotFound:
+        return AuthorityStatus("legacy")
+    permitted = tuple(
+        name.value
+        for name in extension.value.permitted_subtrees or ()
+        if isinstance(name, x509.DNSName)
+    )
+    excluded = extension.value.excluded_subtrees or ()
+    excludes_every_address = {
+        str(name.value) for name in excluded if isinstance(name, x509.IPAddress)
+    } >= {"0.0.0.0/0", "::/0"}
+    if not extension.critical or not excludes_every_address or not permitted:
+        return AuthorityStatus("legacy", permitted)
+    if permitted != (host,):
+        return AuthorityStatus("other-host", permitted)
+    return AuthorityStatus("constrained", permitted)
+
+
+def _authority_warning(status: AuthorityStatus, host: str) -> str | None:
+    if status.kind == "legacy":
+        return (
+            f"{LEGACY_AUTHORITY}. .shop/ca/ca.crt không có nameConstraints: máy tính bảng tin "
+            "nó sẽ tin mọi chứng chỉ nó ký, cho bất kỳ trang nào. (The CA in .shop/ca/ca.crt has "
+            "no name constraints: a tablet that trusts it accepts a certificate it signs for any "
+            "site.) " + RENEWAL_STEP
+        )
+    if status.kind == "other-host":
+        return (
+            f"CA chỉ chấp nhận {', '.join(status.permitted)}, không phải {host} — hãy tạo lại. "
+            f"(The CA is constrained to {', '.join(status.permitted)}, not {host}.) " + RENEWAL_STEP
+        )
+    if status.kind == "unreadable":
+        return ".shop/ca/ca.crt không đọc được (is not a PEM certificate). " + RENEWAL_STEP
+    return None
+
+
+def _leaf_warning(path: _Path, now: datetime) -> str | None:
+    """The console certificate's expiry, once it is within `RENEW_BEFORE_DAYS`."""
+
+    try:
+        leaf = x509.load_pem_x509_certificate(path.read_bytes())
+    except ValueError:
+        return f"{path.name} không đọc được (is not a PEM certificate). " + RENEWAL_STEP
+    expires = leaf.not_valid_after_utc
+    remaining = expires - now
+    shown = expires.astimezone(_SHOP_TIMEZONE).strftime("%d/%m/%Y")
+    if remaining <= timedelta(0):
+        return f"Chứng chỉ console đã hết hạn ngày {shown}. (expired) " + RENEWAL_STEP
+    if remaining <= timedelta(days=RENEW_BEFORE_DAYS):
+        return (
+            f"Chứng chỉ console hết hạn ngày {shown} (còn {remaining.days} ngày). "
+            f"(expires in {remaining.days} days) " + RENEWAL_STEP
+        )
+    return None
+
+
+def retire_authority(*, now: datetime) -> _Path:
+    """`--new-ca`: move the CA certificate and the console's certificate and key aside.
+
+    Moved, not deleted: until every tablet trusts the new CA, putting the old pair back is the way
+    to undo a renewal that went wrong. The two files are the console's own certificate and key --
+    the CA's key is not among them, because under `DEC-052` there is none. A CA key an earlier
+    version left behind is the one thing deleted outright: keeping it anywhere, even aside, is the
+    custody `DEC-052` ends, and nothing here ever needs it again.
+    """
+
+    retired = SECRET_DIRECTORY.parent / "retired" / now.strftime("%Y%m%dT%H%M%SZ")
+    retired.mkdir(parents=True, exist_ok=False)
+    retired.parent.chmod(0o700)
+    retired.chmod(0o700)
+    authority_directory = SECRET_DIRECTORY.parent / "ca"
+    legacy_key = authority_directory / "ca.key"
+    if legacy_key.exists():
+        legacy_key.unlink()
+    for source in (
+        authority_directory / "ca.crt",
+        SECRET_DIRECTORY / "tls_certificate",
+        SECRET_DIRECTORY / "tls_private_key",
+    ):
+        if source.exists():
+            source.rename(retired / source.name)
+    return retired
+
+
 def certificate(
     host: str,
     existing: list[str],
     *,
     export_ca_key: _Path | None = None,
     ca_key: _Path | None = None,
-    passphrase: Callable[[str], bytes] | None = None,
+    new_ca: bool = False,
+    now: datetime | None = None,
 ) -> list[str]:
     """A private, name-constrained CA and one server certificate for the console.
 
-    Two files rather than one: the CA certificate is what gets installed on every tablet, and it
-    outlives the server certificate.
+    Two files rather than one: the CA certificate is what gets installed on every tablet; the
+    console's certificate and key are what the console serves.
 
-    **The CA private key is never written to this machine** (`PLATFORM-SECURITY-009` P4). It is
-    generated in memory, signs the console certificate, and is dropped. This machine serves the
-    console, so it is the one most exposed; a CA key beside the certificate it signed is the key to
-    every tablet's trust. Two ways to keep it, both off this host:
+    **No CA private key is kept** (`DEC-052`, `PLATFORM-SECURITY-009` P4). It is generated in
+    memory, signs the console certificate, and is dropped -- never written to this machine, and
+    never exported: `--export-ca-key` and `--ca-key` are refused. When the console certificate nears
+    expiry (every run says so from `RENEW_BEFORE_DAYS` out) `--new-ca` retires the old pair and
+    mints a new CA, which is then installed and trusted on each tablet.
 
-    - `--export-ca-key PATH` writes it passphrase-encrypted to PATH, which must be outside this
-      checkout -- a removable drive, then unplug it. `--ca-key PATH` reads it back to renew the
-      console certificate without touching the tablets.
-    - Or keep nothing: when the console certificate expires, move `.shop/ca` aside, run this again,
-      and install the new `ca.crt` on each tablet.
-
-    Returns warnings for the operator (a CA key an earlier version left behind).
+    Returns warnings for the operator: a legacy or wrongly constrained CA, a CA key an earlier
+    version left behind, a console certificate near or past expiry.
     """
+
+    moment = now or datetime.now(UTC)
+    certificate_path = SECRET_DIRECTORY / "tls_certificate"
+    # Refused before anything is read or written: the flag asks for a key this design never keeps.
+    for flag, value in (("--export-ca-key", export_ca_key), ("--ca-key", ca_key)):
+        if value is not None:
+            raise refuse_kept_ca_key(flag, certificate_exists=certificate_path.exists())
 
     warnings: list[str] = []
     authority_directory = SECRET_DIRECTORY.parent / "ca"
@@ -220,89 +388,56 @@ def certificate(
     # on every run because an existing directory keeps its mode.
     authority_directory.chmod(0o700)
     ca_certificate_path = authority_directory / "ca.crt"
+
+    if new_ca:
+        retired = retire_authority(now=moment)
+        warnings.append(
+            f"CA cũ và chứng chỉ console cũ đã chuyển sang {retired.relative_to(ROOT)}. Cài "
+            ".shop/ca/ca.crt mới lên từng máy và bật tin cậy; khi mọi máy đã dùng được, xóa thư "
+            "mục đó và gỡ CA cũ khỏi các máy. (The old CA and console certificate were moved "
+            "aside; delete that folder once every tablet trusts the new CA.)"
+        )
+
     legacy_key = authority_directory / "ca.key"
     if legacy_key.exists():
         warnings.append(
-            f"{legacy_key.relative_to(ROOT)} is a CA private key an earlier version of this script "
-            "left on this machine, for a CA with no name constraints. Mint a constrained one: move "
-            ".shop/ca and .shop/secrets/tls_* aside, run this again, reinstall ca.crt on every "
-            "tablet, then delete the old key (docs/runbooks/shop-pilot.md §2)."
+            f"{legacy_key.relative_to(ROOT)} là khóa riêng của CA mà phiên bản cũ của script để "
+            "lại trên máy này. " + RENEWAL_STEP + " --new-ca cũng xóa khóa này. "
+            "(A CA private key an earlier version left on this machine, for a CA with no name "
+            "constraints; --new-ca deletes it.)"
         )
-    if export_ca_key is not None:
-        _refuse_inside_checkout(export_ca_key, "--export-ca-key")
 
-    if (SECRET_DIRECTORY / "tls_certificate").exists():
+    if certificate_path.exists():
         existing.append("tls_certificate")
         if not ca_certificate_path.exists():
             existing.append("ca/ca.crt (absent)")
+        warning = _authority_warning(authority_status(ca_certificate_path, host), host)
+        if warning is not None:
+            warnings.append(warning)
+        warning = _leaf_warning(certificate_path, moment)
+        if warning is not None:
+            warnings.append(warning)
         return warnings
 
     if ca_certificate_path.exists():
-        # Renewal: the tablets already trust this CA, so the console certificate is re-signed by
-        # it -- which needs the key that was deliberately not kept here.
-        authority = x509.load_pem_x509_certificate(ca_certificate_path.read_bytes())
+        # The tablets trust this CA, but its key was never kept (`DEC-052`), so it cannot sign a
+        # new console certificate. Minting a second CA silently would leave every tablet refusing
+        # the console with no idea why; the operator asks for it instead.
         existing.append("ca/ca.crt")
-        if ca_key is None:
-            raise CertificateRefused(
-                "The console certificate is missing and the CA's private key is not on this "
-                "machine (it never is). Either pass --ca-key PATH with the key you exported, or "
-                "move .shop/ca aside and run this again to mint a new CA -- then install the new "
-                "ca.crt on every tablet."
-            )
-        material = ca_key.read_bytes()
-        loaded = serialization.load_pem_private_key(
-            material,
-            password=(passphrase or _ask)("Passphrase for the CA key: ")
-            if b"ENCRYPTED" in material
-            else None,
+        raise CertificateRefused(
+            "Thiếu chứng chỉ console, và CA hiện có không ký thêm được: khóa của nó không được giữ "
+            "lại (DEC-052). (The console certificate is missing and the existing CA cannot sign "
+            "another: its key was not kept.) " + RENEWAL_STEP
         )
-        if not isinstance(loaded, rsa.RSAPrivateKey) or (
-            loaded.public_key().public_numbers() != authority.public_key().public_numbers()
-        ):
-            raise CertificateRefused(f"{ca_key} is not the key of {ca_certificate_path}")
-        authority_key = loaded
-    else:
-        authority, authority_key = mint_console_authority(host)
-        _write_secret(ca_certificate_path, authority.public_bytes(serialization.Encoding.PEM))
-        ca_certificate_path.chmod(0o644)  # a certificate is public; it goes to every tablet
-        if export_ca_key is not None:
-            secret = (passphrase or _ask_twice)("Passphrase to protect the exported CA key: ")
-            if len(secret) < 12:
-                raise CertificateRefused("the CA key passphrase must be at least 12 characters")
-            _write_secret(
-                export_ca_key,
-                authority_key.private_bytes(
-                    serialization.Encoding.PEM,
-                    serialization.PrivateFormat.PKCS8,
-                    serialization.BestAvailableEncryption(secret),
-                ),
-            )
 
-    certificate_pem, key_pem = issue_console_certificate(host, authority, authority_key)
+    authority, authority_key = mint_console_authority(host, now=moment)
+    _write_secret(ca_certificate_path, authority.public_bytes(serialization.Encoding.PEM))
+    ca_certificate_path.chmod(0o644)  # a certificate is public; it goes to every tablet
+    certificate_pem, key_pem = issue_console_certificate(host, authority, authority_key, now=moment)
     _write_secret(SECRET_DIRECTORY / "tls_private_key", key_pem)
-    _write_secret(SECRET_DIRECTORY / "tls_certificate", certificate_pem)
+    _write_secret(certificate_path, certificate_pem)
     del authority_key
     return warnings
-
-
-def _refuse_inside_checkout(path: _Path, flag: str) -> None:
-    resolved = path.expanduser().resolve()
-    if resolved == ROOT or ROOT in resolved.parents:
-        raise CertificateRefused(
-            f"{flag} {path} is inside this checkout, on the machine that serves the console. "
-            "Write it to a removable drive (then unplug it) or another machine."
-        )
-
-
-def _ask(prompt: str) -> bytes:
-    return getpass.getpass(prompt).encode()
-
-
-def _ask_twice(prompt: str) -> bytes:
-    first = _ask(prompt)
-    if _ask("Again: ") != first:
-        raise CertificateRefused("the two passphrases differ; nothing was exported")
-    return first
 
 
 def main() -> int:
@@ -325,22 +460,25 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--export-ca-key",
-        type=_Path,
-        default=None,
+        "--new-ca",
+        action="store_true",
         help=(
-            "write the new CA's private key, passphrase-encrypted, to this path OUTSIDE the "
-            "checkout (a removable drive). Without it the key is never written anywhere and a "
-            "future renewal mints a new CA."
+            "renewal (DEC-052): move the CA certificate and the console certificate and key to "
+            ".shop/retired/<time>/, mint a new CA and certificate, then install the new ca.crt on "
+            "every tablet. Run it when this script says the certificate is near expiry."
         ),
     )
-    parser.add_argument(
-        "--ca-key",
-        type=_Path,
-        default=None,
-        help="renew the console certificate with the CA key exported earlier",
-    )
+    # Kept as flags so an old command line gets the reason instead of "unrecognized arguments".
+    parser.add_argument("--export-ca-key", type=_Path, default=None, help="refused (DEC-052)")
+    parser.add_argument("--ca-key", type=_Path, default=None, help="refused (DEC-052)")
     arguments = parser.parse_args()
+    # Before a single secret is written: a run that asked to keep a CA key is refused whole.
+    kept = (("--export-ca-key", arguments.export_ca_key), ("--ca-key", arguments.ca_key))
+    for flag, value in kept:
+        if value is not None:
+            raise refuse_kept_ca_key(
+                flag, certificate_exists=(SECRET_DIRECTORY / "tls_certificate").exists()
+            )
 
     host = arguments.console_host.strip().lower()
     if not HOSTNAME.fullmatch(host):
@@ -406,9 +544,7 @@ def main() -> int:
         existing=existing,
     )
 
-    warnings = certificate(
-        host, existing, export_ca_key=arguments.export_ca_key, ca_key=arguments.ca_key
-    )
+    warnings = certificate(host, existing, new_ca=arguments.new_ca)
 
     print(f"  secrets written to {SECRET_DIRECTORY.relative_to(ROOT)} (0600, gitignored)")
     if existing:
@@ -438,9 +574,16 @@ def main() -> int:
     print("    CREATE DATABASE keycloak OWNER keycloak;")
     print()
     print("  Install .shop/ca/ca.crt on every tablet, and switch trust ON for it.")
-    print(
-        f"  It vouches for {host} only (name-constrained); its private key is not on this machine."
-    )
+    # Read from the certificate on disk, not assumed from this version of the script: a CA an
+    # earlier version made has no constraint at all, and this line used to call it constrained.
+    status = authority_status(SECRET_DIRECTORY.parent / "ca" / "ca.crt", host)
+    if status.vouches_only_for_console:
+        print(
+            f"  It vouches for {host} only (name-constrained); its private key was not kept "
+            "(DEC-052)."
+        )
+    else:
+        print(f"  It is NOT limited to {host}: see the warning below.")
     for warning in warnings:
         print(f"  WARNING: {warning}")
     print(f"  Point the shop's DNS at this machine for {host}.")

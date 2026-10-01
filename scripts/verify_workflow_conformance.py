@@ -323,6 +323,8 @@ DECLARED_CONTROLS = (
     "invoice.issued-total",
     "invoice.issued-line",
     "invoice.issued-save",
+    # MONEY-RESIDUAL-009B (J6a): an issued invoice recorded at the figure it prints.
+    "invoice.issued-printed",
     "invoices.tabs",
     "invoices.cancel",
     "invoice.cancel-reason",
@@ -7537,6 +7539,12 @@ def scenario_money_lifecycle(console: Console) -> None:
         console.page.wait_for_timeout(600)
         console.page.locator("dialog[open] input[value=SHOP_FAULT_NO_CHARGE]").check()
         touched("orderDetail.cancel-custody")
+        # GOODS-AND-DRAWER-009 (merged after this scenario was written): money goes back, so the
+        # sheet asks how, and its press stays shut until it is answered.
+        method = console.page.locator("dialog[open] input[name=refund_method][value=TIEN_MAT]")
+        if method.count():
+            method.check()
+            touched("orderDetail.cancel-refund-method")
         sheet = console.dialog_text()
     ok(
         "Huỷ đơn states before the press: 30.000 ₫ voided, 40.000 ₫ taken off the refund",
@@ -8946,7 +8954,7 @@ def scenario_invoice_requests(console: Console) -> None:
         "'Số tiền theo giá tiệm đã thu (chưa tách thuế)', both requests",
         exported["status"] == 200
         and content.startswith("﻿")
-        and str(produced.get("query_version", "")).startswith("invoice-requests-export-v2:")
+        and str(produced.get("query_version", "")).startswith("invoice-requests-export-v3:")
         and "Số tiền theo giá tiệm đã thu (chưa tách thuế)" in content
         and str(order_request.get("request_code")) in content
         and str(month_request.get("request_code")) in content,
@@ -9282,7 +9290,7 @@ def scenario_invoice_truth(console: Console) -> None:
         "the bookkeeper's download lists the refunded invoice again, at its issued figure, with "
         "'Cần báo kế toán'",
         exported["status"] == 200
-        and str(produced.get("query_version", "")).startswith("invoice-requests-export-v2:")
+        and str(produced.get("query_version", "")).startswith("invoice-requests-export-v3:")
         and (produced.get("flagged_issued_count") or 0) >= 1
         and bool(mine)
         and mine[0][12] == str(figure)
@@ -10876,8 +10884,11 @@ def scenario_goods_and_drawer(console: Console) -> None:
 # --- COUNTER-UI-RACE-009 (C2, C3, C4): the price, the QR and If-Match are of what is on screen ----
 
 
-def _vnd_text(amount: int) -> str:
-    """How a person types an amount at the counter: 1.234.000 (dots group thousands)."""
+def _typed_vnd(amount: int) -> str:
+    """How a person types an amount at the counter: 1.234.000 (dots group thousands).
+
+    Round 9b: this was a second `_vnd_text`, which shadowed money_lifecycle's (the server's
+    sentence, with " ₫") at import, so ML3's sentence check compared against "50.000" alone."""
 
     return f"{amount:,}".replace(",", ".")
 
@@ -11285,7 +11296,7 @@ def scenario_counter_race(console: Console) -> None:
             decoded == part.get("payload"),
             decoded[:80],
         )
-    console.type_into("#payment-amount", _vnd_text(owed + 1_000), "orderDetail.payment-amount")
+    console.type_into("#payment-amount", _typed_vnd(owed + 1_000), "orderDetail.payment-amount")
     page.wait_for_timeout(1500)
     _race_shot(console, "c3-above-remaining")
     ok(
@@ -11456,6 +11467,452 @@ def scenario_counter_race(console: Console) -> None:
         _publish_bank_account("--withdraw")
 
 
+# --- MONEY-RESIDUAL-009B (round 9b, slice J) ----------------------------------------------------
+
+
+def _residual_shot(console: Console, name: str) -> None:
+    """With RESIDUAL_SHOTS set, the screen at this moment (desk or phone, as the run is)."""
+
+    directory = os.environ.get("RESIDUAL_SHOTS", "")
+    if not directory:
+        return
+    os.makedirs(directory, exist_ok=True)
+    size = "phone" if os.environ.get("CONSOLE_VIEWPORT") == "phone" else "desk"
+    with contextlib.suppress(Exception):
+        console.page.screenshot(path=os.path.join(directory, f"{name}-{size}.png"), full_page=True)
+
+
+def _suits_with_credit(console: Console, suits: str, amount: str) -> tuple[str, str, int]:
+    """`suits` suits washed, paid and handed back; one damage credit of `amount` executed on the
+    first. Returns the order, the credit and what was paid."""
+
+    order = console.build_order(
+        stop="ready",
+        lines=[
+            {
+                "service_code": "IRON_SUIT",
+                "quantity": suits,
+                "unit": "ITEM",
+                "quantity_basis": "STAFF_MEASUREMENT",
+            }
+        ],
+    )
+    order_id = order["order_id"]
+    console.pay(order_id, hand_over=True)
+    console.call(
+        "POST",
+        f"/internal/v1/orders/{order_id}/steps",
+        {"step": "RELEASE"},
+        if_match=console.current_version(order_id, 0),
+    )
+    paid = int(
+        sql(f"select coalesce(sum(amount_vnd), 0) from order_payments where order_id='{order_id}'")
+        or 0
+    )
+    opened = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/incidents",
+        {"order_id": order_id, "evidence_summary": "Áo vest bị sờn cổ sau khi ủi"},
+    )
+    incident = str((opened.get("body") or {}).get("incident_id") or "")
+    console.open(f"#/incidents/{incident}", settle=2000)
+    _propose_remedy(console, kind="DAMAGE_COMPENSATION", amount=amount, garment="1")
+    console.open(f"#/incidents/{incident}", settle=2000)
+    carry_out = console.page.locator("button[data-remedy-execute]")
+    if carry_out.count():
+        carry_out.first.click()
+        touched("remedy.execute")
+        console.page.wait_for_timeout(2200)
+    credits = (
+        console.call("GET", f"/internal/v1/stores/{STORE}/orders/{order_id}/remedy-credits")["body"]
+        or {}
+    ).get("credits") or []
+    return order_id, (str(credits[0]["credit_id"]) if credits else ""), paid
+
+
+def _spend_credit(console: Console, credit_id: str, kg: str = "7") -> str:
+    """A walk-in bag whose bill spends `credit_id`, taken on Nhận đồ with the credit picked."""
+
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", kg)
+    console.price()
+    console.page.locator("#new-credit-open").click()
+    touched("newOrder.credit-open")
+    row = console.page.locator(f"#new-credit-list [data-credit-id='{credit_id}']")
+    with contextlib.suppress(Exception):
+        row.wait_for(state="visible", timeout=8000)
+    if row.count():
+        console.press_capturing(row.first, "/remedy-credits")
+        touched("newOrder.credit-pick")
+        console.page.wait_for_timeout(1200)
+    done = console.confirm()
+    return str(((done.get("order") or {}).get("body") or {}).get("order_id") or "")
+
+
+def _open_cancel(console: Console, order_id: str, custody: str = "", refund: str = "") -> str:
+    console.open_order(order_id)
+    control = console.step_control("CANCEL")
+    if control is None:
+        return ""
+    control.click()
+    console.page.wait_for_timeout(700)
+    if custody and console.page.locator(f"dialog[open] input[value={custody}]").count():
+        console.page.locator(f"dialog[open] input[value={custody}]").check()
+        touched("orderDetail.cancel-custody")
+    if (
+        refund
+        and console.page.locator(f"dialog[open] input[name=refund_method][value={refund}]").count()
+    ):
+        console.page.locator(f"dialog[open] input[name=refund_method][value={refund}]").check()
+        touched("orderDetail.cancel-refund-method")
+    return console.dialog_text()
+
+
+def _press_cancel(console: Console) -> dict[str, Any]:
+    confirm = console.page.locator("dialog[open] .sheet__actions button").first
+    if not confirm.count() or confirm.is_disabled():
+        return {"status": 0, "body": None, "text": "the press is shut"}
+    confirm.click()
+    console.page.wait_for_timeout(200)
+    (answer,) = console.press_capturing(confirm, "/steps")
+    touched("orderDetail.cancel-confirm")
+    console.page.wait_for_timeout(1500)
+    return answer
+
+
+def scenario_money_residual(console: Console) -> None:
+    """MONEY-RESIDUAL-009B (round 9b), on the real API and the console.
+
+    J1 (DEC-050): held days are not waiting days -- the order's Lưu kho, the waiting list and the
+    reminders count the same days. J5: an account customer's unpaid delivery goes on the account
+    from the money card, then leaves. J4: a credit spent under the open refund sheet is refused by
+    name, the sheet shows the new figures, and the next press goes through at them. J2: the
+    cancellation that gives a credit back names it. J3: a cancellation that would give a credit
+    back twice is refused before the press. J6a: an invoice already issued for another figure is
+    recorded at its printed figure and flagged.
+    """
+
+    head("33", "NGÀY GIỮ ĐƠN KHÔNG TÍNH LÀ NGÀY CHỜ — one clock (DEC-050, J1)")
+    if not arguments.database_url:
+        ok("this scenario ages orders and publishes policies, which needs --database-url", False)
+        return
+    in_force = sql(
+        "select payload ->> 'withdrawn' from configuration_versions "
+        "where config_type = 'STORAGE_POLICY' and lifecycle = 'PUBLISHED' "
+        "order by version desc limit 1"
+    )
+    if in_force in ("", "true"):
+        published = _publish_storage()
+        note("the storage policy was not in force (only with --only): " + published.stdout[-80:])
+    console.sign_in("demo-operations")
+    held = console.build_order(kg="7", stop="ready")["order_id"]
+    _age_ready(held, 30)
+    console.step(held, "HOLD")
+    console.step(held, "RESUME")
+    # HARNESS STEP, as `_age_ready`: the hold took twenty of those thirty days (25 to 5 days ago).
+    # Its guard admits only its end, so it is set aside for this one statement, as a restore would.
+    sql(
+        "begin; alter table order_storage_holds disable trigger order_storage_holds_protected; "
+        "update order_storage_holds set held_at = held_at - make_interval(days => 25), "
+        f"resumed_at = resumed_at - make_interval(days => 5) where order_id = '{held}'; "
+        "alter table order_storage_holds enable trigger order_storage_holds_protected; commit;"
+    )
+    storage = console.call("GET", f"/internal/v1/orders/{held}/storage").get("body") or {}
+    ok(
+        "thirty days since ready, twenty of them held: ten days waiting, the fee still free",
+        (storage.get("days_waiting"), storage.get("held_days")) == (10, 20)
+        and (storage.get("storage_fee") or {}).get("status") == "FREE_PERIOD"
+        and (storage.get("disposal_verdict") or {}).get("eligible_on")
+        == sql(
+            "select ((production_ready_at at time zone 'Asia/Ho_Chi_Minh')::date + 80)::text "
+            f"from orders where id = '{held}'"
+        ),
+        json.dumps({k: storage.get(k) for k in ("days_waiting", "held_days", "disposal_verdict")})[
+            :240
+        ],
+    )
+    console.open_order(held, settle=2200)
+    waiting = console.page.locator("[data-field=storage-waiting]")
+    ok(
+        "the order's Lưu kho says 'Chờ 10 ngày' and that the twenty held days are not counted",
+        waiting.count() == 1
+        and "Chờ 10 ngày" in waiting.inner_text()
+        and "không tính 20 ngày tiệm giữ đơn" in waiting.inner_text(),
+        waiting.inner_text() if waiting.count() else console.text()[:200],
+    )
+    _residual_shot(console, "j1-held-days")
+    listed = console.call("GET", f"/internal/v1/stores/{STORE}/orders/awaiting-pickup?limit=200")
+    row = next(
+        (
+            item
+            for item in (listed.get("body") or {}).get("orders") or []
+            if item.get("order_id") == held
+        ),
+        {},
+    )
+    ok(
+        "Đồ chờ lấy counts the same ten days",
+        row.get("days_waiting") == 10,
+        json.dumps(row)[:200],
+    )
+
+    head("33b", "KHÁCH CÔNG NỢ GIAO TẬN NƠI — Ghi vào công nợ beside Thu tiền, then the trip (J5)")
+    console.sign_in("demo-owner")
+    notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
+    if (notice.get("body") or {}).get("published") is not True:
+        _publish_script("publish_privacy_notice.py")
+    if (
+        sql("SELECT count(*) FROM configuration_versions WHERE config_type = 'ACCOUNT_TERMS'")
+        == "0"
+    ):
+        _publish_script("publish_account_terms.py")
+    customer_id, last4 = _account_customer(console, "Homestay Ngọc Lan")
+    opened = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/customers/{customer_id}/account",
+        {"credit_limit_vnd": 5_000_000},
+    )
+    console.sign_in("demo-operations")
+    trip = console.build_order(
+        kg="5",
+        mode="PICKUP_AND_RETURN",
+        distance_m=1500,
+        stop="ready",
+        customer=(customer_id, last4),
+    )["order_id"]
+    console.open_order(trip, settle=2500)
+    money_card = console.page.locator(".order__money")
+    account_press = console.page.locator(".order__money #order-account-charge")
+    card_text = money_card.inner_text() if money_card.count() else ""
+    ok(
+        "the money card of an account customer's unpaid delivery says 'Thu tiền trước khi giao' "
+        "and offers 'Ghi vào công nợ' beside it",
+        opened["status"] == 201
+        and "Thu tiền trước khi giao" in card_text
+        and account_press.count() == 1
+        and account_press.first.inner_text().strip() == "Ghi vào công nợ",
+        card_text[:240].replace("\n", " | "),
+    )
+    _residual_shot(console, "j5-account-path")
+    if account_press.count():
+        account_press.first.click()
+        touched("orderDetail.account-charge")
+        console.page.wait_for_timeout(600)
+    (charged,) = console.press_capturing(
+        console.page.locator("#order-account-confirm"), "/account-charge"
+    )
+    touched("orderDetail.account-confirm")
+    console.page.wait_for_timeout(1800)
+    ok(
+        "the charge puts it on the account for the courier: ON_ACCOUNT, not collected",
+        charged["status"] == 201
+        and (charged.get("body") or {}).get("balance_status") == "ON_ACCOUNT"
+        and (charged.get("body") or {}).get("self_collection_recorded") is False,
+        charged["text"][:200],
+    )
+    console.page.keyboard.press("Escape")
+    said = console.step(trip, "RELEASE")
+    after = console.call("GET", f"/internal/v1/orders/{trip}").get("body") or {}
+    ok(
+        "RELEASE after the account charge goes through on the order page: the goods leave on "
+        "the account, and the courier's trip is next",
+        after.get("production") == "RELEASED"
+        and after.get("balance") == "ON_ACCOUNT"
+        and any(str(e.get("step")) == "DELIVERY_RETURN" for e in after.get("next_steps") or []),
+        f"{said[:80]} || {json.dumps({k: after.get(k) for k in ('production', 'balance')})}",
+    )
+    _residual_shot(console, "j5-released-on-account")
+
+    head("33c", "PHIẾU HOÀN TIỀN LÀ LỆNH — a credit spent under the open sheet is refused (J4, J2)")
+    remedy_in_force = sql(
+        "select count(*) from configuration_versions "
+        "where config_type = 'REMEDY_POLICY' and lifecycle = 'PUBLISHED'"
+    )
+    if remedy_in_force in ("", "0"):
+        _publish_remedies()
+    suits, credit, paid = _suits_with_credit(console, "3", "40000")
+    sheet = _open_cancel(console, suits, "SHOP_FAULT_NO_CHARGE", "TIEN_MAT")
+    ok(
+        "Huỷ đơn shows the unspent 40.000 ₫ credit voided and the whole refund",
+        bool(credit)
+        and "Khoản Bồi thường món bị hỏng 40.000 ₫ khách chưa dùng được huỷ cùng đơn." in sheet,
+        sheet[:240].replace("\n", " | "),
+    )
+    # Another phone spends the credit while this sheet is open: this order does not change.
+    other = _second_device(console, "demo-operations")
+    try:
+        spent = _spend_credit(other, credit)
+    finally:
+        other.context.close()
+    ok(
+        "on another phone the credit is spent on the customer's next bag",
+        bool(spent)
+        and sql(f"select redeemed_at is not null from remedy_credits where id='{credit}'") == "t",
+        spent,
+    )
+    refused = _press_cancel(console)
+    detail = (refused.get("body") or {}).get("detail") or {}
+    refund = paid - 40_000
+    sheet = console.dialog_text()
+    ok(
+        "the press is refused 409 CANCELLATION_MONEY_CHANGED; nothing is written",
+        refused["status"] == 409
+        and detail.get("reason_code") == "CANCELLATION_MONEY_CHANGED"
+        and (detail.get("cancellation_money") or {}).get("refund_vnd") == refund
+        and stored(suits, "commercial_status") != "CANCELLED"
+        and sql(f"select count(*) from order_refunds where order_id='{suits}'") == "0",
+        refused["text"][:240],
+    )
+    ok(
+        "the sheet re-read by itself: the reason in words, and the new figures (40.000 ₫ taken "
+        "off the refund)",
+        "Số tiền hoàn hoặc khoản giảm trừ của đơn vừa thay đổi" in sheet
+        and f"Trừ khoản Bồi thường món bị hỏng 40.000 ₫ khách đã dùng: hoàn {_vnd_text(refund)} "
+        f"thay vì {_vnd_text(paid)}."
+        in sheet,
+        sheet[:300].replace("\n", " | "),
+    )
+    _residual_shot(console, "j4-money-changed")
+    landed = _press_cancel(console)
+    ok(
+        "the next press carries the new figures and goes through: refunded less the spent credit",
+        landed["status"] == 200
+        and sql(
+            "select refunded_amount_vnd || '|' || netted_remedy_vnd from order_refunds "
+            f"where order_id='{suits}'"
+        )
+        == f"{refund}|40000",
+        landed["text"][:200],
+    )
+    said = console.step(spent, "CANCEL")
+    reissue = sql(f"select id from remedy_credits where reissue_of='{credit}'")
+    named = sql(
+        "select payload -> 'remedy_credits' -> 'reissued_credits' ->> 0 from domain_events "
+        f"where aggregate_id='{spent}' and event_type='ORDER_STATE_TRANSITIONED' "
+        "and payload ->> 'target' = 'CANCELLED'"
+    )
+    ok(
+        "the bag that spent it is cancelled; its event names the credit it gave back (J2)",
+        bool(reissue) and credit in named and reissue in named,
+        f"{said[:80]} || {named}",
+    )
+
+    head("33d", "CHUỖI KHOẢN GIẢM TRỪ — a cancellation that would give a credit twice (J3)")
+    suit, big_credit, suit_paid = _suits_with_credit(console, "1", "90000")
+    bag = _spend_credit(console, big_credit)
+    console.step(suit, "CANCEL", custody="SHOP_FAULT_NO_CHARGE", refund="TIEN_MAT")
+    ok(
+        "the suit (30.000 ₫ paid) is cancelled first: only what it held is taken off (capped)",
+        sql(
+            "select refunded_amount_vnd || '|' || netted_remedy_vnd from order_refunds "
+            f"where order_id='{suit}'"
+        )
+        == f"0|{suit_paid}",
+        sql(
+            "select refunded_amount_vnd, netted_remedy_vnd from order_refunds "
+            f"where order_id='{suit}'"
+        ),
+    )
+    sheet = _open_cancel(console, bag)
+    shut = console.page.locator("dialog[open] .sheet__actions button").first
+    ok(
+        "the bag's Huỷ đơn says before the press it would give the credit twice, and is shut",
+        "Huỷ không tính tiền sẽ trả khách hai lần — báo chủ tiệm" in sheet
+        and shut.count() == 1
+        and shut.is_disabled(),
+        sheet[:240].replace("\n", " | "),
+    )
+    _residual_shot(console, "j3-chain-refused")
+    console.page.keyboard.press("Escape")
+    forced = console.call(
+        "POST",
+        f"/internal/v1/orders/{bag}/steps",
+        {"step": "CANCEL"},
+        if_match=console.current_version(bag, 0),
+    )
+    ok(
+        "and the server refuses it by name: 409 CREDIT_CHAIN_NOT_NETTED, nothing written",
+        forced["status"] == 409
+        and ((forced.get("body") or {}).get("detail") or {}).get("reason_code")
+        == "CREDIT_CHAIN_NOT_NETTED"
+        and stored(bag, "commercial_status") != "CANCELLED"
+        and sql(f"select count(*) from remedy_credits where reissue_of='{big_credit}'") == "0",
+        forced["text"][:200],
+    )
+
+    head("33e", "HÓA ĐƠN ĐÃ XUẤT — recorded at the figure it prints, flagged (J6a)")
+    console.sign_in("demo-owner")
+    order = console.build_order(kg="5", stop="ready")["order_id"]
+    total = int(
+        (console.call("GET", f"/internal/v1/orders/{order}").get("body") or {}).get(
+            "payable_total_vnd"
+        )
+        or 0
+    )
+    created = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/orders/{order}/invoice-requests",
+        {"buyer_unit_name": "Công ty TNHH Ngọc Lan"},
+    )
+    request_id = str((created.get("body") or {}).get("invoice_request_id") or "")
+    console.open("#/invoices", settle=2200)
+    record = console.page.locator(f"[data-record-issued='{request_id}']")
+    if record.count():
+        record.first.click()
+        touched("invoices.record-issued")
+    console.page.wait_for_timeout(600)
+    console.type_into("#invoice-symbol", "1c26tyy", "invoice.issued-symbol")
+    console.type_into("#invoice-number", _invoice_number(), "invoice.issued-number")
+    printed = total - 5_000
+    console.type_into("#invoice-total", str(printed), "invoice.issued-total")
+    (first,) = console.press_capturing(console.page.locator("#invoice-issued-save"), "/issued")
+    touched("invoice.issued-save")
+    console.page.wait_for_timeout(900)
+    offer = console.page.locator("dialog[open] #invoice-issued-printed")
+    ok(
+        "a total the order does not cost is refused first; 'Ghi theo số trên hóa đơn' is offered",
+        first["status"] == 422
+        and ((first.get("body") or {}).get("detail") or {}).get("reason_code")
+        == "INVOICE_TOTAL_MISMATCH"
+        and offer.count() == 1,
+        first["text"][:200],
+    )
+    _residual_shot(console, "j6a-printed-offered")
+    (second,) = console.press_capturing(offer.first, "/issued")
+    touched("invoice.issued-printed")
+    console.page.wait_for_timeout(1500)
+    fixed = (
+        console.call("GET", f"/internal/v1/stores/{STORE}/invoice-requests/{request_id}").get(
+            "body"
+        )
+        or {}
+    )
+    ok(
+        "confirmed, it is recorded at the printed figure, flagged, the shop's figure beside it",
+        second["status"] == 200
+        and fixed.get("status") == "ISSUED"
+        and (fixed.get("amount") or {}).get("total_vnd") == printed
+        and fixed.get("shop_total_vnd") == total
+        and fixed.get("flags") == ["PRINTED_TOTAL_DIFFERS"]
+        and sql(
+            "select printed_total_vnd from invoice_request_snapshots "
+            f"where request_id='{request_id}'"
+        )
+        == str(printed),
+        json.dumps({k: fixed.get(k) for k in ("status", "amount", "flags", "shop_total_vnd")})[
+            :260
+        ],
+    )
+    console.open_order(order, settle=2200)
+    row = console.page.locator("#invoice-section")
+    ok(
+        "the order's Hóa đơn row says the invoice's figure differs — báo kế toán",
+        row.count() == 1 and "Số trên hóa đơn khác số hiện tại" in row.inner_text(),
+        row.inner_text()[:200].replace("\n", " | ") if row.count() else "absent",
+    )
+    _residual_shot(console, "j6a-flagged")
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -11536,6 +11993,10 @@ SCENARIOS = {
     # publishes (publishing it itself, and withdrawing it again, only when run alone) and the
     # turnaround policy the promise scenario leaves published (the stack publishes one too).
     "counter_race": scenario_counter_race,
+    # MONEY-RESIDUAL-009B (round 9b, slice J). After counter_race; it finds the storage, remedy,
+    # privacy-notice and account-terms publications earlier scenarios leave (publishing them only
+    # with --only), takes and refunds money on its own orders, and reads nothing others count.
+    "money_residual": scenario_money_residual,
     # PLATFORM-SECURITY-009 (slice G). Publishes nothing and reads nothing another scenario counts;
     # it adds two pending export requests, after export_range has made its own before/after count.
     "platform_bounds": scenario_platform_bounds,

@@ -220,6 +220,15 @@ const REFUSAL = {
   // drawer can count cash apart from transfers.
   REFUND_METHOD_REQUIRED:
     "Chưa huỷ được: chọn tiền trả lại khách bằng tiền mặt hay chuyển khoản. Không có gì được ghi.",
+  // MONEY-RESIDUAL-009B (J4): what the refund sheet showed is no longer what the press would do (a
+  // credit was spent on another order in between). The sheet re-reads and shows the new figures.
+  CANCELLATION_MONEY_CHANGED:
+    "Số tiền hoàn hoặc khoản giảm trừ của đơn vừa thay đổi. Xem lại số mới rồi bấm Huỷ đơn lần " +
+    "nữa. Không có gì được ghi.",
+  // MONEY-RESIDUAL-009B (J3): reissuing the credit this bill spent would compensate twice.
+  CREDIT_CHAIN_NOT_NETTED:
+    "Đơn này dùng khoản giảm trừ của một đơn đã huỷ mà lúc huỷ chưa trừ lại đủ. Huỷ không tính " +
+    "tiền sẽ trả khách hai lần — báo chủ tiệm.",
   INTAKE_BLOCKERS:
     "Chưa nhận đồ được: còn thiếu điều kiện bên dưới. Không có gì được ghi.",
   ORDER_MISSING: "Không tìm thấy đơn này trong cửa hàng đang chọn.",
@@ -298,6 +307,17 @@ const CONSENT_REFUSAL_KEY = {
  * page offers "Thu tiền" beside them instead of a reload.
  */
 export const PAY_FIRST_CODES = new Set(["RELEASE_REQUIRES_PAYMENT", "DELIVERY_REQUIRES_PAYMENT"]);
+
+/**
+ * MONEY-RESIDUAL-009B: the cancellation refusals over remedy money (409 `{reason_code, …}`), each
+ * to its sentence in `REFUSAL`.
+ *
+ * @type {Record<string, keyof typeof REFUSAL>}
+ */
+export const CANCELLATION_REFUSALS = {
+  CANCELLATION_MONEY_CHANGED: "CANCELLATION_MONEY_CHANGED",
+  CREDIT_CHAIN_NOT_NETTED: "CREDIT_CHAIN_NOT_NETTED",
+};
 
 /** The six `RECEIVE` readiness codes (`order_steps.READINESS_BLOCKER_CODES`), matched exactly. */
 const INTAKE_READINESS_CODES = new Set([
@@ -710,6 +730,19 @@ export function classify(status, detail, context = {}) {
   if (status === 429) return of("RATE_LIMITED");
 
   if (status === 409) {
+    // MONEY-RESIDUAL-009B (J3, J4): a cancellation refused over remedy money, by its code. The
+    // sentence is this map's; the server's own figures ride along for the sheet that re-reads.
+    if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+      const codes = reasonCodesOf(detail);
+      const named = codes.find((code) => code in CANCELLATION_REFUSALS);
+      if (named) {
+        return of("CONFLICT", {
+          message: REFUSAL[CANCELLATION_REFUSALS[named]],
+          reasonCodes: codes,
+          decision: typeof detail.decision === "string" ? detail.decision : "",
+        });
+      }
+    }
     if (text.startsWith("STALE_VERSION")) return of("STALE");
     if (text === "IDEMPOTENCY_CONFLICT") return of("IDEMPOTENCY_CONFLICT");
     if (text.startsWith("HUMAN_APPROVAL_REQUIRED")) {

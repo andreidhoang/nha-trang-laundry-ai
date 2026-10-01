@@ -632,7 +632,11 @@ export const REASON_NOTE = {
     "để xem danh sách mới rồi chọn đúng các đơn trên hóa đơn.",
   INVOICE_TOTAL_MISMATCH:
     "Chưa lưu: tổng tiền gõ vào khác tổng của các đơn đã chọn. Chép đúng tổng trên hóa đơn và chỉ " +
-    "chọn các đơn hóa đơn ghi. Nếu hóa đơn ghi số khác số của tiệm, báo chủ tiệm và kế toán.",
+    "chọn các đơn hóa đơn ghi. Nếu hóa đơn đã xuất in đúng số này, bấm “Ghi theo số trên hóa đơn”.",
+  // MONEY-RESIDUAL-009B (J6d): a quote with no single total has no figure to record.
+  INVOICE_TOTAL_UNKNOWN:
+    "Báo giá của đơn chưa có một tổng nên chưa ghi số hóa đơn được. Huỷ yêu cầu, hoặc chờ chốt giá " +
+    "rồi ghi.",
   INVOICE_CANCEL_NOTE_REQUIRED: "Lý do khác cần vài chữ ghi rõ (tối đa 200 ký tự).",
   // MONEY-LIFECYCLE-009 (DEC-045): a credit voided with the cancellation of its order.
   REMEDY_CREDIT_VOIDED:

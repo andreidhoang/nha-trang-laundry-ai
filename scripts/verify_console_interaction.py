@@ -1066,7 +1066,7 @@ def invoice_subject(
         "history": [live] if live else [],
         "history_truncated": False,
         "evaluated_at": "2026-09-27T03:00:00+00:00",
-        "query_version": "invoice-requests-v1:0000000000000000",
+        "query_version": "invoice-requests-v3:0000000000000000",
         "decision": "DEC-040",
     }
 
@@ -1091,7 +1091,7 @@ def invoice_list(status: str) -> dict[str, object]:
         "truncated": False,
         "counts": {"REQUESTED": 2, "ISSUED": 1, "CANCELLED": 0},
         "requests": items,
-        "query_version": "invoice-requests-v1:0000000000000000",
+        "query_version": "invoice-requests-v3:0000000000000000",
     }
 
 
@@ -2775,7 +2775,7 @@ with sync_playwright() as playwright:
                             "filename": "yeu-cau-hoa-don-20260927-1000.csv",
                             "content_csv": "\ufeffPhiên bản truy vấn,v1\r\n",
                             "content_hash": "sha256:" + "0" * 64,
-                            "query_version": "invoice-requests-export-v2:0000000000000000",
+                            "query_version": "invoice-requests-export-v3:0000000000000000",
                             "request_count": state.get("invoice_export_count", 2),
                             "row_count": 3,
                             "truncated": False,
@@ -2786,6 +2786,12 @@ with sync_playwright() as playwright:
                 )
                 return
             refusal = state.get("invoice_refuse")
+            # MONEY-RESIDUAL-009B (J6a): a section may refuse only the press that does not confirm
+            # the invoice's printed figure, as the server does.
+            if refusal and state.get("invoice_refuse_unless_printed"):
+                sent_body = json.loads(route.request.post_data or "{}")
+                if sent_body.get("record_printed_total") is True:
+                    refusal = None
             if refusal:
                 route.fulfill(
                     status=state.get("invoice_refuse_status", 422),
@@ -13130,7 +13136,8 @@ with sync_playwright() as playwright:
     writes = press_cancel_twice()
     check(
         "and the refund method picked stays picked, so the next two presses send the custody "
-        "answer and 'Tiền mặt' at version 15",
+        "answer and 'Tiền mặt' at version 15 -- with the FRESH preview's figures (round 9b, J4: "
+        "the press carries what the sheet shows; the stale press carried the old ones)",
         picked == ["TIEN_MAT"]
         and landed(writes, "steps")
         and json.loads(str(writes[1]["body"]) or "{}")
@@ -13138,8 +13145,16 @@ with sync_playwright() as playwright:
             "step": "CANCEL",
             "custody_resolution": "SHOP_FAULT_NO_CHARGE",
             "refund_method": "TIEN_MAT",
-        },
-        f"picked={picked} {writes!r}"[:300],
+            "expected_cancellation_money": {
+                "refund_vnd": 20_000,
+                "netted_vnd": 90_000,
+                "voided_vnd": 0,
+                "reissued_vnd": 0,
+            },
+        }
+        and json.loads(str(writes[0]["body"]) or "{}").get("expected_cancellation_money")
+        == {"refund_vnd": 30_000, "netted_vnd": 80_000, "voided_vnd": 0, "reissued_vnd": 0},
+        f"picked={picked} {writes!r}"[:600],
     )
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
@@ -13963,6 +13978,421 @@ with sync_playwright() as playwright:
     state["order_view"] = None
     state["storage"] = None
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
+
+    print()
+    print("=" * 74)
+    print("28. MONEY-RESIDUAL-009B — the press is the preview, chains, account path, invoices")
+    print("=" * 74)
+
+    # J4: the cancel sheet sends back the figures it shows; a credit spent elsewhere meanwhile is
+    # refused 409 CANCELLATION_MONEY_CHANGED, the sheet re-reads by itself and shows the new
+    # figures with the reason, and the next press carries them.
+    def preview28(lines: list[str], refund: int, netted: int, voided: int) -> dict[str, object]:
+        return {
+            "stage": "PREVIEW",
+            "refundable_vnd": 110_000,
+            "netted_vnd": netted,
+            "refund_vnd": refund,
+            "voided_vnd": voided,
+            "reissued_vnd": 0,
+            "lines_vi": lines,
+        }
+
+    unspent28 = ["Khoản Bồi thường món bị hỏng 80.000 ₫ khách chưa dùng được huỷ cùng đơn."]
+    spent28 = [
+        "Trừ khoản Bồi thường món bị hỏng 80.000 ₫ khách đã dùng: hoàn 30.000 ₫ thay vì 110.000 ₫."
+    ]
+    cancel28 = {
+        **order_view(
+            "SELF_DROP_SELF_COLLECT",
+            balance="PAID",
+            collected=False,
+            steps=[
+                step("HAND_OVER", True),
+                step(
+                    "CANCEL",
+                    requires=["custody_resolution", "refund_method"],
+                    custody_resolutions=["SHOP_FAULT_NO_CHARGE"],
+                ),
+            ],
+        ),
+        "cancellation_money": preview28(unspent28, 110_000, 0, 80_000),
+    }
+    open_order(cancel28)
+    tap("button[data-more-steps]")
+    page.wait_for_timeout(400)
+    tap("dialog[open] button[data-step=CANCEL]")
+    page.wait_for_timeout(400)
+    page.locator("dialog[open] input[name=custody_resolution]").first.check()
+    tap("dialog[open] label.choice-chip[title=TIEN_MAT]")
+    page.wait_for_timeout(150)
+    # Another phone spends the credit: the order's version does not move, its preview does.
+    state["order_view"] = {**cancel28, "cancellation_money": preview28(spent28, 30_000, 80_000, 0)}
+    state["order_writes"] = []
+    state["order_write_reply"] = (
+        409,
+        {
+            "detail": {
+                "reason_code": "CANCELLATION_MONEY_CHANGED",
+                "message_vi": "Số tiền hoàn hoặc khoản giảm trừ của đơn vừa thay đổi.",
+                "decision": "DEC-045",
+                "cancellation_money": {
+                    "refund_vnd": 30_000,
+                    "netted_vnd": 80_000,
+                    "voided_vnd": 0,
+                    "reissued_vnd": 0,
+                },
+            }
+        },
+    )
+    tap("dialog[open] .sheet__actions button")
+    page.wait_for_timeout(250)
+    tap("dialog[open] .sheet__actions button")
+    page.wait_for_timeout(1300)
+    sheet28 = open_dialog_text().replace("\xa0", " ")
+    writes28 = list(state.get("order_writes") or [])
+    first28 = json.loads(str(writes28[0]["body"]) or "{}") if writes28 else {}
+    check(
+        "J4 Huỷ đơn sends the figures the sheet shows (hoàn 110.000, huỷ 80.000)",
+        first28.get("expected_cancellation_money")
+        == {"refund_vnd": 110_000, "netted_vnd": 0, "voided_vnd": 80_000, "reissued_vnd": 0},
+        repr(first28)[:300],
+    )
+    check(
+        "J4 a moved figure is refused in words, the sheet re-reads by itself and shows the new "
+        "preview (hoàn 30.000, trừ 80.000) -- one write, no automatic second press",
+        len(writes28) == 1
+        and sheet_open("order-cancel")
+        and "Số tiền hoàn hoặc khoản giảm trừ của đơn vừa thay đổi" in sheet28
+        and spent28[0] in sheet28
+        and unspent28[0] not in sheet28
+        and "Tiền hoàn cho khách: 30.000 ₫ (đã trừ 80.000 ₫)" in sheet28
+        and "CANCELLATION_MONEY_CHANGED"
+        not in page.locator("dialog[open] .alert, dialog[open] .notice").first.inner_text(),
+        sheet28[:400],
+    )
+    race_shot("j4-cancel-money-changed")
+    cancelled28 = {**cancel28, "commercial": "CANCELLED", "balance": "REFUNDED", "next_steps": []}
+    state["order_write_reply"] = (200, cancelled28)
+    tap("dialog[open] .sheet__actions button")
+    page.wait_for_timeout(250)
+    tap("dialog[open] .sheet__actions button")
+    page.wait_for_timeout(900)
+    writes28 = list(state.get("order_writes") or [])
+    second28 = json.loads(str(writes28[-1]["body"]) or "{}") if len(writes28) == 2 else {}
+    check(
+        "J4 the next two presses send the new figures, under a new key",
+        len(writes28) == 2
+        and second28.get("expected_cancellation_money")
+        == {"refund_vnd": 30_000, "netted_vnd": 80_000, "voided_vnd": 0, "reissued_vnd": 0}
+        and second28.get("refund_method") == "TIEN_MAT"
+        and writes28[0]["key"] != writes28[1]["key"],
+        repr(writes28)[:400],
+    )
+    state["order_write_reply"] = None
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # J4: an order with no remedy money sends no figures at all.
+    plain28 = {**cancel28, "cancellation_money": None}
+    open_order(plain28)
+    tap("button[data-more-steps]")
+    page.wait_for_timeout(400)
+    tap("dialog[open] button[data-step=CANCEL]")
+    page.wait_for_timeout(400)
+    page.locator("dialog[open] input[name=custody_resolution]").first.check()
+    tap("dialog[open] label.choice-chip[title=TIEN_MAT]")
+    state["order_writes"] = []
+    state["order_write_reply"] = (200, cancelled28)
+    tap("dialog[open] .sheet__actions button")
+    page.wait_for_timeout(250)
+    tap("dialog[open] .sheet__actions button")
+    page.wait_for_timeout(900)
+    writes28 = list(state.get("order_writes") or [])
+    check(
+        "J4 no preview, no figures: the body is the custody answer and the method alone",
+        len(writes28) == 1
+        and json.loads(str(writes28[0]["body"]) or "{}")
+        == {
+            "step": "CANCEL",
+            "custody_resolution": "SHOP_FAULT_NO_CHARGE",
+            "refund_method": "TIEN_MAT",
+        },
+        repr(writes28)[:300],
+    )
+    state["order_write_reply"] = None
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # J3: the server says the cancellation would compensate twice -- said before the press, in
+    # danger, and the press stays shut; nothing is sent.
+    chain28 = {
+        **cancel28,
+        "cancellation_money": {
+            **preview28(
+                [
+                    "Đơn này dùng khoản giảm trừ của một đơn đã huỷ mà lúc huỷ chưa trừ lại đủ. "
+                    "Huỷ không tính tiền sẽ trả khách hai lần — báo chủ tiệm."
+                ],
+                110_000,
+                0,
+                0,
+            ),
+            "reissued_vnd": 80_000,
+            "refusal": "CREDIT_CHAIN_NOT_NETTED",
+        },
+    }
+    open_order(chain28)
+    tap("button[data-more-steps]")
+    page.wait_for_timeout(400)
+    tap("dialog[open] button[data-step=CANCEL]")
+    page.wait_for_timeout(400)
+    page.locator("dialog[open] input[name=custody_resolution]").first.check()
+    tap("dialog[open] label.choice-chip[title=TIEN_MAT]")
+    page.wait_for_timeout(150)
+    state["order_writes"] = []
+    press28 = page.locator("dialog[open] .sheet__actions button").first
+    shut28 = press28.is_disabled()
+    if not shut28:
+        press28.click(timeout=800)
+    page.wait_for_timeout(300)
+    check(
+        "J3 a cancellation the server would refuse (credit chain) is said in danger before the "
+        "press, the press stays shut, nothing is sent",
+        shut28
+        and page.locator(
+            "dialog[open] [data-cancellation-refusal=CREDIT_CHAIN_NOT_NETTED] "
+            ".alert[data-state=danger]"
+        ).count()
+        == 1
+        and "trả khách hai lần — báo chủ tiệm" in open_dialog_text()
+        and not state.get("order_writes"),
+        open_dialog_text()[:300],
+    )
+    race_shot("j3-cancel-chain-refused")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # J5: an account customer's unpaid delivery order -- "Ghi vào công nợ" in the money card,
+    # beside "Thu tiền trước khi giao"; once on the account the trip's door opens.
+    delivery28 = {
+        **order_view(
+            "PICKUP_AND_RETURN",
+            balance="UNPAID",
+            collected=False,
+            production="READY_AT_STORE",
+            steps=[step("TAKE_PAYMENT", True, requires=["amount_vnd", "method"])],
+        ),
+        "customer_id": ACCOUNT_CUSTOMER_ID,
+    }
+    state["account_handover"] = {
+        "customer_id": ACCOUNT_CUSTOMER_ID,
+        "account_id": "77777777-8888-4333-8444-aaaaaaaaaac1",
+        "offered": True,
+        "refusal": None,
+        "collected_by_customer": False,
+        "order_remaining_vnd": 110_000,
+        "outstanding_vnd": 200_000,
+        "credit_limit_vnd": 1_000_000,
+        "outstanding_after_vnd": 310_000,
+        "row_version": 14,
+    }
+    open_order(delivery28)
+    page.wait_for_timeout(700)
+    card28 = text_of(".order__money").replace("\xa0", " ")
+    account_press = page.locator(".order__money #order-account-charge")
+    check(
+        "J5 the money card of an account customer's delivery offers 'Ghi vào công nợ' beside "
+        "'Thu tiền trước khi giao'",
+        "Thu tiền trước khi giao" in card28
+        and account_press.count() == 1
+        and account_press.first.inner_text().strip() == "Ghi vào công nợ"
+        and "Hoặc ghi vào công nợ thay vì thu tiền, rồi giao." in card28
+        and page.locator(".action-bar--v2 button[data-step=TAKE_PAYMENT]").count() == 1,
+        card28[:300],
+    )
+    race_shot("j5-account-path-delivery")
+    tap(".order__money #order-account-charge")
+    page.wait_for_timeout(500)
+    state["order_writes"] = []
+    on_account28 = {
+        **delivery28,
+        "balance": "ON_ACCOUNT",
+        "row_version": 15,
+        "paid_vnd": 0,
+        "remaining_vnd": 110_000,
+        "next_steps": [step("RELEASE", True), step("DELIVERY_RETURN")],
+    }
+    state["order_write_reply"] = (
+        201,
+        {
+            "charge_id": "77777777-8888-4333-8444-aaaaaaaaaac9",
+            "order_id": PICKUP_ORDER_ID,
+            "amount_vnd": 110_000,
+            "outstanding_after_vnd": 310_000,
+            "balance_status": "ON_ACCOUNT",
+            "self_collection_recorded": False,
+            "row_version": 15,
+            "replayed": False,
+        },
+    )
+    state["order_view"] = on_account28
+    state["account_handover"] = {
+        **state["account_handover"],
+        "offered": False,
+        "refusal": "NOTHING_OWED",
+    }
+    tap("dialog[open] #order-account-confirm")
+    page.wait_for_timeout(1300)
+    charge28 = [
+        w for w in state.get("order_writes") or [] if str(w["path"]).endswith("/account-charge")
+    ]
+    check(
+        "J5 the charge sends 'not collected' (the goods go by courier) under If-Match",
+        len(charge28) == 1
+        and json.loads(str(charge28[0]["body"]) or "{}") == {"collected_by_customer": False}
+        and charge28[0]["if_match"] == '"14"',
+        repr(charge28)[:300],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(400)
+    open_order(on_account28)
+    page.wait_for_timeout(500)
+    card28 = text_of(".order__money").replace("\xa0", " ")
+    check(
+        "J5 on the account: the card reads 'Ghi công nợ', no 'Thu tiền trước khi giao', and "
+        "Cho đồ ra is the big button",
+        "Ghi công nợ" in card28
+        and "Thu tiền trước khi giao" not in card28
+        and page.locator(".action-bar--v2 button[data-step=RELEASE]").count() == 1,
+        card28[:200],
+    )
+    state["order_writes"] = []
+    state["order_write_reply"] = (
+        200,
+        {**on_account28, "production": "RELEASED", "next_steps": [step("DELIVERY_RETURN", True)]},
+    )
+    tap(".action-bar--v2 button[data-step=RELEASE]")
+    page.wait_for_timeout(900)
+    release28 = list(state.get("order_writes") or [])
+    check(
+        "J5 RELEASE after the account charge is one write of the step, accepted",
+        len(release28) == 1
+        and json.loads(str(release28[0]["body"]) or "{}") == {"step": "RELEASE"}
+        and "Thu tiền trước khi giao" not in rendered_text(),
+        repr(release28)[:300],
+    )
+    race_shot("j5-release-on-account")
+    state["order_write_reply"] = None
+    state["account_handover"] = None
+
+    # J1: the order's Lưu kho says the days the shop held the laundry do not count.
+    held28 = order_view(
+        "SELF_DROP_SELF_COLLECT", balance="UNPAID", collected=False, production="READY_AT_STORE"
+    )
+    state["storage"] = {**storage_read(awaiting=True, days=12), "held_days": 9}
+    open_order(held28)
+    page.wait_for_timeout(700)
+    waiting28 = text_of("[data-field=storage-waiting]")
+    check(
+        "J1 Chờ lấy counts the waiting days and says the held days are not counted",
+        "Chờ 12 ngày" in waiting28 and "không tính 9 ngày tiệm giữ đơn" in waiting28,
+        waiting28,
+    )
+    state["storage"] = None
+
+    # J6: invoices.
+    state["invoice_writes"] = []
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/invoices", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    # (a) the typed total is not what the order costs: refused first, then "Ghi theo số trên hóa
+    # đơn" records it at that printed figure, with the confirmation in the body.
+    state["invoice_refuse"] = {
+        "detail": {"reason_code": "INVOICE_TOTAL_MISMATCH", "field": "invoice_total_vnd"}
+    }
+    state["invoice_refuse_unless_printed"] = True
+    page.locator(f"[data-record-issued='{INVOICE_ID}']").click()
+    page.wait_for_selector("#invoice-issued-sheet[open]")
+    page.locator("#invoice-symbol").click()
+    page.keyboard.type("1c26tyy", delay=4)
+    page.locator("#invoice-number").click()
+    page.keyboard.type("0000777", delay=4)
+    page.locator("#invoice-total").click()
+    page.keyboard.type("100.000", delay=4)
+    page.locator("#invoice-issued-save").click()
+    page.wait_for_timeout(900)
+    offered28 = page.locator("dialog[open] #invoice-issued-printed")
+    check(
+        "J6a a total the orders do not add up to is refused first and 'Ghi theo số trên hóa đơn' "
+        "is offered beside the reason",
+        offered28.count() == 1
+        and "Nếu hóa đơn đã xuất in đúng số này" in open_dialog_text()
+        and page.locator("#invoice-total").get_attribute("aria-invalid") == "true",
+        open_dialog_text()[-300:],
+    )
+    race_shot("j6a-printed-offered")
+    offered28.first.click()
+    page.wait_for_timeout(1000)
+    issued28 = [item for item in state["invoice_writes"] if item["path"].endswith("/issued")]
+    check(
+        "J6a the confirmed press records the printed figure: same figures plus "
+        "record_printed_total, a new key, and the sheet closes",
+        len(issued28) == 2
+        and json.loads(issued28[0]["body"] or "{}").get("record_printed_total") is None
+        and json.loads(issued28[1]["body"] or "{}").get("record_printed_total") is True
+        and json.loads(issued28[1]["body"] or "{}").get("invoice_total_vnd") == 100_000
+        and issued28[0]["key"] != issued28[1]["key"]
+        and page.locator("#invoice-issued-sheet[open]").count() == 0,
+        repr(issued28)[:400],
+    )
+    state["invoice_refuse"] = None
+    state["invoice_refuse_unless_printed"] = False
+
+    # (a, b) the flags in words; (d) a request with no single total cannot be recorded.
+    printed28 = {
+        **invoice_request("abababab-1111-4000-8000-000000000035", status="ISSUED", code="YC-0011"),
+        "flags": ["PRINTED_TOTAL_DIFFERS", "ON_ANOTHER_REQUEST"],
+        "shop_total_vnd": 135_000,
+        "other_request_codes": ["YC-0004"],
+    }
+    ranged28 = invoice_request("abababab-1111-4000-8000-000000000036", code="YC-0012")
+    ranged28["amount"] = {**ranged28["amount"], "total_vnd": None}
+    state["invoice_lists"] = {
+        "REQUESTED": {**invoice_list("REQUESTED"), "requests": [ranged28]},
+        "ISSUED": {**invoice_list("ISSUED"), "requests": [printed28]},
+    }
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/invoices", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    record28 = page.locator("[data-record-issued='abababab-1111-4000-8000-000000000036']")
+    row_text28 = text_of("tr[data-invoice='abababab-1111-4000-8000-000000000036']")
+    check(
+        "J6d a request whose quote has no single total: Ghi số hóa đơn is shut with its reason, "
+        "Huỷ stays open",
+        record28.count() == 1
+        and record28.first.is_disabled()
+        and "Báo giá chưa có một tổng" in row_text28
+        and page.locator(
+            "[data-cancel-invoice='abababab-1111-4000-8000-000000000036']"
+        ).first.is_enabled(),
+        row_text28[:200],
+    )
+    page.locator("#invoices-tabs").get_by_text("Đã xuất").first.click()
+    page.wait_for_timeout(1000)
+    flags28 = " ".join(page.locator("[data-field=invoice-flag]").all_inner_texts()).replace(
+        "\xa0", " "
+    )
+    check(
+        "J6a/b an issued request says its printed figure differs (with the shop's figure) and "
+        "names the other request that covers its order",
+        "Số trên hóa đơn khác số hiện tại (135.000 ₫ lúc ghi số) — báo kế toán." in flags28
+        and "cũng nằm trong YC-0004 — báo kế toán để không xuất hóa đơn hai lần." in flags28,
+        flags28[:300],
+    )
+    race_shot("j6-invoice-flags")
+    state["invoice_lists"] = None
+    state["invoice_writes"] = []
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

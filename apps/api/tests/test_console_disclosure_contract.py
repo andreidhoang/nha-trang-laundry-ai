@@ -983,7 +983,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   hints (untick the orders the invoice does not list; copy the total off the invoice).
     #   593 + 4 = 597 once merged after slices A and B.
     # COUNTER-UI-RACE-009 merged after A, B, C: 597 + 0 = 597 (no disclosure added or retired).
-    assert sum(counts.values()) == _registry()["total"] == 597
+    # MONEY-RESIDUAL-009B (round 9b, J): 597 + 3 = 600 -- REFUSAL.CANCELLATION_MONEY_CHANGED,
+    # REFUSAL.CREDIT_CHAIN_NOT_NETTED, REASON_NOTE.INVOICE_TOTAL_UNKNOWN (INVOICE_TOTAL_MISMATCH
+    # reworded in place: the printed-figure path).
+    assert sum(counts.values()) == _registry()["total"] == 600
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

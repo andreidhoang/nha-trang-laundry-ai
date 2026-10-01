@@ -11,6 +11,7 @@
 
 import { h } from "../core/dom.js";
 import { money } from "../core/format.js";
+import { inlineAlert } from "./kit.js";
 
 /**
  * The server's plan (`PREVIEW`) or record (`DONE`) for this order, or null.
@@ -35,6 +36,15 @@ export function cancellationMoney(order, stage) {
 export function cancellationMoneyBlock(order, stage) {
   const plan = cancellationMoney(order, stage);
   if (!plan) return null;
+  // MONEY-RESIDUAL-009B (J3): the server says this cancellation would be refused -- its one
+  // sentence, as a danger beside the press, which stays shut (`cancellationRefused`).
+  if (stage === "PREVIEW" && plan.refusal) {
+    return h(
+      "div",
+      { class: "remedy-money", dataCancellationMoney: stage, dataCancellationRefusal: String(plan.refusal) },
+      inlineAlert({ state: "danger", title: String(plan.lines_vi[0]) }),
+    );
+  }
   const refunding = Number(plan.refundable_vnd) > 0;
   return h(
     "div",
@@ -76,5 +86,37 @@ export function receiptCancellationMoney(order) {
     refund: Number(plan.refundable_vnd) > 0 ? money(plan.refund_vnd) : null,
     netted: netted ? money(plan.netted_vnd) : null,
     lines: plan.lines_vi.map(String),
+  };
+}
+
+/**
+ * MONEY-RESIDUAL-009B (J3): the server's preview says this cancellation would be refused.
+ *
+ * @param {any} order an `OrderViewResponse`
+ * @returns {boolean}
+ */
+export function cancellationRefused(order) {
+  const plan = order?.cancellation_money;
+  return Boolean(plan && plan.stage === "PREVIEW" && plan.refusal);
+}
+
+/**
+ * MONEY-RESIDUAL-009B (J4): the four figures the sheet showed, sent back with the press so the
+ * server executes exactly them or refuses (`CANCELLATION_MONEY_CHANGED`). The preview's own
+ * numbers, copied -- nothing is computed here. `{}` when the order shows no preview.
+ *
+ * @param {any} order the order the sheet is drawn from
+ * @returns {{expected_cancellation_money?: {refund_vnd: number, netted_vnd: number, voided_vnd: number, reissued_vnd: number}}}
+ */
+export function expectedCancellationMoney(order) {
+  const plan = order?.cancellation_money;
+  if (!plan || plan.stage !== "PREVIEW") return {};
+  return {
+    expected_cancellation_money: {
+      refund_vnd: plan.refund_vnd,
+      netted_vnd: plan.netted_vnd,
+      voided_vnd: plan.voided_vnd,
+      reissued_vnd: plan.reissued_vnd,
+    },
   };
 }

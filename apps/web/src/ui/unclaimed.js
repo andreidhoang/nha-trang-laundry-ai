@@ -418,7 +418,14 @@ export function storageSection(spec) {
     storage.awaiting_pickup
       ? [
           "Chờ lấy",
-          `${waitingText(storage.days_waiting)}${storage.ready_at ? ` (xong ${dateOnly(storage.ready_at)})` : ""}`,
+          h(
+            "span",
+            { dataField: "storage-waiting", dataHeldDays: String(storage.held_days || 0) },
+            `${waitingText(storage.days_waiting)}${storage.ready_at ? ` (xong ${dateOnly(storage.ready_at)})` : ""}`,
+            // DEC-050 (MONEY-RESIDUAL-009B J1): the server counts the days the shop held the
+            // laundry for nothing; said so, so the count shorter than the calendar is not a slip.
+            storage.held_days ? ` · không tính ${storage.held_days} ngày tiệm giữ đơn` : "",
+          ),
         ]
       : null,
     ["Phí lưu kho", h("span", { dataStorageFee: String(fee.status || "") }, feeText(fee, policy, order?.balance))],

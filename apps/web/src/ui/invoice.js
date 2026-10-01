@@ -154,7 +154,33 @@ export const INVOICE_FLAG_VI = {
     `Số tiền của đơn nay là ${money(item?.live_total_vnd, "chưa có tổng")}, khác số trên hóa đơn — báo kế toán.`,
   MONTH_ORDERS_NOT_ON_INVOICE: (item) =>
     `${item?.uninvoiced_charge_count ?? 0} đơn ghi công nợ tháng này không có trên hóa đơn và chưa có yêu cầu nào — lập yêu cầu riêng cho từng đơn.`,
+  // MONEY-RESIDUAL-009B (J6a): recorded at the figure the issued invoice prints.
+  PRINTED_TOTAL_DIFFERS: (item) =>
+    `Số trên hóa đơn khác số hiện tại (${money(item?.shop_total_vnd, "chưa có tổng")} lúc ghi số) — báo kế toán.`,
+  // MONEY-RESIDUAL-009B (J6b): an order on two live requests (data from before round 9).
+  ON_ANOTHER_REQUEST: (item) =>
+    `Đơn của yêu cầu này cũng nằm trong ${(item?.other_request_codes || []).join(", ") || "yêu cầu khác"} — báo kế toán để không xuất hóa đơn hai lần.`,
 };
+
+/** MONEY-RESIDUAL-009B (J6d): why Ghi số hóa đơn is shut for a request with no single total. */
+export const TOTAL_UNKNOWN = "Báo giá chưa có một tổng — huỷ yêu cầu hoặc chờ chốt giá.";
+
+/**
+ * Who may press Ghi số hóa đơn on this request: the role's verdict, and -- for an order whose quote
+ * has no single total -- never (`INVOICE_TOTAL_UNKNOWN`, the server's rule; said beside the
+ * control, the request can still be cancelled).
+ *
+ * @param {any} item an `InvoiceRequestResponse`
+ * @param {{allowed: boolean, reason: string}} verdict the role's verdict
+ * @returns {{allowed: boolean, reason: string}}
+ */
+export function issuableVerdict(item, verdict) {
+  if (!verdict.allowed) return verdict;
+  if (item?.subject_kind === "ORDER" && !Number.isInteger(item?.amount?.total_vnd)) {
+    return { allowed: false, reason: TOTAL_UNKNOWN };
+  }
+  return verdict;
+}
 
 /**
  * The flags of a request, each as its sentence. An unknown flag is said plainly, never dropped.
@@ -505,6 +531,9 @@ export function issuedSheet(spec) {
   let intent = "";
   // Set once the server said the request moved since this sheet read it: never pressed again.
   let moved = false;
+  // MONEY-RESIDUAL-009B (J6a): the figures the owner confirmed are the invoice's printed ones,
+  // after the server refused them as not what the orders cost. Holds only for exactly those.
+  let printedFor = "";
   const symbol = field({ id: "invoice-symbol", label: "Ký hiệu", maxlength: 12, placeholder: "Ví dụ 1C26TYY" });
   symbol.input.style.textTransform = "uppercase";
   const number = field({ id: "invoice-number", label: "Số hóa đơn", inputmode: "numeric", maxlength: 8 });
@@ -539,6 +568,7 @@ export function issuedSheet(spec) {
       show(alertHost, inlineAlert({ state: "danger", title: "Chưa chọn đơn nào. Chọn các đơn có trên hóa đơn." }));
       return;
     }
+    /** @type {Record<string, unknown>} */
     const body = {
       invoice_symbol: symbol.input.value.trim().toUpperCase(),
       invoice_number: number.input.value.trim(),
@@ -548,6 +578,7 @@ export function issuedSheet(spec) {
       invoice_total_vnd: hasTotal ? parseDong(total.input.value) : null,
       invoice_order_ids: listed,
     };
+    if (printedFor && printedFor === JSON.stringify(body)) body.record_printed_total = true;
     const next = JSON.stringify(body);
     if (next !== intent) {
       submission.reset();
@@ -580,6 +611,31 @@ export function issuedSheet(spec) {
         if (marked) {
           marked.input.setAttribute("aria-invalid", "true");
           marked.input.focus();
+        }
+        // J6a: the typed total is not what the orders cost. A slip is the common cause, so the
+        // field is marked first; an invoice already issued for that figure is recorded at it,
+        // flagged for the bookkeeper, by one more deliberate press -- never a dead end.
+        if (/** @type {any} */ (error)?.reasonCodes?.includes("INVOICE_TOTAL_MISMATCH")) {
+          const typed = { ...body };
+          delete typed.record_printed_total;
+          show(
+            alertHost,
+            errorNotice(/** @type {any} */ (error), {
+              actions: [
+                button({
+                  label: "Ghi theo số trên hóa đơn",
+                  variant: "secondary",
+                  network: true,
+                  id: "invoice-issued-printed",
+                  onClick: () => {
+                    printedFor = JSON.stringify(typed);
+                    void send();
+                  },
+                }),
+              ],
+            }),
+          );
+          return;
         }
         show(
           alertHost,
@@ -860,7 +916,7 @@ export function invoiceSection(spec) {
                         }),
                       ),
                   }),
-                  roleVerdict(closeVerdict, CLOSE_SHORT),
+                  issuableVerdict(live, roleVerdict(closeVerdict, CLOSE_SHORT)),
                 ),
                 gated(
                   button({

@@ -25,6 +25,9 @@ import { button, moneyHero } from "./kit.js";
 // account with its storage fee; the server's figure already includes it, this only says so.
 import { storageChargeLine } from "./unclaimed.js";
 
+/** MONEY-RESIDUAL-009B (J5): the account path's label on a delivery order (`PAYMENT-002`'s sheet). */
+export const ACCOUNT_BEFORE_DELIVERY = "Ghi vào công nợ";
+
 /** The refusals that say nothing worth a line on the page: nothing to charge, or already done. */
 const QUIET = new Set(["NOTHING_OWED", "ALREADY_COLLECTED", "ORDER_NOT_ACTIVE", "NOT_AN_ACCOUNT_CUSTOMER"]);
 
@@ -113,9 +116,12 @@ export function accountHandover(spec) {
     }
     // "Gồm phí lưu kho …" when the server's charges carry a storage fee; the amount is theirs.
     const fee = storageChargeLine(order);
+    // MONEY-RESIDUAL-009B (J5): a delivery order of an account customer leaves on the account
+    // as well as paid -- "Ghi vào công nợ" beside "Thu tiền trước khi giao", then the trip.
+    const delivery = handover.collected_by_customer !== true;
     const press = gated(
       button({
-        label: "Giao đồ — ghi công nợ",
+        label: delivery ? ACCOUNT_BEFORE_DELIVERY : "Giao đồ — ghi công nợ",
         icon: "tag",
         block: true,
         network: true,
@@ -129,7 +135,8 @@ export function accountHandover(spec) {
       press,
       h(
         "p",
-        { class: "hint account-handover__what" },
+        { class: "hint account-handover__what", dataAccountPath: delivery ? "delivery" : "counter" },
+        delivery ? "Hoặc ghi vào công nợ thay vì thu tiền, rồi giao. " : null,
         `Ghi ${money(handover.order_remaining_vnd)} vào công nợ · đang nợ ${money(
           handover.outstanding_vnd,
         )} / hạn mức ${money(handover.credit_limit_vnd)}. `,

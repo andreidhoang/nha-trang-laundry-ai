@@ -302,3 +302,80 @@ def test_the_gates_one_opaque_refusal_for_role_mfa_or_store(
     _as(staff)
     other = uuid4()
     assert client.get(f"/internal/v1/stores/{other}/cash-count").status_code == 403
+
+
+def test_a_malformed_entry_is_answered_without_the_values_it_held(
+    connection: Any, client: TestClient
+) -> None:
+    """A correction reason is free text a person typed, refused by the rules when it looks like a
+    phone number -- so a body the framework itself refuses (a field missing, the wrong type, a
+    reason too long, a field that is not ours) is answered with where and what, never the value:
+    FastAPI's default 422 echoes `input`, and for a missing field that is the whole body."""
+    shop, staff, _ = _the_day(connection)
+    _as(staff)
+    phone = "0905123456"
+    reason = f"khach {phone} tra thieu"
+    base = {
+        "business_day": _today(),
+        "kind": "CLOSING_COUNT",
+        "counted_vnd": 590_000,
+        "supersedes_entry_id": str(uuid4()),
+        "reason": reason,
+    }
+    malformed = {
+        "kind missing": {k: v for k, v in base.items() if k != "kind"},
+        "day missing": {k: v for k, v in base.items() if k != "business_day"},
+        "count a string": {**base, "counted_vnd": "590000"},
+        "count below 0": {**base, "counted_vnd": -1},
+        "kind unknown": {**base, "kind": "MIDDAY"},
+        "reason too long": {**base, "reason": (reason + " ") * 10},
+        "reason not text": {**base, "reason": [reason]},
+        "a field not ours": {**base, "note": reason},
+        "supersedes not an id": {**base, "supersedes_entry_id": phone},
+    }
+    for name, body in malformed.items():
+        refused = _post(client, shop.store_id, body)
+        assert refused.status_code == 422, name
+        assert phone not in refused.text, name
+        detail = refused.json()["detail"]
+        assert detail and all(set(item) == {"type", "loc", "msg"} for item in detail), name
+        assert all(item["loc"] and item["loc"][0] == "body" for item in detail), name
+    # The neighbour: the Sổ thu chi line that carries the "Trả từ két" tick has a free-text note.
+    _as(shop.owner)
+    line = {
+        "spent_on": _today(),
+        "category": "HOA_CHAT",
+        "amount_vnd": 50_000,
+        "paid_from_drawer": True,
+        "note": reason,
+    }
+    for name, body in {
+        "category missing": {k: v for k, v in line.items() if k != "category"},
+        "tick not a yes/no": {**line, "paid_from_drawer": 1},
+        "note too long": {**line, "note": (reason + " ") * 20},
+        "a field not ours": {**line, "reason": reason},
+    }.items():
+        refused = client.post(
+            f"/internal/v1/stores/{shop.store_id}/expenses", headers=_key(), json=body
+        )
+        assert refused.status_code == 422, name
+        assert phone not in refused.text, name
+        assert all("input" not in item for item in refused.json()["detail"]), name
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM cash_counts WHERE store_id = %s", (shop.store_id,))
+        assert cursor.fetchone()[0] == 0
+        cursor.execute("SELECT count(*) FROM expenses WHERE store_id = %s", (shop.store_id,))
+        assert cursor.fetchone()[0] == 0
+    # A refusal the rules make is a code alone (no value), as before.
+    _as(staff)
+    first = {"business_day": _today(), "kind": "CLOSING_COUNT", "counted_vnd": 1}
+    assert _post(client, shop.store_id, first).status_code == 201
+    sheet = client.get(f"/internal/v1/stores/{shop.store_id}/cash-count").json()
+    looks_like_phone = _post(
+        client,
+        shop.store_id,
+        {**base, "supersedes_entry_id": sheet["closing_count"]["entry_id"]},
+    )
+    assert looks_like_phone.json() == {
+        "detail": {"reason_code": "CASH_COUNT_REASON_LOOKS_LIKE_PHONE"}
+    }

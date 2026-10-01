@@ -265,7 +265,11 @@ from nha_trang_laundry_api.auth import (
     StaffIdentityService,
 )
 from nha_trang_laundry_api.authorization import RouteGate, register_gate
-from nha_trang_laundry_api.cash_count import CashCountService, CashCountUnavailable
+from nha_trang_laundry_api.cash_count import (
+    CASH_COUNT_FREE_TEXT_PATH_SUFFIXES,
+    CashCountService,
+    CashCountUnavailable,
+)
 from nha_trang_laundry_api.customers import (
     CUSTOMER_PATH_MARKER,
     CustomerService,
@@ -4306,11 +4310,13 @@ async def _customer_validation_failed(request: Request, error: Exception) -> Res
     # when it looks like a phone number -- so it is answered the same way, without its value.
     # EINVOICE-REQUEST-001: a buyer's name, address or email on an invoice-request path too.
     # LATE-CREDIT-002: the late-delivery decision's note, the same way.
+    # CASH-COUNT-009: a cash-count correction's reason and a Sổ thu chi note, the same way.
     if (
         CUSTOMER_PATH_MARKER not in request.url.path
         and INVOICE_PATH_MARKER not in request.url.path
         and not request.url.path.endswith(UNCLAIMED_FREE_TEXT_PATH_SUFFIXES)
         and LATE_DELIVERY_FREE_TEXT_MARKER not in request.url.path
+        and not request.url.path.endswith(CASH_COUNT_FREE_TEXT_PATH_SUFFIXES)
     ):
         return await request_validation_exception_handler(request, error)
     return JSONResponse(

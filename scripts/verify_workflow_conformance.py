@@ -8662,6 +8662,7 @@ def _invoice_moved_before_the_press(console: Console) -> None:
     console.type_into("#invoice-symbol", "1c26tyy", "invoice.issued-symbol")
     console.type_into("#invoice-number", _invoice_number(), "invoice.issued-number")
     console.type_into("#invoice-total", str(on_invoice), "invoice.issued-total")
+    _invoice_shot(console, "31d-issued-sheet-month-both-ticked")
     (mismatch,) = console.press_capturing(console.page.locator("#invoice-issued-save"), "/issued")
     touched("invoice.issued-save")
     console.page.wait_for_timeout(1200)
@@ -8678,8 +8679,10 @@ def _invoice_moved_before_the_press(console: Console) -> None:
         and stored_invoice(request_id) == "REQUESTED|1|0|0",
         f"{mismatch['status']} {detail} {stored_invoice(request_id)}",
     )
+    _invoice_shot(console, "31d-issued-sheet-total-mismatch")
     console.page.locator(f"#invoice-line-{late['order_id']}").uncheck()
     touched("invoice.issued-line")
+    _invoice_shot(console, "31d-issued-sheet-late-unticked")
     (issued,) = console.press_capturing(console.page.locator("#invoice-issued-save"), "/issued")
     console.page.wait_for_timeout(1200)
     body = issued.get("body") or {}
@@ -8710,6 +8713,16 @@ def _invoice_moved_before_the_press(console: Console) -> None:
         own.get("refusal") is None,
         str(own.get("refusal")),
     )
+
+
+def _invoice_shot(console: Console, name: str) -> None:
+    """The issued sheet as the owner sees it, when `INVOICE_TRUTH_SHOTS` names a directory."""
+
+    directory = os.environ.get("INVOICE_TRUTH_SHOTS", "")
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+        size = "phone" if os.environ.get("CONSOLE_VIEWPORT") == "phone" else "desk"
+        console.page.screenshot(path=os.path.join(directory, f"{size}-{name}.png"), full_page=True)
 
 
 def stored_invoice(request_id: str) -> str:

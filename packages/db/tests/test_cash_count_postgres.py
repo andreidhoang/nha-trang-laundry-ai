@@ -498,6 +498,14 @@ def test_no_float_means_no_expected_figure_and_the_owner_is_told(connection: Any
     assert after.closing_count == closing
     assert after.changed_since_count
     assert after.expected.expected_vnd == 600_000
+    # ...and the owner's summary says the same as the sheet and Báo cáo: "chưa ghi tiền đầu ngày"
+    # was true at the count, is false now, and is never said as if it were still true.
+    text = _attention(connection, shop.store_id, shop.owner).rendered.text
+    assert "nhưng chưa so được: chưa ghi tiền đầu ngày." not in text
+    assert (
+        "- Đếm két cuối ngày được 300.000đ; lúc đếm chưa ghi tiền đầu ngày nên chưa so được. "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 600.000đ." in text
+    )
 
 
 def test_books_that_say_the_drawer_is_below_nothing_produce_no_figure(connection: Any) -> None:
@@ -526,8 +534,15 @@ def test_books_that_move_after_the_count_are_said_and_the_recorded_difference_st
     assert sheet.changed_since_count
     assert sheet.expected.expected_vnd == 590_000
     assert sheet.closing_count == closing  # recorded, never recomputed into the row
+    # Even at the count, but the books no longer agree: the summary says so (it used to stay
+    # silent, as if the drawer were still known to be even), as Báo cáo does.
     summary = _attention(connection, shop.store_id, shop.owner)
-    assert not [line for line in summary.rendered.lines if line.key.value == "ATTN_CASH_COUNT"]
+    (line,) = [line for line in summary.rendered.lines if line.key.value == "ATTN_CASH_COUNT"]
+    assert line.text == (
+        "- Lúc đếm, két cuối ngày khớp (phải có 600.000đ, đếm được 600.000đ). "
+        "Số phải có lúc đó chưa tính 1 khoản hoàn chưa rõ cách hoàn (40.000đ). "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 590.000đ."
+    )
 
     recount, sheet, _ = _record(
         connection,
@@ -543,6 +558,44 @@ def test_books_that_move_after_the_count_are_said_and_the_recorded_difference_st
         10_000,
     )
     assert not sheet.changed_since_count
+    # The re-count is the current one and the books agree with it: said plainly again.
+    summary = _attention(connection, shop.store_id, shop.owner)
+    (line,) = [line for line in summary.rendered.lines if line.key.value == "ATTN_CASH_COUNT"]
+    assert line.text.startswith("- Đếm két cuối ngày thừa 10.000đ (phải có 590.000đ")
+    assert "Sổ đã thay đổi" not in line.text
+
+
+def test_a_short_count_then_a_forgotten_drawer_expense_is_never_still_read_as_short(
+    connection: Any,
+) -> None:
+    """Thiếu 10.000 at the count; then the owner records the 10.000 that left the drawer for
+    chemicals and was forgotten. The recorded difference stays (nothing is rewritten) and the
+    summary says the books moved and what they say now -- the same answer as the sheet."""
+    shop, staff = _the_counted_day(connection)
+    _record(connection, shop.store_id, staff, FLOAT, 500_000)
+    closing, _, _ = _record(connection, shop.store_id, staff, CLOSE, 590_000)
+    assert (closing.difference_direction, closing.difference_vnd) == (
+        DifferenceDirection.SHORT,
+        10_000,
+    )
+    before = _attention(connection, shop.store_id, shop.owner)
+    (line,) = [line for line in before.rendered.lines if line.key.value == "ATTN_CASH_COUNT"]
+    assert line.text.startswith("- Đếm két cuối ngày thiếu 10.000đ (phải có 600.000đ")
+    assert "Sổ đã thay đổi" not in line.text
+    assert dict(line.figures)["cash_changed_since_count"] == 0
+
+    _expense(connection, shop, ExpenseCategory.HOA_CHAT, 10_000, drawer=True)
+    sheet = _sheet(connection, shop.store_id, staff)
+    assert sheet.changed_since_count and sheet.expected.expected_vnd == 590_000
+    after = _attention(connection, shop.store_id, shop.owner)
+    (line,) = [line for line in after.rendered.lines if line.key.value == "ATTN_CASH_COUNT"]
+    assert line.text.startswith(
+        "- Lúc đếm, két cuối ngày thiếu 10.000đ (phải có 600.000đ, đếm được 590.000đ)."
+    )
+    assert line.text.endswith("Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 590.000đ.")
+    assert dict(line.figures)["cash_changed_since_count"] == 1
+    assert dict(line.figures)["cash_expected_now_vnd"] == 590_000
+    assert dict(line.figures)["cash_difference_vnd"] == 10_000  # the recorded one, unchanged
 
 
 # --- roles ---

@@ -74,7 +74,7 @@ from nha_trang_laundry_db.accounts import (
 from nha_trang_laundry_db.cash_counts import (
     CASH_COUNT_HISTORY_ROLES,
     CASH_COUNT_QUERY,
-    recorded_closing,
+    read_day,
 )
 from nha_trang_laundry_db.identity import StaffPrincipal
 from nha_trang_laundry_db.invoice_requests import (
@@ -460,11 +460,15 @@ def cash_count_figures(
 
     Recorded history, so a past day answers as well as today. The figures are the ones stored on
     the count (its trace), never recomputed here: the summary says what the counter saw when they
-    counted. `None` when no closing count was recorded -- an uncounted day is not a line.
+    counted. The day's sheet (`read_day`) also says whether the books or the float moved after the
+    count (`changed_since_count`) and what they say now -- the same answer Báo cáo and Đếm két
+    give -- so the summary never repeats a recorded sentence that is no longer true. `None` when
+    no closing count was recorded -- an uncounted day is not a line.
     """
     if not principal.roles & CASH_COUNT_HISTORY_ROLES:
         return Unavailable(OmissionReason.ROLE_NOT_PERMITTED, "CASH-COUNT-009")
-    entry = recorded_closing(cursor, store_id=store_id, day=day)
+    sheet = read_day(cursor, store_id=store_id, day=day)
+    entry = sheet.closing_count
     if entry is None or entry.expected_status is None:
         return None
     trace = entry.trace or {}
@@ -482,6 +486,8 @@ def cash_count_figures(
         excluded_unknown_entries=excluded_entries if isinstance(excluded_entries, int) else 0,
         excluded_unknown_vnd=excluded_vnd if isinstance(excluded_vnd, int) else 0,
         books_over_vnd=books_over if isinstance(books_over, int) else None,
+        changed_since_count=sheet.changed_since_count,
+        expected_now_vnd=sheet.expected.expected_vnd if sheet.changed_since_count else None,
     )
 
 

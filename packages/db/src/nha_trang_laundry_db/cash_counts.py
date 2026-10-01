@@ -345,22 +345,6 @@ def read_day(cursor: Any, *, store_id: UUID, day: date) -> CashCountDay:
     return _day(store_id, day, entries, movement)
 
 
-def recorded_closing(cursor: Any, *, store_id: UUID, day: date) -> CashCountEntry | None:
-    """The day's current closing count, as it was recorded (for the evening summary)."""
-    cursor.execute(
-        f"""
-        SELECT {_ENTRY_COLUMNS}
-        FROM cash_counts c
-        LEFT JOIN staff_users u ON u.id = c.recorded_by
-        WHERE c.store_id = %s AND c.business_day = %s AND c.kind = 'CLOSING_COUNT'
-          AND NOT EXISTS (SELECT 1 FROM cash_counts n WHERE n.supersedes_id = c.id)
-        """,
-        (store_id, day),
-    )
-    row = cursor.fetchone()
-    return None if row is None else _entry(row)
-
-
 class CashCountRepository:
     """Record an entry; read today's sheet; read the owner's history."""
 
@@ -664,5 +648,4 @@ __all__ = [
     "RecordCashCountCommand",
     "drawer_movements",
     "read_day",
-    "recorded_closing",
 ]

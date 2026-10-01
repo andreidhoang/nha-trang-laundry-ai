@@ -11718,6 +11718,46 @@ def scenario_cash_count(console: Console) -> None:
         text[:400],
     )
 
+    head("K5", "SỔ ĐỔI SAU LÚC ĐẾM — a forgotten drawer expense, and a body with a phone in it")
+    # A malformed entry whose reason holds a phone number is refused without echoing it.
+    malformed = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/cash-count",
+        {"business_day": day, "counted_vnd": 1, "reason": "khach 0905123456 tra thieu"},
+    )
+    ok(
+        "a malformed entry is refused 422 without the reason it held",
+        malformed["status"] == 422 and "0905123456" not in malformed["text"],
+        malformed["text"][:200],
+    )
+    # The 10.000 was chemicals paid from the drawer and not written down: the owner records it
+    # after the count. The recorded shortfall stays; Báo cáo and the summary both say the books
+    # moved after the count, and what they say now.
+    forgotten = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/expenses",
+        {"spent_on": day, "category": "HOA_CHAT", "amount_vnd": 10_000, "paid_from_drawer": True},
+    )
+    ok("the forgotten 10.000 is recorded 'Trả từ két'", forgotten["status"] == 201)
+    now = f"{expected - 10_000:,}".replace(",", ".")
+    console.open(f"#/reports?from={day}&to={day}", settle=2500)
+    row = console.page.locator(f"[data-cash-count-day='{day}']").first
+    row_text = row.inner_text().replace("\xa0", " ") if row.count() else ""
+    ok(
+        "Báo cáo keeps 'Thiếu 10.000 ₫' as recorded and says 'sổ đổi sau lúc đếm'",
+        "Thiếu 10.000 ₫" in row_text and "sổ đổi sau lúc đếm" in row_text,
+        row_text.replace("\n", " | ") or "absent",
+    )
+    summary = console.call("GET", f"/internal/v1/stores/{STORE}/reports/daily-summary?date={day}")
+    text = str((summary.get("body") or {}).get("text", ""))
+    ok(
+        "the evening summary says the same: the shortfall as it was at the count, the books now",
+        f"Lúc đếm, két cuối ngày thiếu 10.000đ (phải có {grouped}đ, đếm được {counted}đ)." in text
+        and f"Sổ đã thay đổi sau lúc đếm: bây giờ két phải có {now}đ." in text
+        and "- Đếm két cuối ngày thiếu 10.000đ" not in text,
+        text[:500],
+    )
+
 
 SCENARIOS = {
     "money": scenario_money,

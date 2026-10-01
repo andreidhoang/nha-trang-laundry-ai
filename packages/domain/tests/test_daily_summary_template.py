@@ -726,6 +726,8 @@ def _counted(
     direction: str | None = "SHORT",
     excluded: tuple[int, int] = (0, 0),
     books_over: int | None = None,
+    changed: bool = False,
+    expected_now: int | None = None,
 ) -> CashCountFigures:
     return CashCountFigures(
         status=status,  # type: ignore[arg-type]
@@ -736,6 +738,8 @@ def _counted(
         excluded_unknown_entries=excluded[0],
         excluded_unknown_vnd=excluded[1],
         books_over_vnd=books_over,
+        changed_since_count=changed,
+        expected_now_vnd=expected_now,
     )
 
 
@@ -828,3 +832,78 @@ def test_all_six_lines_in_order_the_cash_count_after_the_five_of_dec_044() -> No
     cash = next(line for line in summary.lines if line.key is LineKey.ATTN_CASH_COUNT)
     assert "-" not in cash.text[2:] and "\u2212" not in cash.text
     assert dict(cash.figures)["cash_difference_direction"] == "SHORT"
+
+
+def test_a_count_the_books_moved_after_is_said_as_it_was_at_the_count_and_that_they_moved() -> None:
+    """Báo cáo says "sổ đổi sau lúc đếm" when the books (or the float) moved after the count; the
+    summary says the same, never a recorded sentence that is no longer true when read -- "chưa ghi
+    tiền đầu ngày" after a float was recorded, "thiếu" after a drawer expense was added, or nothing
+    at all after an even count the books no longer agree with."""
+    moved = "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 600.000đ."
+    no_float = _counted(
+        status="FLOAT_MISSING",
+        expected=None,
+        difference=None,
+        direction=None,
+        changed=True,
+        expected_now=600_000,
+    )
+    assert _attention_lines(cash_count=no_float) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày được 590.000đ; lúc đếm chưa ghi tiền đầu ngày nên chưa so được. "
+        + moved,
+    ]
+    short = _counted(changed=True, expected_now=590_000)
+    assert _attention_lines(cash_count=short) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày thiếu 10.000đ (phải có 600.000đ, đếm được 590.000đ). "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 590.000đ.",
+    ]
+    over = _counted(
+        counted=605_000, difference=5_000, direction="OVER", changed=True, expected_now=600_000
+    )
+    assert _attention_lines(cash_count=over) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày thừa 5.000đ (phải có 600.000đ, đếm được 605.000đ). " + moved,
+    ]
+    # Even when counted is no longer known to be even: a line, not the all-clear.
+    even = _counted(
+        counted=600_000,
+        difference=0,
+        direction="EVEN",
+        changed=True,
+        expected_now=590_000,
+        status="INCOMPLETE",
+        excluded=(1, 20_000),
+    )
+    assert _attention_lines(cash_count=even) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày khớp (phải có 600.000đ, đếm được 600.000đ). "
+        "Số phải có lúc đó chưa tính 1 khoản hoàn chưa rõ cách hoàn (20.000đ). "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 590.000đ.",
+    ]
+    below = _counted(
+        status="BOOKS_BELOW_ZERO",
+        counted=0,
+        expected=None,
+        difference=None,
+        direction=None,
+        books_over=100_000,
+        changed=True,
+        expected_now=None,
+    )
+    assert _attention_lines(cash_count=below) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày được 0đ; lúc đếm sổ ghi tiền ra khỏi két nhiều hơn tiền vào "
+        "100.000đ nên chưa so được. Sổ đã thay đổi sau lúc đếm; bây giờ chưa tính được số phải "
+        "có.",
+    ]
+    # The figures say it too, for the reader that takes numbers rather than words.
+    summary = render_summary(_inputs(attention=dataclasses.replace(CALM, cash_count=short)))
+    cash = next(line for line in summary.lines if line.key is LineKey.ATTN_CASH_COUNT)
+    assert dict(cash.figures)["cash_changed_since_count"] == 1
+    assert dict(cash.figures)["cash_expected_now_vnd"] == 590_000
+    assert "-" not in cash.text[2:] and "\u2212" not in cash.text
+    unchanged = render_summary(_inputs(attention=dataclasses.replace(CALM, cash_count=_counted())))
+    line = next(line for line in unchanged.lines if line.key is LineKey.ATTN_CASH_COUNT)
+    assert dict(line.figures)["cash_changed_since_count"] == 0

@@ -333,6 +333,12 @@ class CashCountFigures:
     `status` is the expected figure's (`COMPLETE`, `INCOMPLETE`, `FLOAT_MISSING`,
     `BOOKS_BELOW_ZERO`); `expected_vnd`, `difference_vnd` and `direction` (`EVEN`, `OVER`, `SHORT`)
     exist only when an expected figure was produced. Every amount is a magnitude.
+
+    `changed_since_count` is the count's sheet's own answer (the trace recomputed from the books
+    now differs from the stored one): the books or the float moved after the count. Then the
+    recorded figures are said as what they were *at the count*, and `expected_now_vnd` -- what
+    the books say the drawer should hold now, when a figure is produced -- is said beside them, as
+    Báo cáo and Đếm két say it.
     """
 
     status: Literal["COMPLETE", "INCOMPLETE", "FLOAT_MISSING", "BOOKS_BELOW_ZERO"]
@@ -343,6 +349,8 @@ class CashCountFigures:
     excluded_unknown_entries: int
     excluded_unknown_vnd: int
     books_over_vnd: int | None
+    changed_since_count: bool = False
+    expected_now_vnd: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -902,44 +910,68 @@ def _numbers_sentences(
 
 
 def _cash_count_line(counted: CashCountFigures) -> SummaryLine | None:
-    """`DEC-049`: the closing count when it is not even with the books, or could not be compared.
+    """`DEC-049`: the closing count when it is not even with the books, or could not be compared,
+    or the books moved after it.
 
     Thừa / thiếu is a word and the gap a magnitude; both figures are printed, never a difference
-    the reader would have to take from them. An even count is not a line.
+    the reader would have to take from them. An even count the books still agree with is not a
+    line. A count the books (or the float) moved after is said as it was *at the count*, followed
+    by what the books say now -- the summary never repeats a recorded sentence that is no longer
+    true when read, and never stays silent about an even count the books no longer agree with.
     """
+    moved = counted.changed_since_count
     figures: tuple[tuple[str, Figure], ...] = (
         ("cash_count_status", counted.status),
         ("cash_counted_vnd", counted.counted_vnd),
         ("cash_expected_vnd", counted.expected_vnd),
         ("cash_difference_vnd", counted.difference_vnd),
         ("cash_difference_direction", counted.direction),
+        ("cash_changed_since_count", 1 if moved else 0),
+        ("cash_expected_now_vnd", counted.expected_now_vnd if moved else None),
     )
-    if counted.status == "FLOAT_MISSING":
-        text = (
-            f"Đếm két cuối ngày được {format_vnd(counted.counted_vnd)} nhưng chưa so được: "
-            "chưa ghi tiền đầu ngày."
+    sentences: list[str]
+    if counted.status in ("FLOAT_MISSING", "BOOKS_BELOW_ZERO"):
+        why = (
+            "chưa ghi tiền đầu ngày"
+            if counted.status == "FLOAT_MISSING"
+            else "sổ ghi tiền ra khỏi két nhiều hơn tiền vào "
+            f"{format_vnd(counted.books_over_vnd or 0)}"
         )
-        return SummaryLine(LineKey.ATTN_CASH_COUNT, text, figures)
-    if counted.status == "BOOKS_BELOW_ZERO":
-        text = (
-            f"Đếm két cuối ngày được {format_vnd(counted.counted_vnd)} nhưng chưa so được: "
-            "sổ ghi tiền ra khỏi két nhiều hơn tiền vào "
-            f"{format_vnd(counted.books_over_vnd or 0)}."
+        counted_text = format_vnd(counted.counted_vnd)
+        sentences = [
+            f"Đếm két cuối ngày được {counted_text}; lúc đếm {why} nên chưa so được."
+            if moved
+            else f"Đếm két cuối ngày được {counted_text} nhưng chưa so được: {why}."
+        ]
+    elif counted.direction in ("OVER", "SHORT", "EVEN") and counted.expected_vnd is not None:
+        if counted.direction == "EVEN" and not moved:
+            return None
+        both = (
+            f"(phải có {format_vnd(counted.expected_vnd)}, "
+            f"đếm được {format_vnd(counted.counted_vnd)})"
         )
-        return SummaryLine(LineKey.ATTN_CASH_COUNT, text, figures)
-    if counted.direction not in ("OVER", "SHORT") or counted.expected_vnd is None:
+        if counted.direction == "EVEN":
+            gap = "khớp"
+        else:
+            word = "thừa" if counted.direction == "OVER" else "thiếu"
+            gap = f"{word} {format_vnd(counted.difference_vnd or 0)}"
+        sentences = [
+            f"Lúc đếm, két cuối ngày {gap} {both}." if moved else f"Đếm két cuối ngày {gap} {both}."
+        ]
+        if counted.excluded_unknown_entries:
+            sentences.append(
+                f"Số phải có{' lúc đó' if moved else ''} chưa tính "
+                f"{format_count(counted.excluded_unknown_entries, 'khoản hoàn')} chưa rõ cách hoàn "
+                f"({format_vnd(counted.excluded_unknown_vnd)})."
+            )
+    else:
         return None
-    word = "thừa" if counted.direction == "OVER" else "thiếu"
-    sentences = [
-        f"Đếm két cuối ngày {word} {format_vnd(counted.difference_vnd or 0)} "
-        f"(phải có {format_vnd(counted.expected_vnd)}, "
-        f"đếm được {format_vnd(counted.counted_vnd)})."
-    ]
-    if counted.excluded_unknown_entries:
+    if moved:
         sentences.append(
-            "Số phải có chưa tính "
-            f"{format_count(counted.excluded_unknown_entries, 'khoản hoàn')} chưa rõ cách hoàn "
-            f"({format_vnd(counted.excluded_unknown_vnd)})."
+            "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có "
+            f"{format_vnd(counted.expected_now_vnd)}."
+            if counted.expected_now_vnd is not None
+            else "Sổ đã thay đổi sau lúc đếm; bây giờ chưa tính được số phải có."
         )
     return SummaryLine(LineKey.ATTN_CASH_COUNT, " ".join(sentences), figures)
 

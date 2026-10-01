@@ -246,6 +246,8 @@ def _on_invoice(
     invoice: tuple[int | None, tuple[int, ...]],
     lines: tuple[tuple[int, int | None], ...],
     request_total: int | None = None,
+    *,
+    printed: bool = False,
 ) -> tuple[int, ...] | str:
     from uuid import UUID
 
@@ -262,11 +264,13 @@ def _on_invoice(
             invoice_order_ids=[UUID(int=n) for n in invoice[1]],
             request_total_vnd=request_total,
             lines=[(UUID(int=n), amount) for n, amount in lines],
+            record_printed=printed,
         )
     except InvoiceRuleError as error:
         assert (error.field == "invoice_total_vnd") is (str(error) == "INVOICE_TOTAL_MISMATCH")
         return str(error)
-    return tuple(order_id.int for order_id in chosen)
+    assert (chosen.printed_total_vnd is not None) is (printed and invoice[0] != request_total)
+    return tuple(order_id.int for order_id in chosen.order_ids)
 
 
 MONTH = ((1, 110_000), (2, 70_000), (3, 40_000))
@@ -301,11 +305,13 @@ def test_a_month_is_fixed_at_the_orders_its_invoice_lists(
     ("invoice", "request_total", "result"),
     [
         ((110_000, (1,)), 110_000, (1,)),
-        ((None, (1,)), None, (1,)),
-        # A fee accrued since the invoice was made; a single total appeared or went away.
+        # Round 9b (J6d): a quote with no single total has no figure to fix, whatever was typed.
+        # (Round 9 recorded `(None, (1,))` against no total as issued: that row encoded the gap.)
+        ((None, (1,)), None, "INVOICE_TOTAL_UNKNOWN"),
+        ((110_000, (1,)), None, "INVOICE_TOTAL_UNKNOWN"),
+        # A fee accrued since the invoice was made; a single total appeared.
         ((110_000, (1,)), 135_000, "INVOICE_TOTAL_MISMATCH"),
         ((None, (1,)), 110_000, "INVOICE_TOTAL_MISMATCH"),
-        ((110_000, (1,)), None, "INVOICE_TOTAL_MISMATCH"),
         ((110_000, (2,)), 110_000, "INVOICE_AMOUNT_MOVED"),
         ((110_000, ()), 110_000, "INVOICE_AMOUNT_MOVED"),
         ((110_000, (1, 1)), 110_000, "INVOICE_AMOUNT_MOVED"),
@@ -317,3 +323,65 @@ def test_an_order_is_fixed_only_at_its_total_now(
     result: tuple[int, ...] | str,
 ) -> None:
     assert _on_invoice("ORDER", invoice, ((1, request_total),), request_total) == result
+
+
+# --- round 9b (J6a): an invoice already issued is recorded at its printed figure, when confirmed --
+
+
+@pytest.mark.parametrize(
+    ("kind", "invoice", "lines", "request_total", "result"),
+    [
+        # The fee accrued after the bookkeeper made the invoice: kept at what it prints.
+        ("ORDER", (110_000, (1,)), ((1, 135_000),), 135_000, (1,)),
+        ("ACCOUNT_MONTH", (100_000, (1, 2)), MONTH[:2], None, (1, 2)),
+        # Agreeing figures need no confirmation and record no printed figure.
+        ("ORDER", (110_000, (1,)), ((1, 110_000),), 110_000, (1,)),
+        # Confirmation never invents a figure, or a total where the quote has none.
+        ("ORDER", (None, (1,)), ((1, 110_000),), 110_000, "INVOICE_TOTAL_MISMATCH"),
+        ("ORDER", (110_000, (1,)), ((1, None),), None, "INVOICE_TOTAL_UNKNOWN"),
+        # Nor does it pass orders that are not the request's.
+        ("ACCOUNT_MONTH", (100_000, (4,)), MONTH, None, "INVOICE_AMOUNT_MOVED"),
+    ],
+)
+def test_a_confirmed_printed_figure_is_recorded_never_refused_into_a_dead_end(
+    kind: str,
+    invoice: tuple[int | None, tuple[int, ...]],
+    lines: tuple[tuple[int, int | None], ...],
+    request_total: int | None,
+    result: tuple[int, ...] | str,
+) -> None:
+    total = request_total if kind == "ORDER" else sum(a or 0 for n, a in lines if n in invoice[1])
+    assert _on_invoice(kind, invoice, lines, total, printed=True) == result
+    # Unconfirmed, the same press is refused first: a typing slip is the common cause.
+    if isinstance(result, tuple) and invoice[0] != total:
+        assert _on_invoice(kind, invoice, lines, total) == "INVOICE_TOTAL_MISMATCH"
+
+
+@pytest.mark.parametrize(
+    ("printed", "others", "expected"),
+    [
+        (None, 0, ()),
+        (110_000, 0, ("PRINTED_TOTAL_DIFFERS",)),
+        (None, 1, ("ON_ANOTHER_REQUEST",)),
+        (110_000, 2, ("PRINTED_TOTAL_DIFFERS", "ON_ANOTHER_REQUEST")),
+    ],
+)
+def test_the_round_9b_flags_are_said_in_their_place(
+    printed: int | None, others: int, expected: tuple[str, ...]
+) -> None:
+    from uuid import UUID
+
+    from nha_trang_laundry_domain.invoice_requests import CoveredOrderState, issued_flags
+
+    order = UUID(int=1)
+    state = {order: CoveredOrderState(False, False)}
+    flags = issued_flags(
+        fixed_total_vnd=135_000,
+        live_total_vnd=135_000,
+        at_issue=state,
+        now=state,
+        uninvoiced_month_orders=0,
+        printed_total_vnd=printed,
+        other_live_requests=others,
+    )
+    assert tuple(flag.value for flag in flags) == expected

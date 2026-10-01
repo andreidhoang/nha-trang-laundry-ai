@@ -9640,6 +9640,11 @@ class InvoiceRequestResponse(BaseModel):
     flags: list[InvoiceFlag] = []
     live_total_vnd: int | None = None
     uninvoiced_charge_count: int | None = None
+    #: Round 9b (J6a), with `PRINTED_TOTAL_DIFFERS`: what the orders cost when the invoice was
+    #: recorded; `amount.total_vnd` is then the invoice's printed figure.
+    shop_total_vnd: int | None = None
+    #: Round 9b (J6b), with `ON_ANOTHER_REQUEST`: the other live requests covering its orders.
+    other_request_codes: list[str] = []
     #: The orders the request covers: an order's own; an open month's charged orders without a
     #: request of their own; an issued request's fixed list.
     covered_order_ids: list[UUID] = []
@@ -9723,6 +9728,11 @@ class InvoiceIssuedRequest(StrictRequest):
     #: what those orders cost; 422 `INVOICE_AMOUNT_MOVED` when an order is not the request's now.
     invoice_total_vnd: StrictInt | None = Field(ge=0)
     invoice_order_ids: list[UUID] = Field(max_length=10000)
+    #: Round 9b (J6a): the owner confirms `invoice_total_vnd` is what the invoice prints although
+    #: it is not what those orders cost now (the press was refused `INVOICE_TOTAL_MISMATCH` first).
+    #: The request is then recorded at that printed figure and flagged `PRINTED_TOTAL_DIFFERS`.
+    #: An order whose quote has no single total is refused `INVOICE_TOTAL_UNKNOWN` either way.
+    record_printed_total: StrictBool = False
 
 
 class InvoiceCancelRequest(StrictRequest):
@@ -9808,6 +9818,8 @@ def _invoice_request_response(
         flags=list(view.flags),
         live_total_vnd=view.live_total_vnd,
         uninvoiced_charge_count=view.uninvoiced_charge_count,
+        shop_total_vnd=view.shop_total_vnd,
+        other_request_codes=list(view.other_request_codes),
         covered_order_ids=list(view.covered_order_ids),
         lines=[
             InvoiceLineResponse(
@@ -10058,7 +10070,7 @@ def export_invoice_requests(
 ) -> InvoiceExportResponse:
     """*Tải danh sách cho kế toán*: open requests and flagged issued ones as CSV (export v2).
 
-    `invoice-requests-export-v2`: every open request, then every issued request something moved on
+    `invoice-requests-export-v3`: every open request, then every issued request something moved on
     after it was issued, from its fixed figure, with what to tell the bookkeeper.
 
     Owner or approver, MFA. Audited: who, when, how many rows and the digest of the exact bytes.
@@ -10138,6 +10150,7 @@ def record_invoice_issued(
             invoice_date=request.invoice_date,
             invoice_total_vnd=request.invoice_total_vnd,
             invoice_order_ids=tuple(request.invoice_order_ids),
+            record_printed_total=request.record_printed_total,
         )
     except _INVOICE_ERRORS as error:
         _raise_invoice_error(error)

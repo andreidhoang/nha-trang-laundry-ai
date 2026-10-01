@@ -88,6 +88,8 @@ def test_discovers_forward_only_transaction_foundation() -> None:
         ("0068", "invoice_snapshots"),
         # Round 9 slice H (OPS-OBSERVABILITY-009, review P7); 0066-0069 are reserved for A, B, C, G.
         ("0070", "event_aggregate_id_indexes"),
+        # Round 9b, MONEY-RESIDUAL-009B (J6a): an issued invoice kept at its printed figure.
+        ("0071", "invoice_printed_total"),
     ]
     assert all(len(migration.checksum) == 64 for migration in migrations)
 

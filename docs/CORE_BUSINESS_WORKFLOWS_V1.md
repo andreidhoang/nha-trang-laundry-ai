@@ -327,8 +327,10 @@ already paid stays owed-for.
     month's missing cost categories;
   - the day's **recorded** closing cash count when it is thừa or thiếu (both figures; the refunds of
     unknown method its expected figure left out), or when it could not be compared (no float, or
-    books below nothing) — read by the owner only; another reader gets the line omitted by role and
-    no "nothing needs attention" (`daily-summary-v5`).
+    books below nothing), or — even if it was even — when the books or the float moved after the
+    count: then said as it was *lúc đếm* with "Sổ đã thay đổi sau lúc đếm" and what the books say
+    now, the answer Báo cáo gives — read by the owner only; another reader gets the line omitted
+    by role and no "nothing needs attention" (`daily-summary-v5`).
 
   It says "Không có việc cần chú ý" only when every source answered. Then the day's figures: orders taken in, completed and
   cancelled; money in split cash / transfer (and refunds when any); finished on time against the
@@ -359,9 +361,15 @@ already paid stays owed-for.
   the row; the screen says **Sổ đã thay đổi sau lúc đếm** when the books move after it. A wrong
   figure is corrected by **Sửa** (a new superseding entry with **Vì sao sửa?**); the first stays
   listed as **Đã thay**. A second phone's entry turns the press into a re-read
-  (`CASH_COUNT_ALREADY_RECORDED` / `CASH_COUNT_STALE`, 409). Nothing happens automatically: no
-  adjustment, no money moved. The owner (alone) reads every day's count on **Báo cáo → Đếm két**
-  (`GET …/cash-counts?from=&to=`, the report's window rules) and in the evening summary.
+  (`CASH_COUNT_ALREADY_RECORDED` / `CASH_COUNT_STALE`, 409). Entries — originals and
+  corrections alike — are for the shop's today only (`CASH_COUNT_DAY_NOT_TODAY`, 422; the screen
+  says **Đã sang ngày mới**): a past day's count, wrong or missing, cannot be recorded or corrected
+  on the machine. That is the fail-closed reading of `DEC-049`, which does not say whether a past
+  day may be corrected or by whom; it stands until the owner decides (round 9b, decisions needed).
+  Nothing happens automatically: no adjustment, no money moved. The owner (alone) reads every day's count on **Báo cáo → Đếm két**
+  (`GET …/cash-counts?from=&to=`, the report's window rules) and in the evening summary; when
+  the books or the float moved after the count, both say so (**sổ đổi sau lúc đếm**; the summary
+  says the recorded figures as they were *lúc đếm* and what the books say now).
 - **`#/orders`** is the board: four labels per order, read as four answers.
 - **`#/orders/{id}`** is the working surface: the audit timeline, the settlement panel, the delivery
   legs.

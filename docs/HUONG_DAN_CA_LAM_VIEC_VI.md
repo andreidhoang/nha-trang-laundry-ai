@@ -277,6 +277,11 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
      tự tải lại, kiểm tra rồi sửa nếu cần.
    - Máy báo **Sổ đã thay đổi sau lúc đếm** khi có khoản thu, hoàn hay chi từ két ghi sau lúc
      đếm: đếm lại rồi **Sửa số đếm** nếu cần.
+   - Máy chỉ ghi tiền đầu ngày, số đếm cuối ngày và lần sửa cho **hôm nay** theo giờ của tiệm:
+     đếm và ghi xong **trước 0 giờ**. Qua nửa đêm máy báo **Đã sang ngày mới** — số đó không ghi
+     cho hôm qua được nữa. Số của một ngày đã qua, ghi sai hay quên ghi, cũng **không sửa được
+     trên máy**: ghi ra giấy số đúng và lý do, đưa chủ tiệm. Báo cáo và tóm tắt cuối ngày vẫn hiện
+     số đã ghi của ngày đó.
 2. Lệch thì **không tự bù, không sửa gì khác trên máy** — máy chỉ ghi phần thừa thiếu để chủ tiệm
    xem; không tự điều chỉnh tiền, không trừ lương ai. Lần thu đã ghi không sửa được.
 3. Để máy **bật qua đêm** (chỉ tắt màn hình). Bản sao lưu chạy lúc 2 giờ 30 sáng.

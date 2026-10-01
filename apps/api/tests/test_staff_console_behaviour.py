@@ -728,6 +728,9 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         "Vì sao sửa?",
         "Trả từ két",
         "Người khác vừa ghi số này",
+        # CASH-COUNT-009 (verification round 1): a count is for the shop's today only -- what the
+        # screen says after midnight, and that a past day's count cannot be fixed on the machine.
+        "Đã sang ngày mới",
     ]
 
     absent_from_guide = [phrase for phrase in quoted if phrase not in guide]

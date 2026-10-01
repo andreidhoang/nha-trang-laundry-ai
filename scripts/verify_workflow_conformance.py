@@ -9234,7 +9234,9 @@ def scenario_invoice_truth(console: Console) -> None:
         paid["status"] == 201 and issued["status"] == 200 and figure,
         f"{paid['status']} {issued['status']} {issued['text'][:120]}",
     )
-    said = console.step(order_id, "CANCEL", custody="RETURNED_UNWASHED_REFUNDED")
+    # GOODS-AND-DRAWER-009 (DEC-048): a refunding cancellation names how the money went back; the
+    # sheet keeps its press shut until it does (this scenario predates that question).
+    said = console.step(order_id, "CANCEL", custody="RETURNED_UNWASHED_REFUNDED", refund="TIEN_MAT")
     console.page.wait_for_timeout(1500)
     after = (
         console.call(

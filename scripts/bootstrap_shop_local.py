@@ -322,7 +322,7 @@ def _leaf_warning(path: _Path, now: datetime) -> str | None:
     return None
 
 
-def retire_authority(*, now: datetime) -> _Path:
+def retire_authority(*, now: datetime) -> _Path | None:
     """`--new-ca`: move the CA certificate and the console's certificate and key aside.
 
     Moved, not deleted: until every tablet trusts the new CA, putting the old pair back is the way
@@ -332,21 +332,27 @@ def retire_authority(*, now: datetime) -> _Path:
     custody `DEC-052` ends, and nothing here ever needs it again.
     """
 
-    retired = SECRET_DIRECTORY.parent / "retired" / now.strftime("%Y%m%dT%H%M%SZ")
-    retired.mkdir(parents=True, exist_ok=False)
-    retired.parent.chmod(0o700)
-    retired.chmod(0o700)
     authority_directory = SECRET_DIRECTORY.parent / "ca"
     legacy_key = authority_directory / "ca.key"
     if legacy_key.exists():
         legacy_key.unlink()
-    for source in (
-        authority_directory / "ca.crt",
-        SECRET_DIRECTORY / "tls_certificate",
-        SECRET_DIRECTORY / "tls_private_key",
-    ):
-        if source.exists():
-            source.rename(retired / source.name)
+    sources = [
+        source
+        for source in (
+            authority_directory / "ca.crt",
+            SECRET_DIRECTORY / "tls_certificate",
+            SECRET_DIRECTORY / "tls_private_key",
+        )
+        if source.exists()
+    ]
+    if not sources:
+        return None  # a first run with --new-ca: nothing to retire
+    retired = SECRET_DIRECTORY.parent / "retired" / now.strftime("%Y%m%dT%H%M%SZ")
+    retired.mkdir(parents=True, exist_ok=False)
+    retired.parent.chmod(0o700)
+    retired.chmod(0o700)
+    for source in sources:
+        source.rename(retired / source.name)
     return retired
 
 
@@ -389,8 +395,8 @@ def certificate(
     authority_directory.chmod(0o700)
     ca_certificate_path = authority_directory / "ca.crt"
 
-    if new_ca:
-        retired = retire_authority(now=moment)
+    retired = retire_authority(now=moment) if new_ca else None
+    if retired is not None:
         warnings.append(
             f"CA cũ và chứng chỉ console cũ đã chuyển sang {retired.relative_to(ROOT)}. Cài "
             ".shop/ca/ca.crt mới lên từng máy và bật tin cậy; khi mọi máy đã dùng được, xóa thư "

@@ -362,3 +362,12 @@ def test_the_bootstrap_makes_the_api_log_folder_the_container_writes(
     assert bootstrap.main() == 0
     folder = bootstrap.ROOT / ".shop/logs/api"
     assert folder.is_dir() and folder.stat().st_mode & 0o777 == 0o755
+
+
+def test_new_ca_on_a_fresh_till_mints_without_retiring_anything(bootstrap: ModuleType) -> None:
+    warnings = bootstrap.certificate(HOST, [], new_ca=True)
+    assert warnings == []
+    assert not (bootstrap.ROOT / ".shop/retired").exists()
+    assert bootstrap.authority_status(
+        bootstrap.ROOT / ".shop/ca/ca.crt", HOST
+    ).vouches_only_for_console

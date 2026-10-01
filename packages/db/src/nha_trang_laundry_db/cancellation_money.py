@@ -92,11 +92,12 @@ _ISSUED_SQL: Final = """
 """
 
 #: The credits the order's bill spent, each with J3's fact: was the order it came from cancelled
-#: (not disposed of -- `DEC-036` keeps every credit) without its refund taking this credit's whole
-#: face value off? Covered means a refund row exists, the credit was spent by the time of that
-#: refund (it was among the credits netted then), and the refund netted the whole face value of
-#: every credit from that order spent by then -- the chain latest links, as `_ISSUED_SQL` reads
-#: them, at that instant.
+#: (not disposed of -- `DEC-036` keeps every credit) without its refund taking the credits' whole
+#: face value off? Covered means a refund row exists and it netted the whole face value of every
+#: credit from that order spent by then -- the chain latest links, as `_ISSUED_SQL` reads them, at
+#: that instant. Every credit from that order still spendable afterwards descends from one of
+#: those (an unspent one was voided with the cancellation), so a credit reissued from a netted one
+#: and spent again later is covered too: its value was taken back once.
 _SPENT_SQL: Final = """
     SELECT c.id, p.kind, c.amount_vnd, c.redeemed_at IS NOT NULL, c.voided_at IS NOT NULL,
            c.row_version, c.remedy_proposal_id, c.store_id, c.issued_from_order_id,
@@ -105,8 +106,7 @@ _SPENT_SQL: Final = """
                issuer.commercial_status = 'CANCELLED'
                AND NOT EXISTS (SELECT 1 FROM order_disposals d WHERE d.order_id = issuer.id)
                AND NOT coalesce((
-                   SELECT c.redeemed_at <= r.refunded_at
-                      AND r.netted_remedy_vnd >= (
+                   SELECT r.netted_remedy_vnd >= (
                           SELECT coalesce(sum(n.amount_vnd), 0)
                           FROM remedy_credits n
                           WHERE n.issued_from_order_id = issuer.id

@@ -25,6 +25,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from nha_trang_laundry_domain.cancellation_money import (
     CancellationMoneyFigures,
+    CancellationMoneyPlan,
     CancellationMoneyRefusal,
     CancellationMoneyRefused,
     CreditState,
@@ -188,29 +189,28 @@ def test_property_no_order_of_cancellation_ends_anywhere_else(
 # --- the press carries the preview (J4) ------------------------------------------------------
 
 
-def _plan(**overrides: object) -> object:
+def _plan() -> CancellationMoneyPlan:
     spent = RemedyCreditFact(uuid4(), RemedyKind.LATE_DELIVERY_CREDIT, 11_000, CreditState.SPENT)
     return cancellation_money_plan(
         resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE,
         refundable_vnd=110_000,
         issued_from_order=[spent],
         spent_on_order=[],
-        **overrides,  # type: ignore[arg-type]
     )
 
 
 def test_the_press_must_carry_exactly_the_figures_it_would_execute() -> None:
     plan = _plan()
-    shown = plan.figures()  # type: ignore[attr-defined]
+    shown = plan.figures()
     assert shown == CancellationMoneyFigures(99_000, 11_000, 0, 0)
-    plan.require_allowed(shown)  # type: ignore[attr-defined]
+    plan.require_allowed(shown)
     for moved in (
         CancellationMoneyFigures(110_000, 0, 11_000, 0),  # the credit was unspent when shown
         CancellationMoneyFigures(99_000, 11_000, 0, 11_000),
         None,  # remedy money moves and the press said nothing about it
     ):
         with pytest.raises(CancellationMoneyRefused) as refused:
-            plan.require_allowed(moved)  # type: ignore[attr-defined]
+            plan.require_allowed(moved)
         assert refused.value.code is CancellationMoneyRefusal.CANCELLATION_MONEY_CHANGED
         assert "Xem lại số mới" in refused.value.message_vi
 

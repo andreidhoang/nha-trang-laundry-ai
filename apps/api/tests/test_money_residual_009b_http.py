@@ -378,6 +378,38 @@ def test_a_capped_three_order_chain_refuses_exactly_the_cancellations_that_would
     assert _run(connection, service, client, 3, True, order) == expected
 
 
+def test_a_credit_given_back_after_a_full_netting_and_spent_again_comes_back_again(
+    connection: Any, service: OperationsService, client: TestClient
+) -> None:
+    """X nets c1 whole, Y gives c1 back as c1', c1' is spent on W: W's cancellation gives it back
+    once more and the customer still ends at 0 -- the value was taken back once, at X."""
+
+    (x_id, y_id), _ = _chain(connection, service, client, 2, capped=False)
+    assert _cancel_any(client, x_id).status_code == 200
+    assert _cancel_any(client, y_id).status_code == 200
+    [(again,)] = _rows(
+        connection,
+        "SELECT id FROM remedy_credits WHERE issued_from_order_id = %s AND reissue_of IS NOT NULL",
+        x_id,
+    )
+    [(store_id,)] = _rows(connection, "SELECT store_id FROM orders WHERE id = %s", x_id)
+    staff = _staff_of()
+    w_id = _spend_on_new_order(service, connection, store_id, staff, UUID(str(again))).order_id
+    answer = _cancel_any(client, w_id)
+    assert answer.status_code == 200, answer.text
+    paid, refunded, live = _customer_total(connection, (x_id, y_id, w_id))
+    assert paid - refunded - live == 0
+
+
+def _staff_of() -> Any:
+    """The counter staff member the chain was built by (the principal the test client uses)."""
+
+    from nha_trang_laundry_api.main import app as served
+    from nha_trang_laundry_api.main import current_principal
+
+    return served.dependency_overrides[current_principal]()
+
+
 def test_the_preview_says_the_cancellation_would_be_refused(
     connection: Any, service: OperationsService, client: TestClient
 ) -> None:

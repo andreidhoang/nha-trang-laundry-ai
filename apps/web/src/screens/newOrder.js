@@ -304,11 +304,17 @@ export function render_(context) {
    * A ticket issued by a walk-in whose intake failed stays (`flow.ticket`): the next walk-in press
    * resumes it with the same number.
    *
+   * CONSOLE-RESIDUAL-009B (K1): unless this context is the one the address names (`fromAddress`),
+   * the address stops naming a customer (`leaveAddress`), so a reload never brings back the one
+   * just superseded.
+   *
+   * @param {boolean} [fromAddress] the context is the boot resume the address names
    * @returns {number} the new context, for an async caller to compare after each await
    */
-  function newContext() {
+  function newContext(fromAddress = false) {
+    const leaving = flow.request;
     flow.session += 1;
-    flow.busy = false;
+    setBusy(false);
     Object.assign(flow, {
       request: null,
       mode: "SELF_DROP_SELF_COLLECT",
@@ -329,6 +335,7 @@ export function render_(context) {
     orderSub.reset();
     accepting = null;
     render(resumeHost);
+    if (!fromAddress) leaveAddress(leaving);
     return flow.session;
   }
 
@@ -340,11 +347,133 @@ export function render_(context) {
    * theirs. Otherwise it is a new context, and whatever an earlier one is still reading is dropped
    * when it arrives -- the last press wins, and a late read never lands on another customer (C2).
    *
+   * Not taken is never silent (K1): the step-1 rows are shown disabled while the write is in
+   * flight, and a press that reaches here anyway hears why (`heldNotice`).
+   *
+   * @param {boolean} [fromAddress] the boot resume the address names, and its own later steps
    * @returns {number|null} the context to compare after each await; null when not taken
    */
-  function beginIntent() {
-    if (flow.busy) return null;
-    return newContext();
+  function beginIntent(fromAddress = false) {
+    if (flow.busy) {
+      heldNotice();
+      return null;
+    }
+    return newContext(fromAddress);
+  }
+
+  /**
+   * CONSOLE-RESIDUAL-009B (K1): a step-1 press while a ticket or intake write is in flight. The
+   * rows are disabled then; a row drawn meanwhile (a search answer) may still take a press, and it
+   * is told, never ignored.
+   */
+  function heldNotice() {
+    toast("Đang mở lượt tiếp nhận cho khách vừa chọn — chờ xong rồi bấm lại.");
+  }
+
+  /**
+   * CONSOLE-RESIDUAL-009B (K1). Whether a ticket or intake write is in flight, kept in one place
+   * so the step-1 screen shows it: every row and button on it is disabled while the write is out
+   * (`data-busy-held` marks the ones disabled here, so only those are given back), and a row drawn
+   * meanwhile is dimmed by `.new-step1[data-busy]` (kit.css). A control disabled for another reason
+   * -- a denial (`data-denied`), being offline -- stays as it was.
+   *
+   * @param {boolean} on
+   */
+  function setBusy(on) {
+    flow.busy = on;
+    const root = step1Node;
+    if (!root || !root.isConnected) return;
+    if (on) {
+      root.setAttribute("data-busy", "true");
+      root.setAttribute("aria-busy", "true");
+      for (const control of root.querySelectorAll("button")) {
+        if (control.disabled) continue;
+        control.disabled = true;
+        control.setAttribute("aria-disabled", "true");
+        control.setAttribute("data-busy-held", "true");
+      }
+      return;
+    }
+    root.removeAttribute("data-busy");
+    root.removeAttribute("aria-busy");
+    for (const control of root.querySelectorAll("[data-busy-held]")) {
+      control.removeAttribute("data-busy-held");
+      if (control.getAttribute("data-denied") === "true") continue;
+      if (control.hasAttribute("data-requires-network") && !navigator.onLine) {
+        // Offline meanwhile: the shell's own mark, so it gives the control back when online.
+        control.setAttribute("data-offline-disabled", "true");
+        continue;
+      }
+      control.disabled = false;
+      control.removeAttribute("aria-disabled");
+    }
+  }
+
+  /** @type {HTMLElement|null} the step-1 screen on show, which `setBusy` marks */
+  let step1Node = null;
+
+  /**
+   * CONSOLE-RESIDUAL-009B (K1). Whether the address still names a customer -- `?request=`,
+   * `?quote=` or `?contact=` at boot, or the `?request=` a hand-off settled on -- and whether that
+   * boot resume is still on its way.
+   */
+  let addressNames = Boolean(handOffContact || resumeQuote || resumeRequest);
+  let addressPending = false;
+
+  /**
+   * Another customer is being served than the one the address names: the address goes back to
+   * `#/new` (no new history entry, no rebuild), so a reload starts clean instead of resuming the
+   * one just left. A boot resume superseded before it landed says so in one quiet line -- the
+   * customer it was opening is not lost, and the person knows where to find them.
+   *
+   * @param {any|null} leaving the intake on screen (or being resumed) until now
+   */
+  function leaveAddress(leaving) {
+    if (!addressNames) return;
+    addressNames = false;
+    if (location.hash.startsWith("#/new")) history.replaceState(history.state, "", "#/new");
+    if (!addressPending) return;
+    addressPending = false;
+    const contactOnly = Boolean(handOffContact) && !leaving;
+    droppedLine = h(
+      "p",
+      { class: "hint new-dropped", id: "new-resume-dropped", role: "status" },
+      contactOnly ? "Đã bỏ khách mở từ cuộc trò chuyện — chưa tạo gì cho khách đó." : droppedText(leaving),
+    );
+    show(resumeHost, droppedLine);
+  }
+
+  /** @type {HTMLElement|null} the "Đã bỏ khách" line, while it may still be on screen */
+  let droppedLine = null;
+
+  /**
+   * What the quiet line can truthfully say about the customer dropped: named once their intake
+   * has been read, and only then "still in the list" without a condition -- an intake that became
+   * an order meanwhile, or one the store does not have, is not waiting anywhere.
+   *
+   * @param {any|null} item the intake dropped, when it has been read
+   */
+  function droppedText(item) {
+    if (!item) {
+      return "Đã bỏ khách đang chờ mở từ đường dẫn — nếu chưa thành đơn thì vẫn còn trong danh sách.";
+    }
+    if (item.order_id) return `Đã bỏ “${customerLabel(item)}” — khách này đã thành đơn.`;
+    return `Đã bỏ khách đang chờ “${customerLabel(item)}” — vẫn còn trong danh sách.`;
+  }
+
+  /**
+   * The dropped resume's read arrived after all: it names the customer on the quiet line (the
+   * counter knows whom to look for in the list) and changes nothing else. `null` with `missing`:
+   * the store has no such intake.
+   *
+   * @param {any|null} item
+   * @param {boolean} [missing]
+   */
+  function nameDropped(item, missing = false) {
+    if (!droppedLine?.isConnected) return;
+    droppedLine.textContent = missing
+      ? "Đã bỏ khách mở từ đường dẫn — cửa hàng đang chọn không có khách này."
+      : droppedText(item);
   }
 
   /** An answer to a press made for the customer before: say where it went, change nothing. */
@@ -390,9 +519,9 @@ export function render_(context) {
       id: "new-walk-in",
       onClick: () => void issueWalkIn(walkIn, alertHost),
     });
-    return h(
+    step1Node = h(
       "div",
-      { class: "stack" },
+      { class: "stack new-step1" },
       customerSection(),
       section({
         card: false,
@@ -435,6 +564,7 @@ export function render_(context) {
       recentSection(),
       waitingSection(),
     );
+    return step1Node;
   }
 
   /** The customer this flow is serving, when the person came back to step 1. */
@@ -466,7 +596,7 @@ export function render_(context) {
   async function issueWalkIn(control, alertHost) {
     const session = beginIntent();
     if (session === null) return;
-    flow.busy = true;
+    setBusy(true);
     control.disabled = true;
     control.setAttribute("aria-busy", "true");
     render(alertHost, h("p", { class: "hint", role: "status" }, "Đang phát phiếu…"));
@@ -496,11 +626,11 @@ export function render_(context) {
         order_id: null,
       };
       flow.ticket = null;
-      flow.busy = false;
+      setBusy(false);
       go(2);
     } catch (error) {
       if (session !== flow.session) return;
-      flow.busy = false;
+      setBusy(false);
       control.removeAttribute("aria-busy");
       if (control.getAttribute("data-denied") !== "true") control.disabled = false;
       show(
@@ -588,7 +718,10 @@ export function render_(context) {
    * @param {HTMLElement|null} control the pressed row, marked busy while the write is in flight
    */
   async function bindCustomer(customer, alertHost, control) {
-    if (flow.busy) return;
+    if (flow.busy) {
+      heldNotice();
+      return;
+    }
     const customerId = String(customer?.customer_id || "");
     if (!UUID.test(customerId)) return;
     const session = beginIntent();
@@ -597,7 +730,7 @@ export function render_(context) {
       customerRequestSub.reset();
       customerKeyFor = customerId;
     }
-    flow.busy = true;
+    setBusy(true);
     control?.setAttribute("aria-busy", "true");
     render(alertHost, h("p", { class: "hint", role: "status" }, "Đang mở lượt tiếp nhận…"));
     try {
@@ -609,7 +742,7 @@ export function render_(context) {
         (item) => item.customer_id === customerId && !item.order_id && item.status !== "CANCELLED",
       );
       if (waiting) {
-        flow.busy = false;
+        setBusy(false);
         render(alertHost);
         await resumeFromRequest(waiting);
         return;
@@ -622,7 +755,7 @@ export function render_(context) {
       customerRequestSub.reset();
       customerKeyFor = "";
       if (session !== flow.session) return;
-      flow.busy = false;
+      setBusy(false);
       render(alertHost);
       flow.request = {
         ...created,
@@ -632,7 +765,7 @@ export function render_(context) {
       go(2);
     } catch (error) {
       if (session !== flow.session) return;
-      flow.busy = false;
+      setBusy(false);
       control?.removeAttribute("aria-busy");
       show(
         alertHost,
@@ -663,16 +796,17 @@ export function render_(context) {
    * @param {string} binding
    * @param {HTMLElement} alertHost
    * @param {HTMLElement|null} control the pressed control, marked busy while the write is in flight
+   * @param {boolean} [fromAddress] the hand-off the address names (`?contact=`), not a press
    * @returns {Promise<boolean>} whether the intake exists now
    */
-  async function bindChannel(binding, alertHost, control) {
-    const session = beginIntent();
+  async function bindChannel(binding, alertHost, control, fromAddress = false) {
+    const session = beginIntent(fromAddress);
     if (session === null) return false;
     if (channelKeyFor !== binding) {
       channelRequestSub.reset();
       channelKeyFor = binding;
     }
-    flow.busy = true;
+    setBusy(true);
     control?.setAttribute("aria-busy", "true");
     render(alertHost, h("p", { class: "hint", role: "status" }, "Đang mở lượt tiếp nhận…"));
     try {
@@ -684,14 +818,14 @@ export function render_(context) {
       channelRequestSub.reset();
       channelKeyFor = "";
       if (session !== flow.session) return false;
-      flow.busy = false;
+      setBusy(false);
       render(alertHost);
       flow.request = { ...created, ticket_number: null, ticket_issued_on: null, order_id: null };
       go(2);
       return true;
     } catch (error) {
       if (session !== flow.session) return false;
-      flow.busy = false;
+      setBusy(false);
       control?.removeAttribute("aria-busy");
       show(
         alertHost,
@@ -844,25 +978,28 @@ export function render_(context) {
    * @param {HTMLElement} alertHost
    */
   async function pickContact(item, row, alertHost) {
-    if (flow.busy) return;
+    if (flow.busy) {
+      heldNotice();
+      return;
+    }
     const waiting = String(item.waiting_order_request_id || "");
     if (UUID.test(waiting)) {
       // An intake is already open for this customer: resume it rather than open a second.
       const session = beginIntent();
       if (session === null) return;
-      flow.busy = true;
+      setBusy(true);
       row.setAttribute("aria-busy", "true");
       try {
         const intake = await request(
           `/internal/v1/stores/${encodeURIComponent(store)}/order-requests/${encodeURIComponent(waiting)}`,
         );
         if (session !== flow.session) return;
-        flow.busy = false;
+        setBusy(false);
         render(alertHost);
         await resumeFromRequest(intake);
       } catch (error) {
         if (session !== flow.session) return;
-        flow.busy = false;
+        setBusy(false);
         row.removeAttribute("aria-busy");
         show(alertHost, errorNotice(error, { onRetry: () => void pickContact(item, row, alertHost) }));
       }
@@ -963,7 +1100,7 @@ export function render_(context) {
    * @param {string} binding
    */
   async function handOff(binding) {
-    const session = beginIntent();
+    const session = beginIntent(true);
     if (session === null) return;
     render(
       resumeHost,
@@ -994,13 +1131,15 @@ export function render_(context) {
     }
     if (waiting) {
       render(resumeHost);
-      await resumeFromRequest(waiting);
+      await resumeFromRequest(waiting, true);
       if (flow.request?.order_request_id === waiting.order_request_id) {
         settleAddress(waiting.order_request_id);
       }
       return;
     }
-    if (await bindChannel(binding, resumeHost, null)) settleAddress(flow.request?.order_request_id);
+    if (await bindChannel(binding, resumeHost, null, true)) {
+      settleAddress(flow.request?.order_request_id);
+    }
   }
 
   /**
@@ -1011,7 +1150,10 @@ export function render_(context) {
    */
   function settleAddress(requestId) {
     if (typeof requestId !== "string" || !UUID.test(requestId)) return;
+    // Left for another screen meanwhile: that screen's address is not this one's to change.
+    if (!location.hash.startsWith("#/new")) return;
     history.replaceState(history.state, "", `#/new?request=${encodeURIComponent(requestId)}`);
+    addressNames = true;
   }
 
   /** "Tiếp tục một khách đang chờ": intakes that have not become an order yet. */
@@ -1082,9 +1224,10 @@ export function render_(context) {
 
   /**
    * @param {any} item an order-request summary
+   * @param {boolean} [fromAddress] the resume the address names (boot, or its retry), not a press
    */
-  async function resumeFromRequest(item) {
-    const session = beginIntent();
+  async function resumeFromRequest(item, fromAddress = false) {
+    const session = beginIntent(fromAddress);
     if (session === null) return;
     if (item.order_id) {
       // Converted already: nothing to resume, and binding it would offer a second order.
@@ -1107,23 +1250,27 @@ export function render_(context) {
         go(2);
         return;
       }
-      await adoptQuote(String(found.quote_id), item, session);
+      await adoptQuote(String(found.quote_id), item, session, fromAddress);
     } catch (error) {
       if (session !== flow.session) return;
       go(1);
-      show(resumeHost, errorNotice(error, { onRetry: () => void resumeFromRequest(item) }));
+      show(
+        resumeHost,
+        errorNotice(error, { onRetry: () => void resumeFromRequest(item, fromAddress) }),
+      );
     }
   }
 
   /**
    * @param {string} quoteId
    * @param {any|null} known the intake, when the caller already read it
+   * @param {boolean} [fromAddress] the resume the address names (`?quote=`, or its retry)
    */
-  async function resumeFromQuote(quoteId, known) {
-    const session = beginIntent();
+  async function resumeFromQuote(quoteId, known, fromAddress = false) {
+    const session = beginIntent(fromAddress);
     if (session === null) return;
     render(resumeHost, skeleton(1));
-    await adoptQuote(quoteId, known, session);
+    await adoptQuote(quoteId, known, session, fromAddress);
   }
 
   /**
@@ -1133,8 +1280,9 @@ export function render_(context) {
    * @param {string} quoteId
    * @param {any|null} known the intake, when the caller already read it
    * @param {number} session from the `beginIntent` that started this resume
+   * @param {boolean} [fromAddress] the resume the address names, for a retry to stay one
    */
-  async function adoptQuote(quoteId, known, session) {
+  async function adoptQuote(quoteId, known, session, fromAddress = false) {
     try {
       const detail = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${encodeURIComponent(quoteId)}`,
@@ -1191,7 +1339,9 @@ export function render_(context) {
                 "Mã có thể thuộc cửa hàng khác hoặc đã sai — máy chủ trả lời giống nhau cho cả hai, " +
                 "nên màn hình này cũng không đoán. Không có gì được điền sẵn.",
             })
-          : errorNotice(error, { onRetry: () => void resumeFromQuote(quoteId, known) }),
+          : errorNotice(error, {
+              onRetry: () => void resumeFromQuote(quoteId, known, fromAddress),
+            }),
       );
     }
   }
@@ -2566,7 +2716,9 @@ export function render_(context) {
                       label: "Đọc lại báo giá",
                       icon: "refresh",
                       variant: "quiet",
-                      onClick: () => void resumeFromQuote(String(flow.quote.quote_id), flow.request),
+                      // The same customer read again: the address, if it names them, stays.
+                      onClick: () =>
+                        void resumeFromQuote(String(flow.quote.quote_id), flow.request, true),
                     }),
                   ],
             }),
@@ -2610,8 +2762,22 @@ export function render_(context) {
   // ============================================================================================
 
   void loadCatalog();
+  /**
+   * K1: the boot resume the address names, while it is on its way. A step-1 press meanwhile
+   * supersedes it (`leaveAddress` says so); once it has landed or failed, a later press only
+   * clears the address.
+   *
+   * @param {Promise<unknown>} chain
+   */
+  function bootResume(chain) {
+    addressPending = true;
+    void chain.finally(() => {
+      addressPending = false;
+    });
+  }
+
   if (handOffContact) {
-    if (UUID.test(handOffContact)) void handOff(handOffContact);
+    if (UUID.test(handOffContact)) bootResume(handOff(handOffContact));
     else {
       show(
         resumeHost,
@@ -2623,39 +2789,40 @@ export function render_(context) {
       );
     }
   } else if (resumeQuote) {
-    if (UUID.test(resumeQuote)) void resumeFromQuote(resumeQuote, null);
+    if (UUID.test(resumeQuote)) bootResume(resumeFromQuote(resumeQuote, null, true));
     else show(resumeHost, inlineAlert({ state: "warn", title: "Mã báo giá trong đường dẫn không hợp lệ" }));
   } else if (resumeRequest) {
     if (UUID.test(resumeRequest)) {
-      // A step-1 intent like any other: a walk-in pressed while this reads makes it moot (C2).
-      const session = beginIntent();
+      // A step-1 intent like any other: a walk-in pressed while this reads makes it moot (C2),
+      // and the address stops naming it (K1).
+      const session = beginIntent(true);
       render(resumeHost, skeleton(1));
-      void request(
+      const chain = request(
         `/internal/v1/stores/${encodeURIComponent(store)}/order-requests/${encodeURIComponent(resumeRequest)}`,
       ).then(
-        (item) => {
-          if (session === flow.session) void resumeFromRequest(item);
-        },
+        (item) => (session === flow.session ? resumeFromRequest(item, true) : nameDropped(item)),
         (error) =>
-          session === flow.session &&
-          show(
-            resumeHost,
-            /** @type {any} */ (error).kind === "MISSING"
-              ? h(
-                  "div",
-                  { class: "notice", dataState: "warn", id: "new-request-missing" },
-                  h("p", { class: "notice__title" }, "Không tìm thấy yêu cầu này trong cửa hàng đang chọn"),
-                  h(
-                    "p",
-                    null,
-                    "Mã có thể thuộc cửa hàng khác hoặc đã bị gõ sai — máy chủ trả lời cùng một cách cho " +
-                      "cả hai, nên màn hình này cũng không đoán. Không có dữ kiện nào được điền sẵn; " +
-                      "hãy chọn từ danh sách bên dưới.",
-                  ),
-                )
-              : errorNotice(error),
-          ),
+          session !== flow.session
+            ? nameDropped(null, /** @type {any} */ (error).kind === "MISSING")
+            : show(
+                resumeHost,
+                /** @type {any} */ (error).kind === "MISSING"
+                  ? h(
+                      "div",
+                      { class: "notice", dataState: "warn", id: "new-request-missing" },
+                      h("p", { class: "notice__title" }, "Không tìm thấy yêu cầu này trong cửa hàng đang chọn"),
+                      h(
+                        "p",
+                        null,
+                        "Mã có thể thuộc cửa hàng khác hoặc đã bị gõ sai — máy chủ trả lời cùng một cách cho " +
+                          "cả hai, nên màn hình này cũng không đoán. Không có dữ kiện nào được điền sẵn; " +
+                          "hãy chọn từ danh sách bên dưới.",
+                      ),
+                    )
+                  : errorNotice(error),
+              ),
       );
+      bootResume(chain);
     } else {
       show(resumeHost, inlineAlert({ state: "warn", title: "Mã yêu cầu trong đường dẫn không hợp lệ" }));
     }

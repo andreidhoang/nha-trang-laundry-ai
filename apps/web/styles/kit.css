@@ -5056,3 +5056,41 @@ details.more-denied[open] > .more-denied__summary::after {
   min-width: 0;
   padding: 0;
 }
+
+/* === CONSOLE-RESIDUAL-009B (slice K, round 9b) =========================================================
+ * K1: Nhận đồ step 1 while a ticket or intake write is in flight. The rows on screen are disabled
+ * (newOrder.js `setBusy`); a row drawn meanwhile -- a search answer -- reads as shut too.
+ * K2: "Nhận đồ" for a session without two-step verification: shown, shut, its reason in words --
+ * under the label in the sidebar (layout.css) and, smaller, under the raised tab on a phone. */
+
+.new-step1[data-busy="true"] .row-item--interactive {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  cursor: progress;
+}
+
+.new-dropped {
+  margin: 0;
+}
+
+@media (max-width: 63.99rem) {
+  .nav__link--primary[aria-disabled="true"] .nav__reason {
+    display: block;
+    font-size: 0.5625rem;
+    line-height: 1.15;
+  }
+}
+
+@media (min-width: 64rem) {
+  .nav__link--primary[aria-disabled="true"],
+  .nav__link--primary[aria-disabled="true"]:hover {
+    background: var(--surface-sunken);
+    color: var(--text-secondary);
+    cursor: not-allowed;
+  }
+
+  .nav__link--primary[aria-disabled="true"] .nav__reason {
+    padding-left: 0;
+    text-align: center;
+  }
+}

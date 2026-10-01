@@ -117,17 +117,27 @@ function navLink(entry, shown) {
   const { item } = entry;
   const active = isActive(entry, shown, currentPath());
   const badge = item.path === "/approvals" && approvalsWaiting;
+  // K2: shown and shut ("Nhận đồ" for a session without two-step verification) -- disabled, its
+  // reason in words; a press still opens the route's guard screen with the whole sentence.
+  const shut = entry.denied || null;
   return h(
     "a",
     {
       class: ["nav__link", item.primary && "nav__link--primary"],
       href: `#${item.path}`,
       "aria-current": active ? "page" : null,
-      title: item.hint ? `${item.label} — ${item.hint}` : item.label,
+      "aria-disabled": shut ? "true" : null,
+      title: shut
+        ? `${item.label} — ${shut.reason}`
+        : item.hint
+          ? `${item.label} — ${item.hint}`
+          : item.label,
       dataNavLink: item.path,
+      dataNavDenied: shut ? item.path : null,
     },
     item.primary ? h("span", { class: "nav__plus" }, icon(item.icon)) : icon(item.icon),
     h("span", null, item.label),
+    shut ? h("span", { class: "nav__reason" }, shut.short || shut.reason) : null,
     badge
       ? h(
           "span",
@@ -159,6 +169,31 @@ function navItem(entry, shown) {
 }
 
 /**
+ * Who the navigation is drawn for (CONSOLE-RESIDUAL-009B, K2).
+ *
+ * An idle expiry or a lost server is not a sign-out: the screen is kept, the banner says what
+ * happened, and the navigation stays where it was -- it used to vanish with the principal, which
+ * left the person on a page with no way around it and no sign that one would come back. So the
+ * last person's destinations are kept while the session is `ended` (not by "Thoát") or
+ * `unreachable`. A press on one still goes nowhere that needs the server without saying so: the
+ * route's guard screen says the session ended, or that the server is not answering
+ * (`guard`). "Thoát" -- here or in another tab -- forgets them with everything else.
+ *
+ * @type {import("./src/core/session.js").Principal|null}
+ */
+let lastPrincipal = null;
+
+function navPrincipal() {
+  const state = session.snapshot();
+  if (state.principal) {
+    lastPrincipal = state.principal;
+    return state.principal;
+  }
+  if (state.signedOut) lastPrincipal = null;
+  return state.status === "ended" || state.status === "unreachable" ? lastPrincipal : null;
+}
+
+/**
  * Whether the sidebar's closed "Khác" group is open. In memory only (UX spec §2 invariant 3): a
  * preference for this page's lifetime, never written to the device. Opened by a press, and kept
  * open while the screen on show is one of its entries so the active entry is never hidden.
@@ -166,7 +201,7 @@ function navItem(entry, shown) {
 let foldOpen = false;
 
 function renderNav() {
-  const { shown } = navPlan(session.principal());
+  const { shown } = navPlan(navPrincipal());
   const path = currentPath();
   const children = [];
   const folded = [];
@@ -614,6 +649,9 @@ function signedOutScreen() {
   const signInPath =
     configured && configured.startsWith("/") && !configured.startsWith("//") ? configured : "";
 
+  // K2: a destination pressed after an idle expiry. The navigation is still there; what is behind
+  // it needs the server, and this says why it is not shown -- not "never signed in".
+  const expired = state.status === "ended" && !state.signedOut && lastPrincipal !== null;
   return h(
     "section",
     { class: "screen" },
@@ -621,11 +659,26 @@ function signedOutScreen() {
       "div",
       { class: "screen__header" },
       h("p", { class: "eyebrow" }, "PHIÊN LÀM VIỆC"),
-      h("h1", null, "Chưa đăng nhập"),
+      h("h1", null, expired ? "Phiên đăng nhập đã kết thúc" : "Chưa đăng nhập"),
     ),
     h(
       "div",
       { class: "card stack" },
+      expired
+        ? h(
+            "p",
+            { dataSessionExpired: "true" },
+            "Màn hình này cần máy chủ, nên chưa mở được. Đăng nhập lại rồi bấm “Kiểm tra lại phiên”.",
+          )
+        : null,
+      state.signedOutElsewhere
+        ? h(
+            "p",
+            { class: "hint", dataSignedOutElsewhere: "true" },
+            "Đã thoát ở một thẻ khác của trình duyệt này, nên thẻ này cũng thoát.",
+          )
+        : null,
+      // How sign-in works stays said in both cases; an expiry only adds why this screen is shown.
       state.lastError
         ? h("div", { class: "notice", dataState: "danger" }, state.lastError)
         : h(
@@ -680,6 +733,13 @@ function sessionLoadingScreen() {
 }
 
 /**
+ * Whether the outlet shows one of the session screens above rather than the route's own (K2). A
+ * destination pressed during an idle expiry shows the session screen; when the session is back
+ * under the same key, the route is rendered again instead of leaving that screen up.
+ */
+let sessionScreenShown = false;
+
+/**
  * Refuse a screen before it renders, with the reason.
  *
  * A courtesy, not a control. The server re-checks every call, and a screen that slips through this
@@ -691,12 +751,14 @@ function sessionLoadingScreen() {
  */
 function guard(_context, route) {
   const state = session.snapshot();
+  sessionScreenShown = true;
   if (state.status === "unknown") return sessionLoadingScreen();
   // Before the signed-out branch on purpose: `unreachable` also has a null principal, and telling
   // an operator they are signed out when the truth is "we could not ask" is the defect this exists
   // to prevent.
   if (state.status === "unreachable") return unreachableScreen();
   if (!state.principal) return signedOutScreen();
+  sessionScreenShown = false;
   if (!route) return null;
 
   if (route.capability) {
@@ -845,6 +907,7 @@ function wipeWorkspace() {
   }
   render(accountSheet.body);
   accountDevices = null;
+  lastPrincipal = null;
   approvalsWaiting = false;
   signOutFailure = null;
   foldOpen = false;
@@ -945,7 +1008,7 @@ async function boot() {
     }
 
     const key = contentKey();
-    if (key === renderedKey) return;
+    if (key === renderedKey && !(sessionScreenShown && state.status === "active")) return;
     renderedKey = key;
     void router.render();
   });

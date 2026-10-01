@@ -307,8 +307,13 @@ export function newCustomerSheet(spec) {
       },
     })
   );
-  const consentText = h("span");
-  const marketingText = h("span");
+  // CONSOLE-RESIDUAL-009B (K3): each tick has a name before the notice is read -- the label is
+  // the notice's own words once it arrives, and until then the tick says what it is and stays
+  // shut, since nobody can agree to words not yet on screen.
+  const consentText = h("span", null, "Khách đồng ý (chờ đọc thông báo bảo mật…)");
+  const marketingText = h("span", null, "Khách nhận tin ưu đãi (chờ đọc thông báo bảo mật…)");
+  consent.disabled = true;
+  marketing.disabled = true;
   const saveReason = h("p", { class: "hint", id: "customer-new-save-reason" });
   const save = button({
     label: spec.saveLabel,
@@ -370,6 +375,8 @@ export function newCustomerSheet(spec) {
       );
       consentText.textContent = String(notice.service_consent_label || "");
       marketingText.textContent = String(notice.marketing_consent_label || "");
+      consent.disabled = false;
+      marketing.disabled = false;
     }
     drawSave();
   }

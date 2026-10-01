@@ -1498,3 +1498,57 @@ decisions:
       Staff record the opening float and closing count; expected = float + cash taken - cash refunded - expenses marked paid from the drawer; the difference is recorded and shown to the owner; nothing happens automatically.
     reversal: >-
       Hide the screen; records stay.
+  - id: DEC-050
+    title: Held days are not waiting days
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    opened_at: '2026-10-01'
+    question: >-
+      DEC-047 paused the fee on hold but days waiting, disposal eligibility and reminder steps still counted held days.
+    resolved_at: '2026-10-01'
+    decision_record: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    decided_under: >-
+      Delegated, not signed: the owner wrote "make the best decision and finish" on 2026-09-30.
+    resolution: >-
+      Held days count for nothing that measures the customer's lateness (fee, days waiting, disposal eligibility, reminder steps); one shared clock.
+    reversal: >-
+      Count held days for reminders and disposal.
+  - id: DEC-051
+    title: Record-only outbox rows are kept
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    opened_at: '2026-10-01'
+    question: >-
+      Never-claimable outbox rows accumulate and the trigger refuses deletion.
+    resolved_at: '2026-10-01'
+    decision_record: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    decided_under: >-
+      Delegated, not signed: the owner wrote "make the best decision and finish" on 2026-09-30.
+    resolution: >-
+      Keep them; the ops check reports the outbox row count and warns past 1000000 rows.
+    reversal: >-
+      A retention migration with an owner-approved window.
+  - id: DEC-052
+    title: Shop CA custody keeps no CA key
+    status: RESOLVED
+    owner: BUSINESS_OWNER
+    affected_capabilities: [INTERNAL_SHADOW]
+    fail_closed_behavior: REQUIRE_HUMAN
+    source: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    opened_at: '2026-10-01'
+    question: >-
+      The shop CA key on the serving host could mint certificates for any domain the tablets trust.
+    resolved_at: '2026-10-01'
+    decision_record: docs/DECISION_RECORD_ROUND9_2026-09-30.md
+    decided_under: >-
+      Delegated, not signed: the owner wrote "make the best decision and finish" on 2026-09-30.
+    resolution: >-
+      Name-constrained CA; private key not kept after issuing; mint and re-trust a new CA near leaf expiry.
+    reversal: >-
+      Keep the CA key offline in the owner's custody.

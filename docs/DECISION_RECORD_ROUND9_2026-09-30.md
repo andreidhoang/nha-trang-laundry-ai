@@ -73,3 +73,38 @@ The difference is recorded and shown to the owner in the report and the evening 
 happens automatically: no adjustment, no blame, no money moved.
 
 **Reversal.** Hide the screen; the records stay.
+
+---
+
+## Round 9b rulings (same delegation)
+
+## DEC-050 — Held days are not waiting days
+
+**Grounding.** DEC-047 made a hold pause the storage fee; the verifier found that "days waiting",
+disposal eligibility and the pickup-reminder steps still counted the held days.
+
+**Decision.** While the shop holds an order, the held days count for nothing that measures the
+customer's lateness: not the fee, not days waiting, not disposal eligibility, not reminder steps.
+One shared clock computes all of them.
+
+**Reversal.** Count held days for reminders and disposal (the fee stays paused).
+
+## DEC-051 — Record-only outbox rows are kept
+
+**Grounding.** Review P6: the outbox counted ~56 never-claimable event types as pending work. The
+count is fixed; the rows themselves are refused deletion by the outbox trigger.
+
+**Decision.** Keep them (no deletion). The ops check reports the outbox row count and warns past
+1 000 000 rows, when retention is decided again.
+
+**Reversal.** A retention migration with an owner-approved window.
+
+## DEC-052 — Shop CA custody: keep no CA key
+
+**Grounding.** Review P4: the shop's private CA key lived on the serving host and could mint a
+certificate for any domain the tablets would trust.
+
+**Decision.** The CA is name-constrained to the console host and its private key is not kept after
+issuing; near the leaf's expiry a new CA is minted and re-trusted on each device (runbook).
+
+**Reversal.** Keep the CA key offline (owner's custody) to reissue without re-trusting devices.

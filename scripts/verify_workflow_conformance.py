@@ -11517,9 +11517,13 @@ def _token_without_two_step(subject: str) -> str:
     two-step claim, signed with the demo identity provider's own key (`.demo/idp`, the demo
     stack's test-only key, read from disk -- the provider on :9000 is not touched). The provider's
     HTTP endpoint always adds the claim, and the case this proves is an operator whose sign-in did
-    not include it. Empty when the demo files are not on this machine; the caller fails then."""
+    not include it. `DEMO_MATERIAL_DIR` names the material when it is not this checkout's `.demo`
+    (a worktree that parks its link while the test suite runs). Empty when the files are not on
+    this machine; the caller fails then."""
 
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".demo")
+    root = os.environ.get("DEMO_MATERIAL_DIR") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".demo"
+    )
 
     def read(*parts: str) -> str:
         with open(os.path.join(root, *parts), encoding="utf-8") as handle:

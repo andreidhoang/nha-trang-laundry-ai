@@ -2730,6 +2730,14 @@ with sync_playwright() as playwright:
             )
             return
         if url.endswith("/internal/v1/session"):
+            # CONSOLE-RESIDUAL-009B (K2): the server not answering (not a 401) -- `unreachable`.
+            if state.get("session_unreachable"):
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps({"detail": "operations unavailable"}),
+                )
+                return
             body = SESSION_OK
         elif url.split("?")[0].endswith("/internal/v1/auth/logout"):
             # CONSOLE-SHELL-009 (C1): "Thoát", answered as the section asks -- 200 by default. A
@@ -2981,6 +2989,9 @@ with sync_playwright() as playwright:
             body = {"store_ids": [STORE]}
         elif "/customer-privacy-notice" in url:
             body = NOTICE_PUBLISHED if state.get("notice_published") else NOTICE_UNPUBLISHED
+            # CONSOLE-RESIDUAL-009B (K3): the read held, to see the sheet before it lands.
+            if hold_step1("privacy_notice", route, 200, body):
+                return
         elif "/account/payments" in url and route.request.method == "POST":
             # PAYMENT-002: Thu công nợ, captured with its key and If-Match.
             state.setdefault("account_writes", []).append(
@@ -8739,12 +8750,12 @@ with sync_playwright() as playwright:
     page.reload()
     page.wait_for_timeout(1500)
     check(
-        "an order with a promise prints 'Hẹn trả: 13:00 thứ Bảy 26/09' in place of R4's sentence",
-        # The fixture is in 2026; from 2027 the paper adds the year ("26/09/2026", format.js C9).
-        paper.locator("[data-field=closing]")
-        .inner_text()
-        .strip()
-        .startswith("Hẹn trả: 13:00 thứ Bảy 26/09"),
+        "an order with a promise prints 'Hẹn trả: 13:00 thứ Bảy 26/09/2026' in place of R4's "
+        "sentence -- paper always carries the year (format.js), exactly",
+        # CONSOLE-RESIDUAL-009B (K3): exact equality again. The round-9 form only checked a
+        # prefix, which let the paper drop its year in the shop's current year.
+        paper.locator("[data-field=closing]").inner_text().strip()
+        == "Hẹn trả: 13:00 thứ Bảy 26/09/2026",
         paper.locator("[data-field=closing]").inner_text(),
     )
     state["receipt_order"] = None
@@ -12000,12 +12011,14 @@ with sync_playwright() as playwright:
     state["intake_reply"] = INTAKE_B
 
     # 5. The other way round: B's walk-in in flight, then X tapped -- the tap is not taken, so no
-    #    resume read is even made, and B lands clean.
+    #    resume read is even made, and B lands clean. Since CONSOLE-RESIDUAL-009B (K1) X's row is
+    #    disabled while B's write is out, so the press is forced: a person's tap on it does nothing.
     fresh_new()
     state["hold_intake"] = True
     tap("#new-walk-in")
     page.wait_for_timeout(500)
-    tap("#new-waiting [data-request]")
+    if page.locator("#new-waiting [data-request]").count():
+        page.locator("#new-waiting [data-request]").first.click(force=True, timeout=5000)
     page.wait_for_timeout(1000)
     read_during = list(state["quote_list_reads"])
     release_step1("intake")
@@ -13963,6 +13976,488 @@ with sync_playwright() as playwright:
     state["order_view"] = None
     state["storage"] = None
     SESSION_OK["roles"] = ["OWNER_ADMIN"]
+
+    # ============================================================================================
+    print()
+    print("=" * 74)
+    print("29. CONSOLE-RESIDUAL-009B — địa chỉ, ca làm, giấy in (K1, K2, K3)")
+    print("=" * 74)
+    # Each check below failed on d5fa939 (the round-9 integration), except the ones named
+    # "control" -- those hold on both, so the checks next to them are about the fix.
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    SESSION_OK["mfa_verified"] = True
+    state["authenticated"] = True
+    state["order_view"] = None
+    state["quotes_listed"] = True
+    state["intake_reply"] = INTAKE_B
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    def address() -> str:
+        return str(page.evaluate("() => location.hash"))
+
+    # Section 27's `hero` is a plain string by now (later sections reuse the name), so this
+    # section reads the ticket for itself.
+    def k_hero() -> str:
+        node = page.locator("#new-ticket")
+        return (node.first.text_content() or "") if node.count() else ""
+
+    def k_b_walked_in() -> bool:
+        return "Phiếu" in k_hero() and " 1" in k_hero() and X_ID not in k_hero()
+
+    def dropped_line() -> str:
+        node = page.locator("#new-resume-dropped")
+        return node.first.inner_text() if node.count() else ""
+
+    # --- K1: a walk-in that supersedes a boot resume leaves the address -----------------------
+    for query, held, label, says in (
+        (f"?request={X_ID}", "intake_read", "?request=X", "vẫn còn trong danh sách"),
+        (f"?quote={EXACT_QUOTE}", "quote_read", "?quote=X", "vẫn còn trong danh sách"),
+        (f"?contact={CONTACT}", "intake_list", "?contact=X", "chưa tạo gì cho khách đó"),
+    ):
+        state[f"hold_{held}"] = True
+        fresh_new(query)
+        tap("#new-walk-in")
+        page.wait_for_timeout(1300)
+        superseded = address()
+        line = dropped_line()
+        race_shot("k1-dropped-" + held)
+        release_step1(held)
+        page.wait_for_timeout(1500)
+        check(
+            f"K1 ({label} held, walk-in B): the address drops X at once -- #/new",
+            superseded == "#/new",
+            superseded,
+        )
+        check(
+            f"K1 ({label}): one quiet line says X was dropped, and where it is",
+            line.startswith("Đã bỏ khách") and says in line,
+            line or "no line",
+        )
+        check(
+            f"K1 ({label}): X's late read does not put X back in the address; B is on screen",
+            address() == "#/new" and k_b_walked_in(),
+            f"{address()} hero={k_hero()[:60]!r}",
+        )
+        if held == "intake_read":
+            check(
+                "K1 (?request=X): once X's read lands, the quiet line names X -- and only then "
+                "says, without a condition, that X is still in the list",
+                dropped_line()
+                == "Đã bỏ khách đang chờ “Khách nhắn qua kênh” — vẫn còn trong danh sách.",
+                dropped_line(),
+            )
+        state["quote_list_reads"] = []
+        posts_before = len(state.get("intake_posts", []))
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_timeout(1500)
+        check(
+            f"K1 ({label}): a reload starts clean -- X is not resumed, nothing is opened for it",
+            address() == "#/new"
+            and page.locator("#new-walk-in").count() == 1
+            and page.locator("#new-ticket").count() == 0
+            and len(state.get("intake_posts", [])) == posts_before,
+            f"{address()} ticket={page.locator('#new-ticket').count()}",
+        )
+
+    # Control: X's resume lands alone; the address keeps naming X (a reload resumes X).
+    fresh_new(f"?request={X_ID}")
+    check(
+        "K1 control: ?request=X resumed alone keeps ?request=X, with no 'Đã bỏ' line",
+        address() == f"#/new?request={X_ID}"
+        and page.locator("#new-line-0-qty").count() == 1
+        and not dropped_line(),
+        address(),
+    )
+    # ... and once X is on screen, "Khách khác" is an explicit abandon: the address goes, quietly.
+    tap("button[data-back]")
+    page.wait_for_timeout(500)
+    tap("#new-restart")
+    page.wait_for_timeout(700)
+    check(
+        "K1: 'Khách khác' after X landed leaves the address too, without a 'Đã bỏ' line",
+        address() == "#/new" and not dropped_line(),
+        f"{address()} line={dropped_line()!r}",
+    )
+
+    # --- K1: step 1 is visibly shut while a walk-in or bind write is in flight ----------------
+    def step1_state() -> dict:
+        return dict(
+            page.evaluate(
+                """() => {
+                    const root = document.querySelector('.new-step1');
+                    const rows = [...document.querySelectorAll(
+                        '#new-waiting button.row-item, #new-recent-list button.row-item')];
+                    return {
+                      busy: root?.getAttribute('data-busy') || '',
+                      rows: rows.length,
+                      shut: rows.filter((r) => r.disabled
+                        && r.getAttribute('aria-disabled') === 'true').length,
+                      add: document.querySelector('#new-customer-add')?.disabled ?? null,
+                    };
+                }"""
+            )
+        )
+
+    def toasts() -> str:
+        return str(
+            page.evaluate(
+                "() => [...document.querySelectorAll('.toast, [role=status]')]"
+                ".map((n) => n.textContent).join(' | ')"
+            )
+        )
+
+    fresh_new()
+    idle = step1_state()
+    check(
+        "K1 control: with nothing in flight the step-1 rows are live",
+        idle["rows"] >= 2 and idle["shut"] == 0 and not idle["busy"],
+        repr(idle),
+    )
+    state["hold_intake"] = True
+    tap("#new-walk-in")
+    page.wait_for_timeout(500)
+    during = step1_state()
+    race_shot("k1-walk-in-in-flight")
+    check(
+        "K1 (walk-in in flight): every waiting and recent row is disabled, and says so",
+        during["busy"] == "true" and during["rows"] >= 2 and during["shut"] == during["rows"],
+        repr(during),
+    )
+    check(
+        "K1 (walk-in in flight): 'Thêm khách mới' is shut too",
+        during["add"] is True,
+        repr(during),
+    )
+    # A search answer drawn while the write is out: dimmed as shut, and a press on it is told.
+    page.locator("#new-customer-search").click()
+    page.keyboard.type("3456", delay=20)
+    page.wait_for_timeout(900)
+    found = page.locator(f"#new-customer-search-list [data-customer='{CUSTOMER_ID}']")
+    looks_shut = bool(
+        found.count()
+        and found.first.evaluate(
+            "(n) => Boolean(n.closest('.new-step1[data-busy=\"true\"]'))"
+            " && getComputedStyle(n).cursor !== 'pointer'"
+        )
+    )
+    posts = len(state.get("intake_posts", []))
+    if found.count():
+        found.first.click(force=True)
+    page.wait_for_timeout(400)
+    told = toasts()
+    check(
+        "K1 (walk-in in flight): a search result drawn meanwhile reads as shut",
+        looks_shut,
+        f"found={found.count()}",
+    )
+    check(
+        "K1 (walk-in in flight): pressing it anyway is told why -- nothing is silently ignored, "
+        "and nothing is sent for it",
+        "chờ xong rồi bấm lại" in told and len(state.get("intake_posts", [])) == posts,
+        told[:160],
+    )
+    # The write fails: the rows come back.
+    for held_route, _status, _body in held_step1.pop("intake", []):
+        held_route.fulfill(
+            status=503,
+            content_type="application/json",
+            body=json.dumps({"detail": "operations unavailable"}),
+        )
+    state["hold_intake"] = False
+    page.wait_for_timeout(1000)
+    after_fail = step1_state()
+    check(
+        "K1 (the walk-in write failed): the rows are live again, and the press can be repeated",
+        not after_fail["busy"]
+        and after_fail["shut"] == 0
+        and page.locator("#new-walk-in").first.is_enabled(),
+        repr(after_fail),
+    )
+    # A regular's bind in flight (a tap on a search result): the same.
+    state["hold_intake"] = True
+    found = page.locator(f"#new-customer-search-list [data-customer='{CUSTOMER_ID}']")
+    if found.count():
+        found.first.click()
+    page.wait_for_timeout(500)
+    binding = step1_state()
+    walk_in_shut = (
+        page.locator("#new-walk-in").count() == 1
+        and page.locator("#new-walk-in").first.is_disabled()
+    )
+    release_step1("intake")
+    page.wait_for_timeout(1200)
+    check(
+        "K1 (a regular's intake in flight): rows and the walk-in button are disabled meanwhile",
+        binding["busy"] == "true" and binding["shut"] == binding["rows"] and walk_in_shut,
+        repr(binding),
+    )
+    check(
+        "K1 (a regular's intake in flight): then that customer is on screen",
+        "chị Lan" in k_hero(),
+        k_hero()[:80],
+    )
+    state["hold_intake"] = False
+    for name in list(held_step1):
+        release_step1(name)
+    state["quotes_listed"] = False
+    state["intake_reply"] = None
+
+    # --- K2: an idle expiry keeps the navigation; a press on it says the session ended --------
+    def nav_links() -> list[str]:
+        return list(
+            page.evaluate(
+                """() => [...document.querySelectorAll('nav.nav a.nav__link')]
+                    .filter((n) => n.checkVisibility({visibilityProperty: true}))
+                    .map((n) => n.getAttribute('href'))"""
+            )
+        )
+
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/customers", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    page.locator("#customers-search").fill("3456")
+    page.locator("#customers-search").press("Enter")
+    page.wait_for_timeout(800)
+    before_nav = nav_links()
+    # Eight hours idle: the next request anywhere (a poll, a press) is answered 401.
+    state["authenticated"] = False
+    page.evaluate(
+        "async () => { const api = await import('/src/core/api.js');"
+        " await api.request('/internal/v1/session').catch(() => null); }"
+    )
+    page.wait_for_timeout(1000)
+    kept = shell_text()
+    expired_nav = nav_links()
+    shell_shot("stub-k2-expired-desk")
+    check(
+        "K2 (idle expiry): the banner says the session ended and the screen is kept",
+        "Phiên đăng nhập đã kết thúc" in kept and "chị Lan" in kept,
+        kept[:160],
+    )
+    check(
+        "K2 (idle expiry): the navigation is still there -- the same destinations as before",
+        len(before_nav) >= 5 and expired_nav == before_nav,
+        f"before={len(before_nav)} after={expired_nav}",
+    )
+    target = page.locator("nav.nav a.nav__link[href='#/orders']")
+    if target.count():
+        target.first.click()
+    page.wait_for_timeout(900)
+    main_text = page.locator("main").inner_text()
+    check(
+        "K2 (idle expiry): a destination pressed says the session ended and the screen needs the "
+        "server -- not 'Chưa đăng nhập', not an empty or broken screen",
+        page.locator("main h1").first.inner_text() == "Phiên đăng nhập đã kết thúc"
+        and "cần máy chủ" in main_text,
+        main_text[:160],
+    )
+    state["authenticated"] = True
+    recheck = page.locator("main button", has_text="Kiểm tra lại phiên")
+    if recheck.count():
+        recheck.first.click()
+    page.wait_for_timeout(1300)
+    check(
+        "K2: signed in again, 'Kiểm tra lại phiên' opens the destination that was pressed",
+        address() == "#/orders"
+        and page.locator("main h1").first.inner_text() != "Phiên đăng nhập đã kết thúc"
+        and "Kiểm tra lại phiên" not in page.locator("main").inner_text(),
+        f"{address()} {page.locator('main').inner_text()[:80]!r}",
+    )
+    # Unreachable mid-shift: the same -- the navigation stays, the screen stays.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/customers", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    page.locator("#customers-search").fill("3456")
+    page.locator("#customers-search").press("Enter")
+    page.wait_for_timeout(800)
+    before_nav = nav_links()
+    state["session_unreachable"] = True
+    page.evaluate(
+        "async () => { const s = await import('/src/core/session.js'); await s.refresh(); }"
+    )
+    page.wait_for_timeout(600)
+    lost = shell_text()
+    check(
+        "K2 (server unreachable): the banner says so, the screen and the navigation stay",
+        "Mất liên lạc với máy chủ" in lost and "chị Lan" in lost and nav_links() == before_nav,
+        f"nav={nav_links()} {lost[:100]!r}",
+    )
+    state["session_unreachable"] = False
+    page.evaluate(
+        "async () => { const s = await import('/src/core/session.js'); await s.refresh(); }"
+    )
+    page.wait_for_timeout(600)
+
+    # --- K2: one Thoát clears every tab --------------------------------------------------------
+    customer_on_screen()
+    other = context.new_page()
+    other.on("pageerror", lambda e: errors.append(str(e)))
+    other.route("**/internal/**", route_api)
+    other.goto(f"http://localhost:{PORT}/#/customers", wait_until="networkidle")
+    other.wait_for_timeout(700)
+    other.locator("#customers-search").fill("3456")
+    other.locator("#customers-search").press("Enter")
+    other.wait_for_timeout(800)
+
+    def other_text() -> str:
+        return str(other.evaluate("() => document.body.textContent || ''"))
+
+    check(
+        "set-up: a second tab shows the same customer",
+        "chị Lan" in other_text() and phone_digits_in(other_text()),
+        other_text()[:120],
+    )
+    # A Thoát that did not end the session ends nothing anywhere (neighbouring case).
+    state["logout_answer"] = (503, {"detail": "operations unavailable"})
+    page.bring_to_front()
+    press_sign_out()
+    page.wait_for_timeout(900)
+    check(
+        "K2 control: a Thoát the server refused leaves the other tab exactly as it was",
+        "chị Lan" in other_text() and other.locator(".appbar__account").count() == 1,
+        other_text()[:120],
+    )
+    state["logout_answer"] = (200, {"end_session_url": None})
+    press_sign_out()
+    page.wait_for_timeout(900)
+    out_other = other.evaluate(
+        """() => ({
+            heading: document.querySelector('main h1')?.textContent || '',
+            text: document.body.textContent || '',
+            dialogs: document.querySelectorAll('dialog').length,
+            hash: location.hash,
+            elsewhere: document.querySelectorAll('[data-signed-out-elsewhere]').length,
+        })"""
+    )
+    shell_shot("stub-k2-other-tab-desk", other)
+    check(
+        "K2: Thoát in one tab shows the signed-out screen in the other tab too, with no reload",
+        out_other["heading"] == "Chưa đăng nhập" and out_other["elsewhere"] == 1,
+        repr({k: out_other[k] for k in ("heading", "elsewhere", "hash")}),
+    )
+    check(
+        "K2: and no customer name or number is left in the other tab's page",
+        "chị Lan" not in out_other["text"]
+        and not phone_digits_in(out_other["text"])
+        and out_other["dialogs"] == 0
+        and out_other["hash"] == "#/",
+        out_other["text"][:200],
+    )
+    other.close()
+    state["logout_answer"] = None
+    state["authenticated"] = True
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(700)
+
+    # --- K2: "Nhận đồ" for an operator without two-step verification ---------------------------
+    def new_entry() -> dict:
+        return dict(
+            page.evaluate(
+                """() => {
+                    const link = [...document.querySelectorAll("nav.nav a.nav__link[href='#/new']")]
+                      .find((n) => n.checkVisibility({visibilityProperty: true}));
+                    if (!link) return {shown: false};
+                    const reason = link.querySelector('.nav__reason');
+                    return {
+                      shown: true,
+                      shut: link.getAttribute('aria-disabled') === 'true',
+                      reason: reason && reason.checkVisibility() ? reason.textContent : '',
+                    };
+                }"""
+            )
+        )
+
+    def home_new() -> str:
+        quick = page.locator(".today__quick")
+        return quick.first.inner_text() if quick.count() else ""
+
+    for roles, mfa, expect, label in (
+        (["OPERATOR"], False, "shut", "an operator without two-step verification"),
+        (["OPERATOR"], True, "open", "control: an operator with it"),
+        (["AUDITOR"], False, "absent", "control: a role that never takes laundry in"),
+    ):
+        SESSION_OK["roles"] = roles
+        SESSION_OK["mfa_verified"] = mfa
+        for tag, size in (("desk", (1366, 900)), ("phone", (390, 844))):
+            page.set_viewport_size({"width": size[0], "height": size[1]})
+            page.goto("about:blank")
+            page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+            page.wait_for_timeout(900)
+            entry = new_entry()
+            home = home_new()
+            if expect == "shut":
+                shell_shot(f"stub-k2-no-mfa-{tag}")
+                check(
+                    f"K2 ({label}, {tag}): 'Nhận đồ' is in the navigation, disabled, with "
+                    "'Cần xác thực hai bước' in words",
+                    entry.get("shown")
+                    and entry.get("shut")
+                    and entry.get("reason") == "Cần xác thực hai bước",
+                    repr(entry),
+                )
+                button_new = page.locator(".today__quick button", has_text="Nhận đồ")
+                check(
+                    f"K2 ({label}, {tag}): Hôm nay shows 'Nhận đồ' disabled with the same reason",
+                    button_new.count() == 1
+                    and button_new.first.is_disabled()
+                    and "Cần xác thực hai bước" in home,
+                    home[:160],
+                )
+            elif expect == "open":
+                check(
+                    f"K2 ({label}, {tag}): 'Nhận đồ' is live, no reason under it",
+                    entry.get("shown") and not entry.get("shut") and not entry.get("reason"),
+                    repr(entry),
+                )
+            else:
+                check(
+                    f"K2 ({label}, {tag}): no 'Nhận đồ' in the navigation (C6), and Hôm nay "
+                    "still says why",
+                    not entry.get("shown") and "Nhận đồ" in home,
+                    repr(entry),
+                )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    SESSION_OK["mfa_verified"] = True
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    # --- K3: the new-customer ticks have a name before the privacy notice arrives --------------
+    state["notice_published"] = True
+    state["hold_privacy_notice"] = True
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="domcontentloaded")
+    page.wait_for_timeout(1200)
+    tap("#new-customer-add")
+    page.wait_for_timeout(500)
+    unnamed = unnamed_fields("#customer-new-sheet")
+    ticks_shut = page.evaluate(
+        "() => ['#customer-new-consent', '#customer-new-marketing']"
+        ".map((id) => document.querySelector(id)?.disabled)"
+    )
+    check(
+        "K3: before the notice loads, every field in 'Thêm khách mới' has a name (the two ticks)",
+        unnamed == [] and page.locator("#customer-new-consent").count() == 1,
+        repr(unnamed),
+    )
+    check(
+        "K3: and the two ticks are shut until the notice's own words are on screen",
+        ticks_shut == [True, True],
+        repr(ticks_shut),
+    )
+    release_step1("privacy_notice")
+    state["hold_privacy_notice"] = False
+    page.wait_for_timeout(900)
+    consent_label = page.evaluate(
+        "() => document.querySelector('#customer-new-consent')?.labels?.[0]?.textContent || ''"
+    )
+    check(
+        "K3: once it loads, the tick reads the notice's own words and can be ticked",
+        str(consent_label).strip() == str(NOTICE_PUBLISHED.get("service_consent_label", "")).strip()
+        and page.locator("#customer-new-consent").first.is_enabled(),
+        repr(consent_label),
+    )
+    page.keyboard.press("Escape")
+    state["notice_published"] = False
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

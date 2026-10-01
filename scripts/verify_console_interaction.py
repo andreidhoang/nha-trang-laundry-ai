@@ -14244,10 +14244,12 @@ with sync_playwright() as playwright:
         target.first.click()
     page.wait_for_timeout(900)
     main_text = page.locator("main").inner_text()
+    expired_line = page.locator("main [data-session-expired]")
     check(
-        "K2 (idle expiry): a destination pressed says the session ended and the screen needs the "
-        "server -- not 'Chưa đăng nhập', not an empty or broken screen",
-        page.locator("main h1").first.inner_text() == "Phiên đăng nhập đã kết thúc"
+        "K2 (idle expiry): a destination pressed says the session ended and that the screen needs "
+        "the server -- not a bare 'Chưa đăng nhập', not an empty or broken screen",
+        expired_line.count() == 1
+        and "Phiên đăng nhập đã kết thúc" in expired_line.first.inner_text()
         and "cần máy chủ" in main_text,
         main_text[:160],
     )
@@ -14259,7 +14261,8 @@ with sync_playwright() as playwright:
     check(
         "K2: signed in again, 'Kiểm tra lại phiên' opens the destination that was pressed",
         address() == "#/orders"
-        and page.locator("main h1").first.inner_text() != "Phiên đăng nhập đã kết thúc"
+        and page.locator("main [data-session-expired]").count() == 0
+        and page.locator("main h1").first.inner_text() == "Đơn hàng"
         and "Kiểm tra lại phiên" not in page.locator("main").inner_text(),
         f"{address()} {page.locator('main').inner_text()[:80]!r}",
     )

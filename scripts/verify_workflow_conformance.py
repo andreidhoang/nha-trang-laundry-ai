@@ -11707,12 +11707,12 @@ def scenario_console_residual(console: Console) -> None:
         if console.nav("Đơn hàng", "/orders"):
             touched("shell.nav.orders")
         page.wait_for_timeout(1000)
-        heading = page.locator("main h1").first.inner_text()
+        expired = page.locator("main [data-session-expired]")
+        said = expired.first.inner_text() if expired.count() else ""
         ok(
             "a destination pressed says the session ended and needs the server",
-            heading == "Phiên đăng nhập đã kết thúc"
-            and "cần máy chủ" in page.locator("main").inner_text(),
-            heading,
+            "Phiên đăng nhập đã kết thúc" in said and "cần máy chủ" in said,
+            said or page.locator("main").inner_text()[:120],
         )
         ok(
             "signed in again, 'Kiểm tra lại phiên' opens the destination pressed",
@@ -11725,7 +11725,8 @@ def scenario_console_residual(console: Console) -> None:
         ok(
             "-- Đơn hàng, not the session screen",
             page.evaluate("() => location.hash").startswith("#/orders")
-            and page.locator("main h1").first.inner_text() != "Phiên đăng nhập đã kết thúc",
+            and page.locator("main [data-session-expired]").count() == 0
+            and page.locator("main h1").first.inner_text() == "Đơn hàng",
             page.locator("main").inner_text()[:120],
         )
 

@@ -661,7 +661,7 @@ function signedOutScreen() {
       "div",
       { class: "screen__header" },
       h("p", { class: "eyebrow" }, "PHIÊN LÀM VIỆC"),
-      h("h1", null, expired ? "Phiên đăng nhập đã kết thúc" : "Chưa đăng nhập"),
+      h("h1", null, "Chưa đăng nhập"),
     ),
     h(
       "div",
@@ -670,7 +670,8 @@ function signedOutScreen() {
         ? h(
             "p",
             { dataSessionExpired: "true" },
-            "Màn hình này cần máy chủ, nên chưa mở được. Đăng nhập lại rồi bấm “Kiểm tra lại phiên”.",
+            "Phiên đăng nhập đã kết thúc, nên màn hình này (cần máy chủ) chưa mở được. Đăng nhập " +
+              "lại rồi bấm “Kiểm tra lại phiên”.",
           )
         : null,
       state.signedOutElsewhere

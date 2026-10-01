@@ -197,9 +197,30 @@ def _with_refund_method(client: TestClient, order_id: UUID, body: dict[str, Any]
     return {**body, "refund_method": "TIEN_MAT"} if cancelling and paid else body
 
 
+def _with_expected_money(
+    client: TestClient, order_id: UUID, body: dict[str, Any]
+) -> dict[str, Any]:
+    """MONEY-RESIDUAL-009B (J4): a cancellation carries the figures its sheet showed -- the order's
+    `cancellation_money` preview -- exactly as the counter's sheet sends them; nothing when the
+    order read shows no preview (no remedy money moves)."""
+
+    cancelling = body.get("step") in {"CANCEL", "REJECT_INTAKE"} or body.get("target") == (
+        "CANCELLED"
+    )
+    preview = _read(client, order_id)["cancellation_money"]
+    if not cancelling or not preview or preview["stage"] != "PREVIEW":
+        return body
+    figures = {key: preview[key] for key in EXPECTED_KEYS}
+    return {**body, "expected_cancellation_money": figures}
+
+
+#: The four figures a cancellation press carries back (J4).
+EXPECTED_KEYS = ("refund_vnd", "netted_vnd", "voided_vnd", "reissued_vnd")
+
+
 def _step(client: TestClient, order_id: UUID, body: dict[str, Any]) -> Any:
     version = int(_read(client, order_id)["row_version"])
-    body = _with_refund_method(client, order_id, body)
+    body = _with_expected_money(client, order_id, _with_refund_method(client, order_id, body))
     return _post(client, f"/internal/v1/orders/{order_id}/steps", body, if_match=version)
 
 
@@ -250,7 +271,11 @@ def _cancel(client: TestClient, order_id: UUID, route: str, body: dict[str, Any]
     return _post(
         client,
         f"/internal/v1/orders/{order_id}/transition",
-        _with_refund_method(client, order_id, {"target": "CANCELLED", **body}),
+        _with_expected_money(
+            client,
+            order_id,
+            _with_refund_method(client, order_id, {"target": "CANCELLED", **body}),
+        ),
         if_match=int(_read(client, order_id)["row_version"]),
     )
 
@@ -656,7 +681,7 @@ def test_a_replayed_cancellation_returns_its_answer_and_moves_no_credit_again(
     body: dict[str, object] = (
         {"step": "CANCEL", **SHOP_FAULT} if move != "reissue" else {"step": "CANCEL"}
     )
-    body = _with_refund_method(client, order_id, body)
+    body = _with_expected_money(client, order_id, _with_refund_method(client, order_id, body))
     version = int(_read(client, order_id)["row_version"])
     before = _remedy_money_rows(connection)
     key = f"cancel-{uuid4().hex}"

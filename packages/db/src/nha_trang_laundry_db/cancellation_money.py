@@ -21,7 +21,7 @@ states what will happen) and after it (the order and the receipt state what did)
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Final, Literal
 from uuid import UUID, uuid4
@@ -67,6 +67,17 @@ class LockedCancellationMoney:
     credits: dict[UUID, _LockedCredit]
     #: Who a reissued credit is issued to: the cancelled order's own customer reference.
     order_contact_id: UUID | None
+    #: J2: the id each reissued credit will have, by the credit it replaces -- minted here, before
+    #: anything is written, so the cancellation's own event and audit row can name the reissues
+    #: they record (`plan_document`), not an empty list.
+    reissue_ids: dict[UUID, UUID] = field(default_factory=dict)
+
+    def reissued_pairs(self) -> tuple[tuple[UUID, UUID], ...]:
+        """`(original, reissue)` for every credit the plan reissues, in the plan's order."""
+
+        return tuple(
+            (fact.credit_id, self.reissue_ids[fact.credit_id]) for fact in self.plan.reissued
+        )
 
 
 _ISSUED_SQL: Final = """
@@ -80,15 +91,41 @@ _ISSUED_SQL: Final = """
     ORDER BY c.issued_at, c.id
 """
 
+#: The credits the order's bill spent, each with J3's fact: was the order it came from cancelled
+#: (not disposed of -- `DEC-036` keeps every credit) without its refund taking this credit's whole
+#: face value off? Covered means a refund row exists, the credit was spent by the time of that
+#: refund (it was among the credits netted then), and the refund netted the whole face value of
+#: every credit from that order spent by then -- the chain latest links, as `_ISSUED_SQL` reads
+#: them, at that instant.
 _SPENT_SQL: Final = """
     SELECT c.id, p.kind, c.amount_vnd, c.redeemed_at IS NOT NULL, c.voided_at IS NOT NULL,
            c.row_version, c.remedy_proposal_id, c.store_id, c.issued_from_order_id,
-           c.policy_version_id, c.bearer_contact_id
+           c.policy_version_id, c.bearer_contact_id,
+           (
+               issuer.commercial_status = 'CANCELLED'
+               AND NOT EXISTS (SELECT 1 FROM order_disposals d WHERE d.order_id = issuer.id)
+               AND NOT coalesce((
+                   SELECT c.redeemed_at <= r.refunded_at
+                      AND r.netted_remedy_vnd >= (
+                          SELECT coalesce(sum(n.amount_vnd), 0)
+                          FROM remedy_credits n
+                          WHERE n.issued_from_order_id = issuer.id
+                            AND n.redeemed_at IS NOT NULL
+                            AND n.redeemed_at <= r.refunded_at
+                            AND NOT EXISTS (
+                                SELECT 1 FROM remedy_credits again
+                                WHERE again.reissue_of = n.id AND again.issued_at <= r.refunded_at
+                            )
+                      )
+                   FROM order_refunds r WHERE r.order_id = issuer.id
+               ), FALSE)
+           ) AS issuer_uncovered
     FROM orders o
     JOIN remedy_credits c
       ON c.redeemed_quote_id = o.current_quote_id
      AND c.redeemed_quote_revision = o.current_quote_revision
     JOIN remedy_proposals p ON p.id = c.remedy_proposal_id
+    JOIN orders issuer ON issuer.id = c.issued_from_order_id
     WHERE o.id = %s
     ORDER BY c.issued_at, c.id
 """
@@ -126,6 +163,7 @@ def _locked(row: Sequence[object]) -> _LockedCredit:
             kind=RemedyKind(str(row[1])),
             amount_vnd=int(str(row[2])),
             state=state,
+            issuer_uncovered=len(row) > 11 and bool(row[11]),
         ),
         row_version=int(str(row[5])),
         remedy_proposal_id=_uuid(row[6]),
@@ -175,6 +213,7 @@ def plan_cancellation_money(
         plan=plan,
         credits={credit.fact.credit_id: credit for credit in (*issued, *spent)},
         order_contact_id=None if contact is None or contact[0] is None else _uuid(contact[0]),
+        reissue_ids={fact.credit_id: uuid4() for fact in plan.reissued},
     )
 
 
@@ -254,7 +293,7 @@ def write_cancellation_credit_moves(
     reissued: list[tuple[UUID, UUID]] = []
     for fact in plan.reissued:
         original = locked.credits[fact.credit_id]
-        new_id = uuid4()
+        new_id = locked.reissue_ids[fact.credit_id]
         bearer = locked.order_contact_id or original.bearer_contact_id
 
         def reissue(
@@ -357,6 +396,9 @@ class CancellationMoneyView:
     voided_vnd: int
     reissued_vnd: int
     lines_vi: tuple[str, ...]
+    #: J3: before the cancellation, why it would be refused over remedy money (`lines_vi` then
+    #: holds that sentence alone), or `None`.
+    refusal: str | None = None
 
 
 def read_order_cancellation_money(
@@ -429,14 +471,16 @@ def read_order_cancellation_money(
     plan = locked.plan
     if not plan.moves_remedy_money:
         return None
+    figures = plan.figures()
     return CancellationMoneyView(
         stage="PREVIEW",
         refundable_vnd=plan.refundable_vnd,
-        netted_vnd=plan.netted_vnd,
-        refund_vnd=plan.refund_vnd,
-        voided_vnd=sum(c.amount_vnd for c in plan.voided),
-        reissued_vnd=sum(c.amount_vnd for c in plan.reissued),
+        netted_vnd=figures.netted_vnd,
+        refund_vnd=figures.refund_vnd,
+        voided_vnd=figures.voided_vnd,
+        reissued_vnd=figures.reissued_vnd,
         lines_vi=plan.lines_vi,
+        refusal=None if plan.refusal is None else plan.refusal.value,
     )
 
 

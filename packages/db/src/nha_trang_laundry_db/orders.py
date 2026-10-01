@@ -7,6 +7,10 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
 from uuid import UUID, uuid4
 
+from nha_trang_laundry_domain.cancellation_money import (
+    CancellationMoneyFigures,
+    CancellationMoneyRefused,
+)
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
     CommercialOrderStatus,
@@ -138,6 +142,21 @@ class OrderPromiseRefused(OrderStateError):
         self.code = code
 
 
+class OrderCancellationMoneyRefused(OrderStateError):
+    """`MONEY-RESIDUAL-009B` (J3, J4): a cancellation refused over remedy money, by one code --
+    `CREDIT_CHAIN_NOT_NETTED` or `CANCELLATION_MONEY_CHANGED` -- with the counter's sentence and
+    the money as it stands now (`preview`, the figures the refund sheet should show instead).
+    Nothing was written."""
+
+    def __init__(
+        self, code: str, message_vi: str, preview: CancellationMoneyFigures | None
+    ) -> None:
+        super().__init__(f"{code}: {message_vi}")
+        self.code = code
+        self.message_vi = message_vi
+        self.preview = preview
+
+
 class OrderNotVisibleError(LookupError):
     """The order does not exist, or it is in a store the caller is not a member of.
 
@@ -208,6 +227,10 @@ class OrderTransitionCommand:
     #: `TIEN_MAT` from the drawer or `CHUYEN_KHOAN` by bank transfer, as the staff member says.
     #: Required exactly when the transition writes a refund, refused otherwise.
     refund_method: PaymentMethod | None = None
+    #: MONEY-RESIDUAL-009B (J4): what the refund sheet showed -- refund, netted, voided, reissued.
+    #: Taken only by a transition into CANCELLED; required when it moves remedy money, and the
+    #: cancellation is refused (`CANCELLATION_MONEY_CHANGED`) when it would execute other figures.
+    expected_cancellation_money: CancellationMoneyFigures | None = None
 
 
 @dataclass(frozen=True)
@@ -243,6 +266,9 @@ class OrderStepCommand:
     #: GOODS-AND-DRAWER-009 (review M4): `CANCEL` only, and required when the cancellation hands
     #: money back -- how it went back (`TIEN_MAT` / `CHUYEN_KHOAN`).
     refund_method: PaymentMethod | None = None
+    #: MONEY-RESIDUAL-009B (J4): a step that ends the order without charge (`CANCEL`,
+    #: `REJECT_INTAKE`) carries the figures its sheet showed; see `OrderTransitionCommand`.
+    expected_cancellation_money: CancellationMoneyFigures | None = None
 
 
 #: SHOP-CAPTURE-001: the steps that put a load into a machine, and so may name one.
@@ -1002,6 +1028,8 @@ class OrderRepository:
                 if command.refund_method is None
                 else {"refund_method": command.refund_method.value}
             ),
+            # MONEY-RESIDUAL-009B (J4): present only when given, for the same reason.
+            **_expected_money_payload(command.expected_cancellation_money),
         }
 
         def transition_once() -> dict[str, object]:
@@ -1157,6 +1185,22 @@ class OrderRepository:
                 amount_vnd=remedy_money.plan.refund_vnd,
                 netted_remedy_vnd=remedy_money.plan.netted_vnd,
             )
+        # MONEY-RESIDUAL-009B (J3, J4): refused before anything is written when the credit chain
+        # would compensate twice, or when what this would execute is not what the sheet showed.
+        if remedy_money is None:
+            if command.expected_cancellation_money is not None:
+                raise OrderStateError(
+                    "VALIDATION_ERROR: expected_cancellation_money is taken only by a cancellation"
+                )
+        else:
+            try:
+                remedy_money.plan.require_allowed(command.expected_cancellation_money)
+            except CancellationMoneyRefused as error:
+                raise OrderCancellationMoneyRefused(
+                    error.code.value,
+                    error.message_vi,
+                    None if remedy_money.plan.refusal is not None else remedy_money.plan.figures(),
+                ) from error
         closed_at = (
             occurred_at if next_state.commercial is CommercialOrderStatus.COMPLETED else None
         )
@@ -1340,8 +1384,10 @@ class OrderRepository:
             step_note["rejection_reason"] = command.rejection_reason.value
         if step_note and command.step is not None:
             step_note["step"] = command.step.value
+        # J2: the reissues are named here, by the ids minted with the plan, so the cancellation's
+        # own event and audit row say which credits came back -- never an empty list.
         remedy_note: dict[str, object] = (
-            {"remedy_credits": plan_document(remedy_money.plan)}
+            {"remedy_credits": plan_document(remedy_money.plan, remedy_money.reissued_pairs())}
             if remedy_money is not None and remedy_money.plan.moves_remedy_money
             else {}
         )
@@ -1365,7 +1411,8 @@ class OrderRepository:
                 # table because a quote acceptance is spent by a later command; nothing spends
                 # a cancellation.
                 event_payload=(
-                    {"dimension": dimension, "target": target, **step_note}
+                    # J2: a cancellation that moved remedy money says which, resolution or not.
+                    {"dimension": dimension, "target": target, **step_note, **remedy_note}
                     if command.custody_resolution is None
                     else {
                         "dimension": dimension,
@@ -1513,6 +1560,8 @@ class OrderRepository:
                 if command.refund_method is None
                 else {"refund_method": command.refund_method.value}
             ),
+            # MONEY-RESIDUAL-009B (J4): present only when given, for the same reason.
+            **_expected_money_payload(command.expected_cancellation_money),
         }
         if command.step is not OrderStep.RECEIVE and (
             command.promise_choice is not None or command.custom_promise_at is not None
@@ -1596,6 +1645,12 @@ class OrderRepository:
                         rejection_reason=planned.rejection_reason,
                         machine_id=command.machine_id,
                         refund_method=planned.refund_method,
+                        # J4: the sheet's figures ride on the transition that cancels, only.
+                        expected_cancellation_money=(
+                            command.expected_cancellation_money
+                            if planned.commercial_target is CommercialOrderStatus.CANCELLED
+                            else None
+                        ),
                     ),
                     locked,
                     moment,
@@ -2062,6 +2117,22 @@ def _optional_int(value: object) -> int | None:
 
 
 # --- PROMISE-001: the promise RECEIVE writes -------------------------------------------------
+
+
+def _expected_money_payload(figures: CancellationMoneyFigures | None) -> dict[str, object]:
+    """J4's figures in an idempotency payload, only when given: a key used before they existed
+    hashes as it did, and the same key resent with other figures is a conflict, not a replay."""
+
+    if figures is None:
+        return {}
+    return {
+        "expected_cancellation_money": {
+            "refund_vnd": figures.refund_vnd,
+            "netted_vnd": figures.netted_vnd,
+            "voided_vnd": figures.voided_vnd,
+            "reissued_vnd": figures.reissued_vnd,
+        }
+    }
 
 
 def _promise_payload(command: OrderStepCommand) -> dict[str, object]:

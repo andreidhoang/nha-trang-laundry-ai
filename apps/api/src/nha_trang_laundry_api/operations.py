@@ -143,6 +143,7 @@ from nha_trang_laundry_db.transactional_consent import (
     release_transactional_suppression,
 )
 from nha_trang_laundry_domain.approvals import APPROVAL_POLICIES, APPROVAL_RESOURCE_TYPES
+from nha_trang_laundry_domain.cancellation_money import CancellationMoneyFigures
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
     ActorRole,
@@ -631,6 +632,7 @@ class OperationsService:
         principal: StaffPrincipal,
         custody_resolution: CustodyResolution | None = None,
         refund_method: PaymentMethod | None = None,
+        expected_cancellation_money: CancellationMoneyFigures | None = None,
     ) -> StoredOrder:
         with self._connection_factory(self._database_url) as connection:
             return self._orders.transition(
@@ -644,6 +646,7 @@ class OperationsService:
                     commercial_target=target,
                     custody_resolution=custody_resolution,
                     refund_method=refund_method,
+                    expected_cancellation_money=expected_cancellation_money,
                 ),
             )
 
@@ -762,6 +765,7 @@ class OperationsService:
         custom_promise_at: datetime | None = None,
         machine_id: UUID | None = None,
         refund_method: PaymentMethod | None = None,
+        expected_cancellation_money: CancellationMoneyFigures | None = None,
     ) -> OrderStepResult:
         """`ORDER-STEPS-001`: one named business step, as its domain transitions, all or nothing.
 
@@ -788,6 +792,7 @@ class OperationsService:
                     custom_promise_at=custom_promise_at,
                     machine_id=machine_id,
                     refund_method=refund_method,
+                    expected_cancellation_money=expected_cancellation_money,
                 ),
             )
 

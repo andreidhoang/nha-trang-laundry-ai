@@ -89,6 +89,7 @@ from nha_trang_laundry_db.manual_sends import (
 from nha_trang_laundry_db.message_drafts import SEND_MESSAGE_POLICY_VERSION
 from nha_trang_laundry_db.orders import (
     OrderAuthorizationError,
+    OrderCancellationMoneyRefused,
     OrderGoodsMayNotLeaveError,
     OrderNotVisibleError,
     OrderPromiseRefused,
@@ -158,6 +159,7 @@ from nha_trang_laundry_domain.accounts import (
 )
 from nha_trang_laundry_domain.accounts import month_label as account_month_label
 from nha_trang_laundry_domain.approvals import ApprovalEnvelopeError
+from nha_trang_laundry_domain.cancellation_money import CancellationMoneyFigures
 from nha_trang_laundry_domain.canonical import MAX_CANONICAL_INT
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
@@ -498,6 +500,32 @@ class OrderCreateRequest(StrictRequest):
     acquisition_source: AcquisitionSource
 
 
+class CancellationMoneyFiguresRequest(StrictRequest):
+    """MONEY-RESIDUAL-009B (J4): the figures the refund sheet showed before the press -- the
+    order's `cancellation_money` preview (`refund_vnd`, `netted_vnd`, `voided_vnd`,
+    `reissued_vnd`), sent back unchanged. The cancellation is refused with 409
+    `CANCELLATION_MONEY_CHANGED` when it would execute other figures."""
+
+    refund_vnd: StrictInt = Field(ge=0, le=MAX_SETTLEMENT_VND)
+    netted_vnd: StrictInt = Field(ge=0, le=MAX_SETTLEMENT_VND)
+    voided_vnd: StrictInt = Field(ge=0, le=MAX_SETTLEMENT_VND)
+    reissued_vnd: StrictInt = Field(ge=0, le=MAX_SETTLEMENT_VND)
+
+    def figures(self) -> CancellationMoneyFigures:
+        return CancellationMoneyFigures(
+            refund_vnd=self.refund_vnd,
+            netted_vnd=self.netted_vnd,
+            voided_vnd=self.voided_vnd,
+            reissued_vnd=self.reissued_vnd,
+        )
+
+
+def _expected_figures(
+    request: CancellationMoneyFiguresRequest | None,
+) -> CancellationMoneyFigures | None:
+    return None if request is None else request.figures()
+
+
 class CommercialTransitionRequest(StrictRequest):
     target: CommercialOrderStatus
     #: `DEC-024`. Required only to cancel an order whose work has begun, and the refusal says so.
@@ -509,6 +537,9 @@ class CommercialTransitionRequest(StrictRequest):
     #: money back -- `TIEN_MAT` from the drawer or `CHUYEN_KHOAN` by bank transfer. Required then
     #: (422 `REQUIRE_HUMAN` / `REFUND_METHOD_REQUIRED`), refused otherwise.
     refund_method: Literal["TIEN_MAT", "CHUYEN_KHOAN"] | None = None
+    #: MONEY-RESIDUAL-009B (J4): `CANCELLED` only -- the preview's figures, required when the
+    #: cancellation moves remedy money (`cancellation_money` on the order read).
+    expected_cancellation_money: CancellationMoneyFiguresRequest | None = None
 
 
 class IntakeTransitionRequest(StrictRequest):
@@ -557,6 +588,10 @@ class OrderStepRequest(StrictRequest):
     #: `CANCEL` only (GOODS-AND-DRAWER-009, review M4): how the money went back when the
     #: cancellation hands money back -- the `CANCEL` entry's `requires` lists `refund_method` then.
     refund_method: Literal["TIEN_MAT", "CHUYEN_KHOAN"] | None = None
+    #: MONEY-RESIDUAL-009B (J4): `CANCEL` / `REJECT_INTAKE` only -- the order's
+    #: `cancellation_money` preview, sent back as shown. Required when the step moves remedy money;
+    #: 409 `CANCELLATION_MONEY_CHANGED` when the step would execute other figures.
+    expected_cancellation_money: CancellationMoneyFiguresRequest | None = None
 
     @field_validator("step")
     @classmethod
@@ -600,6 +635,13 @@ class OrderStepRequest(StrictRequest):
             raise ValueError("machine_id is taken only by START_WASH and REWASH")
         if self.refund_method is not None and self.step is not OrderStep.CANCEL:
             raise ValueError("refund_method is taken only by CANCEL")
+        if self.expected_cancellation_money is not None and self.step not in {
+            OrderStep.CANCEL,
+            OrderStep.REJECT_INTAKE,
+        }:
+            raise ValueError(
+                "expected_cancellation_money is taken only by CANCEL and REJECT_INTAKE"
+            )
         return self
 
 
@@ -942,6 +984,9 @@ class CancellationMoneyResponse(BaseModel):
     reissued_vnd: int = Field(ge=0)
     #: One sentence per credit movement, in the order they apply.
     lines_vi: list[str]
+    #: MONEY-RESIDUAL-009B (J3), `PREVIEW` only: the cancellation would be refused over remedy
+    #: money -- `CREDIT_CHAIN_NOT_NETTED` (`lines_vi` then holds the reason alone) -- or null.
+    refusal: str | None = None
 
 
 class OrderViewResponse(OrderResponse):
@@ -2481,6 +2526,7 @@ def transition_order(
             refund_method=None
             if request.refund_method is None
             else PaymentMethod(request.refund_method),
+            expected_cancellation_money=_expected_figures(request.expected_cancellation_money),
         )
     except OrderStepRequiresHuman as error:
         # GOODS-AND-DRAWER-009: a refunding cancellation without its refund method.
@@ -2611,6 +2657,7 @@ def execute_order_step(
             refund_method=None
             if request.refund_method is None
             else PaymentMethod(request.refund_method),
+            expected_cancellation_money=_expected_figures(request.expected_cancellation_money),
         )
     except MachineUnavailableError as error:
         # SHOP-CAPTURE-001: another store's machine, a retired one, or one a load does not go into.
@@ -6500,6 +6547,27 @@ def _transactional_release_response(
 
 
 def _raise_operations_error(error: Exception) -> NoReturn:
+    if isinstance(error, OrderCancellationMoneyRefused):
+        # MONEY-RESIDUAL-009B (J3, J4): a structured 409 the console words and acts on -- the
+        # code, the counter's sentence, and (for a changed figure) what the sheet should now show.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "reason_code": error.code,
+                "message_vi": error.message_vi,
+                "decision": "DEC-045",
+                "cancellation_money": (
+                    None
+                    if error.preview is None
+                    else {
+                        "refund_vnd": error.preview.refund_vnd,
+                        "netted_vnd": error.preview.netted_vnd,
+                        "voided_vnd": error.preview.voided_vnd,
+                        "reissued_vnd": error.preview.reissued_vnd,
+                    }
+                ),
+            },
+        ) from error
     if isinstance(error, EgressRefusedError):
         # Before the generic 409 below, which would have flattened it to its English message.
         raise HTTPException(
@@ -6689,6 +6757,7 @@ def _order_view_response(view: OrderView, *, replayed: bool = False) -> OrderVie
                 voided_vnd=view.cancellation_money.voided_vnd,
                 reissued_vnd=view.cancellation_money.reissued_vnd,
                 lines_vi=list(view.cancellation_money.lines_vi),
+                refusal=view.cancellation_money.refusal,
             )
         ),
     )

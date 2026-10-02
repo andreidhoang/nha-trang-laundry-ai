@@ -393,6 +393,12 @@ def test_a_malformed_entry_is_answered_without_the_values_it_held(
         "khach 0905/123 456",
         "khach (090) 512/3456",
         "khach [0905] 123 456",
+        # Verification round 5 of 9b: a symbol between the groups, a run of marks, a date-shaped
+        # tail.
+        "khach 0905|123|456 tra thieu",
+        "khach 0905 ... 123 ... 456",
+        "khach (0905) 12-03-45",
+        "khach 84 905 12-03-45",
     ):
         refused = _post(
             client,
@@ -413,3 +419,22 @@ def test_a_malformed_entry_is_answered_without_the_values_it_held(
             (shop.store_id,),
         )
         assert cursor.fetchone()[0] == 0
+    # Verification round 5 of 9b: amounts joined by a spaced sign are a reason, not a phone.
+    arithmetic = "đếm lại 1.250.000 - 50.000 tiền lẻ"
+    kept = _post(
+        client,
+        shop.store_id,
+        {
+            **base,
+            "reason": arithmetic,
+            "supersedes_entry_id": sheet["closing_count"]["entry_id"],
+        },
+    )
+    assert kept.status_code == 201, kept.text
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT correction_reason FROM cash_counts"
+            " WHERE store_id = %s AND correction_reason IS NOT NULL",
+            (shop.store_id,),
+        )
+        assert cursor.fetchall() == [(arithmetic,)]

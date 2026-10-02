@@ -48,12 +48,16 @@ import {
 
 /** The server's named refusals, in the counter's words. */
 const REFUSAL_VI = {
-  CASH_COUNT_DAY_NOT_TODAY: "Đã sang ngày mới. Bấm Tải lại để đếm két của hôm nay.",
+  // Verification round 5 of 9b: this told the worker to reload and count today's drawer, which led
+  // into the new day's form whose hint forbids last night's count there. It now gives the hint's own
+  // instruction; `send` names the sheet's day in front of it.
+  CASH_COUNT_DAY_NOT_TODAY: "đừng ghi lại vào sổ ngày mới: ghi ra giấy, đưa chủ tiệm.",
   CASH_COUNT_AMOUNT_INVALID: "Gõ số tiền đếm được, ví dụ 500000.",
   CASH_COUNT_AMOUNT_TOO_LARGE: "Số quá lớn (tối đa 1.000.000.000 ₫). Kiểm tra lại số vừa gõ.",
   CASH_COUNT_REASON_REQUIRED: "Ghi lý do sửa, ví dụ “đếm sót tờ 50.000”.",
   CASH_COUNT_REASON_INVALID: "Lý do dài tối đa 120 chữ.",
-  CASH_COUNT_REASON_LOOKS_LIKE_PHONE: "Lý do không được chứa số điện thoại.",
+  CASH_COUNT_REASON_LOOKS_LIKE_PHONE:
+    "Lý do không được chứa số điện thoại. Số tiền ghi có dấu chấm hoặc chữ k, ví dụ 1.250.000 - 50.000 hay 150k.",
   CASH_COUNT_REASON_NOT_EXPECTED: "Lần ghi đầu tiên không cần lý do.",
 };
 
@@ -415,7 +419,11 @@ export function render_() {
         void load("Người khác vừa ghi số này. Màn hình đã tải lại — kiểm tra rồi sửa nếu cần.");
         return;
       }
-      const words = REFUSAL_VI[/** @type {keyof typeof REFUSAL_VI} */ (code)];
+      const known = REFUSAL_VI[/** @type {keyof typeof REFUSAL_VI} */ (code)];
+      const words =
+        code === "CASH_COUNT_DAY_NOT_TODAY"
+          ? `Đã sang ngày mới nên số của ${calendarDay(current.business_day)} chưa được ghi — ${known}`
+          : known;
       render(
         spec.alertHost,
         words

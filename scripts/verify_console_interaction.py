@@ -14169,6 +14169,22 @@ with sync_playwright() as playwright:
         and keys[2] != keys[1],
         repr(keys),
     )
+    # Verification round 5 of 9b: the after-midnight refusal told the worker to reload and count
+    # "hôm nay" -- straight into the new day's form, whose hint forbids last night's count there.
+    # It now names the sheet's day, says nothing was recorded, and gives the same instruction as
+    # the hint: not on the new day, on paper, to the owner.
+    refusal = page.locator("main [role='alert'], main .alert").filter(has_text="Đã sang ngày mới")
+    refusal_text = refusal.first.inner_text().replace("\xa0", " ") if refusal.count() else ""
+    check(
+        "the after-midnight refusal names the sheet's day and sends the count to paper, not today",
+        "30/09" in refusal_text
+        and "chưa được ghi" in refusal_text
+        and "đừng ghi lại vào sổ ngày mới" in refusal_text
+        and "ghi ra giấy, đưa chủ tiệm" in refusal_text
+        and "Tải lại" not in refusal_text
+        and "hôm nay" not in refusal_text,
+        refusal_text or "no refusal",
+    )
     state["cash_write_reply"] = None
     state["cash_writes"] = []
     closed = cash_sheet(

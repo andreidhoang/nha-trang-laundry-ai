@@ -734,6 +734,9 @@ def test_the_counter_guide_only_quotes_words_the_console_really_says() -> None:
         # CASH-COUNT-009 (verification round 4): a sheet opened after midnight is the new day's;
         # the closing form says so when the day has no float yet.
         "đừng ghi số đếm của hôm qua vào đây",
+        # CASH-COUNT-009 (verification round 5): the after-midnight refusal gives the hint's own
+        # instruction instead of sending the worker to the new day's form.
+        "đừng ghi lại vào sổ ngày mới",
     ]
 
     absent_from_guide = [phrase for phrase in quoted if phrase not in guide]
@@ -766,6 +769,14 @@ def test_the_counter_guide_says_what_den_ket_and_the_summary_do_after_the_count(
     closing = flat[flat.index("## Đóng ca") :]
     assert "mở **Đếm két** sau 0 giờ là sổ của **ngày mới**" in closing
     assert "**không chặn**" in closing
+    # Verification round 5 of 9b: the refusal for a sheet read before midnight must not send the
+    # worker to the new day's form (which the hint forbids); guide and console say the same thing.
+    refused = closing[closing.index("**Đã sang ngày mới**") : closing.index("Còn mở **Đếm két**")]
+    assert "đừng ghi lại vào sổ ngày mới" in refused and "ghi ra giấy, đưa chủ tiệm" in refused
+    assert "Tải lại" not in refused
+    console = (ROOT / "apps/web/src/screens/cashCount.js").read_text(encoding="utf-8")
+    assert "Bấm Tải lại để đếm két của hôm nay" not in console
+    assert "đừng ghi lại vào sổ ngày mới: ghi ra giấy, đưa chủ tiệm." in console
     attention = closing[
         closing.index("Đầu tóm tắt là mục **Cần chú ý**") : closing.index("Không có gì thì máy ghi")
     ]

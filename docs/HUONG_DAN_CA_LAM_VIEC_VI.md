@@ -273,14 +273,17 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
    - Dòng **Chưa tính … lần hoàn chưa rõ cách hoàn** là khoản hoàn ghi trước khi máy hỏi cách
      hoàn: máy không đoán, số phải có ghi là chưa đầy đủ — hỏi chủ tiệm.
    - Đếm nhầm thì bấm **Sửa số đếm**, gõ số đúng và ghi **Vì sao sửa?**; số cũ vẫn hiện, ghi
-     **Đã thay**. Máy báo **Người khác vừa ghi số này** nghĩa là máy khác đã ghi trước — màn hình
-     tự tải lại, kiểm tra rồi sửa nếu cần.
+     **Đã thay**. Lý do không ghi số điện thoại khách; số tiền ghi có dấu chấm hoặc chữ k
+     (*1.250.000 - 50.000*, *150k*) để máy không nhầm là số điện thoại. Máy báo
+     **Người khác vừa ghi số này** nghĩa là máy khác đã ghi trước — màn hình tự tải lại, kiểm tra
+     rồi sửa nếu cần.
    - Máy báo **Sổ đã thay đổi sau lúc đếm** khi có khoản thu, hoàn, chi từ két hay tiền đầu ngày
      ghi hoặc sửa sau lúc đếm: đếm lại rồi **Sửa số đếm** nếu cần.
    - Máy chỉ ghi tiền đầu ngày, số đếm cuối ngày và lần sửa cho **hôm nay** theo giờ của tiệm:
      đếm và ghi xong **trước 0 giờ**. Màn hình mở từ trước 0 giờ mà bấm ghi sau 0 giờ thì máy báo
-     **Đã sang ngày mới** và không ghi. Còn mở **Đếm két** sau 0 giờ là sổ của **ngày mới**: máy
-     không biết bạn đang đếm két của hôm qua nên **không chặn**. Khi ngày đó chưa có tiền đầu
+     **Đã sang ngày mới** và không ghi số đó; máy nhắc *đừng ghi lại vào sổ ngày mới* — ghi ra
+     giấy, đưa chủ tiệm. Còn mở **Đếm két** sau 0 giờ là sổ của **ngày mới**: máy không biết bạn
+     đang đếm két của hôm qua nên **không chặn**. Khi ngày đó chưa có tiền đầu
      ngày, ô ghi số đếm nhắc: *đừng ghi số đếm của hôm qua vào đây*. Số của một ngày đã qua, ghi
      sai hay quên ghi, cũng **không sửa được trên máy**: ghi ra giấy số đúng và lý do, đưa chủ
      tiệm. Báo cáo và tóm tắt cuối ngày vẫn hiện số đã ghi của ngày đó.

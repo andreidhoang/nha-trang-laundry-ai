@@ -157,10 +157,18 @@ The same spine with three differences:
    characters — every field optional, one `delivery_leg_costs` row per leg, append-only. The sheet
    shows the owner's rule for this order's weight (under 20 kg a motorbike, from exactly 20 kg a car;
    nothing when a line is priced by the piece) and picks nothing. A note that looks like a phone
-   number -- nine or more digits held together by nothing but spaces and punctuation of any kind
-   (dashes, dots, slashes, brackets), a letter or a date ending the number -- is refused
-   (`NOTE_LOOKS_LIKE_PHONE`; a cash-count correction reason the same way), and no note enters an
-   event, audit or outbox row.
+   number is refused (`NOTE_LOOKS_LIKE_PHONE`; a cash-count correction reason the same way), and no
+   note enters an event, audit or outbox row. The rule (`looks_like_phone`, deterministic): only a
+   Latin letter ends a number -- every other character, any number of them (spaces, any
+   punctuation or symbol such as `|` `~` `=` `→`, a letter of another script), holds digits
+   together; within such a stretch, a valid date, a time, a percentage, an amount in thousands
+   groups that is whole hundreds of đồng below 100.000.000, or a number its unit follows ("150k",
+   "2 bao") is set aside, and the stretch is a phone when it has nine digits or more and any of them
+   is not set aside. So "1.250.000 - 50.000" is a note and "(0905) 12-03-45" a phone. Fail-closed
+   side: "150000 200000", an amount not in whole hundreds beside another number, and a bare list
+   number beside amounts are refused (write đ or k, or a word between). Known limit: a phone typed
+   so that every group is itself a date, time, percentage or amount ("09/05 12/03/45") is not
+   recognised.
 
 ---
 
@@ -370,7 +378,9 @@ already paid stays owed-for.
   listed as **Đã thay**. A second phone's entry turns the press into a re-read
   (`CASH_COUNT_ALREADY_RECORDED` / `CASH_COUNT_STALE`, 409). Entries — originals and
   corrections alike — are for the shop's today only (`CASH_COUNT_DAY_NOT_TODAY`, 422; the screen
-  says **Đã sang ngày mới** when a sheet read before midnight is pressed after it): a past day's
+  says **Đã sang ngày mới**, names the sheet's day and says "đừng ghi lại vào sổ ngày mới: ghi ra
+  giấy, đưa chủ tiệm" when a sheet read before midnight is pressed after it -- the same instruction
+  as the no-float hint below, never "reload and count today"): a past day's
   count, wrong or missing, cannot be recorded or corrected on the machine. A sheet opened after
   midnight is the new day's, and the server cannot tell last night's drawer from this one, so it
   takes the count; with no float on that day the closing form names the day and says "đừng ghi số

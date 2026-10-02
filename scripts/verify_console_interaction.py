@@ -14431,6 +14431,23 @@ with sync_playwright() as playwright:
         and "vẫn còn trên màn hình" in held_banner,
         held_banner[:220],
     )
+    way_in = page.evaluate(
+        """() => { const a = document.querySelector('#banners a[data-sign-in-elsewhere]');
+            return a ? {text: a.textContent, href: a.getAttribute('href'),
+                        target: a.target, rel: a.rel} : null; }"""
+    )
+    check(
+        "K2 (idle expiry, screen held): the way back in is in the banner -- the sign-in opens in "
+        "a tab of its own, so the held screen is not left",
+        way_in
+        == {
+            "text": "Đăng nhập lại ở thẻ mới",
+            "href": "/signin/",
+            "target": "_blank",
+            "rel": "noopener",
+        },
+        repr(way_in),
+    )
     # Back (a phone's back gesture) is held the same way.
     page.go_back()
     page.wait_for_timeout(900)
@@ -14484,6 +14501,31 @@ with sync_playwright() as playwright:
         qty_after == "3.5" and "Phiên đăng nhập đã kết thúc" not in banner_text(),
         f"qty={qty_after!r} banner={banner_text()[:80]!r}",
     )
+
+    # Neighbour: a screen only looked at -- nothing typed, ticked or pressed on it. Nothing to
+    # keep, so the press goes where it went before K2's hold: the session screen with the way in
+    # (a device signed out from another, a lost phone, lands there at its next press).
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    expire()
+    target = page.locator("nav.nav a.nav__link[href='#/customers']")
+    if target.count():
+        target.first.click()
+    page.wait_for_timeout(900)
+    check(
+        "K2 (idle expiry on a screen only looked at, Khách hàng pressed): the session screen, "
+        "saying why, with 'Tới trang đăng nhập'",
+        address() == "#/customers"
+        and page.locator("main [data-session-expired]").count() == 1
+        and page.locator("main a.button", has_text="Tới trang đăng nhập").count() == 1,
+        f"{address()} {page.locator('main').inner_text()[:100]!r}",
+    )
+    state["authenticated"] = True
+    page.evaluate(
+        "async () => { const s = await import('/src/core/session.js'); await s.refresh(); }"
+    )
+    page.wait_for_timeout(900)
 
     # Neighbour: nothing a route drew is on show (a "not found" screen) -- nothing to hold, so the
     # press opens the destination's session screen, which says why it is not shown.

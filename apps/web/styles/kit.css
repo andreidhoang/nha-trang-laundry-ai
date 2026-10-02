@@ -5063,12 +5063,18 @@ details.more-denied[open] > .more-denied__summary::after {
  * K2: "Nhận đồ" for a session without two-step verification: shown, shut, its reason in words --
  * under the label in the sidebar (layout.css) and, smaller, under the raised tab on a phone.
  * K2: a destination pressed while the session is out is named on its own line in the banner, under
- * the sentence and above the button, and the screen on show is held (app.js `holdScreen`). */
+ * the sentence and above the button, and a screen worked on is held (app.js `holdScreen`); the
+ * banner's "Đăng nhập lại ở thẻ mới" is the way back in without leaving it. */
 
 .banner__held {
   flex-basis: 100%;
   margin: 0;
   text-align: center;
+}
+
+.banner [data-sign-in-elsewhere] {
+  color: inherit;
+  text-decoration: underline;
 }
 
 .new-step1[data-busy="true"] .row-item--interactive {

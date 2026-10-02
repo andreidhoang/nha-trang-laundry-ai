@@ -178,9 +178,9 @@ function navItem(entry, shown) {
  * left the person on a page with no way around it and no sign that one would come back. So the
  * last person's destinations are kept while the session is `ended` (not by "Thoát") or
  * `unreachable`. A press on one still goes nowhere that needs the server without saying so: the
- * screen on show is held and the banner names the destination not opened (`holdScreen`); where
- * nothing is held (a guard's screen was on show), the route's guard screen says the session ended,
- * or that the server is not answering (`guard`). "Thoát" -- here or in another tab -- forgets them
+ * screen worked on is held and the banner names the destination not opened (`holdScreen`); where
+ * nothing is held (nothing typed or pressed, or a guard's screen on show), the route's guard screen
+ * says the session ended, or that the server is not answering (`guard`). "Thoát" -- here or in another tab -- forgets them
  * with everything else.
  *
  * @type {import("./src/core/session.js").Principal|null}
@@ -579,6 +579,20 @@ function renderBanners() {
             : "Phiên đăng nhập đã kết thúc. Những gì bạn đang nhập vẫn còn trên màn hình — " +
               "đăng nhập lại rồi bấm gửi một lần nữa."),
         heldLine(),
+        // K2 (round-9b verification): the way back in without leaving the kept screen -- the
+        // sign-in opens in a tab of its own, and "Kiểm tra lại phiên" here picks the session up.
+        !sessionScreenShown && configuredSignInPath()
+          ? h(
+              "a",
+              {
+                href: configuredSignInPath(),
+                target: "_blank",
+                rel: "noopener",
+                dataSignInElsewhere: "true",
+              },
+              "Đăng nhập lại ở thẻ mới",
+            )
+          : null,
         h(
           "button",
           {
@@ -654,18 +668,12 @@ function unreachableScreen() {
  */
 function signedOutScreen() {
   const state = session.snapshot();
-  const configured = document
-    .querySelector('meta[name="console-signin-path"]')
-    ?.getAttribute("content")
-    ?.trim();
-  // Same-origin only. A sign-in path pointing at another origin would be an open redirect sitting
-  // in the one place staff are trained to trust.
-  const signInPath =
-    configured && configured.startsWith("/") && !configured.startsWith("//") ? configured : "";
+  const signInPath = configuredSignInPath();
 
-  // K2: a destination pressed after an idle expiry while no screen of a route was on show to hold
-  // (a guard's or a "not found" screen; a route's screen is held instead -- `holdScreen`). What is
-  // behind it needs the server, and this says why it is not shown -- not "never signed in".
+  // K2: a destination pressed after an idle expiry while nothing was held -- the screen on show was
+  // only looked at, or was a guard's or a "not found" screen (one worked on is held instead --
+  // `holdScreen`). What is behind it needs the server, and this says why it is not shown -- not
+  // "never signed in".
   const expired = state.status === "ended" && !state.signedOut && lastPrincipal !== null;
   return h(
     "section",
@@ -725,6 +733,21 @@ function signedOutScreen() {
 }
 
 /**
+ * The deployment's sign-in entry point, from `<meta name="console-signin-path">`. Same-origin
+ * only: a sign-in path pointing at another origin would be an open redirect sitting in the one
+ * place staff are trained to trust.
+ *
+ * @returns {string} the path, or "" when none is declared
+ */
+function configuredSignInPath() {
+  const configured = document
+    .querySelector('meta[name="console-signin-path"]')
+    ?.getAttribute("content")
+    ?.trim();
+  return configured && configured.startsWith("/") && !configured.startsWith("//") ? configured : "";
+}
+
+/**
  * Hold route rendering until both the session and its store scope have been resolved.
  *
  * Deep-linking to a store-scoped screen used to build that screen while `refresh()` was still
@@ -770,8 +793,11 @@ let heldDestination = null;
  * was typed is still on screen. A press on a destination used to replace that screen with the
  * session screen -- and the typed line was gone, one press after the console had said it was safe.
  * Every destination needs the server while the session is out, so the press now goes nowhere and
- * the banner says so; the screen, and what is typed on it, stays. Not after "Thoát": the person
- * chose to leave and the page has been cleared.
+ * the banner says so; the screen, and what is typed on it, stays. The router asks only for a
+ * screen the person has worked on (typed, ticked, pressed); one only looked at gives way to the
+ * session screen with its "Tới trang đăng nhập", as before -- a device signed out from another
+ * (lost phone) still lands there at its next press. Not after "Thoát": the person chose to leave
+ * and the page has been cleared.
  *
  * @param {import("./src/core/router.js").RouteContext} context
  * @param {boolean} moved the address changed (a press, Back) -- not a redraw of the same one

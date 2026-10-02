@@ -11791,6 +11791,14 @@ def scenario_console_residual(console: Console) -> None:
             "Chưa mở “Đơn hàng”: cần máy chủ, nên màn hình đang làm được giữ nguyên." in banner,
             banner[:200],
         )
+        way_in = page.locator("#banners a[data-sign-in-elsewhere]")
+        ok(
+            "and offers the way back in without leaving it: 'Đăng nhập lại ở thẻ mới' (a new tab)",
+            way_in.count() == 1
+            and way_in.first.get_attribute("target") == "_blank"
+            and bool(way_in.first.get_attribute("href")),
+            way_in.first.get_attribute("href") if way_in.count() else "no link",
+        )
         ok(
             "signed in again (in this browser), 'Kiểm tra lại phiên' in the banner",
             _session_with(console, token("demo-operations")) == 200,

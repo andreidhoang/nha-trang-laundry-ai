@@ -44,10 +44,29 @@ let pending = null;
 /** @type {((context: RouteContext, moved: boolean) => boolean)|null} */
 let hold = null;
 /**
- * Whether the outlet shows a screen a route rendered -- something a person may have typed into --
- * rather than a guard's screen, a "not found" or nothing yet. Only such a screen is held (`hold`).
+ * Whether the outlet shows a screen a route rendered rather than a guard's screen, a "not found"
+ * or nothing yet -- and whether the person has worked on it since it opened: typed, ticked, chose
+ * or pressed something on it (`noteWork`). Only such a screen is held (`hold`): a screen only
+ * looked at gives way as before, to the screen that says why and offers the way back in.
  */
 let routeShown = false;
+let worked = false;
+
+/**
+ * Something done on the screen on show -- a key typed, a box ticked, an option chosen, a button
+ * pressed. A link is not work: pressing one is leaving.
+ *
+ * @param {Event} event
+ */
+function noteWork(event) {
+  if (!routeShown) return;
+  if (event.type !== "click") {
+    worked = true;
+    return;
+  }
+  const target = /** @type {Element|null} */ (event.target);
+  if (target?.closest?.("button, input, select, textarea, label, [role=button]")) worked = true;
+}
 
 /**
  * Split a hash into a path and a query string.
@@ -157,7 +176,7 @@ function contextOf(hash) {
  * @param {MouseEvent} event
  */
 function holdPress(event) {
-  if (!routeShown || !hold || event.defaultPrevented || event.button !== 0) return;
+  if (!routeShown || !worked || !hold || event.defaultPrevented || event.button !== 0) return;
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   const link = /** @type {Element|null} */ (event.target)?.closest?.("a[href^='#/']");
   const target = link?.getAttribute("href") || "";
@@ -173,9 +192,9 @@ function holdPress(event) {
  *
  * CONSOLE-RESIDUAL-009B (K2, round-9b verification): while the shell says a screen must be held
  * (`hold` -- the session ended or the server is not answering), a change of address does not
- * replace the screen on show. The address goes back to it (no new history entry) and the shell
- * says why. Every destination needs the server then, so nothing is lost by staying -- and what the
- * person typed, which the banner promises is still on screen, stays true.
+ * replace a screen the person has worked on. The address goes back to it (no new history entry)
+ * and the shell says why. Every destination needs the server then, so nothing is lost by staying
+ * -- and what the person typed, which the banner promises is still on screen, stays true.
  *
  * @param {HashChangeEvent} [event] the address change that asked for this render, if one did
  */
@@ -188,7 +207,7 @@ export async function render(event) {
 
   const left = event?.oldURL ? new URL(event.oldURL).hash : "";
   const moved = Boolean(left) && left !== location.hash;
-  if (routeShown && hold?.(context, moved)) {
+  if (routeShown && worked && hold?.(context, moved)) {
     if (moved) history.replaceState(history.state, "", left);
     return;
   }
@@ -225,6 +244,7 @@ export async function render(event) {
   }
   if (controller.signal.aborted) return;
   routeShown = true;
+  worked = false;
   outlet.replaceChildren(view);
   enter(outlet);
   onChange?.();
@@ -305,6 +325,7 @@ export function start(config) {
   hold = config.hold || null;
   window.addEventListener("hashchange", (event) => void render(event));
   document.addEventListener("click", holdPress, true);
+  for (const type of ["input", "change", "click"]) outlet.addEventListener(type, noteWork, true);
   if (!location.hash) location.hash = "#/";
   else void render();
 }

@@ -87,7 +87,10 @@ from test_reports import AS_OF, DAY, _Order, _person, _seeded_shop, _store
 #: v5 (round 9b, MONEY-RESIDUAL-009B J1, `DEC-050`): "chờ quá N ngày" and the reminder steps count
 #: the days the laundry waited, not the days the shop held it (`awaiting-pickup-count-v2`, the
 #: reminder rules over `unclaimed.waiting_clock`). v4 was `daily-summary-v4:c8b8abadb5e4578f`.
-PINNED_TEMPLATE_VERSION = "daily-summary-v5:d0cbea0c5eb30373"
+#: The v5 digest moved once more inside round 9b, before v5 ever left the branch (it was
+#: `d0cbea0c5eb30373`): the reminder rules module now carries `pickup-reminder-v2`, whose text names
+#: the held days (verification round 1, P2). The count the summary prints did not change.
+PINNED_TEMPLATE_VERSION = "daily-summary-v5:1d5f720d3dfa67f2"
 
 
 def _database_url() -> str:

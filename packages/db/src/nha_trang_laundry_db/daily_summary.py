@@ -475,6 +475,7 @@ def cash_count_figures(
     excluded_entries = trace.get("excluded_unknown_refunds_entries", 0)
     excluded_vnd = trace.get("excluded_unknown_refunds_vnd", 0)
     books_over = trace.get("books_over_vnd")
+    moved, now = sheet.changed_since_count, sheet.expected
     return CashCountFigures(
         status=entry.expected_status.value,
         counted_vnd=entry.counted_vnd,
@@ -486,8 +487,15 @@ def cash_count_figures(
         excluded_unknown_entries=excluded_entries if isinstance(excluded_entries, int) else 0,
         excluded_unknown_vnd=excluded_vnd if isinstance(excluded_vnd, int) else 0,
         books_over_vnd=books_over if isinstance(books_over, int) else None,
-        changed_since_count=sheet.changed_since_count,
-        expected_now_vnd=sheet.expected.expected_vnd if sheet.changed_since_count else None,
+        changed_since_count=moved,
+        expected_now_vnd=now.expected_vnd if moved else None,
+        # The figure now carries its own status and exclusion: still leaving refunds of unknown
+        # method out is said and marked, as the sheet marks it (`DEC-049`).
+        status_now=now.status.value if moved else None,
+        excluded_unknown_now_entries=(
+            now.movement.unknown_refunds_entries if moved and now.produced else 0
+        ),
+        excluded_unknown_now_vnd=now.movement.unknown_refunds_vnd if moved and now.produced else 0,
     )
 
 

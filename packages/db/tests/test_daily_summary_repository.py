@@ -88,7 +88,10 @@ from test_reports import AS_OF, DAY, _Order, _person, _seeded_shop, _store
 #: count when it is not even with the books -- and, when the books or the float moved after the
 #: count, said as it was at the count with what the books say now (verification round 1 of 9b; the
 #: unreleased first v5 digest was `ee89b1db6938c01c`). v4 was `daily-summary-v4:c8b8abadb5e4578f`.
-PINNED_TEMPLATE_VERSION = "daily-summary-v5:7a9d280c088f4e66"
+#: Verification round 2 of 9b: the figure for now is marked incomplete (how many refunds of unknown
+#: method and their total) while the books still leave them out; the unreleased second v5 digest
+#: was `7a9d280c088f4e66`. v5 has not left this slice, so the identifier stays v5.
+PINNED_TEMPLATE_VERSION = "daily-summary-v5:b7647201be330134"
 
 
 def _database_url() -> str:

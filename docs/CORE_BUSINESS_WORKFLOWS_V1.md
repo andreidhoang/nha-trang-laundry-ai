@@ -329,7 +329,9 @@ already paid stays owed-for.
     unknown method its expected figure left out), or when it could not be compared (no float, or
     books below nothing), or — even if it was even — when the books or the float moved after the
     count: then said as it was *lúc đếm* with "Sổ đã thay đổi sau lúc đếm" and what the books say
-    now, the answer Báo cáo gives — read by the owner only; another reader gets the line omitted
+    now, the answer Báo cáo gives — the figure for now marked incomplete ("chưa tính N khoản hoàn
+    chưa rõ cách hoàn (X) nên số này chưa đầy đủ") whenever the books still leave refunds of unknown
+    method out, as Đếm két marks it — read by the owner only; another reader gets the line omitted
     by role and no "nothing needs attention" (`daily-summary-v5`).
 
   It says "Không có việc cần chú ý" only when every source answered. Then the day's figures: orders taken in, completed and

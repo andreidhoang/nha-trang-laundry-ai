@@ -11748,14 +11748,27 @@ def scenario_cash_count(console: Console) -> None:
         "Thiếu 10.000 ₫" in row_text and "sổ đổi sau lúc đếm" in row_text,
         row_text.replace("\n", " | ") or "absent",
     )
+    # The figure now is said with the sheet's own status: while the books still leave refunds of
+    # unknown method out, the summary marks it incomplete as Đếm két does (verification round 2).
+    sheet_now = _cash_sheet(console).get("expected") or {}
+    left_out = int(sheet_now.get("excluded_unknown_refunds_count") or 0)
+    left_out_vnd = f"{int(sheet_now.get('excluded_unknown_refunds_vnd') or 0):,}".replace(",", ".")
+    now_sentence = (
+        f"Sổ đã thay đổi sau lúc đếm: bây giờ két phải có {now}đ, chưa tính {left_out} khoản hoàn "
+        f"chưa rõ cách hoàn ({left_out_vnd}đ) nên số này chưa đầy đủ."
+        if sheet_now.get("status") == "INCOMPLETE"
+        else f"Sổ đã thay đổi sau lúc đếm: bây giờ két phải có {now}đ."
+    )
     summary = console.call("GET", f"/internal/v1/stores/{STORE}/reports/daily-summary?date={day}")
     text = str((summary.get("body") or {}).get("text", ""))
+    at_count = f"Lúc đếm, két cuối ngày thiếu 10.000đ (phải có {grouped}đ, đếm được {counted}đ)."
     ok(
         "the evening summary says the same: the shortfall as it was at the count, the books now",
-        f"Lúc đếm, két cuối ngày thiếu 10.000đ (phải có {grouped}đ, đếm được {counted}đ)." in text
-        and f"Sổ đã thay đổi sau lúc đếm: bây giờ két phải có {now}đ." in text
+        sheet_now.get("status") in ("COMPLETE", "INCOMPLETE")
+        and at_count in text
+        and now_sentence in text
         and "- Đếm két cuối ngày thiếu 10.000đ" not in text,
-        text[:500],
+        {"sheet_status": sheet_now.get("status"), "text": text[:500]},
     )
 
 

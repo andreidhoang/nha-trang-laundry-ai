@@ -14379,6 +14379,124 @@ with sync_playwright() as playwright:
     race_shot("j1-reminders-held-days")
     state["reminder_list"] = None
 
+    # J1 (verification round 2, P2): held on the ready day and resumed later, the server counts 0
+    # waiting days with N held days. "Xong hôm nay" beside "xong 02/08" and the held days is the
+    # count contradicting the date, so a held order never says it: "Chờ 0 ngày" keeps ready day +
+    # count + held days = today. An order never held, ready today, still says "Xong hôm nay".
+    held0 = order_view(
+        "SELF_DROP_SELF_COLLECT", balance="UNPAID", collected=False, production="READY_AT_STORE"
+    )
+    state["storage"] = {**storage_read(awaiting=True, days=0), "held_days": 5}
+    open_order(held0)
+    page.wait_for_timeout(700)
+    waiting0 = text_of("[data-field=storage-waiting]")
+    check(
+        "J1 Lưu kho, 0 counted days and 5 held: 'Chờ 0 ngày (xong 02/08) · không tính 5 ngày tiệm "
+        "giữ đơn', never 'Xong hôm nay'",
+        waiting0.strip() == "Chờ 0 ngày (xong 02/08) · không tính 5 ngày tiệm giữ đơn",
+        waiting0,
+    )
+    state["storage"] = {**storage_read(awaiting=True, days=0), "held_days": 0}
+    open_order(held0)
+    page.wait_for_timeout(700)
+    fresh0 = text_of("[data-field=storage-waiting]")
+    check(
+        "J1 Lưu kho, ready today and never held: still 'Xong hôm nay (xong 02/08)'",
+        fresh0.strip() == "Xong hôm nay (xong 02/08)",
+        fresh0,
+    )
+    state["storage"] = None
+    state["pickup_list"] = pickup_list(
+        {
+            **pickup_row(
+                PICKUP_ORDER_ID,
+                ticket=12,
+                days=0,
+                fee=0,
+                status="FREE_PERIOD",
+                attempts=0,
+                allowed=False,
+            ),
+            "held_days": 5,
+        },
+        pickup_row(
+            UNCLAIMED_OTHER_ID,
+            ticket=17,
+            days=0,
+            fee=0,
+            status="FREE_PERIOD",
+            attempts=0,
+            allowed=False,
+        ),
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/pickup", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    held0_pickup = text_of(f".pickup-row[data-order='{PICKUP_ORDER_ID}'] [data-field=waiting]")
+    fresh0_pickup = text_of(f".pickup-row[data-order='{UNCLAIMED_OTHER_ID}'] [data-field=waiting]")
+    subtitle0 = text_of("[data-field=pickup-count]")
+    check(
+        "J1 Đồ chờ lấy, 0 counted days and 5 held: 'Chờ 0 ngày (không tính 5 ngày tiệm giữ đơn)'; "
+        "the never-held row ready today says 'Xong hôm nay'; the heading's longest wait is the "
+        "held row's 'chờ 0 ngày'",
+        held0_pickup.startswith("Chờ 0 ngày (không tính 5 ngày tiệm giữ đơn)")
+        and "hôm nay" not in held0_pickup
+        and fresh0_pickup.startswith("Xong hôm nay")
+        and "giữ đơn" not in fresh0_pickup
+        and subtitle0.strip() == "2 đơn · lâu nhất chờ 0 ngày",
+        f"{held0_pickup!r} / {fresh0_pickup!r} / {subtitle0!r}",
+    )
+    race_shot("j1-pickup-held-zero")
+    state["pickup_list"] = None
+    state["reminder_list"] = reminder_list(
+        {
+            **reminder_row(
+                PICKUP_ORDER_ID,
+                ticket=12,
+                step="READY",
+                days=0,
+                reachable="PHONE",
+                phone="0905123456",
+            ),
+            "held_days": 5,
+        },
+        reminder_row(REMINDER_CHAT_ID, ticket=None, step="READY", days=0, reachable="CHAT"),
+        {
+            **reminder_row(
+                REMINDER_TICKET_ID,
+                ticket=21,
+                step="READY",
+                days=0,
+                reachable="NONE",
+                refusal="NO_CONTACT",
+            ),
+            "held_days": 5,
+        },
+    )
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/reminders", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    held0_row = text_of(f"#reminder-list tr[data-reminder='{PICKUP_ORDER_ID}'] .reminders__order")
+    fresh0_row = text_of(f"#reminder-list tr[data-reminder='{REMINDER_CHAT_ID}'] .reminders__order")
+    # The unreachable list sits in a closed <details>: its text is read, not its rendering.
+    unreachable0_node = page.locator(f"[data-reminder-unreachable='{REMINDER_TICKET_ID}']")
+    unreachable0 = unreachable0_node.first.text_content() or "" if unreachable0_node.count() else ""
+    check(
+        "J1 Nhắc khách lấy đồ, 0 counted days and 5 held: 'Chờ 0 ngày · xong 02/08 · không tính 5 "
+        "ngày tiệm giữ đơn' (the ready day kept); the never-held row says 'Xong hôm nay' alone; "
+        "the unreachable held order says 'Chờ 0 ngày (không tính 5 ngày tiệm giữ đơn)'",
+        "Chờ 0 ngày · xong 02/08 · không tính 5 ngày tiệm giữ đơn" in held0_row
+        and "hôm nay" not in held0_row
+        and "Xong hôm nay" in fresh0_row
+        and " · xong " not in fresh0_row
+        and "giữ đơn" not in fresh0_row
+        and "Chờ 0 ngày (không tính 5 ngày tiệm giữ đơn)" in unreachable0
+        and "hôm nay" not in unreachable0,
+        f"{held0_row!r} / {fresh0_row!r} / {unreachable0!r}",
+    )
+    race_shot("j1-reminders-held-zero")
+    state["reminder_list"] = None
+
     # J6: invoices.
     state["invoice_writes"] = []
     page.goto("about:blank")

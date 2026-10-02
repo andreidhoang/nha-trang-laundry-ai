@@ -84,7 +84,7 @@ export function render_() {
     const orders = Array.isArray(payload?.orders) ? payload.orders : [];
     const policy = payload?.policy || null;
     subtitle.textContent = payload.total_count
-      ? `${payload.total_count} đơn · lâu nhất ${waitingText(orders[0]?.days_waiting).toLowerCase()}`
+      ? `${payload.total_count} đơn · lâu nhất ${waitingText(orders[0]?.days_waiting, orders[0]?.held_days).toLowerCase()}`
       : "Không có đơn nào";
     render(
       infoHost,
@@ -208,7 +208,7 @@ export function render_() {
             "span",
             { dataField: "waiting" },
             // DEC-050: the count leaves the held days out; said beside it (P2).
-            `${waitingText(item.days_waiting)}${item.held_days ? ` (${heldDaysText(item.held_days)})` : ""} · ${attempts}`,
+            `${waitingText(item.days_waiting, item.held_days)}${item.held_days ? ` (${heldDaysText(item.held_days)})` : ""} · ${attempts}`,
           ),
           item.disposal?.allowed
             ? statusPill({ state: "danger", text: "Thanh lý được", token: "DISPOSAL_ALLOWED" })

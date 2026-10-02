@@ -240,7 +240,8 @@ export function render_() {
             h(
               "span",
               { class: "hint" },
-              ` · ${REMINDER_STEP_VI[item.step] || item.step} · ${waitingText(item.days_waiting)}`,
+              ` · ${REMINDER_STEP_VI[item.step] || item.step} · ${waitingText(item.days_waiting, item.held_days)}` +
+                (item.held_days ? ` (${heldDaysText(item.held_days)})` : ""),
             ),
           ),
         ),
@@ -388,8 +389,9 @@ export function render_() {
         h(
           "span",
           { class: "hint" },
-          h("span", { dataField: "waiting" }, waitingText(item.days_waiting)),
-          item.days_waiting === 0 ? null : ` · xong ${dateOnly(item.ready_at)}`,
+          h("span", { dataField: "waiting" }, waitingText(item.days_waiting, item.held_days)),
+          // "Xong hôm nay" already names the day; a held order keeps its ready day (J1, round 2).
+          item.days_waiting === 0 && !item.held_days ? null : ` · xong ${dateOnly(item.ready_at)}`,
           // DEC-050: the count leaves the held days out; said beside the ready day (P2).
           item.held_days
             ? h("span", { dataField: "held-days" }, ` · ${heldDaysText(item.held_days)}`)

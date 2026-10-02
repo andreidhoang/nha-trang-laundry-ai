@@ -11582,6 +11582,93 @@ def _press_cancel(console: Console) -> dict[str, Any]:
     return answer
 
 
+def _held_on_ready_day(console: Console) -> None:
+    """J1, verification round 2 (P2): held on its ready day and resumed five days later, the
+    server counts 0 waiting days and 5 held. The console never says "Xong hôm nay" beside the
+    earlier ready day: it says "Chờ 0 ngày", so ready day + count + held days is today."""
+
+    head("33a", "GIỮ NGAY HÔM ĐỒ XONG — 'Chờ 0 ngày', never 'Xong hôm nay' (J1, round 2)")
+    held = console.build_order(kg="7", stop="ready")["order_id"]
+    _age_ready(held, 5)
+    console.step(held, "HOLD")
+    console.step(held, "RESUME")
+    # HARNESS STEP, as above: the hold began one second after the laundry was ready (the same shop
+    # day) and was lifted today. Its guard admits only its end, so it is set aside for this one
+    # statement.
+    sql(
+        "begin; alter table order_storage_holds disable trigger order_storage_holds_protected; "
+        "update order_storage_holds h set held_at = o.production_ready_at + interval '1 second' "
+        f"from orders o where o.id = h.order_id and h.order_id = '{held}'; "
+        "alter table order_storage_holds enable trigger order_storage_holds_protected; commit;"
+    )
+    ready_on = sql(
+        "select to_char((production_ready_at at time zone 'Asia/Ho_Chi_Minh')::date, 'DD/MM') "
+        f"from orders where id = '{held}'"
+    )
+    storage = console.call("GET", f"/internal/v1/orders/{held}/storage").get("body") or {}
+    ok(
+        "held from the ready day to today: 0 days waiting, 5 held",
+        (storage.get("days_waiting"), storage.get("held_days")) == (0, 5),
+        json.dumps({k: storage.get(k) for k in ("days_waiting", "held_days", "ready_at")}),
+    )
+    console.open_order(held, settle=2200)
+    waiting = console.page.locator("[data-field=storage-waiting]")
+    line = waiting.inner_text().strip() if waiting.count() else ""
+    ok(
+        f"the order's Lưu kho says 'Chờ 0 ngày (xong {ready_on}) · không tính 5 ngày tiệm giữ "
+        "đơn', not 'Xong hôm nay'",
+        line == f"Chờ 0 ngày (xong {ready_on}) · không tính 5 ngày tiệm giữ đơn",
+        line or console.text()[:200],
+    )
+    _residual_shot(console, "j1-held-on-ready-day")
+    console.open("#/pickup", settle=1800)
+    row = console.page.locator(f".pickup-row[data-order='{held}'] [data-field=waiting]")
+    row_text = row.inner_text() if row.count() else ""
+    ok(
+        "Đồ chờ lấy's row says 'Chờ 0 ngày (không tính 5 ngày tiệm giữ đơn)', not 'Xong hôm nay'",
+        row_text.startswith("Chờ 0 ngày (không tính 5 ngày tiệm giữ đơn)")
+        and "hôm nay" not in row_text,
+        row_text or console.text()[:200],
+    )
+    reminders = console.call("GET", f"/internal/v1/stores/{STORE}/pickup-reminders?limit=200")
+    reminder = next(
+        (
+            item
+            for item in (reminders.get("body") or {}).get("orders") or []
+            if item.get("order_id") == held
+        ),
+        {},
+    )
+    ok(
+        "the reminder due is READY, 0 days waiting, 5 held",
+        (reminder.get("step"), reminder.get("days_waiting"), reminder.get("held_days"))
+        == ("READY", 0, 5),
+        json.dumps(reminder)[:200],
+    )
+    console.open("#/reminders", settle=1800)
+    table_row = console.page.locator(f"#reminder-list tr[data-reminder='{held}'] .reminders__order")
+    listed = console.page.locator(f"[data-reminder-unreachable='{held}']")
+    shown = (
+        table_row.first.inner_text()
+        if table_row.count()
+        else (listed.first.text_content() or "")
+        if listed.count()
+        else ""
+    )
+    ok(
+        f"Nhắc khách lấy đồ keeps the ready day: 'Chờ 0 ngày · xong {ready_on} · không tính 5 ngày "
+        "tiệm giữ đơn' (or, with no way to reach the customer, 'Chờ 0 ngày (không tính 5 ngày tiệm "
+        "giữ đơn)'), never 'Xong hôm nay'",
+        (
+            f"Chờ 0 ngày · xong {ready_on} · không tính 5 ngày tiệm giữ đơn" in shown
+            if table_row.count()
+            else "Chờ 0 ngày (không tính 5 ngày tiệm giữ đơn)" in shown
+        )
+        and "hôm nay" not in shown,
+        shown.replace("\n", " | ")[:200] or console.text()[:200],
+    )
+
+
 def scenario_money_residual(console: Console) -> None:
     """MONEY-RESIDUAL-009B (round 9b), on the real API and the console.
 
@@ -11682,6 +11769,7 @@ def scenario_money_residual(console: Console) -> None:
         == ("DAY_7", 10, 20),
         json.dumps(reminder)[:200],
     )
+    _held_on_ready_day(console)
 
     head("33b", "KHÁCH CÔNG NỢ GIAO TẬN NƠI — Ghi vào công nợ beside Thu tiền, then the trip (J5)")
     console.sign_in("demo-owner")

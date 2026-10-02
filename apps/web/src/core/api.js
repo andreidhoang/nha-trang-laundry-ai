@@ -44,6 +44,26 @@ export function whenSessionEnds(handler) {
   sessionEndObserver = handler;
 }
 
+/** @type {(sentAt: number) => void} */
+let answerObserver = () => {};
+
+/**
+ * Register the one handler told whenever the server answers a request with a success, and when
+ * that request was sent (`performance.now()`).
+ *
+ * CONSOLE-RESIDUAL-009B (K2, round-9b verification 2). A session that ended or a server that
+ * stopped answering is a local status, and only a re-read of the session used to clear it. But
+ * the banner tells the person to sign in again and press the same button: that write then
+ * succeeded while the console still believed the session was out -- and held the write's own move
+ * to the order it had just created, saying it "needs the server". The server had just answered.
+ * Told here, before the caller sees the answer, the session module can stop believing that.
+ *
+ * @param {(sentAt: number) => void} handler
+ */
+export function whenServerAnswers(handler) {
+  answerObserver = handler;
+}
+
 /**
  * Read a cookie by name. Only `staff_csrf` is readable — the session cookie is `HttpOnly`, which
  * is why this file never sees a token and never puts one anywhere.
@@ -120,6 +140,7 @@ export async function request(path, options = {}) {
   if (options.ifMatch !== undefined) headers["If-Match"] = `"${options.ifMatch}"`;
 
   const timeout = new AbortController();
+  const sentAt = performance.now();
   const timer = setTimeout(() => timeout.abort(), mutating ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS);
   const signal = options.signal
     ? AbortSignal.any([options.signal, timeout.signal])
@@ -157,6 +178,9 @@ export async function request(path, options = {}) {
     throw failure;
   }
 
+  // Synchronously, so the session knows before the caller acts on the answer (a move to the order
+  // a write just created must not be held as if the server were out).
+  answerObserver(sentAt);
   return body;
 }
 

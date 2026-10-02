@@ -11561,6 +11561,21 @@ def _token_without_two_step(subject: str) -> str:
     return provider.mint(subject, with_mfa=False)
 
 
+def _hold_first_read(held: list[Any]) -> Any:
+    """A route handler that holds the first GET it sees in `held` and lets everything else pass:
+    the address's own read, while the waiting list and a pressed row's reads answer (K1d).
+
+    One parameter: Playwright passes the request as a second one when a handler declares it."""
+
+    def handler(route: Any) -> None:
+        if not held and route.request.method == "GET":
+            held.append(route)
+        else:
+            route.continue_()
+
+    return handler
+
+
 def _session_with(console: Console, id_token: str) -> int:
     """Exchange a token for the session cookie in this page, without a reload (as `sign_in`)."""
 
@@ -11732,6 +11747,64 @@ def scenario_console_residual(console: Console) -> None:
         f"line={named!r} hero={hero_text[:60]!r}",
     )
 
+    head("K1d", "KHÁCH CỦA CHÍNH ĐƯỜNG DẪN — ?quote= / ?contact=, its own row: nothing dropped")
+    # Round-9b verification 2: the row pressed while the address still read was the very customer
+    # it names. A `?quote=` names X's quote and a `?contact=` X's conversation (a walk-in's ticket
+    # is its intake's binding); the line said X was dropped beside X on screen, and the address no
+    # longer named X, so a reload lost them.
+    own = console.walk_in()
+    own_id = str((own.get("intake") or {}).get("order_request_id") or "")
+    own_binding = str((own.get("intake") or {}).get("contact_binding_id") or "")
+    own_ticket = (own.get("ticket") or {}).get("ticket_number")
+    console.add_line("STANDARD_WASH_DRY", "3")
+    own_quote = str((console.price().get("body") or {}).get("quote_id") or "")
+    for query, matcher, label in (
+        (
+            f"?quote={own_quote}",
+            re.compile(rf"/quotes/{re.escape(own_quote)}$"),
+            "?quote=X",
+        ),
+        (
+            f"?contact={own_binding}",
+            re.compile(rf"/stores/{STORE}/order-requests\?"),
+            "?contact=X",
+        ),
+    ):
+        first: list[Any] = []
+        hold_first = _hold_first_read(first)
+
+        page.route(matcher, hold_first)
+        page.goto("about:blank")
+        page.goto(f"{CONSOLE}#/new{query}", wait_until="domcontentloaded")
+        page.wait_for_timeout(1800)
+        own_row = page.locator(f"#new-waiting [data-request='{own_id}']")
+        pressed = own_row.count() == 1 and bool(first)
+        if own_row.count():
+            own_row.first.click()
+            touched("newOrder.resume")
+        page.wait_for_timeout(1500)
+        while_held = line.first.inner_text() if line.count() else ""
+        for route in first:
+            route.continue_()
+        page.unroute(matcher, hold_first)
+        page.wait_for_timeout(2000)
+        after = line.first.inner_text() if line.count() else ""
+        hero_text = hero.first.inner_text() if hero.count() else ""
+        ok(
+            f"{label} still reading, X's own waiting row pressed: X opens and no line says X was "
+            "dropped -- not while the address reads, not after",
+            pressed
+            and not while_held
+            and not after
+            and f"Phiếu {own_ticket}" in hero_text.replace("\n", " "),
+            f"pressed={pressed} held={while_held!r} after={after!r} hero={hero_text[:40]!r}",
+        )
+        ok(
+            f"{label}: the address names X again (?request=X), so a reload resumes X",
+            page.evaluate("() => location.hash") == f"#/new?request={own_id}",
+            page.evaluate("() => location.hash"),
+        )
+
     head("K2", "HẾT PHIÊN GIỮA CA — the navigation stays; a press on it keeps what was typed")
     order = console.build_order(stop="created")
     order_id = order["order_id"]
@@ -11821,6 +11894,90 @@ def scenario_console_residual(console: Console) -> None:
             page.evaluate("() => location.hash").startswith("#/orders")
             and page.locator("main h1").first.inner_text() == "Đơn hàng",
             page.locator("main").inner_text()[:120],
+        )
+
+    head("K2d", "ĐĂNG NHẬP LẠI RỒI BẤM GỬI — the server's answer ends the hold; the order opens")
+    # Round-9b verification 2: the banner says "đăng nhập lại rồi bấm gửi một lần nữa". Done so --
+    # signed in again in this browser, without "Kiểm tra lại phiên" -- the order was created, and
+    # the hold kept the console on Nhận đồ saying "Chưa mở “Đơn hàng”: cần máy chủ".
+    console.sign_in("demo-operations")
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "7")
+    made = str((console.price().get("body") or {}).get("quote_id") or "")
+    page.locator("#new-next").click()
+    page.wait_for_selector("#new-confirm")
+    page.locator("#new-source [data-value='WALK_IN']").click()
+    page.wait_for_timeout(300)
+    session_id = str(
+        (console.call("GET", "/internal/v1/session").get("body") or {}).get("session_id") or ""
+    )
+    if not (READS_DATABASE and session_id):
+        ok("an idle expiry needs --database-url (the session's idle deadline is moved)", False)
+    else:
+        # The screen is scrolled to its end, as a phone's is at the button (a desk's pane too).
+        page.evaluate(
+            "() => { window.scrollTo(0, document.documentElement.scrollHeight);"
+            " const m = document.querySelector('#main'); if (m) m.scrollTop = m.scrollHeight; }"
+        )
+        # HARNESS STEP: eight hours idle, as in K2.
+        sql(
+            "update staff_sessions set idle_expires_at = now() - interval '1 second' "
+            f"where id = '{session_id}'"
+        )
+        page.evaluate(
+            "async () => { const api = await import('/staff/src/core/api.js');"
+            " await api.request('/internal/v1/session').catch(() => null); }"
+        )
+        page.wait_for_timeout(1200)
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(1000)
+        in_view = page.evaluate(
+            """() => { const n = document.querySelector('#banners [data-held-destination]');
+                if (!n) return null; const r = n.getBoundingClientRect();
+                return r.top >= 0 && r.bottom <= window.innerHeight; }"""
+        )
+        ok(
+            "Đơn hàng pressed on the scrolled confirmation: held, and the banner's 'Chưa mở' line "
+            "is in view (on a phone the page goes back to the top for it)",
+            page.evaluate("() => location.hash").startswith("#/new") and in_view is True,
+            f"{page.evaluate('() => location.hash')} in_view={in_view}",
+        )
+        ok(
+            "signed in again in this browser (as 'Đăng nhập lại ở thẻ mới' does)",
+            _session_with(console, token("demo-operations")) == 200,
+        )
+        accepted, created = console.press_capturing(
+            page.locator("#new-confirm"), "/acceptance", "/orders"
+        )
+        touched("newOrder.confirm")
+        page.wait_for_timeout(2500)
+        new_order = str((created.get("body") or {}).get("order_id") or "")
+        landed = str(page.evaluate("() => location.hash"))
+        ok(
+            "'Khách đồng ý — tạo đơn' pressed again: accepted and created (201, 201), and the "
+            "order opens by itself -- its own move is not held",
+            accepted["status"] == 201
+            and created["status"] == 201
+            and bool(new_order)
+            and landed == f"#/orders/{new_order}"
+            and page.locator("main h1").first.inner_text() != "Nhận đồ",
+            f"{accepted['status']}/{created['status']} {landed} "
+            f"h1={page.locator('main h1').first.inner_text()!r}",
+        )
+        banner = page.locator("#banners").inner_text()
+        ok(
+            "the session is picked up by itself: no 'Phiên đăng nhập đã kết thúc', no 'Chưa mở … "
+            "cần máy chủ', and 'In phiếu cho khách' is offered",
+            "Phiên đăng nhập đã kết thúc" not in banner
+            and "Chưa mở" not in banner
+            and page.locator("#order-created button[data-receipt]").count() == 1,
+            banner[:160],
+        )
+        ok(
+            "the server agrees: one order for that quote",
+            sql(f"select count(*) from orders where current_quote_id = '{made}'").strip() == "1",
+            sql(f"select count(*) from orders where current_quote_id = '{made}'"),
         )
 
     head("K2b", "MỘT LẦN THOÁT, MỌI THẺ — the other tab clears itself")

@@ -14096,13 +14096,18 @@ with sync_playwright() as playwright:
     # dropped without a word and its late read had nowhere to be named. The line has its own place.
     Y_ID = str(WAITING_Y["order_request_id"])
     state["waiting_y"] = True
-    for query, held, label, press, named in (
+    # `at_once`: whether it can be told at the press that Y is not the customer the address names.
+    # A `?request=` names an intake, so it can. A `?quote=` names a quote whose intake is known
+    # only once its read lands (round-9b verification 2): until then the row pressed may be that
+    # very customer, and "Đã bỏ" beside them would be false -- so the line waits for the read.
+    for query, held, label, press, named, at_once in (
         (
             f"?request={X_ID}",
             "intake_read",
             "?request=X held, waiting row Y",
             f"#new-waiting [data-request='{Y_ID}']",
             "Đã bỏ khách đang chờ “Khách nhắn qua kênh” — vẫn còn trong danh sách.",
+            True,
         ),
         (
             f"?quote={EXACT_QUOTE}",
@@ -14113,6 +14118,7 @@ with sync_playwright() as playwright:
             # line keeps its conditional wording rather than guess a name.
             "Đã bỏ khách đang chờ mở từ đường dẫn — nếu chưa thành đơn thì vẫn còn trong "
             "danh sách.",
+            False,
         ),
         (
             f"?request={X_ID}",
@@ -14120,6 +14126,7 @@ with sync_playwright() as playwright:
             "?request=X held, recent row whose waiting intake is Y",
             f"#new-recent-list [data-contact='{RECENT_CONTACT}']",
             "Đã bỏ khách đang chờ “Khách nhắn qua kênh” — vẫn còn trong danh sách.",
+            True,
         ),
     ):
         state["recent_waiting_y"] = "recent" in label
@@ -14136,11 +14143,19 @@ with sync_playwright() as playwright:
         race_shot("k1-row-dropped-" + held)
         release_step1(held)
         page.wait_for_timeout(1500)
-        check(
-            f"K1 ({label}): one quiet line says X was dropped -- and it stays while Y opens",
-            soon.startswith("Đã bỏ khách") and later == soon and superseded == "#/new",
-            f"{superseded} soon={soon!r} later={later!r}",
-        )
+        if at_once:
+            check(
+                f"K1 ({label}): one quiet line says X was dropped -- and it stays while Y opens",
+                soon.startswith("Đã bỏ khách") and later == soon and superseded == "#/new",
+                f"{superseded} soon={soon!r} later={later!r}",
+            )
+        else:
+            check(
+                f"K1 ({label}): while X's read is out nothing claims X was dropped -- Y may be "
+                "X -- and the address no longer names X",
+                not soon and not later and superseded == "#/new",
+                f"{superseded} soon={soon!r} later={later!r}",
+            )
         check(
             f"K1 ({label}): Y is on screen, and once X's read lands the line says where X is",
             "Phiếu 203" in k_hero() and dropped_line() == named and address() == "#/new",
@@ -14165,6 +14180,83 @@ with sync_playwright() as playwright:
         and address() == f"#/new?request={X_ID}"
         and page.locator("#new-line-0-qty").count() == 1,
         f"{address()} line={dropped_line()!r}",
+    )
+
+    # Round-9b verification 2: the same neighbour for the two addresses that do not name an intake
+    # outright. `?quote=` names X's quote, `?contact=` X's conversation; the row pressed is X's own.
+    # The line said X was dropped beside X on screen, never went, and the address no longer named
+    # X, so a reload lost them.
+    for query, held, label in (
+        (f"?quote={EXACT_QUOTE}", "quote_read", "?quote=X held"),
+        (f"?contact={CONTACT}", "intake_list", "?contact=X held"),
+    ):
+        state[f"hold_{held}"] = True
+        fresh_new(query)
+        held_lists = held_step1.get(held, [])
+        if held == "intake_list" and len(held_lists) >= 2:
+            # Answer the waiting list's own read; keep the hand-off's (the first) held.
+            waiting_read = held_lists.pop(1)
+            waiting_read[0].fulfill(
+                status=waiting_read[1],
+                content_type="application/json",
+                body=json.dumps(waiting_read[2]),
+            )
+            page.wait_for_timeout(800)
+        row = page.locator(f"#new-waiting [data-request='{X_ID}']")
+        pressed_row = row.count() == 1
+        if pressed_row:
+            row.first.click()
+        page.wait_for_timeout(1200)
+        while_held = dropped_line()
+        release_step1(held)
+        page.wait_for_timeout(1500)
+        race_shot("k1-own-row-" + held)
+        check(
+            f"K1 ({label}, X's own waiting row pressed): X opens, no 'Đã bỏ' line -- not while X's "
+            "read is out, not after it lands",
+            pressed_row
+            and not while_held
+            and not dropped_line()
+            and page.locator("#new-line-0-qty").count() == 1
+            and "Khách nhắn qua kênh" in k_hero(),
+            f"row={pressed_row} held={while_held!r} after={dropped_line()!r} "
+            f"hero={k_hero()[:40]!r}",
+        )
+        check(
+            f"K1 ({label}, X's own waiting row pressed): the address names X again, so a reload "
+            "resumes X",
+            address() == f"#/new?request={X_ID}",
+            address(),
+        )
+
+    # Neighbour: `?contact=X` held, and the row pressed is Y -- another conversation's customer.
+    # That can be told at the press (the conversations differ): the line is there at once.
+    state["hold_intake_list"] = True
+    fresh_new(f"?contact={CONTACT}")
+    held_lists = held_step1.get("intake_list", [])
+    if len(held_lists) >= 2:
+        waiting_read = held_lists.pop(1)
+        waiting_read[0].fulfill(
+            status=waiting_read[1],
+            content_type="application/json",
+            body=json.dumps(waiting_read[2]),
+        )
+        page.wait_for_timeout(800)
+    row = page.locator(f"#new-waiting [data-request='{Y_ID}']")
+    if row.count():
+        row.first.click()
+    page.wait_for_timeout(600)
+    at_press = dropped_line()
+    release_step1("intake_list")
+    page.wait_for_timeout(1300)
+    check(
+        "K1 control (?contact=X held, waiting row Y): the line says X's conversation was dropped, "
+        "at once and after X's read lands; Y is on screen, the address is #/new",
+        at_press == "Đã bỏ khách mở từ cuộc trò chuyện — chưa tạo gì cho khách đó."
+        and dropped_line() == at_press
+        and "Phiếu 203" in k_hero()
+        and address() == "#/new",
+        f"{address()} at_press={at_press!r} after={dropped_line()!r} hero={k_hero()[:40]!r}",
     )
 
     # Neighbour: X dropped (its read lands and names it), then X itself is opened from step 1 --
@@ -14195,6 +14287,12 @@ with sync_playwright() as playwright:
         and not dropped_line()
         and page.locator("#new-line-0-qty").count() == 1,
         f"before={named_before!r} after={dropped_line()!r}",
+    )
+    check(
+        "K1 (X dropped, then opened again from the list): the address names X again -- a reload "
+        "resumes the customer on screen",
+        address() == f"#/new?request={X_ID}",
+        address(),
     )
     state["waiting_y"] = False
 
@@ -14603,6 +14701,206 @@ with sync_playwright() as playwright:
         "Chưa mở" not in banner_text() and same_screen() and search_value() == "3456",
         banner_text()[:120],
     )
+
+    # --- K2 (round-9b verification 2): the hold's own premise, its history, its phone ------------
+    # A server answer is the end of "the server is out". The banner says: sign in again, press the
+    # same button. Done -- in the tab it offers, without "Kiểm tra lại phiên" -- the write
+    # succeeded, and the hold then kept its own move to the order it had just made, saying it needs
+    # the server.
+    state["accept_posts"] = []
+    state["order_posts"] = []
+    state["order_refuse_once"] = False
+    state["accept_fail_once"] = False
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    tap("#new-walk-in")
+    page.wait_for_timeout(1000)
+    tap("#new-add-line")
+    page.wait_for_timeout(300)
+    tap("#new-picker [data-code='STD_WASH_DRY_LT6']")
+    page.wait_for_timeout(300)
+    page.keyboard.type("5.9", delay=8)
+    tap("#new-price")
+    page.wait_for_timeout(1200)
+    tap("#new-next")
+    page.wait_for_timeout(600)
+    at_confirm = page.locator("#new-confirm").count() == 1
+    expire()
+    state["authenticated"] = True
+    tap("#new-confirm")
+    page.wait_for_timeout(2000)
+    created_at = address()
+    shell_shot("stub-k2-write-after-sign-in")
+    check(
+        "K2 (signed in again in another tab, 'Khách đồng ý — tạo đơn' pressed): the order is "
+        "created and opens by itself -- its own move is not held",
+        at_confirm
+        and len(state["order_posts"]) == 1
+        and created_at == f"#/orders/{ORDER_CREATED['order_id']}"
+        and "Đã tạo đơn" in page.locator("main").inner_text(),
+        f"confirm={at_confirm} orders={len(state['order_posts'])} {created_at} "
+        f"{page.locator('main').inner_text()[:80]!r}",
+    )
+    check(
+        "K2 (the server answered): the session is picked up by itself -- no 'Phiên đăng nhập đã "
+        "kết thúc', no 'Chưa mở … cần máy chủ', and 'In phiếu cho khách' is there",
+        "Phiên đăng nhập đã kết thúc" not in banner_text()
+        and "Chưa mở" not in banner_text()
+        and page.locator("#order-created button[data-receipt]").count() == 1,
+        banner_text()[:160],
+    )
+
+    # Neighbour: the server answers a read while the session read itself still fails -- the hold
+    # stays (nothing moves, nothing claims the session is back); once the session read answers,
+    # the first answer the server gives clears the banner, "Kiểm tra lại phiên" not needed.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/customers", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    page.locator("#customers-search").fill("3456")
+    page.locator("#customers-search").press("Enter")
+    page.wait_for_timeout(800)
+    page.evaluate("() => document.querySelector('main section')?.setAttribute('data-k2-kept', '1')")
+    state["session_unreachable"] = True
+    page.evaluate(
+        "async () => { const s = await import('/src/core/session.js'); await s.refresh(); }"
+    )
+    page.wait_for_timeout(600)
+    read_answered = (
+        "async () => { const api = await import('/src/core/api.js');"
+        f" await api.request('/internal/v1/stores/{STORE}/customers?q=3456')"
+        ".catch(() => null); }"
+    )
+    page.evaluate(read_answered)
+    page.wait_for_timeout(800)
+    press_orders()
+    check(
+        "K2 control (a read answered, the session read still failing): the banner stays, the "
+        "screen is held, the press is named",
+        "Mất liên lạc với máy chủ" in banner_text()
+        and same_screen()
+        and address() == "#/customers"
+        and "Chưa mở “Đơn hàng”" in banner_text(),
+        f"{address()} kept={same_screen()} {banner_text()[:120]!r}",
+    )
+    state["session_unreachable"] = False
+    page.evaluate(read_answered)
+    page.wait_for_timeout(900)
+    check(
+        "K2 (server back): the first answer the server gives clears the banner and its held line; "
+        "the screen is the same",
+        "Mất liên lạc" not in banner_text()
+        and "Chưa mở" not in banner_text()
+        and same_screen()
+        and search_value() == "3456",
+        banner_text()[:120],
+    )
+
+    # A held Back used to overwrite the entry it reached with the held screen's address: that
+    # screen was gone from the history, and the next Back after signing in left the console.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.wait_for_timeout(500)
+    page.evaluate("() => { location.hash = '#/customers'; }")
+    page.wait_for_timeout(900)
+    page.locator("#customers-search").fill("3456")
+    page.locator("#customers-search").press("Enter")
+    page.wait_for_timeout(800)
+    page.evaluate("() => document.querySelector('main section')?.setAttribute('data-k2-kept', '1')")
+    length_before = page.evaluate("() => history.length")
+    expire()
+    page.go_back()
+    page.wait_for_timeout(1000)
+    held_back = address()
+    held_kept = same_screen() and search_value() == "3456"
+    recheck_in_banner()
+    page.go_back()
+    page.wait_for_timeout(1200)
+    check(
+        "K2 (Back held, then signed in again): the screen was kept through the held Back, and the "
+        "next Back reaches Đơn hàng -- the entry before is still there",
+        held_back == "#/customers"
+        and held_kept
+        and address() == "#/orders"
+        and page.locator("main h1").first.inner_text() == "Đơn hàng"
+        and page.evaluate("() => history.length") == length_before,
+        f"held={held_back} kept={held_kept} now={page.url} "
+        f"length={page.evaluate('() => history.length')}/{length_before}",
+    )
+
+    # On a phone the document scrolls and the banner with it: a held tab press on a long, scrolled
+    # screen answered off-screen and looked like nothing at all.
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    tap("#new-walk-in")
+    page.wait_for_timeout(1200)
+    tap("#new-add-line")
+    page.wait_for_timeout(400)
+    tap("#new-picker [data-code='STD_WASH_DRY_LT6']")
+    page.wait_for_timeout(400)
+    page.locator("#new-line-0-qty").fill("3.5")
+    page.wait_for_timeout(200)
+    page.evaluate("() => window.scrollTo(0, document.documentElement.scrollHeight)")
+    page.wait_for_timeout(300)
+    scrolled = page.evaluate("() => window.scrollY")
+    expire()
+    phone_tab = page.locator("nav.nav a.nav__link[href='#/orders']")
+    if phone_tab.count() and phone_tab.first.is_visible():
+        phone_tab.first.click()
+    page.wait_for_timeout(900)
+    in_view = page.evaluate(
+        """() => { const n = document.querySelector('#banners [data-held-destination]');
+            if (!n) return null; const r = n.getBoundingClientRect();
+            return r.top >= 0 && r.bottom <= window.innerHeight; }"""
+    )
+    shell_shot("stub-k2-held-phone-scrolled")
+    check(
+        "K2 (phone, Nhận đồ scrolled down, Đơn hàng tab pressed): the banner's 'Chưa mở “Đơn "
+        "hàng”' is in view, and the typed 3.5 kg is still there",
+        scrolled > 0
+        and in_view is True
+        and "Chưa mở “Đơn hàng”" in banner_text()
+        and page.evaluate("() => document.querySelector('#new-line-0-qty')?.value") == "3.5",
+        f"scrolled={scrolled} in_view={in_view} {banner_text()[:100]!r}",
+    )
+    recheck_in_banner()
+
+    # "Thêm" on a phone and "Tất cả màn hình" on a desk are one address: the banner names the one
+    # this device shows.
+    for viewport, label, opener in (
+        ({"width": 390, "height": 844}, "Thêm", None),
+        ({"width": 1280, "height": 900}, "Tất cả màn hình", "nav.nav [data-nav-fold]"),
+    ):
+        page.set_viewport_size(viewport)
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/customers", wait_until="networkidle")
+        page.wait_for_timeout(700)
+        page.locator("#customers-search").fill("3456")
+        page.locator("#customers-search").press("Enter")
+        page.wait_for_timeout(800)
+        expire()
+        if opener and page.locator(opener).count():
+            page.locator(opener).first.click()
+            page.wait_for_timeout(200)
+        more_link = page.locator("nav.nav a.nav__link[href='#/more']", has_text=label)
+        visible = more_link.count() > 0 and more_link.first.is_visible()
+        if visible:
+            more_link.first.click()
+        page.wait_for_timeout(900)
+        named = banner_text()
+        check(
+            f"K2 ({'phone' if label == 'Thêm' else 'desk control'}, '{label}' pressed): the "
+            f"banner names “{label}”, the destination this device shows",
+            visible
+            and f"Chưa mở “{label}”" in named
+            and address() == "#/customers"
+            and search_value() == "3456",
+            f"visible={visible} {address()} {named[:160]!r}",
+        )
+        recheck_in_banner()
+    page.set_viewport_size({"width": 1280, "height": 900})
 
     # --- K2: one Thoát clears every tab --------------------------------------------------------
     customer_on_screen()

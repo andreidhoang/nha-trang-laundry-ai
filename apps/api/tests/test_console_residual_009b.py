@@ -206,3 +206,146 @@ console.log(JSON.stringify({{signedOut: outcome.signedOut, heard,
     assert got["heard"] == ([{"type": "signed-out"}] if told else [])
     # The tab that pressed is not "signed out elsewhere".
     assert got["elsewhereHere"] is False
+
+
+# --- K2 (round-9b verification 2): a success after the session went out ---------------------
+#
+# The hold (`app.js` `holdScreen`) rests on "the session is out, every destination needs the
+# server". A write sent after signing in again elsewhere succeeded -- and its own move to the order
+# it created was held, because only a re-read of the session cleared the local status. The server's
+# answer now says so at once (`answered`), before the caller acts on it, and the session is read
+# again. A request sent before the session went out says nothing about now.
+
+_ANSWERED = """
+const api = await import("./src/core/api.js");
+const session = await import("./src/core/session.js");
+const asked = [];
+const pending = [];
+globalThis.fetch = (url, init = {}) => {
+  asked.push(String(url));
+  const answer = globalThis.__answers.shift();
+  if (answer === "hold") {
+    return new Promise((resolve) => pending.push(() => resolve(new Response("{}", {
+      status: 200, headers: {"Content-Type": "application/json"},
+    }))));
+  }
+  const [status, body] = answer || [200, {}];
+  return Promise.resolve(new Response(JSON.stringify(body), {
+    status, headers: {"Content-Type": "application/json"},
+  }));
+};
+const SESSION = {staff_user_id: "u1", roles: ["OPERATOR"], mfa_verified: true, session_id: "s1"};
+const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+"""
+
+
+def _session_answers(script: str) -> Any:
+    return _run(_ANSWERED + script)
+
+
+def test_a_success_sent_after_an_expiry_says_so_before_the_caller_sees_it() -> None:
+    got = _session_answers(
+        """
+globalThis.__answers.push([200, SESSION], [200, []]);
+await session.refresh();
+globalThis.__answers.push([401, {detail: "invalid staff session"}]);
+await api.request("/internal/v1/x").catch(() => null);
+const out = session.snapshot().status;
+asked.length = 0;
+// Signed in again elsewhere; the write is answered. What the caller sees, at once:
+globalThis.__answers.push([201, {order_id: "o1"}], [200, SESSION], [200, []]);
+const created = await api.request("/internal/v1/orders", {method: "POST", body: {},
+  idempotencyKey: "k1"});
+const atOnce = session.snapshot();
+await settle();
+const later = session.snapshot();
+console.log(JSON.stringify({out, created: created.order_id, answered: atOnce.answered,
+  statusAtOnce: atOnce.status, reread: asked.includes("/internal/v1/session"),
+  statusLater: later.status, answeredLater: later.answered}));
+"""
+    )
+    assert got == {
+        "out": "ended",
+        "created": "o1",
+        "answered": True,
+        "statusAtOnce": "ended",
+        "reread": True,
+        "statusLater": "active",
+        "answeredLater": False,
+    }
+
+
+def test_a_success_sent_before_the_expiry_says_nothing_about_now() -> None:
+    got = _session_answers(
+        """
+globalThis.__answers.push([200, SESSION], [200, []]);
+await session.refresh();
+globalThis.__answers.push("hold");
+const early = api.request("/internal/v1/slow");
+globalThis.__answers.push([401, {detail: "invalid staff session"}]);
+await api.request("/internal/v1/x").catch(() => null);
+asked.length = 0;
+pending.shift()();
+await early;
+await settle();
+const now = session.snapshot();
+console.log(JSON.stringify({status: now.status, answered: now.answered,
+  reread: asked.includes("/internal/v1/session")}));
+"""
+    )
+    assert got == {"status": "ended", "answered": False, "reread": False}
+
+
+def test_a_success_after_the_server_was_unreachable_reads_the_session_again() -> None:
+    got = _session_answers(
+        """
+globalThis.__answers.push([200, SESSION], [200, []]);
+await session.refresh();
+globalThis.__answers.push([503, {detail: "operations unavailable"}]);
+await session.refresh();
+const out = session.snapshot().status;
+globalThis.__answers.push([200, []], [200, SESSION], [200, []]);
+await api.request("/internal/v1/y");
+const atOnce = session.snapshot().answered;
+await settle();
+console.log(JSON.stringify({out, atOnce, status: session.snapshot().status}));
+"""
+    )
+    assert got == {"out": "unreachable", "atOnce": True, "status": "active"}
+
+
+def test_the_re_read_finding_no_session_puts_the_hold_back() -> None:
+    got = _session_answers(
+        """
+globalThis.__answers.push([200, SESSION], [200, []]);
+await session.refresh();
+globalThis.__answers.push([401, {detail: "invalid staff session"}]);
+await api.request("/internal/v1/x").catch(() => null);
+// A public answer (no session needed) -- the re-read then finds no session after all.
+globalThis.__answers.push([200, {}], [401, {detail: "invalid staff session"}]);
+await api.request("/internal/v1/public");
+await settle();
+const now = session.snapshot();
+console.log(JSON.stringify({status: now.status, answered: now.answered}));
+"""
+    )
+    assert got == {"status": "ended", "answered": False}
+
+
+def test_after_thoat_a_success_changes_nothing() -> None:
+    got = _session_answers(
+        """
+globalThis.__answers.push([200, SESSION], [200, []]);
+await session.refresh();
+globalThis.__answers.push([200, {end_session_url: null}]);
+await session.signOut();
+asked.length = 0;
+globalThis.__answers.push([200, {}]);
+await api.request("/internal/v1/z");
+await settle();
+const now = session.snapshot();
+console.log(JSON.stringify({status: now.status, signedOut: now.signedOut,
+  answered: now.answered, reread: asked.includes("/internal/v1/session")}));
+"""
+    )
+    assert got == {"status": "ended", "signedOut": True, "answered": False, "reread": False}

@@ -53,6 +53,64 @@ let routeShown = false;
 let worked = false;
 
 /**
+ * Round-9b verification 2 (K2): every history entry this page renders is stamped in its own
+ * `history.state` (`consoleEntry`), increasing in the order entries are made -- and since a new
+ * entry always discards the ones ahead of it, increasing along the history too. A held Back or
+ * Forward is undone by stepping back to the stamp of the screen on show (`shownEntry`) rather than
+ * by overwriting the entry it reached: that overwrite deleted the previous screen from the history,
+ * and the next Back after signing in left the console. `returning` is true while those steps run.
+ */
+let lastStamp = 0;
+let shownEntry = 0;
+let returning = false;
+/** The held screen's address when a held Back or Forward began its way back. */
+let keptAddress = "";
+/** Whether a route's screen is being built (awaited) -- the outlet is about to change. */
+let building = false;
+
+/** @returns {number|null} the current entry's stamp, if this page has stamped it */
+function entryStamp() {
+  const value = history.state?.consoleEntry;
+  return typeof value === "number" ? value : null;
+}
+
+/**
+ * The current entry's state with `stamp` in it, keeping whatever else is there.
+ *
+ * @param {number} stamp
+ */
+function stamped(stamp) {
+  const state = history.state && typeof history.state === "object" ? history.state : {};
+  return { ...state, consoleEntry: stamp };
+}
+
+/** @returns {number} the current entry's stamp, stamping it first if it has none */
+function stampEntry() {
+  const here = entryStamp();
+  if (here !== null) return here;
+  lastStamp = Math.max(Date.now(), lastStamp + 1);
+  history.replaceState(stamped(lastStamp), "");
+  return lastStamp;
+}
+
+/** A step of a held Back or Forward's way back (`returning`) has landed on an entry. */
+function onPopstate() {
+  if (!returning) return;
+  const here = entryStamp();
+  if (here === shownEntry) {
+    returning = false;
+    return;
+  }
+  if (here === null) {
+    // An entry this page never stamped, on the way: it becomes the held screen's, address and all.
+    returning = false;
+    history.replaceState(stamped(shownEntry), "", keptAddress);
+    return;
+  }
+  history.go(here < shownEntry ? 1 : -1);
+}
+
+/**
  * Something done on the screen on show -- a key typed, a box ticked, an option chosen, a button
  * pressed. A link is not work: pressing one is leaving.
  *
@@ -109,7 +167,8 @@ export function navigate(path, query) {
   const search = query && Object.keys(query).length ? `?${new URLSearchParams(query)}` : "";
   const target = `#${path}${search}`;
   if (location.hash === target) render();
-  else location.hash = target;
+  // K2: a held screen is not left for a button's destination either -- and no entry is made.
+  else if (!heldFor(target)) location.hash = target;
 }
 
 /**
@@ -176,12 +235,44 @@ function contextOf(hash) {
  * @param {MouseEvent} event
  */
 function holdPress(event) {
-  if (!routeShown || !worked || !hold || event.defaultPrevented || event.button !== 0) return;
+  if (event.defaultPrevented || event.button !== 0) return;
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   const link = /** @type {Element|null} */ (event.target)?.closest?.("a[href^='#/']");
   const target = link?.getAttribute("href") || "";
   if (!target || target === location.hash) return;
-  if (hold(contextOf(target), true)) event.preventDefault();
+  if (heldFor(target)) event.preventDefault();
+}
+
+/**
+ * Whether the screen on show is held rather than give way to `target` (K2); the shell names the
+ * destination when it is.
+ *
+ * @param {string} target a hash
+ * @returns {boolean}
+ */
+function heldFor(target) {
+  return Boolean(routeShown && worked && !building && hold && hold(contextOf(target), true));
+}
+
+/**
+ * The address moved while the screen on show is held: put the history back as it was (K2).
+ *
+ * Back or Forward reached another entry of this page: step back to the held screen's own entry,
+ * one at a time (`onPopstate`), leaving every entry where it was -- the next Back, once signed in
+ * again, goes where it went before. A new address (typed, or written by code that does not ask
+ * `navigate`) made an entry of its own: it is given the held screen's address and stamp.
+ *
+ * @param {string} left the address before the move
+ */
+function keepEntry(left) {
+  const here = entryStamp();
+  if (here !== null && here !== shownEntry) {
+    returning = true;
+    keptAddress = left;
+    history.go(here < shownEntry ? 1 : -1);
+    return;
+  }
+  history.replaceState(stamped(shownEntry), "", left);
 }
 
 /**
@@ -192,9 +283,11 @@ function holdPress(event) {
  *
  * CONSOLE-RESIDUAL-009B (K2, round-9b verification): while the shell says a screen must be held
  * (`hold` -- the session ended or the server is not answering), a change of address does not
- * replace a screen the person has worked on. The address goes back to it (no new history entry)
- * and the shell says why. Every destination needs the server then, so nothing is lost by staying
- * -- and what the person typed, which the banner promises is still on screen, stays true.
+ * replace a screen the person has worked on. The address goes back to it, the history as it was
+ * (`keepEntry`), and the shell says why. A destination needs the server then -- and what the person
+ * typed, which the banner promises is still on screen, stays true. Not once a request sent since
+ * has succeeded (round-9b verification 2): the server is answering then, and the move a write
+ * makes to what it created is not held -- the shell's `hold` answers false.
  *
  * @param {HashChangeEvent} [event] the address change that asked for this render, if one did
  */
@@ -207,18 +300,28 @@ export async function render(event) {
 
   const left = event?.oldURL ? new URL(event.oldURL).hash : "";
   const moved = Boolean(left) && left !== location.hash;
-  if (routeShown && worked && hold?.(context, moved)) {
-    if (moved) history.replaceState(history.state, "", left);
+  if (moved && routeShown && !building) {
+    // A step of a held Back's way back (`onPopstate` takes it), or its arrival: the entry of the
+    // screen on show -- which never left -- is on show again. Nothing to render.
+    if (returning || entryStamp() === shownEntry) return;
+  }
+  if (routeShown && worked && !building && hold?.(context, moved)) {
+    if (moved) keepEntry(left);
     return;
   }
+  returning = false;
 
   pending?.abort();
   const controller = new AbortController();
   pending = controller;
+  // Stamped before the screen builds: a screen that forwards (`replace`) while building moves to
+  // an entry of its own, and that entry's change of address must render, not pass for this one.
+  const entry = stampEntry();
 
   const blocked = guard ? guard(context, route) : null;
   if (blocked) {
     if (controller.signal.aborted) return;
+    building = false;
     routeShown = false;
     outlet.replaceChildren(blocked);
     enter(outlet);
@@ -228,6 +331,7 @@ export async function render(event) {
 
   if (!route) {
     if (controller.signal.aborted) return;
+    building = false;
     routeShown = false;
     outlet.replaceChildren(notFound(path));
     enter(outlet);
@@ -236,6 +340,7 @@ export async function render(event) {
   }
 
   let view;
+  building = true;
   try {
     view = await route.render(context);
   } catch (error) {
@@ -243,8 +348,10 @@ export async function render(event) {
     view = renderCrash(error);
   }
   if (controller.signal.aborted) return;
+  building = false;
   routeShown = true;
   worked = false;
+  shownEntry = entry;
   outlet.replaceChildren(view);
   enter(outlet);
   onChange?.();
@@ -324,6 +431,7 @@ export function start(config) {
   onChange = config.onChange || null;
   hold = config.hold || null;
   window.addEventListener("hashchange", (event) => void render(event));
+  window.addEventListener("popstate", onPopstate);
   document.addEventListener("click", holdPress, true);
   for (const type of ["input", "change", "click"]) outlet.addEventListener(type, noteWork, true);
   if (!location.hash) location.hash = "#/";

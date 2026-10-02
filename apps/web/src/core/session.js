@@ -14,7 +14,7 @@
  * @module core/session
  */
 
-import { request, whenSessionEnds } from "./api.js";
+import { request, whenServerAnswers, whenSessionEnds } from "./api.js";
 import { visibleMessage } from "./errors.js";
 
 const STORE_KEY = "staff_store_id";
@@ -53,7 +53,17 @@ const state = {
   // CONSOLE-RESIDUAL-009B (K2): the "Thoát" was pressed in another tab of this browser. The
   // signed-out screen says so, so nobody wonders why this tab left too.
   signedOutElsewhere: false,
+  // CONSOLE-RESIDUAL-009B (K2, round-9b verification 2): the session is `ended` or `unreachable`
+  // here, but a request sent since has been answered with a success -- the person signed in again
+  // elsewhere, or the server is back. The session is being read again (`refresh`); until it is,
+  // the shell holds nothing on the strength of "the server is out". Cleared by that read.
+  answered: false,
 };
+
+/** When the session was last found out (`ended` or `unreachable`), on `performance.now()`. */
+let outSince = Number.NEGATIVE_INFINITY;
+/** Whether a session read is on its way. */
+let refreshing = false;
 
 /** @type {Set<() => void>} what must be forgotten when this person signs out (C1) */
 const signOutListeners = new Set();
@@ -97,6 +107,7 @@ export function storeId() {
  * @returns {Promise<void>}
  */
 export async function refresh() {
+  refreshing = true;
   try {
     const body = await request("/internal/v1/session");
     state.principal = {
@@ -128,8 +139,28 @@ export async function refresh() {
       state.status = "unreachable";
       state.lastError = visibleMessage(error);
     }
+    outSince = performance.now();
   }
+  refreshing = false;
+  state.answered = false;
   notify();
+}
+
+/**
+ * A request sent after the session was found out has been answered with a success (K2, round-9b
+ * verification 2). The local status is stale: say so (`answered`) at once -- before the caller
+ * acts on the answer -- and read the session again to learn who is signed in now. Not after
+ * "Thoát" (the page was cleared; nothing is held), and not for a request sent before the session
+ * went out, whose answer says nothing about now.
+ *
+ * @param {number} sentAt when the request was sent, on `performance.now()`
+ */
+function serverAnswered(sentAt) {
+  if (state.signedOut) return;
+  if (state.status !== "ended" && state.status !== "unreachable") return;
+  if (sentAt < outSince) return;
+  state.answered = true;
+  if (!refreshing) void refresh();
 }
 
 /**
@@ -201,6 +232,8 @@ export function selectStore(value) {
  * still on screen after signing in again in another tab.
  */
 export function end() {
+  outSince = performance.now();
+  state.answered = false;
   if (state.status === "ended" && !state.principal) return;
   state.principal = null;
   state.status = "ended";
@@ -228,6 +261,8 @@ export function onSignOut(listener) {
  * are told, and the shell renders the signed-out screen in the place of whatever was open.
  */
 function forget(elsewhere = false) {
+  outSince = performance.now();
+  state.answered = false;
   state.principal = null;
   state.status = "ended";
   state.lastError = "";
@@ -348,3 +383,4 @@ export function watchConnectivity() {
 // enough for a 401 anywhere to reach `end()`. A registration a caller can forget is one that will
 // eventually be forgotten, and the symptom — a console that still looks signed in — is silent.
 whenSessionEnds(end);
+whenServerAnswers(serverAnswered);

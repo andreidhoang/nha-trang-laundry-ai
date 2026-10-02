@@ -779,6 +779,13 @@ function sessionLoadingScreen() {
 let sessionScreenShown = false;
 
 /**
+ * Whether that session screen is "Đang kiểm tra phiên" for a session read again because the server
+ * answered while the session was out (K2, `guard`). It gives way to whatever the read finds -- the
+ * route, or the session screen if the session is out after all -- never left up.
+ */
+let rereadShown = false;
+
+/**
  * The destination a press asked for while the screen on show was held (K2), for the banner to
  * name. Cleared when the session is back -- the person presses it again then.
  *
@@ -793,7 +800,9 @@ let heldDestination = null;
  * was typed is still on screen. A press on a destination used to replace that screen with the
  * session screen -- and the typed line was gone, one press after the console had said it was safe.
  * Every destination needs the server while the session is out, so the press now goes nowhere and
- * the banner says so; the screen, and what is typed on it, stays. The router asks only for a
+ * the banner says so; the screen, and what is typed on it, stays. Only until the server answers a
+ * request sent since (`answered`, round-9b verification 2): the session is out no longer, as far
+ * as anyone knows, and is being read again. The router asks only for a
  * screen the person has worked on (typed, ticked, pressed); one only looked at gives way to the
  * session screen with its "Tới trang đăng nhập", as before -- a device signed out from another
  * (lost phone) still lands there at its next press. Not after "Thoát": the person chose to leave
@@ -807,13 +816,48 @@ function holdScreen(context, moved) {
   const state = session.snapshot();
   if (state.signedOut) return false;
   if (state.status !== "ended" && state.status !== "unreachable") return false;
+  // Round-9b verification 2: a request sent since has succeeded -- the person signed in again, or
+  // the server is back -- and the session is being read again. The premise of the hold is gone:
+  // the move a write just made (to the order it created) is not held as if the server were out.
+  if (state.answered) return false;
   if (moved) {
-    const item = NAV_ITEMS.find((candidate) => candidate.path === context.path) ||
-      NAV_ITEMS.find((candidate) => candidate.path !== "/" && navOwns(candidate, context.path));
-    heldDestination = item ? item.label : "";
+    heldDestination = destinationLabel(context.path);
     renderBanners();
+    revealHeldLine();
   }
   return true;
+}
+
+/**
+ * The name of the destination `path` belongs to, as this device shows it (round-9b verification
+ * 2): "Thêm" on a phone and "Tất cả màn hình" on a desk are the same address, and the banner names
+ * the one the person saw and pressed. The phone-only entries are hidden from 64rem up (layout.css)
+ * and the desk-only ones below it.
+ *
+ * @param {string} path
+ * @returns {string} "" when no destination owns the path
+ */
+function destinationLabel(path) {
+  const desk = window.matchMedia("(min-width: 64rem)").matches;
+  const items = NAV_ITEMS.filter((candidate) => (desk ? !candidate.phoneOnly : !candidate.deskOnly));
+  const item =
+    items.find((candidate) => candidate.path === path) ||
+    items.find((candidate) => candidate.path !== "/" && navOwns(candidate, path));
+  return item ? item.label : "";
+}
+
+/**
+ * A held press is answered in the banner, and on a phone the banner scrolls away with the page
+ * (round-9b verification 2): the screen kept is often long and scrolled, and a tab press then did
+ * nothing anyone could see. When the sentence is out of view the page goes back to the top, where
+ * the banner says what was not opened and offers the way back in. On a desk the banner never
+ * leaves the view (the content pane scrolls by itself), so nothing moves there.
+ */
+function revealHeldLine() {
+  const line = banners?.querySelector("[data-held-destination]");
+  if (!line) return;
+  const box = line.getBoundingClientRect();
+  if (box.top < 0 || box.bottom > window.innerHeight) window.scrollTo({ top: 0 });
 }
 
 /** The banner's sentence for a destination pressed while the screen is held (K2). */
@@ -840,7 +884,15 @@ function heldLine() {
 function guard(_context, route) {
   const state = session.snapshot();
   sessionScreenShown = true;
+  rereadShown = false;
   if (state.status === "unknown") return sessionLoadingScreen();
+  // K2 (round-9b verification 2): the server has answered since the session went out, and the
+  // session is being read again -- the next moment says who is signed in. Not "Chưa đăng nhập" for
+  // the order a write has just created; the route follows the read (`boot`'s subscriber).
+  if (state.answered && (state.status === "ended" || state.status === "unreachable")) {
+    rereadShown = true;
+    return sessionLoadingScreen();
+  }
   // Before the signed-out branch on purpose: `unreachable` also has a null principal, and telling
   // an operator they are signed out when the truth is "we could not ask" is the defect this exists
   // to prevent.
@@ -1091,16 +1143,23 @@ async function boot() {
     //
     // A sign-out is the opposite case (C1): the person chose to leave, `wipeWorkspace()` has
     // already emptied the page, and the signed-out screen is rendered in its place at once.
+    //
+    // K2 (round-9b verification 2): unless the outlet shows "Đang kiểm tra phiên" for a read made
+    // because the server answered -- that screen gives way to what the read found.
+    const reread = rereadShown && !state.answered;
     if (
       (state.status === "ended" || state.status === "unreachable") &&
       renderedKey !== null &&
-      !state.signedOut
+      !state.signedOut &&
+      !reread
     ) {
       return;
     }
 
     const key = contentKey();
-    if (key === renderedKey && !(sessionScreenShown && state.status === "active")) return;
+    if (key === renderedKey && !(sessionScreenShown && state.status === "active") && !reread) {
+      return;
+    }
     renderedKey = key;
     void router.render();
   });

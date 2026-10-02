@@ -326,9 +326,9 @@ def test_amounts_dates_and_times_side_by_side_stay_an_ordinary_note(note: str) -
 )
 def test_where_the_shop_must_write_an_amount_with_a_unit_it_is_said(note: str) -> None:
     """The fail-closed side of the rule, stated rather than hidden: amounts with no thousands dots
-    and no unit, an amount that is not whole hundreds of đồng (counted cash always is), and a bare number
-    (no thousands dot, no unit) beside amounts are not set aside; the worker adds đ or k, or words
-    between the numbers."""
+    and no unit, an amount that is not whole hundreds of đồng (counted cash always is), and a bare
+    number (no thousands dot, no unit) beside amounts are not set aside; the worker adds đ or k, or
+    words between the numbers."""
     with pytest.raises(ShopCaptureError) as refused:
         capture_note(note)
     assert refused.value.reason_code == "NOTE_LOOKS_LIKE_PHONE"

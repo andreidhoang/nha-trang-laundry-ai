@@ -284,21 +284,23 @@ def authority_status(path: _Path, host: str) -> AuthorityStatus:
     return AuthorityStatus("constrained", permitted)
 
 
-def _authority_warning(status: AuthorityStatus, host: str) -> str | None:
+def _authority_problem(status: AuthorityStatus, host: str) -> str | None:
+    """What is wrong with the CA on disk, in the operator's words; `None` for a constrained CA."""
+
     if status.kind == "legacy":
         return (
             f"{LEGACY_AUTHORITY}. .shop/ca/ca.crt không có nameConstraints: máy tính bảng tin "
             "nó sẽ tin mọi chứng chỉ nó ký, cho bất kỳ trang nào. (The CA in .shop/ca/ca.crt has "
             "no name constraints: a tablet that trusts it accepts a certificate it signs for any "
-            "site.) " + RENEWAL_STEP
+            "site.)"
         )
     if status.kind == "other-host":
         return (
             f"CA chỉ chấp nhận {', '.join(status.permitted)}, không phải {host} — hãy tạo lại. "
-            f"(The CA is constrained to {', '.join(status.permitted)}, not {host}.) " + RENEWAL_STEP
+            f"(The CA is constrained to {', '.join(status.permitted)}, not {host}.)"
         )
     if status.kind == "unreadable":
-        return ".shop/ca/ca.crt không đọc được (is not a PEM certificate). " + RENEWAL_STEP
+        return ".shop/ca/ca.crt không đọc được (is not a PEM certificate)."
     if status.kind == "absent":
         # Only reached with a console certificate on disk (a fresh run mints both). The tablets
         # need the CA that signed it, and that file is gone; its key was never kept (`DEC-052`),
@@ -307,9 +309,59 @@ def _authority_warning(status: AuthorityStatus, host: str) -> str | None:
             "Thiếu .shop/ca/ca.crt: không có CA nào để cài lên máy tính bảng, và không tạo lại "
             "được CA đã ký chứng chỉ console hiện tại. (.shop/ca/ca.crt is missing: there is no CA "
             "to install on the tablets, and the one that signed the console certificate cannot "
-            "be made again.) " + RENEWAL_STEP
+            "be made again.)"
         )
     return None
+
+
+def _authority_warning(status: AuthorityStatus, host: str) -> str | None:
+    problem = _authority_problem(status, host)
+    return None if problem is None else f"{problem} {RENEWAL_STEP}"
+
+
+def _legacy_key_warning(legacy_key: _Path) -> str:
+    return (
+        f"{legacy_key.relative_to(ROOT)} là khóa riêng của CA mà phiên bản cũ của script để "
+        "lại trên máy này. " + RENEWAL_STEP + " --new-ca cũng xóa khóa này. "
+        "(A CA private key an earlier version left on this machine, for a CA with no name "
+        "constraints; --new-ca deletes it.)"
+    )
+
+
+def missing_certificate_refusal(
+    status: AuthorityStatus, host: str, *, legacy_key: _Path | None
+) -> str:
+    """Why a run with a CA on disk and no console certificate stops, and what to do.
+
+    Round-9b verifier, round 3: this used to say "its key was not kept" whatever was on disk --
+    false when an earlier version left `.shop/ca/ca.key` beside the CA -- and never said the CA was
+    unconstrained, because the warnings already gathered were dropped when the run stopped. Now
+    the CA is classified as on every other path, and the key sentence says what is true: a key an
+    earlier version left is named, and it is not used to sign (`DEC-052`: no CA key is used again;
+    the CA it belongs to vouches for every site, so a certificate it signed would keep that CA
+    trusted on the tablets).
+    """
+
+    parts = [
+        "Thiếu chứng chỉ console, và CA hiện có không được dùng để ký thêm. (The console "
+        "certificate is missing, and the existing CA is not used to sign another.)"
+    ]
+    problem = _authority_problem(status, host)
+    if problem is not None:
+        parts.append(problem)
+    if legacy_key is None:
+        parts.append(
+            "Khóa của CA này không được giữ lại (DEC-052). (Its private key was not kept.)"
+        )
+    else:
+        parts.append(
+            f"{legacy_key.relative_to(ROOT)} là khóa riêng của CA mà phiên bản cũ của script để "
+            "lại; script không ký bằng nó (DEC-052) và --new-ca xóa nó. (A CA private key an "
+            "earlier version left on this machine. It is not used to sign -- DEC-052 -- and "
+            "--new-ca deletes it.)"
+        )
+    parts.append(RENEWAL_STEP)
+    return " ".join(parts)
 
 
 def _leaf_warning(path: _Path, now: datetime) -> str | None:
@@ -416,12 +468,7 @@ def certificate(
 
     legacy_key = authority_directory / "ca.key"
     if legacy_key.exists():
-        warnings.append(
-            f"{legacy_key.relative_to(ROOT)} là khóa riêng của CA mà phiên bản cũ của script để "
-            "lại trên máy này. " + RENEWAL_STEP + " --new-ca cũng xóa khóa này. "
-            "(A CA private key an earlier version left on this machine, for a CA with no name "
-            "constraints; --new-ca deletes it.)"
-        )
+        warnings.append(_legacy_key_warning(legacy_key))
 
     if certificate_path.exists():
         existing.append("tls_certificate")
@@ -436,14 +483,16 @@ def certificate(
         return warnings
 
     if ca_certificate_path.exists():
-        # The tablets trust this CA, but its key was never kept (`DEC-052`), so it cannot sign a
-        # new console certificate. Minting a second CA silently would leave every tablet refusing
-        # the console with no idea why; the operator asks for it instead.
+        # The tablets trust this CA, but it signs nothing more: its key was never kept (`DEC-052`)
+        # or, left by an earlier version, is never used again. Minting a second CA silently would
+        # leave every tablet refusing the console with no idea why; the operator asks for it.
         existing.append("ca/ca.crt")
         raise CertificateRefused(
-            "Thiếu chứng chỉ console, và CA hiện có không ký thêm được: khóa của nó không được giữ "
-            "lại (DEC-052). (The console certificate is missing and the existing CA cannot sign "
-            "another: its key was not kept.) " + RENEWAL_STEP
+            missing_certificate_refusal(
+                authority_status(ca_certificate_path, host),
+                host,
+                legacy_key=legacy_key if legacy_key.exists() else None,
+            )
         )
 
     authority, authority_key = mint_console_authority(host, now=moment)

@@ -415,8 +415,14 @@ def main(argv: list[str] | None = None) -> int:
                 attempted=composition.carried,
                 deferred=composition.deferred,
             )
-            pending_alerts.save(pending_file, state)
-            kept = f"; kept to resend next run ({len(state.alerts)} waiting in {pending_file})"
+            # A file that cannot be written (a full disk, a directory that is a file) must not
+            # turn a failed send into a traceback and exit 1, "delivered" (round-9b verifier).
+            problem = pending_alerts.try_save(pending_file, state)
+            kept = (
+                f"; kept to resend next run ({len(state.alerts)} waiting in {pending_file})"
+                if problem is None
+                else f"; NOT kept for a retry: {problem}"
+            )
         else:
             kept = "; NOT kept for a retry: set R1_ALERT_PENDING_DIRECTORY or R1_ALERT_LOG_FILE"
         _log(label, f"ALERT NOT DELIVERED: {error} -- failing: {checks}{kept}", log_file)
@@ -432,8 +438,22 @@ def main(argv: list[str] | None = None) -> int:
             checks=outcome.checks,
             now=moment,
         )
-        pending_alerts.save(pending_file, remaining)
-        if len(remaining.alerts) > composition.waiting:
+        problem = pending_alerts.try_save(pending_file, remaining)
+        if problem is not None and composition.deferred:
+            # This run's alert was not in the message, and there is nowhere to keep it.
+            _log(
+                label,
+                f"ALERT NOT DELIVERED: this run's alert did not fit beside {carried} earlier "
+                f"alert(s), which were delivered, and is NOT kept for a retry: {problem} -- "
+                f"failing: {checks}",
+                log_file,
+            )
+            return EXIT_NOT_DELIVERED
+        if problem is not None:
+            earlier += f"; WARNING the kept alerts were not updated ({problem})" + (
+                ": the earlier alert(s) delivered now may be sent again" if carried else ""
+            )
+        elif len(remaining.alerts) > composition.waiting:
             earlier += (
                 f"; {len(remaining.alerts) - composition.waiting} still waiting (message full)"
             )

@@ -649,6 +649,27 @@ def test_every_outbox_worker_path_is_granted_or_explicitly_withheld() -> None:
             assert REFUSED_BY[name] in globals(), REFUSED_BY[name]
 
 
+#: How the deploy-day runbook names each withheld path. Round-9b verifier, round 3: the runbook said
+#: only the approval claim was withheld after the kill-switch hold had been withheld too.
+RUNBOOK_NAMES = {
+    "approvals.ApprovalRepository.claim_execution": "approval execution claim",
+    "automation.AutomationExecutionRepository.hold_if_disabled": "automation kill-switch hold",
+}
+
+
+def test_the_deploy_runbook_names_every_withheld_path() -> None:
+    from nha_trang_laundry_db.role_grants import OUTBOX_WORKER_PATHS
+
+    runbook = (ROOT / "docs/runbooks/production-deploy-day.md").read_text(encoding="utf-8")
+    prose = " ".join(runbook.split())
+    withheld = sorted(name for name, path in OUTBOX_WORKER_PATHS.items() if not path.granted)
+    assert set(withheld) <= set(RUNBOOK_NAMES), withheld
+    for name in withheld:
+        assert RUNBOOK_NAMES[name] in prose, name
+    counts = {1: "One is withheld", 2: "Two are withheld", 3: "Three are withheld"}
+    assert counts[len(withheld)] in prose
+
+
 def _claimed_marketing_event(
     connection: Any, *, recipient: UUID | None, channel: str | None
 ) -> tuple[UUID, UUID, datetime]:

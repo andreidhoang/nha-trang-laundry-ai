@@ -438,3 +438,120 @@ def test_the_already_exist_line_names_only_files_that_exist(
     shop = bootstrap.SECRET_DIRECTORY.parent
     for name in lines[0].removeprefix(prefix).split(", "):
         assert (bootstrap.SECRET_DIRECTORY / name).is_file() or (shop / name).is_file(), name
+
+
+# --- a CA on disk and no console certificate: what the refusal says -----------------------------
+
+#: The CA kinds above plus one the classifier also names, for the refusal matrix.
+_REFUSAL_KINDS = [*AUTHORITIES, "unreadable"]
+
+
+def _install_authority_only(module: ModuleType, kind: str, *, with_legacy_key: bool) -> None:
+    """A CA certificate on disk (and, as an earlier version left it, its key), no console pair."""
+
+    directory = module.SECRET_DIRECTORY.parent / "ca"
+    directory.mkdir(parents=True, exist_ok=True)
+    if kind == "unreadable":
+        (directory / "ca.crt").write_bytes(b"not a certificate\n")
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    else:
+        constraints, critical, _ = AUTHORITIES[kind]
+        authority, key = _authority(constraints, critical=critical)
+        (directory / "ca.crt").write_bytes(authority.public_bytes(serialization.Encoding.PEM))
+    if with_legacy_key:
+        (directory / "ca.key").write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+
+
+@pytest.mark.parametrize("with_legacy_key", [True, False], ids=["ca.key left", "no ca.key"])
+@pytest.mark.parametrize("kind", _REFUSAL_KINDS)
+def test_a_ca_without_a_console_certificate_is_refused_as_what_it_is(
+    bootstrap: ModuleType,
+    kind: str,
+    with_legacy_key: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round-9b verifier, round 3 (P2): a legacy CA with its legacy `ca.key` beside it and the
+    console certificate missing stopped with "its key was not kept" -- false, a CA private key sat
+    in `.shop/ca/ca.key` -- and never said the CA was unconstrained, because the warnings already
+    built were thrown away when the run stopped. The refusal now says what the CA is (as every
+    other path does), names a key an earlier version left instead of denying it, and still writes
+    nothing and names `--new-ca`."""
+
+    _install_authority_only(bootstrap, kind, with_legacy_key=with_legacy_key)
+    before = _snapshot(bootstrap.ROOT)
+    monkeypatch.setattr(sys, "argv", ["bootstrap_shop_local.py", "--backup-recipient", RECIPIENT])
+    # Through `main`, as the operator runs it: the secrets ahead of the certificate are written
+    # first (they were before this change too), so the snapshot is compared for the CA folder.
+    with pytest.raises(SystemExit) as refused:
+        bootstrap.main()
+    message = str(refused.value)
+    ca_folder = {name: data for name, data in before.items() if name.startswith(".shop/ca/")}
+    after = _snapshot(bootstrap.ROOT)
+    assert {name: data for name, data in after.items() if name.startswith(".shop/ca/")} == (
+        ca_folder
+    )
+    assert not (bootstrap.SECRET_DIRECTORY / "tls_certificate").exists()
+    assert "--new-ca" in message and "Thiếu chứng chỉ console" in message, message
+
+    if with_legacy_key:
+        assert "không được giữ lại" not in message and "was not kept" not in message, message
+        assert ".shop/ca/ca.key" in message and "--new-ca xóa nó" in message, message
+    else:
+        assert "không được giữ lại (DEC-052)" in message and "was not kept" in message, message
+
+    expected = {
+        "unreadable": "không đọc được",
+        "constrained to the console": None,
+    }.get(kind, AUTHORITIES[kind][2] if kind in AUTHORITIES else None)
+    if expected is None:
+        assert "không giới hạn tên miền" not in message and "hãy tạo lại" not in message
+    else:
+        assert expected in message, message
+
+
+def test_the_legacy_refusal_is_the_verifiers_repro_through_the_command_line(
+    tmp_path: Path,
+) -> None:
+    """The exact state, end to end: a copy of `scripts/` in an empty checkout, a legacy CA and its
+    key in `.shop/ca`, no console certificate. Exit 1; the CA named unconstrained; the key named,
+    not denied; nothing under `.shop/ca` changed."""
+
+    import shutil
+    import subprocess
+
+    checkout = tmp_path / "laundry"
+    shutil.copytree(ROOT / "scripts", checkout / "scripts")
+    authority, key = _authority(None)
+    directory = checkout / ".shop/ca"
+    directory.mkdir(parents=True)
+    (directory / "ca.crt").write_bytes(authority.public_bytes(serialization.Encoding.PEM))
+    (directory / "ca.key").write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    before = _snapshot(directory)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(checkout / "scripts/bootstrap_shop_local.py"),
+            "--backup-recipient",
+            RECIPIENT,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=checkout,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "CA cũ không giới hạn tên miền — hãy tạo lại" in result.stderr, result.stderr
+    assert ".shop/ca/ca.key" in result.stderr and "was not kept" not in result.stderr
+    assert _snapshot(directory) == before

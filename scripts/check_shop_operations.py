@@ -699,15 +699,21 @@ def _most_in_any_window(
     """
 
     instants = sorted(event.occurred_at for event in every if event.event == name)
+    fresh = sorted(event.occurred_at for event in new if event.event == name)
+    if not fresh:
+        return 0
+    # Each instant is tried once as a window's end -- when a new line lies inside the window ending
+    # there -- rather than once per new line that reaches it. Trying it per new line visited every
+    # instant of a burst once for each line of the burst: 16 000 lines took 85 s, and a burst big
+    # enough to pass the relay's timeout was re-read and timed out on every run after (round-9b
+    # verifier, round 3). Now it is O(n log n) and gives the same figure.
     most = 0
-    for event in new:
-        if event.event != name:
-            continue
-        first = bisect.bisect_left(instants, event.occurred_at)
-        last = bisect.bisect_right(instants, event.occurred_at + window)
-        for end in instants[first:last]:
-            inside = bisect.bisect_right(instants, end) - bisect.bisect_left(instants, end - window)
-            most = max(most, inside)
+    for end in sorted(set(instants)):
+        reaches = bisect.bisect_left(fresh, end - window)
+        if reaches == len(fresh) or fresh[reaches] > end:
+            continue  # no new line in [end - window, end]: not a window this run counts
+        inside = bisect.bisect_right(instants, end) - bisect.bisect_left(instants, end - window)
+        most = max(most, inside)
     return most
 
 
@@ -1373,7 +1379,7 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
 
     def _kept() -> None:
         if pending_file is not None:
-            pending_alerts.save(
+            problem = pending_alerts.try_save(
                 pending_file,
                 pending_alerts.after_failure(
                     state,
@@ -1384,6 +1390,8 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
                     deferred=composition.deferred,
                 ),
             )
+            if problem is not None:
+                _not_delivered(f"NOT kept for a retry: {problem}")
 
     try:
         token = _Path(token_file).read_text(encoding="utf-8").strip()
@@ -1416,7 +1424,7 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
         _not_delivered("telegram did not answer 2xx")
         _kept()
     elif pending_file is not None:
-        pending_alerts.save(
+        problem = pending_alerts.try_save(
             pending_file,
             pending_alerts.after_success(
                 state,
@@ -1427,6 +1435,15 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
                 now=now,
             ),
         )
+        if problem is not None and composition.deferred:
+            _not_delivered(f"this run's alert did not fit and is NOT kept for a retry: {problem}")
+        elif problem is not None:
+            print(
+                f"check_shop_operations: WARNING the kept alerts were not updated ({problem}): "
+                "an earlier alert delivered now may be sent again",
+                file=_sys.stderr,
+                flush=True,
+            )
     return delivered
 
 

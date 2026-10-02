@@ -30,8 +30,20 @@ even when everything fitted, and sent neither tail anywhere (round-9b verifier, 
 kept alert is stored short enough to go whole in a message of its own, and every message carries
 the oldest one waiting, whole. The current alert goes first and whole whenever it fits beside that
 one; when the two together are too long, the oldest goes now, the message says a newer one follows,
-and the newer one is kept and goes whole next run. The only text ever cut is past the length of a
-whole message (`KEPT_CHARACTERS`), which Telegram would refuse anyway.
+and the newer one is kept and goes whole next run.
+
+**A kept alert is the text its first send carried, not less** (round-9b verifier, round 3). The
+first send carries an alert of up to `MAX_MESSAGE_CHARACTERS` whole; the kept copy used to be
+clipped 200 characters shorter, to leave room for the redelivery heading, so an alert of 3 601 to
+3 800 characters lost its tail exactly when it was resent. Now the kept copy is the same length as
+the first send, and a message carrying the oldest kept alert alone may grow past
+`MAX_MESSAGE_CHARACTERS` by the headings around it -- up to `MESSAGE_CEILING`, which stays under
+Telegram's own limit (`TELEGRAM_MESSAGE_CHARACTERS`). The one cut left is the first send's: an alert
+longer than `MAX_MESSAGE_CHARACTERS` goes, and is kept, clipped to it.
+
+**A pending file that cannot be written does not hide a failed send** (round-9b verifier, round 3).
+`try_save` returns the reason instead of raising, so the caller still logs "ALERT NOT DELIVERED" and
+exits 3 -- with "not kept" and why -- when the disk is full or the directory is not one.
 
 Used by `scripts/relay_shop_alert.py` (every scheduled run) and by
 `scripts/check_shop_operations.py`'s direct-delivery path. Imports nothing from the application,
@@ -58,12 +70,19 @@ MAX_PENDING = 24
 ALERT_HEADING = "Bảng vận hành — cần xem ngay:"
 REDELIVERY_HEADING = "Cảnh báo trước đó chưa gửi được:"
 SHOP_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
-#: Telegram's limit is 4096 characters; a clipped alert is still an alert.
+#: Telegram's own limit on one message.
+TELEGRAM_MESSAGE_CHARACTERS = 4096
+#: The longest alert text: what a check's alert is clipped to on its first send (a clipped alert is
+#: still an alert), and the room a message fills when it packs several alerts together.
 MAX_MESSAGE_CHARACTERS = 3800
-#: A kept alert is stored no longer than this, which leaves room in one message for both headings,
-#: its "when, how many tries" line and the "a newer alert follows" note -- so the oldest kept alert
-#: can always go whole.
-KEPT_CHARACTERS = MAX_MESSAGE_CHARACTERS - 200
+#: A kept alert is stored no longer than the first send carried it -- so a resend never carries
+#: less than the first attempt did.
+KEPT_CHARACTERS = MAX_MESSAGE_CHARACTERS
+#: The longest message ever composed: a kept alert of `KEPT_CHARACTERS` sent alone, with both
+#: headings, its "when, how many tries" line and the "a newer alert follows" note, fits under it
+#: (`test_a_kept_alert_of_the_longest_length_is_resent_whole`). Kept under Telegram's limit with a
+#: margin, because Telegram counts UTF-16 units and a character outside the BMP is two of them.
+MESSAGE_CEILING = TELEGRAM_MESSAGE_CHARACTERS - 96
 CLIPPED = "…"
 #: The last line of a message that carried the oldest kept alert instead of the current one.
 NEWER_FOLLOWS = "(còn một cảnh báo mới hơn — gửi ở tin sau, vì tin này đã đầy)"
@@ -171,10 +190,11 @@ def load(path: Path, *, now: datetime) -> tuple[PendingState, str | None]:
 
 
 def save(path: Path, state: PendingState) -> None:
-    """Replace the file in one step; an empty state removes it."""
+    """Replace the file in one step; an empty state removes it. Raises `OSError`; see `try_save`."""
 
     if state.empty:
-        with contextlib.suppress(FileNotFoundError):
+        # Under a "directory" that is a file there can be no file to remove either.
+        with contextlib.suppress(FileNotFoundError, NotADirectoryError):
             path.unlink()
         return
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -193,9 +213,32 @@ def save(path: Path, state: PendingState) -> None:
         ],
     }
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(document, ensure_ascii=False, indent=1) + "\n", "utf-8")
-    temporary.chmod(0o600)
-    os.replace(temporary, path)
+    try:
+        temporary.write_text(json.dumps(document, ensure_ascii=False, indent=1) + "\n", "utf-8")
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
+    except OSError:
+        # A full disk leaves a half-written temporary file; the old file is untouched.
+        with contextlib.suppress(OSError):
+            temporary.unlink()
+        raise
+
+
+def try_save(path: Path, state: PendingState) -> str | None:
+    """`save`, with a failure returned as the words to log rather than raised.
+
+    The callers run right after a failed send, and a pending file that cannot be written -- the
+    disk the volume check warns about is full, the directory is a file -- used to raise out of the
+    relay before it logged "ALERT NOT DELIVERED": a traceback, and exit 1, which the relay's
+    contract defines as "delivered" (round-9b verifier, round 3).
+    """
+
+    try:
+        save(path, state)
+    except OSError as error:
+        reason = error.strerror or type(error).__name__
+        return f"cannot write {path} ({reason})"
+    return None
 
 
 def _aware(value: object) -> datetime:
@@ -322,10 +365,12 @@ def compose(
     state: PendingState,
     *,
     limit: int = MAX_MESSAGE_CHARACTERS,
+    ceiling: int = MESSAGE_CEILING,
     now: datetime,
 ) -> Composition:
     """The message for this run: the current alert first, whole, as the check wrote it; then the
-    kept ones, oldest first, each whole, as many as fit within `limit`.
+    kept ones, oldest first, each whole, as many as fit within `limit`. The oldest kept alert goes
+    whole even when it alone fills more than `limit`, up to `ceiling`.
 
     A kept alert of quiet-hours checks only is left untried at night (`DEC-025`). The oldest kept
     alert that may go is always carried, so a long one can neither be skipped forever nor stop the
@@ -374,9 +419,11 @@ def compose(
         if len(_message(parts, [*entries, entry, *tail])) > limit:
             if position:
                 break
-            # Only a kept alert stored longer than `KEPT_CHARACTERS` (by an older version of this
-            # file) can be here: it still goes, clipped to the room there is, so nothing wedges.
-            entry = _clip(entry, limit - len(_message(parts, [*tail])) - 1)
+            # The oldest goes whatever its length: whole, in the room between `limit` and
+            # `ceiling` the headings need. Only an alert stored longer than `KEPT_CHARACTERS` (by an
+            # older version of this file) can still be too long: it goes clipped, so nothing wedges.
+            if len(_message(parts, [entry, *tail])) > ceiling:
+                entry = _clip(entry, ceiling - len(_message(parts, [*tail])) - 1)
         entries.append(entry)
         carried.append(index)
     reported = False
@@ -453,12 +500,14 @@ __all__ = [
     "KEPT_CHARACTERS",
     "MAX_MESSAGE_CHARACTERS",
     "MAX_PENDING",
+    "MESSAGE_CEILING",
     "NEWER_FOLLOWS",
     "PENDING_SCHEMA",
     "QUIET_HOURS_CHECKS",
     "QUIET_HOURS_END",
     "QUIET_HOURS_START",
     "SHOP_TIMEZONE",
+    "TELEGRAM_MESSAGE_CHARACTERS",
     "Composition",
     "PendingAlert",
     "PendingState",
@@ -470,5 +519,6 @@ __all__ = [
     "pending_path",
     "save",
     "split_for_hours",
+    "try_save",
     "waits_for_opening",
 ]

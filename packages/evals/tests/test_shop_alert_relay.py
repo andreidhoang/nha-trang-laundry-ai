@@ -20,6 +20,7 @@ arrives on the owner's phone. That is the owner's first-install step in
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import json
 import os
@@ -1108,7 +1109,10 @@ def test_a_long_undelivered_alert_is_delivered_by_the_next_run(
     assert second.returncode == 0, second.stderr
     assert len(telegram_stub.requests) == 2
     text = telegram_stub.requests[1]["form"]["text"]
-    assert len(text) <= 3800 and "capability_flags" in text and text.endswith("…")
+    # Round-9b verifier, round 3: this used to assert the resend ended "…" -- the 3 800-character
+    # alert the first attempt carried whole was resent clipped to 3 600. It goes whole now.
+    assert telegram_stub.requests[0]["form"]["text"] == LONG_ALERT
+    assert len(text) <= _pending().MESSAGE_CEILING and LONG_ALERT.split("\n", 1)[1] in text
     assert _pending_files(credentials) == []
     assert "nothing to send" not in Path(credentials["R1_ALERT_LOG_FILE"]).read_text("utf-8")
 
@@ -1135,7 +1139,8 @@ def test_a_long_new_alert_beside_a_long_kept_one_loses_nothing(
         _pending().PendingState(), LONG_ALERT, ("capability_flags",), now=RAISED
     )
     kept_body = kept.alerts[0].text.split("\n", 1)[1]
-    assert len(text) <= 3800 and kept_body in text and "yyy" not in text
+    assert kept_body == LONG_ALERT.split("\n", 1)[1], "kept as the first send carried it"
+    assert len(text) <= _pending().MESSAGE_CEILING and kept_body in text and "yyy" not in text
     assert "Cảnh báo trước đó chưa gửi được:" in text and "gửi ở tin sau" in text
     assert len(_pending_files(credentials)) == 1
 
@@ -1249,7 +1254,13 @@ def test_every_run_that_can_send_carries_the_oldest_waiting_alert() -> None:
         if current is None and not sendable:
             assert composition.text is None
             continue
-        assert composition.text is not None and len(composition.text) <= 3800
+        assert composition.text is not None
+        ceiling = pending.MESSAGE_CEILING
+        assert len(composition.text) <= ceiling < pending.TELEGRAM_MESSAGE_CHARACTERS
+        if len(composition.text) > 3800:
+            # Only the oldest kept alert, alone, may push a message past the packing limit.
+            assert composition.carried == (sendable[0],)
+            assert current is None or composition.deferred
         if sendable:
             assert sendable[0] in composition.carried
         assert set(composition.carried) <= set(sendable)
@@ -1475,3 +1486,220 @@ def test_a_renewal_notice_whose_send_failed_is_resent_the_next_hour(
     assert _pending_files(credentials) == []
     assert _daily_run(relay, monkeypatch, tmp_path, morning.replace(hour=11)) == 1
     assert len(telegram_stub.requests) == 2
+
+
+# --- round-9b verifier, round 3: a resend carries what the first send carried --------------------
+
+
+@pytest.mark.parametrize("length", [3540, 3601, 3753, 3800])
+@pytest.mark.parametrize("current", [None, "short", "long"])
+def test_a_resent_alert_carries_everything_its_first_send_did(
+    length: int, current: str | None
+) -> None:
+    """The verifier's repro: a 3 753-character alert goes whole on its first send; that send fails;
+    the kept copy was clipped to 3 600, so the resend ended '0707,0708,0…' and '0739,' was gone.
+    Matrix: lengths either side of the old 3 600 cut and at the 3 800 limit, resent alone, beside a
+    short current alert, and beside a current alert too long to share the message."""
+
+    pending = _pending()
+    noon = datetime(2026, 10, 1, 12, 0, tzinfo=SHOP)
+    prefix = f"{HEADING}\n• application_signals: "
+    digits = "".join(f"{index:04d}," for index in range(800))
+    alert = prefix + digits[: length - len(prefix)]
+    assert len(alert) == length
+
+    first = pending.compose(alert, pending.PendingState(), now=noon)
+    assert first.text == alert, "the first send carries it whole"
+    state = pending.after_failure(pending.PendingState(), alert, ("application_signals",), now=noon)
+    assert state.alerts[0].text == alert, "kept as the first send carried it"
+
+    now_text = {
+        None: None,
+        "short": f"{HEADING}\n{WAL_LINE}",
+        "long": f"{HEADING}\n• wal_archive_gap: " + "w" * 3700,
+    }[current]
+    resend = pending.compose(now_text, state, now=noon + timedelta(minutes=5))
+    assert resend.text is not None and resend.carried == (0,)
+    assert alert.split("\n", 1)[1] in resend.text, "nothing of it is cut"
+    assert len(resend.text) <= pending.MESSAGE_CEILING
+    if now_text is None:
+        return
+    # Beside a current alert: both go when they fit the packing limit together; otherwise the kept
+    # one goes now (whole, above) and the current one is kept and goes whole next run.
+    together = pending._message([now_text], [pending._entry(state.alerts[0])])
+    assert resend.deferred == (len(together) > pending.MAX_MESSAGE_CHARACTERS)
+    if current == "long":
+        assert resend.deferred
+    if resend.deferred:
+        after = pending.after_success(
+            state,
+            resend.carried,
+            resend.reported_dropped,
+            deferred=now_text,
+            checks=("wal_archive_gap",),
+            now=noon + timedelta(minutes=5),
+        )
+        following = pending.compose(None, after, now=noon + timedelta(minutes=10))
+        assert following.text is not None and now_text.split("\n", 1)[1] in following.text
+    else:
+        assert resend.text.startswith(now_text + "\n\n")
+
+
+def test_a_kept_alert_of_the_longest_length_is_resent_whole() -> None:
+    """The worst case the ceiling is sized for: a kept alert of `KEPT_CHARACTERS`, tried a great
+    many times, carried alone beside a deferred current alert (both headings, the entry line, the
+    'a newer alert follows' note). It goes whole, under Telegram's limit."""
+
+    pending = _pending()
+    alert = f"{HEADING}\n• capability_flags: " + "k" * (
+        pending.KEPT_CHARACTERS - len(HEADING) - len("\n• capability_flags: ")
+    )
+    state = pending.after_failure(pending.PendingState(), alert, ("capability_flags",), now=RAISED)
+    assert state.alerts[0].text == alert
+    state = pending.PendingState((dataclasses.replace(state.alerts[0], attempts=10**9),))
+    current = f"{HEADING}\n• wal_archive_gap: " + "c" * 3700
+    composition = pending.compose(current, state, now=RAISED + timedelta(minutes=5))
+    assert composition.deferred and composition.carried == (0,)
+    assert composition.text is not None and alert.split("\n", 1)[1] in composition.text
+    assert len(composition.text) <= pending.MESSAGE_CEILING
+    assert pending.MESSAGE_CEILING <= pending.TELEGRAM_MESSAGE_CHARACTERS - 64
+
+
+def _run_relay_in_process(
+    monkeypatch: pytest.MonkeyPatch,
+    environment: dict[str, str],
+    document: dict[str, object],
+) -> int:
+    relay = importlib.import_module("relay_shop_alert")
+    for key in [key for key in os.environ if key.startswith("R1_ALERT_")]:
+        monkeypatch.delenv(key)
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    command = [sys.executable, "-c", f"import sys; print({json.dumps(json.dumps(document))})"]
+    return int(relay.main(["--label", "checks-data", "--", *command]))
+
+
+_FAILING_DOCUMENT: dict[str, object] = {
+    "schema": "nha-trang-laundry.shop-alert.v1",
+    "passed": False,
+    "results": {},
+    "alert": {"text": f"{HEADING}\n{WAL_LINE}", "checks": ["wal_archive_gap"]},
+    "suppressed": [],
+    "warnings": {},
+}
+
+
+@pytest.mark.parametrize("fault", ["directory is a file", "disk full"])
+def test_a_failed_send_with_nowhere_to_keep_it_is_still_not_delivered(
+    telegram_stub: _Stub,
+    credentials: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault: str,
+) -> None:
+    """Round-9b verifier, round 3 (P2): Telegram failing while the pending file cannot be written
+    -- the disk the volume check warns about is full, or the directory is a file -- crashed the
+    relay with a traceback and exit 1, which its contract defines as 'delivered', and the log had
+    no NOT DELIVERED line. It is exit 3 and the line, saying the alert was not kept and why."""
+
+    import errno
+
+    pending = _pending()
+    environment = {**credentials, "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base}
+    if fault == "directory is a file":
+        blocker = tmp_path / "blocker"
+        blocker.write_text("a file, not a directory", encoding="utf-8")
+        environment["R1_ALERT_PENDING_DIRECTORY"] = str(blocker / "state")
+    else:
+        environment["R1_ALERT_PENDING_DIRECTORY"] = str(tmp_path / "state")
+
+        def _full(self: Path, *_: object, **__: object) -> int:
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        monkeypatch.setattr(Path, "write_text", _full)
+    telegram_stub.status = 500
+
+    if fault == "directory is a file":
+        result = _relay([*_document_command(_FAILING_DOCUMENT)], environment)
+        code, stderr = result.returncode, result.stderr
+    else:
+        code = _run_relay_in_process(monkeypatch, environment, _FAILING_DOCUMENT)
+        stderr = ""
+    log = Path(credentials["R1_ALERT_LOG_FILE"]).read_text("utf-8")
+    assert code == 3, stderr
+    assert "ALERT NOT DELIVERED" in log and "NOT kept for a retry" in log, log
+    assert ("Not a directory" if fault == "directory is a file" else "No space left") in log
+    assert "Traceback" not in stderr
+    assert not list((tmp_path / "state").glob(".*.tmp")) if (tmp_path / "state").exists() else True
+    assert pending.try_save(tmp_path / "unused.json", pending.PendingState()) is None
+
+
+def test_a_deferred_alert_with_nowhere_to_keep_it_is_not_delivered(
+    telegram_stub: _Stub,
+    credentials: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The neighbouring case: the send succeeds, but carried only the oldest kept alert -- this
+    run's alert did not fit beside it -- and the file that would keep this run's alert cannot be
+    written. That alert was neither sent nor kept: exit 3 and the line, not 'delivered'."""
+
+    import errno
+
+    pending = _pending()
+    directory = tmp_path / "state"
+    environment = {
+        **credentials,
+        "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base,
+        "R1_ALERT_PENDING_DIRECTORY": str(directory),
+    }
+    kept = pending.after_failure(
+        pending.PendingState(), LONG_ALERT, ("capability_flags",), now=RAISED
+    )
+    pending.save(pending.pending_path("checks-data", environment), kept)
+    long_now = dict(_FAILING_DOCUMENT)
+    long_now["alert"] = {
+        "text": f"{HEADING}\n• wal_archive_gap: " + "n" * 3700,
+        "checks": ["wal_archive_gap"],
+    }
+
+    def _full(self: Path, *_: object, **__: object) -> int:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(Path, "write_text", _full)
+    code = _run_relay_in_process(monkeypatch, environment, long_now)
+    log = Path(credentials["R1_ALERT_LOG_FILE"]).read_text("utf-8")
+    assert len(telegram_stub.requests) == 1 and "xxx" in telegram_stub.requests[0]["form"]["text"]
+    assert code == 3, log
+    assert "ALERT NOT DELIVERED" in log and "NOT kept for a retry" in log, log
+
+
+def _document_command(document: dict[str, object]) -> list[str]:
+    return [sys.executable, "-c", f"import sys; print({json.dumps(json.dumps(document))})"]
+
+
+def test_the_direct_path_with_nowhere_to_keep_a_failed_alert_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`check_shop_operations.deliver_alert` keeps alerts the same way, so it fails the same way:
+    an unwritable pending directory is a NOT DELIVERED line naming why, never a traceback."""
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    checks = importlib.import_module("check_shop_operations")
+    token = tmp_path / "token"
+    token.write_text("probe-token", encoding="utf-8")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory", encoding="utf-8")
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_TOKEN_FILE", str(token))
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_CHAT_ID", "1234")
+    monkeypatch.setenv("R1_ALERT_PENDING_DIRECTORY", str(blocker / "state"))
+
+    def _refused(request: Any, timeout: float = 0) -> Any:
+        raise OSError("network is unreachable")
+
+    monkeypatch.setattr(checks.urllib.request, "urlopen", _refused)
+    failure = checks.CheckResult("wal_archive_gap", False, "archive 40 min behind", {})
+    assert checks.deliver_alert([failure], now=datetime(2026, 10, 1, 12, 0, tzinfo=SHOP)) is False
+    stderr = capsys.readouterr().err
+    assert "ALERT NOT DELIVERED: OSError" in stderr
+    assert "NOT kept for a retry" in stderr and "Not a directory" in stderr, stderr

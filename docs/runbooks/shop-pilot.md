@@ -82,7 +82,10 @@ console certificate in memory and is dropped — not written to this machine, no
 `--export-ca-key` and `--ca-key` are refused, with this reason, whatever is already on disk. Every
 run reads `.shop/ca/ca.crt` and says what it is: a CA an earlier version made has no name
 constraints and is reported as **"CA cũ không giới hạn tên miền — hãy tạo lại"**; a `.shop/ca/ca.key`
-left by an earlier version is reported too. The script refuses to overwrite anything, so re-running
+left by an earlier version is reported too, and is never used to sign. That holds when the console
+certificate is missing as well: the run stops (nothing more written), says what the CA is and
+whether an old key is on disk, and names `--new-ca` (below) as the way back. The script refuses to
+overwrite anything, so re-running
 after the shop has been trading cannot rotate a password out from under a live system. It prints
 the `CREATE ROLE` statements for §4.
 

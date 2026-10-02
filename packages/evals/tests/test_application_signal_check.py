@@ -852,3 +852,71 @@ def test_lines_written_before_a_restart_are_read_after_it(tmp_path: Path) -> Non
     second = _scheduled_run(log, cursor, T + timedelta(seconds=300))
     assert (first.fields["server_errors"], second.fields["server_errors"]) == (1, 0)
     assert second.passed
+
+
+# --- the window count stays fast for a big burst (round-9b verifier, round 3) --------------------
+
+
+def _reference_most_in_any_window(
+    new: list[Any], every: list[Any], name: str, window: timedelta
+) -> int:
+    """The definition, spelled out: every window [end - window, end] whose end is an instant of
+    `name` and which holds a new `name` line; the most `name` lines any of them holds."""
+
+    instants = [event.occurred_at for event in every if event.event == name]
+    fresh = [event.occurred_at for event in new if event.event == name]
+    most = 0
+    for end in instants:
+        if any(end - window <= moment <= end for moment in fresh):
+            most = max(most, sum(1 for moment in instants if end - window <= moment <= end))
+    return most
+
+
+def test_the_window_count_matches_its_definition() -> None:
+    """A property over random streams -- bursts, exact-window spacing, duplicate instants, lines
+    before the saved position -- so the fast count is the same figure as the definition."""
+
+    import random
+
+    generator = random.Random(20261002)
+    window = timedelta(seconds=CHECKS.APP_SIGNAL_WINDOW_SECONDS)
+    name = "database.request_refused"
+    for _ in range(400):
+        events = []
+        for _ in range(generator.randint(0, 40)):
+            offset = generator.choice(
+                [generator.randint(-1800, 600), generator.choice([-300, 0, 300, 600])]
+            )
+            line = (
+                _refused(at=T + timedelta(seconds=offset))
+                if generator.random() < 0.8
+                else _boundary(at=T + timedelta(seconds=offset))
+            )
+            events.append(CHECKS._api_event(line))
+        new = [event for event in events if generator.random() < 0.5]
+        expected = _reference_most_in_any_window(new, events, name, window)
+        assert CHECKS._most_in_any_window(new, events, name, window) == expected
+
+
+def test_a_large_burst_is_counted_well_inside_the_relays_timeout() -> None:
+    """Round-9b verifier, round 3 (P2): the count tried every instant of a burst once per line of
+    the burst -- 16 000 browser-boundary lines took 85 s, and past ~30 000 a run outlived the
+    relay's 240 s timeout, never saved its position, and timed out again every five minutes. The
+    base counted 32 000 in 0.3 s. 40 000 lines now count in seconds, not hours."""
+
+    import time
+
+    count = 40_000
+    lines = [
+        _boundary(at=T + timedelta(microseconds=int(240_000_000 * index / count)))
+        for index in range(count)
+    ]
+    started = time.monotonic()
+    counts = CHECKS.count_application_signals(
+        lines,
+        now=T + timedelta(minutes=5),
+        cursor=CHECKS.AppSignalCursor(through=T - timedelta(seconds=1)),
+    )
+    elapsed = time.monotonic() - started
+    assert counts.browser_boundary_rejections == count
+    assert elapsed < 30, f"{count} lines took {elapsed:.1f} s"

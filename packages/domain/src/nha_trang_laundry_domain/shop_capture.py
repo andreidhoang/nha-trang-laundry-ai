@@ -447,10 +447,11 @@ def _ends_a_number(character: str) -> bool:
     """Only a letter of the Latin alphabet (Vietnamese included) ends a number.
 
     Every other character -- space, any punctuation or symbol (| ~ = ^ ` > → • :), a format
-    character, a letter of another script, any run of them -- holds digits together. Decided by
-    the Unicode database, so the answer never depends on a list of marks somebody remembered.
+    character, a letter of another script, an uncased Latin sign that looks like a mark (U+01C0
+    dental click, U+A78F sinological dot), any run of them -- holds digits together. Decided by the
+    Unicode database, so the answer never depends on a list of marks somebody remembered.
     """
-    return unicodedata.category(character).startswith("L") and unicodedata.name(
+    return unicodedata.category(character) in ("Lu", "Ll", "Lt") and unicodedata.name(
         character, ""
     ).startswith("LATIN")
 

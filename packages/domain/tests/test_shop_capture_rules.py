@@ -272,6 +272,9 @@ def test_a_phone_is_refused_however_its_groups_are_punctuated(phone: str) -> Non
         # A letter from another script is not one of the shop's letters: it holds a number together.
         "khach 0905\u30fc123\u30fc456",
         "khach 0905\u4e00123\u4e00456",
+        # ... nor is a Latin sign with no case that looks like a mark.
+        "khach 0905\u01c0123\u01c0456",
+        "khach 0905\ua78f123\ua78f456",
         # Digits written another way are digits.
         "khach \u2460\u2468\u2460\u2464 123 456",
     ],

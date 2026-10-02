@@ -14365,6 +14365,27 @@ with sync_playwright() as playwright:
         during["add"] is True,
         repr(during),
     )
+    # Round-9b verification 3: the guide says a dimmed row cannot be pressed until the ticket is
+    # on screen. A real press on one (a mouse, not a forced click) changes and sends nothing.
+    dimmed_row = page.locator("#new-waiting [data-request]")
+    sent_before = len(state.get("intake_posts", []))
+    told_before = toasts()
+    pressed_dimmed = False
+    if dimmed_row.count():
+        box = dimmed_row.first.bounding_box()
+        if box:
+            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            pressed_dimmed = True
+    page.wait_for_timeout(400)
+    check(
+        "K1 control (walk-in in flight): a real press on a dimmed waiting row does nothing -- "
+        "nothing sent, no customer opened, the walk-in still the one on its way",
+        pressed_dimmed
+        and len(state.get("intake_posts", [])) == sent_before
+        and toasts() == told_before
+        and step1_state()["busy"] == "true",
+        f"pressed={pressed_dimmed} {toasts()[:120]!r}",
+    )
     # A search answer drawn while the write is out: dimmed as shut, and a press on it is told.
     page.locator("#new-customer-search").click()
     page.keyboard.type("3456", delay=20)
@@ -14901,6 +14922,174 @@ with sync_playwright() as playwright:
         )
         recheck_in_banner()
     page.set_viewport_size({"width": 1280, "height": 900})
+
+    # --- K2 (round-9b verification 3): the press after signing in elsewhere; an address typed ---
+    # The guide's "Đăng nhập lại xong thì bấm lại": signed in again in the tab the banner opens,
+    # back here, the destination pressed again. A held press never read the session, so it stayed
+    # held -- "cần máy chủ" with the server answering -- until "Kiểm tra lại phiên" was found.
+    session_reads: list[str] = []
+
+    def note_session_read(request: object) -> None:
+        if str(getattr(request, "url", "")).endswith("/internal/v1/session"):
+            session_reads.append(str(getattr(request, "url", "")))
+
+    page.on("request", note_session_read)
+
+    def typed_on_new() -> None:
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+        page.wait_for_timeout(1200)
+        tap("#new-walk-in")
+        page.wait_for_timeout(1200)
+        tap("#new-add-line")
+        page.wait_for_timeout(400)
+        tap("#new-picker [data-code='STD_WASH_DRY_LT6']")
+        page.wait_for_timeout(400)
+        page.locator("#new-line-0-qty").fill("3.5")
+        page.wait_for_timeout(200)
+
+    def qty_now() -> object:
+        return page.evaluate("() => document.querySelector('#new-line-0-qty')?.value ?? null")
+
+    def press_visible(path: str) -> bool:
+        links = page.locator(f"nav.nav a.nav__link[href='#{path}']")
+        for index in range(links.count()):
+            if links.nth(index).is_visible():
+                links.nth(index).click()
+                page.wait_for_timeout(1200)
+                return True
+        return False
+
+    for viewport, tag in (
+        ({"width": 1280, "height": 900}, "desk"),
+        ({"width": 390, "height": 844}, "phone"),
+    ):
+        page.set_viewport_size(viewport)
+        typed_on_new()
+        expire()
+        reads_before = len(session_reads)
+        press_visible("/orders")
+        check(
+            f"K2 ({tag}, session still out, Đơn hàng pressed): held -- 3.5 kg kept, the "
+            "banner names it -- and the press read the session again to find out",
+            address() == "#/new"
+            and qty_now() == "3.5"
+            and "Chưa mở “Đơn hàng”" in banner_text()
+            and len(session_reads) > reads_before,
+            f"{address()} qty={qty_now()!r} reads={len(session_reads) - reads_before} "
+            f"{banner_text()[:100]!r}",
+        )
+        # Signed in again in the other tab: nothing here knows yet. The guide says press again.
+        state["authenticated"] = True
+        press_visible("/orders")
+        shell_shot(f"stub-k2-pressed-again-{tag}")
+        check(
+            f"K2 ({tag}, signed in again elsewhere, Đơn hàng pressed again): it opens -- no "
+            "'Kiểm tra lại phiên' needed, no 'Phiên đăng nhập đã kết thúc', no 'Chưa mở'",
+            address() == "#/orders"
+            and page.locator("main h1").first.inner_text() == "Đơn hàng"
+            and "Phiên đăng nhập đã kết thúc" not in banner_text()
+            and "Chưa mở" not in banner_text(),
+            f"{address()} {page.locator('main h1').first.inner_text()!r} {banner_text()[:100]!r}",
+        )
+        page.go_back()
+        page.wait_for_timeout(1200)
+        check(
+            f"K2 ({tag}): and Back from Đơn hàng returns to Nhận đồ -- one Back, one screen",
+            address() == "#/new" and page.locator("#new-walk-in").count() == 1,
+            f"{address()}",
+        )
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    # Neighbour: Back held, then signed in elsewhere, Back pressed again: it goes.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.wait_for_timeout(500)
+    page.evaluate("() => { location.hash = '#/customers'; }")
+    page.wait_for_timeout(900)
+    page.locator("#customers-search").fill("3456")
+    page.locator("#customers-search").press("Enter")
+    page.wait_for_timeout(800)
+    expire()
+    page.go_back()
+    page.wait_for_timeout(1000)
+    back_held = address() == "#/customers" and search_value() == "3456"
+    state["authenticated"] = True
+    page.go_back()
+    page.wait_for_timeout(1500)
+    check(
+        "K2 (Back held, signed in again elsewhere, Back pressed again): Đơn hàng opens",
+        back_held
+        and address() == "#/orders"
+        and page.locator("main h1").first.inner_text() == "Đơn hàng"
+        and "Chưa mở" not in banner_text(),
+        f"held={back_held} {address()} {banner_text()[:100]!r}",
+    )
+
+    # Neighbour: someone else signed in elsewhere. The press is not carried over to them; the
+    # screen is drawn again for the person now signed in -- nothing typed by the last one stays.
+    typed_on_new()
+    expire()
+    press_visible("/orders")
+    SESSION_OK["staff_user_id"] = "00000000-0000-4000-8000-0000000000bb"
+    state["authenticated"] = True
+    press_visible("/orders")
+    check(
+        "K2 (another person signed in elsewhere, Đơn hàng pressed again): not carried to them -- "
+        "Nhận đồ is drawn afresh, the 3.5 kg typed by the last person is gone, no banner",
+        address() == "#/new"
+        and qty_now() is None
+        and page.locator("#new-walk-in").count() == 1
+        and "Chưa mở" not in banner_text()
+        and "Phiên đăng nhập đã kết thúc" not in banner_text(),
+        f"{address()} qty={qty_now()!r} {banner_text()[:100]!r}",
+    )
+    SESSION_OK["staff_user_id"] = "00000000-0000-4000-8000-0000000000aa"
+    page.evaluate(
+        "async () => { const s = await import('/src/core/session.js'); await s.refresh(); }"
+    )
+    page.wait_for_timeout(900)
+    page.remove_listener("request", note_session_read)
+
+    # An address written while held -- typed in the bar, or set by code that does not ask
+    # `navigate` -- made a history entry of its own, which was rewritten to the held screen: two
+    # entries of one screen, and one Back later did nothing at all.
+    for follow, label in ((False, "Kiểm tra lại phiên"), (True, "signed in elsewhere")):
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+        page.wait_for_timeout(500)
+        page.evaluate("() => { location.hash = '#/customers'; }")
+        page.wait_for_timeout(900)
+        page.locator("#customers-search").fill("3456")
+        page.locator("#customers-search").press("Enter")
+        page.wait_for_timeout(800)
+        expire()
+        if follow:
+            state["authenticated"] = True
+        page.evaluate("() => { location.hash = '#/orders'; }")
+        page.wait_for_timeout(1500)
+        typed_held = address() == "#/customers" and search_value() == "3456"
+        if not follow:
+            recheck_in_banner()
+            press_orders()
+            page.wait_for_timeout(600)
+        reached = address()
+        trail = []
+        for _ in range(2):
+            page.go_back()
+            page.wait_for_timeout(1200)
+            trail.append(address())
+        check(
+            f"K2 (an address typed while held, then {label}): "
+            + ("held first, " if not follow else "")
+            + "Đơn hàng opens, and two Backs reach the first Đơn hàng -- no dead Back, no second "
+            "copy of the held screen in the history",
+            (typed_held or follow)
+            and reached == "#/orders"
+            and trail == ["#/customers", "#/orders"],
+            f"held={typed_held} reached={reached} trail={trail}",
+        )
+        state["authenticated"] = True
 
     # --- K2: one Thoát clears every tab --------------------------------------------------------
     customer_on_screen()

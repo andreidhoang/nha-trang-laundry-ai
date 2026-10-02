@@ -824,8 +824,38 @@ function holdScreen(context, moved) {
     heldDestination = destinationLabel(context.path);
     renderBanners();
     revealHeldLine();
+    recheckForHeld();
   }
   return true;
+}
+
+/** Whether a session read made for a held press is on its way (`recheckForHeld`). */
+let heldRecheck = false;
+
+/**
+ * A held press reads the session again (round-9b verification 3, K2). The banner offers sign-in
+ * in a tab of its own, and the guide says: signed in again, press it again. That press used to be
+ * held like the first -- nothing here had asked the server since -- and "cần máy chủ" stayed up
+ * with the server answering, until "Kiểm tra lại phiên" was found. Now the press asks: still out,
+ * and the screen stays held as it was; the same person signed in again, and the press goes where
+ * it was pressed (`router.resumeHeld`). Someone else signed in: nothing is carried over to them --
+ * the screen is drawn again for them by the session's subscriber, the last person's typing gone.
+ * One read at a time; a second press meanwhile is the one made when the read answers.
+ */
+function recheckForHeld() {
+  if (heldRecheck) return;
+  const who = lastPrincipal?.staffUserId || "";
+  heldRecheck = true;
+  void session
+    .refresh()
+    .catch(() => {})
+    .then(() => {
+      heldRecheck = false;
+      const state = session.snapshot();
+      if (state.status === "active" && who && state.principal?.staffUserId === who) {
+        router.resumeHeld();
+      }
+    });
 }
 
 /**

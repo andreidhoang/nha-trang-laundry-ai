@@ -349,3 +349,38 @@ console.log(JSON.stringify({status: now.status, signedOut: now.signedOut,
 """
     )
     assert got == {"status": "ended", "signedOut": True, "answered": False, "reread": False}
+
+
+# --- Round-9b verification 3: what the guide promises, and who writes the address ---------------
+
+GUIDE = ROOT / "docs" / "HUONG_DAN_CA_LAM_VIEC_VI.md"
+
+
+def _guide_row(cell: str) -> str:
+    rows = [line for line in GUIDE.read_text().splitlines() if line.startswith(f"| {cell}")]
+    assert len(rows) == 1, cell
+    return rows[0]
+
+
+def test_the_guide_does_not_promise_a_reminder_from_a_dimmed_row() -> None:
+    # While a ticket or intake write is out, step 1's rows are disabled: a press on one reaches
+    # nothing, so nothing can remind anyone. The guide said it would.
+    row = _guide_row("Các dòng ở **Nhận đồ** mờ đi vài giây")
+    assert "Bấm vào dòng mờ thì máy nhắc" not in row
+    assert "chưa bấm được" in row
+
+
+def test_the_guide_says_a_press_after_signing_in_again_goes_through() -> None:
+    row = _guide_row("**Phiên đăng nhập đã kết thúc**")
+    assert "Đăng nhập lại xong thì bấm lại nút đó" in row
+    assert "kiểm tra lại phiên rồi mở" in row
+
+
+def test_the_hand_off_asks_the_router_and_writes_no_address_itself() -> None:
+    # A hash written past `navigate` while a screen is held made a history entry of its own.
+    source = (WEB / "src" / "ui" / "handoff.js").read_text()
+    code = "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith(("*", "//", "/*"))
+    )
+    assert "location.hash" not in code
+    assert code.count("navigate(") == 2

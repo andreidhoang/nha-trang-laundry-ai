@@ -11980,6 +11980,96 @@ def scenario_console_residual(console: Console) -> None:
             sql(f"select count(*) from orders where current_quote_id = '{made}'"),
         )
 
+    head("K2e", "ĐĂNG NHẬP LẠI Ở THẺ KHÁC RỒI BẤM LẠI — the press goes; the history has no copy")
+    # Round-9b verification 3: signed in again in another tab, the destination pressed again (the
+    # guide's "Đăng nhập lại xong thì bấm lại") stayed held, saying "cần máy chủ"; and an address
+    # written while held left a second copy of the held screen in the history -- a dead Back.
+    console.sign_in("demo-operations")
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "3.5")
+    page.wait_for_timeout(300)
+    on_new = str(page.evaluate("() => location.hash"))
+    session_id = str(
+        (console.call("GET", "/internal/v1/session").get("body") or {}).get("session_id") or ""
+    )
+    if not (READS_DATABASE and session_id):
+        ok("an idle expiry needs --database-url (the session's idle deadline is moved)", False)
+    else:
+        # HARNESS STEP: eight hours idle, as in K2.
+        sql(
+            "update staff_sessions set idle_expires_at = now() - interval '1 second' "
+            f"where id = '{session_id}'"
+        )
+        page.evaluate(
+            "async () => { const api = await import('/staff/src/core/api.js');"
+            " await api.request('/internal/v1/session').catch(() => null); }"
+        )
+        page.wait_for_timeout(1200)
+        # An address written past the navigation (typed in the bar, or by code): held as a press.
+        page.evaluate("() => { location.hash = '#/orders'; }")
+        page.wait_for_timeout(1500)
+        ok(
+            "an address typed while the session is out: held -- Nhận đồ with 3.5 kg stays",
+            page.evaluate("() => location.hash") == on_new and qty() == "3.5",
+            f"{page.evaluate('() => location.hash')} qty={qty()!r}",
+        )
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(1500)
+        ok(
+            "Đơn hàng pressed, still signed out: held, and the banner says why",
+            page.evaluate("() => location.hash") == on_new
+            and qty() == "3.5"
+            and "Chưa mở" in page.locator("#banners").inner_text(),
+            page.locator("#banners").inner_text()[:160],
+        )
+        other = page.context.new_page()
+        other.goto(CONSOLE, wait_until="domcontentloaded")
+        signed = int(
+            other.evaluate(
+                """async (t) => (await fetch('/internal/v1/auth/session', {method: 'POST',
+                    credentials: 'include', headers: {'Authorization': 'Bearer ' + t}})).status""",
+                token("demo-operations"),
+            )
+        )
+        other.close()
+        page.bring_to_front()
+        ok("signed in again in another tab of this browser", signed == 200, str(signed))
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(2500)
+        banner = page.locator("#banners").inner_text()
+        ok(
+            "Đơn hàng pressed again, as the guide says: it opens -- no 'Kiểm tra lại phiên' "
+            "needed, no 'Phiên đăng nhập đã kết thúc', no 'Chưa mở … cần máy chủ'",
+            page.evaluate("() => location.hash").startswith("#/orders")
+            and page.locator("main h1").first.inner_text() == "Đơn hàng"
+            and "Phiên đăng nhập đã kết thúc" not in banner
+            and "Chưa mở" not in banner,
+            f"{page.evaluate('() => location.hash')} {banner[:120]!r}",
+        )
+        if not page.evaluate("() => location.hash").startswith("#/orders"):
+            # The history check below stands by itself: on its way to Đơn hàng whichever way.
+            recheck = page.locator("#banners button", has_text="Kiểm tra lại phiên")
+            if recheck.count():
+                recheck.first.click()
+            page.wait_for_timeout(1500)
+            console.nav("Đơn hàng", "/orders")
+            page.wait_for_timeout(1500)
+        trail = []
+        for _ in range(2):
+            page.go_back()
+            page.wait_for_timeout(1500)
+            trail.append(
+                page.url if page.url.startswith("about:") else page.evaluate("() => location.hash")
+            )
+        ok(
+            "Back reaches Nhận đồ, and the next Back leaves it -- one entry for the held screen, "
+            "no dead Back",
+            trail[0].startswith("#/new") and trail[1] == "about:blank",
+            repr(trail),
+        )
+
     head("K2b", "MỘT LẦN THOÁT, MỌI THẺ — the other tab clears itself")
     console.sign_in("demo-operations")
     console.open_order(order_id)

@@ -67,6 +67,28 @@ let returning = false;
 let keptAddress = "";
 /** Whether a route's screen is being built (awaited) -- the outlet is about to change. */
 let building = false;
+/**
+ * Round-9b verification 3 (K2): where the screen on show sits in the history, when the browser
+ * says (`navigation.currentEntry.index`; -1 when it does not), and how long the history was at the
+ * last address change this page saw. Together they tell an entry an address written while the
+ * screen was held has just made -- ahead of the held screen's -- from one Back or Forward reached.
+ */
+let shownIndex = -1;
+let lengthSeen = 0;
+/**
+ * The move the person asked for while the screen was held (round-9b verification 3, K2): a press
+ * or an address (`to`), or a Back or Forward (`go`). Made once the session is found back
+ * (`resumeHeld`); forgotten when any screen is drawn.
+ *
+ * @type {{kind: "to", target: string}|{kind: "go", delta: number}|null}
+ */
+let heldMove = null;
+
+/** @returns {number|null} the current entry's place in the history, when the browser says */
+function entryIndex() {
+  const index = /** @type {any} */ (globalThis).navigation?.currentEntry?.index;
+  return typeof index === "number" && index >= 0 ? index : null;
+}
 
 /** @returns {number|null} the current entry's stamp, if this page has stamped it */
 function entryStamp() {
@@ -251,7 +273,27 @@ function holdPress(event) {
  * @returns {boolean}
  */
 function heldFor(target) {
-  return Boolean(routeShown && worked && !building && hold && hold(contextOf(target), true));
+  const held = Boolean(routeShown && worked && !building && hold && hold(contextOf(target), true));
+  if (held) heldMove = { kind: "to", target };
+  return held;
+}
+
+/**
+ * Make the move the person asked for while the screen was held (round-9b verification 3, K2).
+ * The shell calls this once a session read made for that press finds the same person signed in
+ * again: the guide's "Đăng nhập lại xong thì bấm lại" -- the press after signing in elsewhere goes
+ * where it was pressed, rather than staying held until "Kiểm tra lại phiên" is found.
+ *
+ * @returns {boolean} whether there was a move to make
+ */
+export function resumeHeld() {
+  const move = heldMove;
+  heldMove = null;
+  if (!move) return false;
+  if (move.kind === "go") history.go(move.delta);
+  else if (location.hash !== move.target) location.hash = move.target;
+  else void render();
+  return true;
 }
 
 /**
@@ -259,19 +301,40 @@ function heldFor(target) {
  *
  * Back or Forward reached another entry of this page: step back to the held screen's own entry,
  * one at a time (`onPopstate`), leaving every entry where it was -- the next Back, once signed in
- * again, goes where it went before. A new address (typed, or written by code that does not ask
- * `navigate`) made an entry of its own: it is given the held screen's address and stamp.
+ * again, goes where it went before.
+ *
+ * A new address (typed, or written by code that does not ask `navigate`) made an entry of its own,
+ * ahead of the held screen's (round-9b verification 3). It used to be given the held screen's
+ * address and stamp: two entries of one screen, and one Back later did nothing at all. Now the
+ * history steps back over it, to the held screen's own entry, and the next move overwrites it. Only
+ * where the browser shows the entry is new -- its place in the history (`navigation`), or a history
+ * grown longer; an entry of unknown place is still rewritten, which never leaves the console.
  *
  * @param {string} left the address before the move
+ * @param {boolean} grew the history is longer than at the last address change
  */
-function keepEntry(left) {
+function keepEntry(left, grew) {
   const here = entryStamp();
   if (here !== null && here !== shownEntry) {
+    heldMove = { kind: "go", delta: here < shownEntry ? -1 : 1 };
     returning = true;
     keptAddress = left;
     history.go(here < shownEntry ? 1 : -1);
     return;
   }
+  const index = entryIndex();
+  const known = index !== null && shownIndex >= 0 && index !== shownIndex;
+  if (known || (index === null && grew && here === null)) {
+    const ahead = known ? index > shownIndex : true;
+    heldMove = ahead
+      ? { kind: "to", target: location.hash }
+      : { kind: "go", delta: /** @type {number} */ (index) - shownIndex };
+    returning = true;
+    keptAddress = left;
+    history.go(known ? shownIndex - /** @type {number} */ (index) : -1);
+    return;
+  }
+  heldMove = { kind: "to", target: location.hash };
   history.replaceState(stamped(shownEntry), "", left);
 }
 
@@ -300,16 +363,19 @@ export async function render(event) {
 
   const left = event?.oldURL ? new URL(event.oldURL).hash : "";
   const moved = Boolean(left) && left !== location.hash;
+  const grew = history.length > lengthSeen;
+  lengthSeen = history.length;
   if (moved && routeShown && !building) {
     // A step of a held Back's way back (`onPopstate` takes it), or its arrival: the entry of the
     // screen on show -- which never left -- is on show again. Nothing to render.
     if (returning || entryStamp() === shownEntry) return;
   }
   if (routeShown && worked && !building && hold?.(context, moved)) {
-    if (moved) keepEntry(left);
+    if (moved) keepEntry(left, grew);
     return;
   }
   returning = false;
+  heldMove = null;
 
   pending?.abort();
   const controller = new AbortController();
@@ -317,6 +383,7 @@ export async function render(event) {
   // Stamped before the screen builds: a screen that forwards (`replace`) while building moves to
   // an entry of its own, and that entry's change of address must render, not pass for this one.
   const entry = stampEntry();
+  const index = entryIndex();
 
   const blocked = guard ? guard(context, route) : null;
   if (blocked) {
@@ -352,6 +419,7 @@ export async function render(event) {
   routeShown = true;
   worked = false;
   shownEntry = entry;
+  shownIndex = index ?? -1;
   outlet.replaceChildren(view);
   enter(outlet);
   onChange?.();
@@ -430,6 +498,7 @@ export function start(config) {
   guard = config.guard || null;
   onChange = config.onChange || null;
   hold = config.hold || null;
+  lengthSeen = history.length;
   window.addEventListener("hashchange", (event) => void render(event));
   window.addEventListener("popstate", onPopstate);
   document.addEventListener("click", holdPress, true);

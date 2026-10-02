@@ -41,6 +41,13 @@ let guard = null;
 let onChange = null;
 /** @type {AbortController|null} */
 let pending = null;
+/** @type {((context: RouteContext, moved: boolean) => boolean)|null} */
+let hold = null;
+/**
+ * Whether the outlet shows a screen a route rendered -- something a person may have typed into --
+ * rather than a guard's screen, a "not found" or nothing yet. Only such a screen is held (`hold`).
+ */
+let routeShown = false;
 
 /**
  * Split a hash into a path and a query string.
@@ -126,26 +133,74 @@ function enter(element) {
 }
 
 /**
+ * @param {string} path
+ * @returns {Route|null}
+ */
+function routeOf(path) {
+  return routes.find((candidate) => match(candidate.path, path) !== null) || null;
+}
+
+/**
+ * @param {string} hash
+ * @returns {RouteContext}
+ */
+function contextOf(hash) {
+  const { path, query } = parse(hash);
+  const route = routeOf(path);
+  return { params: route ? match(route.path, path) || {} : {}, query, path };
+}
+
+/**
+ * A press on an in-page link while the screen on show is held (K2) is answered before the address
+ * moves, so it leaves no history entry behind -- Back then still goes where it went before.
+ *
+ * @param {MouseEvent} event
+ */
+function holdPress(event) {
+  if (!routeShown || !hold || event.defaultPrevented || event.button !== 0) return;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const link = /** @type {Element|null} */ (event.target)?.closest?.("a[href^='#/']");
+  const target = link?.getAttribute("href") || "";
+  if (!target || target === location.hash) return;
+  if (hold(contextOf(target), true)) event.preventDefault();
+}
+
+/**
  * Render the screen for the current hash.
  *
  * An in-flight render is aborted when the operator navigates away, so a slow list arriving after
  * the screen changed cannot paint over the new one.
+ *
+ * CONSOLE-RESIDUAL-009B (K2, round-9b verification): while the shell says a screen must be held
+ * (`hold` -- the session ended or the server is not answering), a change of address does not
+ * replace the screen on show. The address goes back to it (no new history entry) and the shell
+ * says why. Every destination needs the server then, so nothing is lost by staying -- and what the
+ * person typed, which the banner promises is still on screen, stays true.
+ *
+ * @param {HashChangeEvent} [event] the address change that asked for this render, if one did
  */
-export async function render() {
+export async function render(event) {
   if (!outlet) return;
+
+  const context = contextOf(location.hash);
+  const { path } = context;
+  const route = routeOf(path);
+
+  const left = event?.oldURL ? new URL(event.oldURL).hash : "";
+  const moved = Boolean(left) && left !== location.hash;
+  if (routeShown && hold?.(context, moved)) {
+    if (moved) history.replaceState(history.state, "", left);
+    return;
+  }
+
   pending?.abort();
   const controller = new AbortController();
   pending = controller;
 
-  const { path, query } = parse(location.hash);
-  const route = routes.find((candidate) => match(candidate.path, path) !== null) || null;
-  const params = route ? match(route.path, path) || {} : {};
-  /** @type {RouteContext} */
-  const context = { params, query, path };
-
   const blocked = guard ? guard(context, route) : null;
   if (blocked) {
     if (controller.signal.aborted) return;
+    routeShown = false;
     outlet.replaceChildren(blocked);
     enter(outlet);
     onChange?.();
@@ -154,6 +209,7 @@ export async function render() {
 
   if (!route) {
     if (controller.signal.aborted) return;
+    routeShown = false;
     outlet.replaceChildren(notFound(path));
     enter(outlet);
     onChange?.();
@@ -168,6 +224,7 @@ export async function render() {
     view = renderCrash(error);
   }
   if (controller.signal.aborted) return;
+  routeShown = true;
   outlet.replaceChildren(view);
   enter(outlet);
   onChange?.();
@@ -237,13 +294,17 @@ function notFound(path) {
  * @param {Route[]} config.routes
  * @param {(context: RouteContext, route: Route|null) => Node|null} [config.guard]
  * @param {() => void} [config.onChange]
+ * @param {(context: RouteContext, moved: boolean) => boolean} [config.hold] whether the screen on
+ *   show must stay rather than give way to `context` (K2); the shell says why when it answers true
  */
 export function start(config) {
   outlet = config.outlet;
   routes = config.routes;
   guard = config.guard || null;
   onChange = config.onChange || null;
-  window.addEventListener("hashchange", () => void render());
+  hold = config.hold || null;
+  window.addEventListener("hashchange", (event) => void render(event));
+  document.addEventListener("click", holdPress, true);
   if (!location.hash) location.hash = "#/";
   else void render();
 }

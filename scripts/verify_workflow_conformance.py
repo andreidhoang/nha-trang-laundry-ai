@@ -7290,8 +7290,14 @@ def _money_reads_agree(console: Console, order_id: str, what: str) -> None:
     )
 
 
-def _vnd_text(amount: int) -> str:
-    """`70000` -> `70.000 ₫`, as the server's sentences write it (a plain space)."""
+def _vnd_said(amount: int) -> str:
+    """`70000` -> `70.000 ₫`, as the server's sentences write it (a plain space).
+
+    Not `_vnd_text`: that name is taken further down by how a person *types* an amount
+    (`70.000`, no sign), and the later definition replaced this one at import -- so ML3 looked
+    for "hoàn 50.000 thay vì 90.000." in a sheet that says "hoàn 50.000 ₫ thay vì 90.000 ₫."
+    (round-9b verification, found failing on the integrated base).
+    """
 
     return f"{amount:,}".replace(",", ".") + " ₫"
 
@@ -7541,11 +7547,16 @@ def scenario_money_lifecycle(console: Console) -> None:
         console.page.locator("dialog[open] input[value=SHOP_FAULT_NO_CHARGE]").check()
         touched("orderDetail.cancel-custody")
         sheet = console.dialog_text()
+        # The money goes back, so the sheet asks how (GOODS-AND-DRAWER-009, DEC-048) and "Huỷ
+        # đơn" stays shut until it is answered; this scenario predates that question and pressed
+        # a shut button, so the cancellation it checks was never made.
+        console.page.locator("dialog[open] input[name=refund_method][value=TIEN_MAT]").check()
+        touched("orderDetail.cancel-refund-method")
     ok(
         "Huỷ đơn states before the press: 30.000 ₫ voided, 40.000 ₫ taken off the refund",
         "Khoản Bồi thường món bị hỏng 30.000 ₫ khách chưa dùng được huỷ cùng đơn." in sheet
-        and f"Trừ khoản Bồi thường món bị hỏng 40.000 ₫ khách đã dùng: hoàn {_vnd_text(refund)} "
-        f"thay vì {_vnd_text(paid)}."
+        and f"Trừ khoản Bồi thường món bị hỏng 40.000 ₫ khách đã dùng: hoàn {_vnd_said(refund)} "
+        f"thay vì {_vnd_said(paid)}."
         in sheet,
         sheet[:300].replace("\n", " | "),
     )
@@ -9229,7 +9240,11 @@ def scenario_invoice_truth(console: Console) -> None:
         paid["status"] == 201 and issued["status"] == 200 and figure,
         f"{paid['status']} {issued['status']} {issued['text'][:120]}",
     )
-    said = console.step(order_id, "CANCEL", custody="RETURNED_UNWASHED_REFUNDED")
+    # The money goes back, so the sheet asks how (GOODS-AND-DRAWER-009); without an answer "Huỷ
+    # đơn" stays shut and nothing was cancelled (round-9b verification, failing on the base).
+    said = console.step(
+        order_id, "CANCEL", custody="RETURNED_UNWASHED_REFUNDED", refund="CHUYEN_KHOAN"
+    )
     console.page.wait_for_timeout(1500)
     after = (
         console.call(
@@ -11675,11 +11690,61 @@ def scenario_console_residual(console: Console) -> None:
         page.wait_for_selector("#new-ticket", timeout=15000)
     ok("then the write lands and its customer is on screen", page.locator("#new-ticket").count())
 
-    head("K2", "HẾT PHIÊN GIỮA CA — the navigation stays; a press on it says why")
+    head("K1c", "KHÁCH ĐANG CHỜ THAY KHÁCH ĐANG MỞ — the line survives the row's own redraw")
+    # Round-9b verification: a "Khách đang chờ" row pressed while ?request=X reads drew its own
+    # skeleton where the quiet line stood, in the same task -- X was dropped without a word.
+    y_waiting = console.walk_in()
+    y_id = str((y_waiting.get("intake") or {}).get("order_request_id") or "")
+    y_ticket = (y_waiting.get("ticket") or {}).get("ticket_number")
+    held.clear()
+    page.route(pattern, hold)
+    page.goto("about:blank")
+    page.goto(f"{CONSOLE}#/new?request={x_id}", wait_until="domcontentloaded")
+    page.wait_for_timeout(1800)
+    y_row = page.locator(f"#new-waiting [data-request='{y_id}']")
+    pressed = y_row.count() == 1
+    if pressed:
+        y_row.first.click()
+        touched("newOrder.resume")
+    page.wait_for_timeout(300)
+    soon = line.first.inner_text() if line.count() else ""
+    page.wait_for_timeout(1500)
+    later = line.first.inner_text() if line.count() else ""
+    ok(
+        "a waiting row Y pressed while ?request=X reads: the address is #/new and one quiet line "
+        "says X was dropped -- still there after Y's own reads",
+        pressed
+        and page.evaluate("() => location.hash") == "#/new"
+        and soon.startswith("Đã bỏ khách")
+        and later == soon,
+        f"pressed={pressed} soon={soon!r} later={later!r}",
+    )
+    for route in held:
+        route.continue_()
+    page.unroute(pattern, hold)
+    page.wait_for_timeout(2000)
+    named = line.first.inner_text() if line.count() else ""
+    hero_text = hero.first.inner_text() if hero.count() else ""
+    ok(
+        "X's late read names X on that line, and Y is the customer on screen",
+        named == f"Đã bỏ khách đang chờ “Phiếu {x_ticket}” — vẫn còn trong danh sách."
+        and f"Phiếu {y_ticket}" in hero_text.replace("\n", " "),
+        f"line={named!r} hero={hero_text[:60]!r}",
+    )
+
+    head("K2", "HẾT PHIÊN GIỮA CA — the navigation stays; a press on it keeps what was typed")
     order = console.build_order(stop="created")
     order_id = order["order_id"]
-    console.open_order(order_id)
+    # Nhận đồ step 2 with a weight being typed: what an expiry must not throw away.
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "3.5")
+    page.wait_for_timeout(300)
+    on_new = str(page.evaluate("() => location.hash"))
     before = visible_nav()
+
+    def qty() -> Any:
+        return page.evaluate("() => document.querySelector('#new-line-0-qty')?.value ?? null")
+
     session_id = str(
         (console.call("GET", "/internal/v1/session").get("body") or {}).get("session_id") or ""
     )
@@ -11697,11 +11762,13 @@ def scenario_console_residual(console: Console) -> None:
             " await api.request('/internal/v1/session').catch(() => null); }"
         )
         page.wait_for_timeout(1200)
-        body = str(page.evaluate("() => document.body.textContent"))
+        banner = page.locator("#banners").inner_text()
         ok(
-            "the banner says the session ended, and the order is still on screen",
-            "Phiên đăng nhập đã kết thúc" in body and order_id in body,
-            body[:120],
+            "the banner says the session ended and the typed input is on screen -- it is: 3.5",
+            "Phiên đăng nhập đã kết thúc" in banner
+            and "vẫn còn trên màn hình" in banner
+            and qty() == "3.5",
+            f"qty={qty()!r} {banner[:120]!r}",
         )
         ok(
             "the navigation is still there, with the same destinations",
@@ -11711,31 +11778,39 @@ def scenario_console_residual(console: Console) -> None:
         if console.nav("Đơn hàng", "/orders"):
             touched("shell.nav.orders")
         page.wait_for_timeout(1000)
-        expired = page.locator("main [data-session-expired]")
-        said = expired.first.inner_text() if expired.count() else ""
         banner = page.locator("#banners").inner_text()
         ok(
-            "and the banner no longer says the typed input is on screen (it is not, now)",
-            "Phiên đăng nhập đã kết thúc" in banner and "vẫn còn trên màn hình" not in banner,
-            banner[:160],
+            "Đơn hàng pressed: the screen stays with 3.5 typed, the address does not move",
+            qty() == "3.5"
+            and page.evaluate("() => location.hash") == on_new
+            and page.locator("main [data-session-expired]").count() == 0,
+            f"{page.evaluate('() => location.hash')} qty={qty()!r}",
         )
         ok(
-            "a destination pressed says the session ended and needs the server",
-            "Phiên đăng nhập đã kết thúc" in said and "cần máy chủ" in said,
-            said or page.locator("main").inner_text()[:120],
+            "and the banner names what was not opened, and why",
+            "Chưa mở “Đơn hàng”: cần máy chủ, nên màn hình đang làm được giữ nguyên." in banner,
+            banner[:200],
         )
         ok(
-            "signed in again, 'Kiểm tra lại phiên' opens the destination pressed",
+            "signed in again (in this browser), 'Kiểm tra lại phiên' in the banner",
             _session_with(console, token("demo-operations")) == 200,
         )
-        recheck = page.locator("main button", has_text="Kiểm tra lại phiên")
+        recheck = page.locator("#banners button", has_text="Kiểm tra lại phiên")
         if recheck.count():
             recheck.first.click()
         page.wait_for_timeout(1500)
         ok(
-            "-- Đơn hàng, not the session screen",
+            "-- the same line with 3.5 kg is still there, and the banner is gone",
+            qty() == "3.5"
+            and "Phiên đăng nhập đã kết thúc" not in page.locator("#banners").inner_text(),
+            f"qty={qty()!r}",
+        )
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(1500)
+        ok(
+            "and the next press on Đơn hàng opens it",
             page.evaluate("() => location.hash").startswith("#/orders")
-            and page.locator("main [data-session-expired]").count() == 0
             and page.locator("main h1").first.inner_text() == "Đơn hàng",
             page.locator("main").inner_text()[:120],
         )

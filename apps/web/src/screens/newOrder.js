@@ -419,6 +419,8 @@ export function render_(context) {
    */
   let addressNames = Boolean(handOffContact || resumeQuote || resumeRequest);
   let addressPending = false;
+  /** the intake id the address names, when it names one (`?request=`) */
+  let addressRequest = handOffContact || resumeQuote ? "" : resumeRequest;
 
   /**
    * Another customer is being served than the one the address names: the address goes back to
@@ -430,7 +432,9 @@ export function render_(context) {
    */
   function leaveAddress(leaving) {
     if (!addressNames) return;
+    const named = addressRequest;
     addressNames = false;
+    addressRequest = "";
     if (location.hash.startsWith("#/new")) history.replaceState(history.state, "", "#/new");
     if (!addressPending) return;
     addressPending = false;
@@ -440,11 +444,39 @@ export function render_(context) {
       { class: "hint new-dropped", id: "new-resume-dropped", role: "status" },
       contactOnly ? "Đã bỏ khách mở từ cuộc trò chuyện — chưa tạo gì cho khách đó." : droppedText(leaving),
     );
-    show(resumeHost, droppedLine);
+    droppedRequest = leaving ? String(leaving.order_request_id || "") : named;
+    render(droppedHost, droppedLine);
   }
+
+  /**
+   * The "Đã bỏ khách" line has a host of its own (K1, round-9b verification): `resumeHost` is
+   * redrawn by the very press that supersedes the boot resume -- a waiting customer's row draws its
+   * skeleton there in the same task -- and the line went with it, so X was dropped without a word.
+   * Only "Khách khác" (`reset`) and the dropped customer coming back on screen take it away.
+   */
+  const droppedHost = h("div");
 
   /** @type {HTMLElement|null} the "Đã bỏ khách" line, while it may still be on screen */
   let droppedLine = null;
+  /** the intake the line is about, when its id is known (`?request=`), so its return clears it */
+  let droppedRequest = "";
+
+  /** Take the "Đã bỏ khách" line away. */
+  function clearDropped() {
+    droppedLine = null;
+    droppedRequest = "";
+    render(droppedHost);
+  }
+
+  /**
+   * Whether `requestId` is the intake the address names (`?request=`, or the one a write settled
+   * on). Resuming it is not superseding it: the address keeps naming it, and nothing is "dropped".
+   *
+   * @param {string} requestId
+   */
+  function addressed(requestId) {
+    return addressNames && Boolean(requestId) && requestId === addressRequest;
+  }
 
   /**
    * What the quiet line can truthfully say about the customer dropped: named once their intake
@@ -487,6 +519,7 @@ export function render_(context) {
   /** Start over for the next customer. The last one's intake stays in the waiting list. */
   function reset() {
     newContext();
+    clearDropped();
     flow.ticket = null;
     for (const sub of [
       ticketSub,
@@ -985,7 +1018,7 @@ export function render_(context) {
     const waiting = String(item.waiting_order_request_id || "");
     if (UUID.test(waiting)) {
       // An intake is already open for this customer: resume it rather than open a second.
-      const session = beginIntent();
+      const session = beginIntent(addressed(waiting));
       if (session === null) return;
       setBusy(true);
       row.setAttribute("aria-busy", "true");
@@ -1154,6 +1187,7 @@ export function render_(context) {
     if (!location.hash.startsWith("#/new")) return;
     history.replaceState(history.state, "", `#/new?request=${encodeURIComponent(requestId)}`);
     addressNames = true;
+    addressRequest = requestId;
   }
 
   /** "Tiếp tục một khách đang chờ": intakes that have not become an order yet. */
@@ -1227,8 +1261,11 @@ export function render_(context) {
    * @param {boolean} [fromAddress] the resume the address names (boot, or its retry), not a press
    */
   async function resumeFromRequest(item, fromAddress = false) {
-    const session = beginIntent(fromAddress);
+    const id = String(item?.order_request_id || "");
+    const session = beginIntent(fromAddress || addressed(id));
     if (session === null) return;
+    // The customer the line says was dropped is the one being opened now: it is no longer true.
+    if (id && id === droppedRequest) clearDropped();
     if (item.order_id) {
       // Converted already: nothing to resume, and binding it would offer a second order.
       go(1);
@@ -2834,6 +2871,7 @@ export function render_(context) {
     { class: "screen" },
     page({ title: "Nhận đồ" }),
     progressHost,
+    droppedHost,
     resumeHost,
     body,
     picker.node,

@@ -18,7 +18,7 @@ import { shortId } from "./src/core/format.js";
 import { request } from "./src/core/api.js";
 import { focusContainer, h, render } from "./src/core/dom.js";
 import { enumVi } from "./src/core/i18n.js";
-import { FOLD_GROUP, navOwns, navPlan } from "./src/core/nav.js";
+import { FOLD_GROUP, NAV_ITEMS, navOwns, navPlan } from "./src/core/nav.js";
 import { can } from "./src/core/rbac.js";
 import * as router from "./src/core/router.js";
 import * as session from "./src/core/session.js";
@@ -178,8 +178,10 @@ function navItem(entry, shown) {
  * left the person on a page with no way around it and no sign that one would come back. So the
  * last person's destinations are kept while the session is `ended` (not by "Thoát") or
  * `unreachable`. A press on one still goes nowhere that needs the server without saying so: the
- * route's guard screen says the session ended, or that the server is not answering
- * (`guard`). "Thoát" -- here or in another tab -- forgets them with everything else.
+ * screen on show is held and the banner names the destination not opened (`holdScreen`); where
+ * nothing is held (a guard's screen was on show), the route's guard screen says the session ended,
+ * or that the server is not answering (`guard`). "Thoát" -- here or in another tab -- forgets them
+ * with everything else.
  *
  * @type {import("./src/core/session.js").Principal|null}
  */
@@ -550,6 +552,7 @@ function renderBanners() {
               "Kiểm tra mạng rồi bấm “Kiểm tra lại phiên”."
           : "Mất liên lạc với máy chủ. Chưa biết phiên còn hay hết — đây không phải đã đăng xuất. " +
               "Những gì bạn đang nhập vẫn còn trên màn hình; kiểm tra mạng rồi bấm gửi lại.",
+        heldLine(),
         h(
           "button",
           { type: "button", dataVariant: "quiet", onClick: () => void session.refresh() },
@@ -575,6 +578,7 @@ function renderBanners() {
             ? "Phiên đăng nhập đã kết thúc. Đăng nhập lại rồi bấm “Kiểm tra lại phiên”."
             : "Phiên đăng nhập đã kết thúc. Những gì bạn đang nhập vẫn còn trên màn hình — " +
               "đăng nhập lại rồi bấm gửi một lần nữa."),
+        heldLine(),
         h(
           "button",
           {
@@ -659,8 +663,9 @@ function signedOutScreen() {
   const signInPath =
     configured && configured.startsWith("/") && !configured.startsWith("//") ? configured : "";
 
-  // K2: a destination pressed after an idle expiry. The navigation is still there; what is behind
-  // it needs the server, and this says why it is not shown -- not "never signed in".
+  // K2: a destination pressed after an idle expiry while no screen of a route was on show to hold
+  // (a guard's or a "not found" screen; a route's screen is held instead -- `holdScreen`). What is
+  // behind it needs the server, and this says why it is not shown -- not "never signed in".
   const expired = state.status === "ended" && !state.signedOut && lastPrincipal !== null;
   return h(
     "section",
@@ -749,6 +754,52 @@ function sessionLoadingScreen() {
  * under the same key, the route is rendered again instead of leaving that screen up.
  */
 let sessionScreenShown = false;
+
+/**
+ * The destination a press asked for while the screen on show was held (K2), for the banner to
+ * name. Cleared when the session is back -- the person presses it again then.
+ *
+ * @type {string|null}
+ */
+let heldDestination = null;
+
+/**
+ * Whether the screen on show stays rather than give way to `context` (round-9b verification, K2).
+ *
+ * The navigation is kept through an idle expiry or a lost server, and the banner says that what
+ * was typed is still on screen. A press on a destination used to replace that screen with the
+ * session screen -- and the typed line was gone, one press after the console had said it was safe.
+ * Every destination needs the server while the session is out, so the press now goes nowhere and
+ * the banner says so; the screen, and what is typed on it, stays. Not after "Thoát": the person
+ * chose to leave and the page has been cleared.
+ *
+ * @param {import("./src/core/router.js").RouteContext} context
+ * @param {boolean} moved the address changed (a press, Back) -- not a redraw of the same one
+ * @returns {boolean}
+ */
+function holdScreen(context, moved) {
+  const state = session.snapshot();
+  if (state.signedOut) return false;
+  if (state.status !== "ended" && state.status !== "unreachable") return false;
+  if (moved) {
+    const item = NAV_ITEMS.find((candidate) => candidate.path === context.path) ||
+      NAV_ITEMS.find((candidate) => candidate.path !== "/" && navOwns(candidate, context.path));
+    heldDestination = item ? item.label : "";
+    renderBanners();
+  }
+  return true;
+}
+
+/** The banner's sentence for a destination pressed while the screen is held (K2). */
+function heldLine() {
+  if (heldDestination === null) return null;
+  return h(
+    "p",
+    { class: "banner__held", dataHeldDestination: "true" },
+    `Chưa mở ${heldDestination ? `“${heldDestination}”` : "màn hình đó"}: cần máy chủ, nên màn ` +
+      "hình đang làm được giữ nguyên.",
+  );
+}
 
 /**
  * Refuse a screen before it renders, with the reason.
@@ -991,9 +1042,13 @@ async function boot() {
   /** @type {string|null} null until an authenticated screen has been rendered at least once. */
   let renderedKey = null;
   session.subscribe(() => {
+    const state = session.snapshot();
+    // K2: a destination held while the session was out is not named once it is back (or gone).
+    if (state.signedOut || (state.status !== "ended" && state.status !== "unreachable")) {
+      heldDestination = null;
+    }
     syncChrome();
     void pollApprovals();
-    const state = session.snapshot();
 
     // A session ending must not rebuild the screen. That is the single worst moment to discard a
     // half-typed incident, and `session.js` promises it does not happen — the banner says what
@@ -1024,7 +1079,7 @@ async function boot() {
     void router.render();
   });
 
-  router.start({ outlet, routes: ROUTES, guard, onChange: syncChrome });
+  router.start({ outlet, routes: ROUTES, guard, onChange: syncChrome, hold: holdScreen });
   // A rotation or a soft keyboard changes the bar's height without re-rendering it.
   window.addEventListener("resize", publishNavHeight, { passive: true });
 

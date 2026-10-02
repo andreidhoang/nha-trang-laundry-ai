@@ -425,8 +425,8 @@ def certificate(
 
     if certificate_path.exists():
         existing.append("tls_certificate")
-        if not ca_certificate_path.exists():
-            existing.append("ca/ca.crt (absent)")
+        # A missing ca.crt is not listed among the files that "already exist": the warning from
+        # `_authority_warning` reports it and names `--new-ca`.
         warning = _authority_warning(authority_status(ca_certificate_path, host), host)
         if warning is not None:
             warnings.append(warning)

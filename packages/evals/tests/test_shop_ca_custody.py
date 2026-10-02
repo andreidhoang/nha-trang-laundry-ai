@@ -407,3 +407,34 @@ def test_the_closing_lines_never_point_at_a_warning_that_is_not_there(
         assert "Install .shop/ca/ca.crt on every tablet" not in printed
         assert "Thiếu .shop/ca/ca.crt" in printed
         assert "NOT limited" not in printed
+
+
+@pytest.mark.parametrize("kind", [*AUTHORITIES, "CA certificate missing"])
+def test_the_already_exist_line_names_only_files_that_exist(
+    bootstrap: ModuleType,
+    kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Round-9b fix, round 4: in the verifier's "ca.crt missing" state the run also said
+    "left untouched because they already exist: ..., ca/ca.crt (absent), ..." -- a file it had
+    just warned is missing, listed as one that exists. The line names only files on disk; the
+    missing CA is the warning's to report."""
+
+    if kind == "CA certificate missing":
+        bootstrap.certificate(HOST, [])
+        (bootstrap.SECRET_DIRECTORY.parent / "ca" / "ca.crt").unlink()
+    else:
+        constraints, critical, _ = AUTHORITIES[kind]
+        authority, key = _authority(constraints, critical=critical)
+        _install(bootstrap, authority, key)
+
+    monkeypatch.setattr(sys, "argv", ["bootstrap_shop_local.py", "--backup-recipient", RECIPIENT])
+    assert bootstrap.main() == 0
+    printed = capsys.readouterr().out
+    prefix = "left untouched because they already exist: "
+    lines = [line.strip() for line in printed.splitlines() if prefix in line]
+    assert len(lines) == 1, printed
+    shop = bootstrap.SECRET_DIRECTORY.parent
+    for name in lines[0].removeprefix(prefix).split(", "):
+        assert (bootstrap.SECRET_DIRECTORY / name).is_file() or (shop / name).is_file(), name

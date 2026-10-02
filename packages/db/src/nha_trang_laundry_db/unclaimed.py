@@ -389,6 +389,14 @@ class UnclaimedOrderResult:
 # --- the repository -------------------------------------------------------------------------------
 
 
+def _longest_waiting_first(item: AwaitingPickupRow) -> tuple[int, int]:
+    """Đồ chờ lấy's order: an unknown wait first, then the most counted days (`DEC-050`)."""
+
+    if item.days_waiting is None:
+        return (0, 0)
+    return (1, -item.days_waiting)
+
+
 class UnclaimedRepository:
     def __init__(self, idempotency: IdempotencyRepository | None = None) -> None:
         self._idempotency = idempotency or IdempotencyRepository()
@@ -543,7 +551,9 @@ class UnclaimedRepository:
             )
         # Longest-waiting first by the clock's own days (`DEC-050`); the SQL chose the page by the
         # held-time-skipped ready instant, and a stable sort keeps its order between equal days.
-        found.sort(key=lambda item: -1 if item.days_waiting is None else -item.days_waiting)
+        # An order with no recorded ready time (legacy, 0037) has an unknown wait, possibly the
+        # longest: it stays first, as the SQL's `NULLS FIRST` put it -- never ranked as one day.
+        found.sort(key=_longest_waiting_first)
         return AwaitingPickupList(
             store_id=store_id,
             evaluated_at=as_of,

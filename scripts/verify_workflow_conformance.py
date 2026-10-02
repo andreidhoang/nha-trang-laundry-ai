@@ -11669,6 +11669,65 @@ def _held_on_ready_day(console: Console) -> None:
     )
 
 
+def _unknown_ready_first(console: Console) -> None:
+    """J1, verification round 2 (P2): an order waiting for pickup with no recorded ready time
+    (legacy data `0037` keeps as NULL) has an unknown wait, possibly the longest. Đồ chờ lấy lists
+    it first -- as before the counted-days sort -- never as if it had waited one day."""
+
+    head("33f", "ĐƠN CHƯA RÕ NGÀY XONG — stays at the top of Đồ chờ lấy (J1, round 2)")
+    five = console.build_order(kg="7", stop="ready")["order_id"]
+    _age_ready(five, 5)
+    legacy = console.build_order(kg="7", stop="ready")["order_id"]
+    ready_at = sql(f"select production_ready_at::text from orders where id = '{legacy}'")
+    # HARNESS STEP (documented, as `_age_ready`): the legacy shape, an order finished before 0037
+    # recorded the ready time. One statement, the row version advanced as 0036's guard requires;
+    # it is put back below so no later scenario meets it.
+    sql(
+        "update orders set production_ready_at = null, row_version = row_version + 1 "
+        f"where id = '{legacy}'"
+    )
+    try:
+        listed = console.call(
+            "GET", f"/internal/v1/stores/{STORE}/orders/awaiting-pickup?limit=200"
+        )
+        orders = (listed.get("body") or {}).get("orders") or []
+        ids = [item.get("order_id") for item in orders]
+        ok(
+            "the API lists the order with no ready time first, before the one waiting 5 days",
+            bool(ids)
+            and ids[0] == legacy
+            and orders[0].get("days_waiting") is None
+            and five in ids,
+            json.dumps([(i, o.get("days_waiting")) for i, o in enumerate(orders)][:6]),
+        )
+        console.open("#/pickup", settle=1800)
+        rows = console.page.locator(".pickup-row")
+        shown = [rows.nth(i).get_attribute("data-order") for i in range(rows.count())]
+        first = console.page.locator(f".pickup-row[data-order='{legacy}'] [data-field=waiting]")
+        ok(
+            "Đồ chờ lấy shows it as the first row, 'Chưa rõ ngày xong', above the 5-day order",
+            bool(shown)
+            and shown[0] == legacy
+            and five in shown
+            and first.count() == 1
+            and first.inner_text().startswith("Chưa rõ ngày xong"),
+            json.dumps(
+                {
+                    "legacy_at": shown.index(legacy) if legacy in shown else None,
+                    "five_at": shown.index(five) if five in shown else None,
+                    "rows": len(shown),
+                    "text": first.inner_text() if first.count() else None,
+                }
+            ),
+        )
+        _residual_shot(console, "j1-unknown-ready-first")
+    finally:
+        sql(
+            f"update orders set production_ready_at = '{ready_at}'::timestamptz, "
+            f"row_version = row_version + 1 where id = '{legacy}'"
+        )
+
+
 def scenario_money_residual(console: Console) -> None:
     """MONEY-RESIDUAL-009B (round 9b), on the real API and the console.
 
@@ -11770,6 +11829,7 @@ def scenario_money_residual(console: Console) -> None:
         json.dumps(reminder)[:200],
     )
     _held_on_ready_day(console)
+    _unknown_ready_first(console)
 
     head("33b", "KHÁCH CÔNG NỢ GIAO TẬN NƠI — Ghi vào công nợ beside Thu tiền, then the trip (J5)")
     console.sign_in("demo-owner")

@@ -216,16 +216,33 @@ def test_the_longest_waiting_is_first_by_the_counted_days(
     connection: psycopg.Connection[Any], shop: Shop
 ) -> None:
     """Đồ chờ lấy lists the longest-waiting first: an order ready longer ago but held most of the
-    time waits less than one ready later and never held."""
+    time waits less than one ready later and never held.
+
+    An order with no recorded ready time (legacy data migration 0037 keeps as NULL) has an unknown
+    wait, possibly the longest: it stays at the top, where the page's SQL (`NULLS FIRST`) put it
+    -- never ranked as if it had waited one day (verification round 2, P2)."""
 
     held_long = _ready(connection, shop)
     _age(connection, held_long, 30)
     _hold(connection, held_long, shop, 28, 3)  # 25 days held: 5 count
     plain = _ready(connection, shop)
     _age(connection, plain, 12)
+    today = _ready(connection, shop)
+    legacy = _ready(connection, shop)
+    with connection.cursor() as cursor:
+        # Harness step: the legacy shape -- finished before 0037 recorded the ready time.
+        cursor.execute(
+            "UPDATE orders SET production_ready_at = NULL, row_version = row_version + 1"
+            " WHERE id = %s",
+            (legacy,),
+        )
+    connection.commit()
     listed = [item.order_id for item in _list(connection, shop).orders]
     connection.rollback()
-    assert listed.index(plain) < listed.index(held_long)
+    assert listed.index(plain) < listed.index(held_long) < listed.index(today)
+    assert listed[0] == legacy
+    assert _row(connection, shop, legacy).days_waiting is None
+    assert _row(connection, shop, today).days_waiting == 0
     assert _row(connection, shop, held_long).days_waiting == 5
     assert _row(connection, shop, plain).days_waiting == 12
 

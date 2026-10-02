@@ -565,7 +565,7 @@ def test_the_check_and_the_bootstrap_renew_from_the_same_day() -> None:
 
 
 def test_the_renewal_notice_waits_for_opening_hours() -> None:
-    """A Mac asleep at 09:00 runs the daily agent on wake; at night `DEC-025` holds the notice."""
+    """A run at night (the hourly agent, or one on a night wake): `DEC-025` holds the notice."""
 
     notice = CHECKS.CheckResult(
         "console_certificate", passed=False, detail="còn 45 ngày", fields={}
@@ -584,3 +584,99 @@ def test_the_certificate_check_asked_for_without_its_file_refuses(
     with pytest.raises(SystemExit) as refused:
         CHECKS.main()
     assert "certificate needs --console-certificate" in str(refused.value)
+
+
+# --- Round-9b verifier, round 2: a notice found at night is told that morning, once a day -------
+
+SHOP = CHECKS.SHOP_TIMEZONE
+NEAR = datetime(2028, 11, 15, tzinfo=SHOP)  # 46 days before EXPIRES
+
+
+def _notice(tmp_path: Path, at: datetime, state: Path | None = None) -> Any:
+    certificate = tmp_path / "tls_certificate"
+    if not certificate.exists():
+        _leaf(certificate, expires=EXPIRES)
+    return CHECKS.run_certificate_check(
+        str(certificate),
+        notice_state=str(state if state is not None else tmp_path / "certificate-notice.json"),
+        now=at,
+    )
+
+
+def test_a_renewal_notice_found_at_night_is_told_from_opening_once_a_shop_day(
+    tmp_path: Path,
+) -> None:
+    """The daily agent's run on a night wake used to be suppressed for quiet hours and kept by
+    nobody -- the notice was lost for the day, not held. Now the agent looks every hour and the
+    check remembers the shop day it last told the owner: nothing at night, once from 07:00."""
+
+    state = tmp_path / "certificate-notice.json"
+    night = _notice(tmp_path, NEAR.replace(day=14, hour=23, minute=30))
+    assert not night.passed and not night.told_today
+    document = CHECKS.alert_document([night], now=NEAR.replace(day=14, hour=23, minute=30))
+    assert document["alert"] is None and document["suppressed"] == ["console_certificate"]
+    assert not state.exists(), "a notice nobody was told is not recorded as told"
+
+    morning = _notice(tmp_path, NEAR.replace(hour=7, minute=5))
+    assert not morning.passed and not morning.told_today
+    document = CHECKS.alert_document([morning], now=NEAR.replace(hour=7, minute=5))
+    assert document["alert"]["checks"] == ["console_certificate"]
+
+    later = _notice(tmp_path, NEAR.replace(hour=8, minute=5))
+    assert not later.passed and later.told_today, "still failing, but told already today"
+    document = CHECKS.alert_document([later], now=NEAR.replace(hour=8, minute=5))
+    assert document["alert"] is None and document["told_today"] == ["console_certificate"]
+    assert document["passed"] is False
+
+    tomorrow = _notice(tmp_path, NEAR.replace(day=16, hour=7, minute=5))
+    assert not tomorrow.told_today
+    assert CHECKS.alert_document([tomorrow], now=NEAR.replace(day=16, hour=7, minute=5))["alert"]
+
+
+def test_a_shop_day_is_counted_in_the_shop_clock(tmp_path: Path) -> None:
+    """06:30 UTC on the 15th is 13:30 in Nha Trang; 18:30 UTC is 01:30 on the 16th there."""
+
+    told = _notice(tmp_path, datetime(2028, 11, 15, 6, 30, tzinfo=UTC))
+    assert not told.told_today
+    assert _notice(tmp_path, datetime(2028, 11, 15, 13, 0, tzinfo=UTC)).told_today  # 20:00
+    next_morning = _notice(tmp_path, datetime(2028, 11, 16, 0, 30, tzinfo=UTC))  # 07:30 on 16th
+    assert not next_morning.told_today
+
+
+@pytest.mark.parametrize("content", ["{not json", '{"schema": "something else"}', '"x"'])
+def test_an_unreadable_notice_record_tells_again_rather_than_never(
+    tmp_path: Path, content: str
+) -> None:
+    state = tmp_path / "certificate-notice.json"
+    state.write_text(content, encoding="utf-8")
+    result = _notice(tmp_path, NEAR.replace(hour=9))
+    assert not result.passed and not result.told_today
+    assert _notice(tmp_path, NEAR.replace(hour=10)).told_today
+
+
+def test_a_notice_record_that_cannot_be_written_still_tells_and_says_so(tmp_path: Path) -> None:
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    state = blocker / "certificate-notice.json"
+    first = _notice(tmp_path, NEAR.replace(hour=9), state)
+    assert not first.passed and not first.told_today
+    assert "không ghi được" in first.detail
+    assert not _notice(tmp_path, NEAR.replace(hour=10), state).told_today
+
+
+def test_a_valid_certificate_records_nothing(tmp_path: Path) -> None:
+    state = tmp_path / "certificate-notice.json"
+    result = _notice(tmp_path, EXPIRES - timedelta(days=200))
+    assert result.passed and not state.exists()
+
+
+def test_without_a_notice_record_the_check_tells_every_run(tmp_path: Path) -> None:
+    """A check run by hand (no record named) says what it sees, every time."""
+
+    certificate = tmp_path / "tls_certificate"
+    _leaf(certificate, expires=EXPIRES)
+    for hour in (9, 10):
+        result = CHECKS.run_certificate_check(
+            str(certificate), notice_state=None, now=NEAR.replace(hour=hour)
+        )
+        assert not result.passed and not result.told_today

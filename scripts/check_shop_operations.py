@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 
@@ -99,6 +99,9 @@ class CheckResult:
     #: logged; never an alert -- a warning that paged every five minutes would teach the owner to
     #: ignore the pager.
     warning: bool = False
+    #: Failing, and the owner was already told today (`console_certificate`, once a shop day): not
+    #: alerted again by this run, and the run still fails.
+    told_today: bool = False
 
 
 #: `DEC-051`. Record-only outbox rows are kept -- the outbox trigger refuses deletion and no
@@ -380,10 +383,8 @@ def check_console_certificate(path: str, *, now: datetime) -> CheckResult:
     """How long the console's TLS certificate has left, from the certificate itself (`DEC-052`).
 
     Fails from `CERTIFICATE_RENEW_BEFORE_DAYS` before expiry, when expired, and when the file is
-    missing or not a certificate -- each is a renewal to do, and the message says how. It runs from
-    the till's daily agent at 09:00, so the owner hears once a day, not every five minutes, and it
-    is a quiet-hours check (`shop_alert_pending.QUIET_HOURS_CHECKS`): a Mac that wakes at night
-    holds it for the morning.
+    missing or not a certificate -- each is a renewal to do, and the message says how. Pure: the
+    till's agent runs it through `run_certificate_check`, which keeps it to one message a shop day.
     """
 
     from cryptography import x509  # the host checks' venv has it; the data-check image need not
@@ -434,6 +435,58 @@ def check_console_certificate(path: str, *, now: datetime) -> CheckResult:
         detail=f"console certificate valid until {shown} ({remaining.days} days)",
         fields=fields,
     )
+
+
+CERTIFICATE_NOTICE_SCHEMA = "nha-trang-laundry.certificate-notice.v1"
+
+
+def run_certificate_check(path: str, *, notice_state: str | None, now: datetime) -> CheckResult:
+    """`check_console_certificate`, told to the owner once a shop day, from opening (`DEC-052`).
+
+    The till's `checks-daily` agent runs this every hour. It used to run once, at 09:00 -- and a
+    09:00 missed while the Mac slept ran on its next wake; at 23:30 `DEC-025` held the notice (a
+    quiet-hours check), the relay had nothing to keep, and nothing ran again until the next 09:00:
+    the notice was dropped for the day, not held for the morning (round-9b verifier, round 2).
+
+    So `notice_state` records the shop day the owner was told. A failing run in opening hours that
+    finds no record for today tells (and records); one that finds today's record is `told_today`,
+    which still fails but alerts nobody; at night nothing is recorded, so the first run from 07:00
+    tells. Recorded when raised, not when delivered: a send that fails is the relay's to retry
+    (`shop_alert_pending`), so the record never swallows a notice. An unreadable record tells again
+    rather than never; one that cannot be written tells and says so. Without `notice_state` (a
+    check run by hand) every failing run tells.
+    """
+
+    result = check_console_certificate(path, now=now)
+    if result.passed or notice_state is None or pending_alerts.in_quiet_hours(now):
+        return result
+    today = now.astimezone(SHOP_TIMEZONE).date().isoformat()
+    record = _Path(notice_state)
+    try:
+        document = json.loads(record.read_text(encoding="utf-8"))
+        told_on = (
+            document.get("told_on")
+            if isinstance(document, dict) and document.get("schema") == CERTIFICATE_NOTICE_SCHEMA
+            else None
+        )
+    except (OSError, ValueError):
+        told_on = None
+    if told_on == today:
+        return replace(result, told_today=True)
+    try:
+        record.parent.mkdir(parents=True, exist_ok=True)
+        temporary = record.with_name(f".{record.name}.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps({"schema": CERTIFICATE_NOTICE_SCHEMA, "told_on": today}) + "\n", "utf-8"
+        )
+        os.replace(temporary, record)
+    except OSError as error:
+        return replace(
+            result,
+            detail=f"{result.detail} (không ghi được {record} -- {error.strerror}; "
+            "sẽ báo lại mỗi giờ)",
+        )
+    return result
 
 
 # --- OPS-OBSERVABILITY-009: what the application itself is doing ---------------------------------
@@ -998,6 +1051,14 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--certificate-notice-state",
+        default=os.environ.get("R1_CERTIFICATE_NOTICE_STATE"),
+        help=(
+            "the file where `--check certificate` records the shop day it last told the owner, so "
+            "an hourly agent tells once a day, from 07:00 (round 9b); without it, every run tells"
+        ),
+    )
+    parser.add_argument(
         "--recovery-mode",
         choices=("self-managed", "provider-managed"),
         default=os.environ.get("R1_RECOVERY_MODE"),
@@ -1076,8 +1137,10 @@ def main() -> int:
         "console": lambda: check_console_reachable(
             str(arguments.console_url), ca_file=arguments.console_ca_file
         ),
-        "certificate": lambda: check_console_certificate(
-            str(arguments.console_certificate), now=datetime.now(UTC)
+        "certificate": lambda: run_certificate_check(
+            str(arguments.console_certificate),
+            notice_state=arguments.certificate_notice_state,
+            now=datetime.now(UTC),
         ),
         "app": lambda: run_application_check(
             str(arguments.app_logs),
@@ -1214,10 +1277,15 @@ ALERT_HEADING = "Bảng vận hành — cần xem ngay:"
 def _reportable(
     failures: list[CheckResult], *, now: datetime
 ) -> tuple[list[CheckResult], list[CheckResult]]:
-    """Split failures into those that alert now and those `DEC-025` holds for opening hours."""
+    """Split failures into those that alert now and those held: by `DEC-025` for opening hours,
+    or because the owner was told today (`told_today`)."""
 
     quiet = pending_alerts.in_quiet_hours(now)
-    held = [failure for failure in failures if quiet and failure.name in QUIET_HOURS_CHECKS]
+    held = [
+        failure
+        for failure in failures
+        if failure.told_today or (quiet and failure.name in QUIET_HOURS_CHECKS)
+    ]
     return [failure for failure in failures if failure not in held], held
 
 
@@ -1251,7 +1319,9 @@ def alert_document(results: list[CheckResult], *, now: datetime) -> dict[str, ob
             if text is None
             else {"text": text, "checks": [failure.name for failure in reportable]}
         ),
-        "suppressed": [failure.name for failure in held],
+        "suppressed": [failure.name for failure in held if not failure.told_today],
+        # Failing and already told today: the relay logs it and sends nothing.
+        "told_today": [failure.name for failure in held if failure.told_today],
         # Passed with something coming due (`DEC-051`): the relay logs these and sends nothing.
         "warnings": {r.name: r.detail for r in results if r.passed and r.warning},
     }
@@ -1306,7 +1376,12 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
             pending_alerts.save(
                 pending_file,
                 pending_alerts.after_failure(
-                    state, current, checks, now=now, attempted=composition.carried
+                    state,
+                    current,
+                    checks,
+                    now=now,
+                    attempted=composition.carried,
+                    deferred=composition.deferred,
                 ),
             )
 
@@ -1343,7 +1418,14 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
     elif pending_file is not None:
         pending_alerts.save(
             pending_file,
-            pending_alerts.after_success(state, composition.carried, composition.reported_dropped),
+            pending_alerts.after_success(
+                state,
+                composition.carried,
+                composition.reported_dropped,
+                deferred=current if composition.deferred else None,
+                checks=checks,
+                now=now,
+            ),
         )
     return delivered
 

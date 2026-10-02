@@ -87,9 +87,11 @@ after the shop has been trading cannot rotate a password out from under a live s
 the `CREATE ROLE` statements for §4.
 
 **Renewal, and when.** The console certificate lives 825 days (the most an iPad accepts). From 60
-days before it expires the till's daily 09:00 check (`checks-daily`, §6: `check_shop_operations.py
---check certificate`) sends the owner one Telegram message a day ("chứng chỉ console hết hạn ngày
-… (còn N ngày)"), and every run of this script says so too. Then:
+days before it expires the till's hourly check (`checks-daily`, §6: `check_shop_operations.py
+--check certificate`) sends the owner one Telegram message a shop day, the first hour from 07:00
+the till is awake ("chứng chỉ console hết hạn ngày … (còn N ngày)"); it remembers the day it told
+in `--certificate-notice-state`, and it never sends at night (`DEC-025`). Every run of this script
+says so too. Then:
 
 ```bash
 uv run python scripts/bootstrap_shop_local.py --backup-recipient 'age1...' --new-ca
@@ -283,15 +285,18 @@ It used to be `-e DATABASE_URL="$(cat …)"`, which put the migration identity's
   .venv/bin/python scripts/check_shop_operations.py --check flags --check console \
   --check app --app-logs $HOME/laundry/.shop/logs/api/api.jsonl --emit-alert
 
-# Once a day at 09:00. The console certificate: from 60 days before it expires, one message a day
-# saying to renew (DEC-052; the renewal is §2's --new-ca).
-0 9 * * * cd $HOME/laundry && \
+# Every hour; one message a shop day. The console certificate: from 60 days before it expires,
+# the first run from 07:00 tells the owner to renew, and the notice record keeps the rest of the
+# day's runs quiet (DEC-052; the renewal is §2's --new-ca). Hourly rather than once at 09:00:
+# a single daily run that lands at night is held by DEC-025 and nothing would run again that day.
+0 * * * * cd $HOME/laundry && \
   R1_ALERT_TELEGRAM_TOKEN_FILE=$HOME/laundry/.shop/secrets/alert_telegram_token \
   R1_ALERT_TELEGRAM_CHAT_ID_FILE=$HOME/laundry/.shop/secrets/alert_telegram_chat_id \
   R1_ALERT_LOG_FILE=$HOME/laundry/.shop/alert-delivery.log \
   .venv/bin/python scripts/relay_shop_alert.py --label checks-daily -- \
   .venv/bin/python scripts/check_shop_operations.py --check certificate \
-  --console-certificate $HOME/laundry/.shop/secrets/tls_certificate --emit-alert
+  --console-certificate $HOME/laundry/.shop/secrets/tls_certificate \
+  --certificate-notice-state $HOME/laundry/.shop/certificate-notice.json --emit-alert
 ```
 
 **An alert that could not be sent is sent again** (`PLATFORM-RESIDUAL-009B` L4). The relay keeps

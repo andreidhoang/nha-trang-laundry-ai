@@ -22,10 +22,16 @@ resend, and the check reads it from here too: one copy of the hours. A pending a
 quiet-hours checks waits, untried, until 07:00; an alert that mixed them with a check that alerts at
 any hour is kept as two, so the any-hour part goes now and the console part waits.
 
-**Every run that can send makes progress.** An alert too long to fit beside the redelivery heading
-used to be skipped -- and, being first, blocked every alert behind it, while each run failed with
-"nothing to send" (round-9b verifier, P2). Now a kept alert is stored clipped to the message limit,
-and the oldest one waiting is always carried, clipped if it must be, so the queue drains.
+**Every run that can send makes progress, and nothing is cut to make room.** An alert too long to
+fit beside the redelivery heading used to be skipped -- and, being first, blocked every alert behind
+it, while each run failed with "nothing to send" (round-9b verifier, P2). The first fix carried the
+oldest kept alert clipped and cut the current one to half the message whenever anything was kept,
+even when everything fitted, and sent neither tail anywhere (round-9b verifier, round 2). Now a
+kept alert is stored short enough to go whole in a message of its own, and every message carries
+the oldest one waiting, whole. The current alert goes first and whole whenever it fits beside that
+one; when the two together are too long, the oldest goes now, the message says a newer one follows,
+and the newer one is kept and goes whole next run. The only text ever cut is past the length of a
+whole message (`KEPT_CHARACTERS`), which Telegram would refuse anyway.
 
 Used by `scripts/relay_shop_alert.py` (every scheduled run) and by
 `scripts/check_shop_operations.py`'s direct-delivery path. Imports nothing from the application,
@@ -52,10 +58,15 @@ MAX_PENDING = 24
 ALERT_HEADING = "Bảng vận hành — cần xem ngay:"
 REDELIVERY_HEADING = "Cảnh báo trước đó chưa gửi được:"
 SHOP_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
-#: Telegram's limit is 4096 characters; a clipped alert is still an alert. A kept alert is stored
-#: no longer than this, so it can always be sent.
+#: Telegram's limit is 4096 characters; a clipped alert is still an alert.
 MAX_MESSAGE_CHARACTERS = 3800
+#: A kept alert is stored no longer than this, which leaves room in one message for both headings,
+#: its "when, how many tries" line and the "a newer alert follows" note -- so the oldest kept alert
+#: can always go whole.
+KEPT_CHARACTERS = MAX_MESSAGE_CHARACTERS - 200
 CLIPPED = "…"
+#: The last line of a message that carried the oldest kept alert instead of the current one.
+NEWER_FOLLOWS = "(còn một cảnh báo mới hơn — gửi ở tin sau, vì tin này đã đầy)"
 
 #: `DEC-025`. `console_reachable` is the only check whose failure is a visible outage rather than a
 #: silent loss of a guarantee, and a console down at 03:00 that recovers before opening does not
@@ -94,6 +105,10 @@ class Composition(NamedTuple):
     reported_dropped: bool
     #: Kept alerts left waiting for opening hours (`DEC-025`), untried.
     waiting: int
+    #: The current alert is not in this message: it did not fit beside the oldest kept alert. The
+    #: caller keeps it (`after_success(..., deferred=...)` or `after_failure(..., deferred=True)`)
+    #: and the next run sends it whole.
+    deferred: bool = False
 
 
 @dataclass(frozen=True)
@@ -257,19 +272,49 @@ def split_for_hours(text: str, checks: tuple[str, ...]) -> list[tuple[str, tuple
 
 
 def _parts_of(current: str | None) -> frozenset[str]:
-    """The texts a kept alert would have if it were `current`, whole or split."""
+    """The texts a kept alert would have if it were `current`, whole or split -- and as stored,
+    clipped to `KEPT_CHARACTERS`, so a current alert longer than that still recognises its own kept
+    copy (round-9b verifier, round 2: both went, the same words twice)."""
 
     if current is None:
         return frozenset()
     checks = tuple(
         name for line in current.splitlines() if (name := _bullet_check(line)) is not None
     )
-    return frozenset({current, *(text for text, _ in split_for_hours(current, checks))})
+    texts = {current, *(text for text, _ in split_for_hours(current, checks))}
+    return frozenset({*texts, *(_clip(text, KEPT_CHARACTERS) for text in texts)})
 
 
 def _entry(alert: PendingAlert) -> str:
     at = alert.first_failed_at.astimezone(SHOP_TIMEZONE).strftime("%H:%M %d/%m")
-    return f"— lúc {at} ({alert.attempts} lần chưa gửi được):\n{_body(alert.text)}"
+    why = (
+        "chưa gửi — tin trước đã đầy"
+        if alert.attempts == 0
+        else f"{alert.attempts} lần chưa gửi được"
+    )
+    return f"— lúc {at} ({why}):\n{_body(alert.text)}"
+
+
+def _kept_parts(
+    current: str, checks: tuple[str, ...], *, now: datetime, attempts: int, present: set[str]
+) -> list[PendingAlert]:
+    """`current` as the kept alerts it becomes -- split for `DEC-025`'s hours, each stored clipped
+    to `KEPT_CHARACTERS` -- leaving out any whose text is in `present`."""
+
+    kept: list[PendingAlert] = []
+    for text, part_checks in split_for_hours(current, checks):
+        stored = _clip(text, KEPT_CHARACTERS)
+        if stored not in present:
+            present.add(stored)
+            kept.append(PendingAlert(now, now, attempts, stored, part_checks))
+    return kept
+
+
+def _capped(alerts: list[PendingAlert], dropped: int) -> PendingState:
+    if len(alerts) > MAX_PENDING:
+        dropped += len(alerts) - MAX_PENDING
+        alerts = alerts[-MAX_PENDING:]
+    return PendingState(tuple(alerts), dropped)
 
 
 def compose(
@@ -279,58 +324,80 @@ def compose(
     limit: int = MAX_MESSAGE_CHARACTERS,
     now: datetime,
 ) -> Composition:
-    """The message for this run: the current alert first, as the check wrote it; then the kept
-    ones, oldest first, as many as fit within `limit`.
+    """The message for this run: the current alert first, whole, as the check wrote it; then the
+    kept ones, oldest first, each whole, as many as fit within `limit`.
 
     A kept alert of quiet-hours checks only is left untried at night (`DEC-025`). The oldest kept
-    alert that may go is always carried -- clipped if it must be, and with the current alert
-    clipped to half the message to make room -- so a long one can neither be skipped forever nor
-    stop the ones behind it. Those that do not fit stay for the next run.
+    alert that may go is always carried, so a long one can neither be skipped forever nor stop the
+    ones behind it. When it does not fit beside the current alert, it goes alone and the current
+    alert is `deferred`: kept by the caller and sent whole next run. Nothing is cut to make room.
     """
 
     duplicates = _parts_of(current)
-    carried: list[int] = []
-    others: list[int] = []
+    sendable: list[int] = []
     waiting = 0
     for index, alert in enumerate(state.alerts):
         if waits_for_opening(alert, now):
             waiting += 1
-        elif alert.text in duplicates:
-            carried.append(index)  # the same words are already in the message, as the current
         else:
-            others.append(index)
+            sendable.append(index)
+    # The same words as the current alert are already in the message when the current one goes.
+    same = [index for index in sendable if state.alerts[index].text in duplicates]
+    others = [index for index in sendable if index not in same]
 
-    parts: list[str] = []
-    if current is not None:
-        parts.append(_clip(current, limit // 2 if others else limit))
-    section = [REDELIVERY_HEADING if parts else f"{ALERT_HEADING}\n{REDELIVERY_HEADING}"]
+    first = _clip(current, limit) if current is not None else None
+    deferred = (
+        first is not None
+        and bool(others)
+        and len(_message([first], [_entry(state.alerts[others[0]])])) > limit
+    )
+    if deferred:
+        parts: list[str] = []
+        carried: list[int] = []
+        others = sendable  # the current's own kept copies go in their turn, as kept alerts
+    else:
+        parts = [first] if first is not None else []
+        carried = list(same)
+
     note = f"(và {state.dropped} cảnh báo cũ hơn đã bị bỏ vì danh sách đầy)"
     if not others:
         if state.dropped and not waiting:
-            message = "\n\n".join([*parts, "\n".join([*section, note])])
+            message = _message(parts, [note])
             if len(message) <= limit:
                 return Composition(message, tuple(carried), True, waiting)
         return Composition(parts[0] if parts else None, tuple(carried), False, waiting)
 
-    def length_with(line: str) -> int:
-        return len("\n\n".join([*parts, "\n".join([*section, line])]))
-
+    tail = [NEWER_FOLLOWS] if deferred else []
+    entries: list[str] = []
     for position, index in enumerate(others):
         entry = _entry(state.alerts[index])
-        if length_with(entry) > limit:
+        if len(_message(parts, [*entries, entry, *tail])) > limit:
             if position:
                 break
-            # The oldest that may go always goes, clipped to the room there is.
-            entry = _clip(entry, limit - length_with(""))
-        section.append(entry)
+            # Only a kept alert stored longer than `KEPT_CHARACTERS` (by an older version of this
+            # file) can be here: it still goes, clipped to the room there is, so nothing wedges.
+            entry = _clip(entry, limit - len(_message(parts, [*tail])) - 1)
+        entries.append(entry)
         carried.append(index)
     reported = False
     every_other_carried = carried[-1] == others[-1]
-    if state.dropped and not waiting and every_other_carried and length_with(note) <= limit:
-        section.append(note)
+    if (
+        state.dropped
+        and not waiting
+        and every_other_carried
+        and len(_message(parts, [*entries, note, *tail])) <= limit
+    ):
+        entries.append(note)
         reported = True
-    message = "\n\n".join([*parts, "\n".join(section)])
-    return Composition(message, tuple(sorted(carried)), reported, waiting)
+    message = _message(parts, [*entries, *tail])
+    return Composition(message, tuple(sorted(carried)), reported, waiting, deferred)
+
+
+def _message(parts: list[str], section: list[str]) -> str:
+    """The current alert (if any), then the redelivery section holding `section`'s lines."""
+
+    heading = REDELIVERY_HEADING if parts else f"{ALERT_HEADING}\n{REDELIVERY_HEADING}"
+    return "\n\n".join([*parts, "\n".join([heading, *section])])
 
 
 def after_failure(
@@ -340,9 +407,11 @@ def after_failure(
     *,
     now: datetime,
     attempted: tuple[int, ...] | None = None,
+    deferred: bool = False,
 ) -> PendingState:
     """The kept alerts this send carried (`attempted`; all when not given) failed once more; the
-    current one joins them -- once, if repeated; in two parts, if it mixes `DEC-025`'s hours."""
+    current one joins them -- once, if repeated; in two parts, if it mixes `DEC-025`'s hours. A
+    `deferred` current alert was not in the failed message, so it joins with no failed attempt."""
 
     tried = set(range(len(state.alerts)) if attempted is None else attempted)
     alerts = [
@@ -350,32 +419,41 @@ def after_failure(
         for index, alert in enumerate(state.alerts)
     ]
     if current is not None:
-        for text, part_checks in split_for_hours(current, checks):
-            kept = _clip(text, MAX_MESSAGE_CHARACTERS)
-            if all(alert.text != kept for alert in alerts):
-                alerts.append(PendingAlert(now, now, 1, kept, part_checks))
-    dropped = state.dropped
-    if len(alerts) > MAX_PENDING:
-        dropped += len(alerts) - MAX_PENDING
-        alerts = alerts[-MAX_PENDING:]
-    return PendingState(tuple(alerts), dropped)
+        present = {alert.text for alert in alerts}
+        alerts += _kept_parts(
+            current, checks, now=now, attempts=0 if deferred else 1, present=present
+        )
+    return _capped(alerts, state.dropped)
 
 
 def after_success(
-    state: PendingState, carried: tuple[int, ...], reported_dropped: bool
+    state: PendingState,
+    carried: tuple[int, ...],
+    reported_dropped: bool,
+    *,
+    deferred: str | None = None,
+    checks: tuple[str, ...] = (),
+    now: datetime | None = None,
 ) -> PendingState:
-    """What is left once a message carrying the kept alerts at `carried` was delivered."""
+    """What is left once a message carrying the kept alerts at `carried` was delivered -- plus the
+    current alert when it was `deferred` (not in that message), unless its words were carried."""
 
     gone = set(carried)
-    return PendingState(
-        tuple(alert for index, alert in enumerate(state.alerts) if index not in gone),
-        0 if reported_dropped else state.dropped,
-    )
+    alerts = [alert for index, alert in enumerate(state.alerts) if index not in gone]
+    dropped = 0 if reported_dropped else state.dropped
+    if deferred is not None:
+        if now is None:
+            raise ValueError("a deferred alert is kept with the time it was raised: pass `now`")
+        present = {alert.text for alert in state.alerts}
+        alerts += _kept_parts(deferred, checks, now=now, attempts=0, present=present)
+    return _capped(alerts, dropped)
 
 
 __all__ = [
+    "KEPT_CHARACTERS",
     "MAX_MESSAGE_CHARACTERS",
     "MAX_PENDING",
+    "NEWER_FOLLOWS",
     "PENDING_SCHEMA",
     "QUIET_HOURS_CHECKS",
     "QUIET_HOURS_END",

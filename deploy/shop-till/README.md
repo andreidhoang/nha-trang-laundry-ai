@@ -44,7 +44,7 @@ either alert file is missing; until they exist, every failing check ends in `ALE
 |---|---|---|
 | `com.giatlasachcong.checks-data` | every 5 minutes | WAL archive gap, base-backup age, database volume free space |
 | `com.giatlasachcong.checks-host` | every 5 minutes | every capability flag false on the running containers; the console answers `/readyz` |
-| `com.giatlasachcong.checks-daily` | 09:00 daily, or on the next wake | the console certificate: from 60 days before it expires, one message a day saying to renew (`DEC-052`, `bootstrap_shop_local.py --new-ca`) |
+| `com.giatlasachcong.checks-daily` | every hour | the console certificate: from 60 days before it expires, one message a shop day saying to renew, the first run from 07:00 (`DEC-052`, `bootstrap_shop_local.py --new-ca`); the day it told is kept in `certificate-notice.json` beside the app cursor, so a night wake holds it for the morning instead of losing it |
 | `com.giatlasachcong.base-backup` | 02:30 daily, or on the next wake | a full base backup into the archive |
 
 ## How an alert reaches a person

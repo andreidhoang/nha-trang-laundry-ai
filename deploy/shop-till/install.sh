@@ -117,8 +117,11 @@ every_five_minutes='<key>StartInterval</key><integer>300</integer>'
 # `StartCalendarInterval`, not an interval: a missed calendar job runs once on the next wake, which
 # is exactly what a laptop that sleeps overnight needs. 02:30 is chosen because the shop is shut.
 nightly='<key>StartCalendarInterval</key><dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>'
-# 09:00 on the Mac's clock, which is the shop's: inside DEC-025's 07:00-21:00, after opening.
-daily_morning='<key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>'
+# Every hour, for a notice told once a shop day. Not one 09:00 calendar job: a 09:00 missed while
+# the Mac slept runs on its next wake, and at 23:30 DEC-025 holds the notice -- with nothing running
+# again until the next 09:00, so the day's notice was lost (round-9b verifier, round 2). The check
+# records the day it told the owner, so the hourly runs say it once, from 07:00.
+every_hour='<key>StartInterval</key><integer>3600</integer>'
 
 # Every check goes through the host relay (`SHOP-ALERT-DELIVERY-001`). The check prints its alert as
 # one JSON line and sends nothing; the relay, running here on the host where there is internet,
@@ -167,9 +170,12 @@ host_checks="$relay --label checks-host -- \
 # console's own certificate and, from 60 days before it expires, tells the owner to renew -- DEC-052
 # keeps no CA key, so renewal is a new CA trusted on every tablet, which takes time to get round.
 # Until round 9b only bootstrap_shop_local.py said so, and nobody runs that in normal operation.
+# The agent runs hourly; `--certificate-notice-state` (outside the checkout, like the app cursor)
+# holds the shop day the owner was last told, so the message goes once a day, from 07:00.
 daily_checks="$relay --label checks-daily -- \
   .venv/bin/python scripts/check_shop_operations.py --check certificate \
-  --console-certificate \"$REPOSITORY/.shop/secrets/tls_certificate\" --emit-alert"
+  --console-certificate \"$REPOSITORY/.shop/secrets/tls_certificate\" \
+  --certificate-notice-state \"$STATE_DIRECTORY/certificate-notice.json\" --emit-alert"
 
 base_backup="cd \"$REPOSITORY\" && docker compose \
   -f compose.r1.yaml -f compose.shop-local.yaml -f compose.shop-till.yaml \
@@ -177,7 +183,7 @@ base_backup="cd \"$REPOSITORY\" && docker compose \
 
 write_agent checks-data "$every_five_minutes" "$data_checks"
 write_agent checks-host "$every_five_minutes" "$host_checks"
-write_agent checks-daily "$daily_morning" "$daily_checks"
+write_agent checks-daily "$every_hour" "$daily_checks"
 write_agent base-backup "$nightly" "$base_backup"
 
 echo

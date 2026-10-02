@@ -233,7 +233,10 @@ def interpret(label: str, returncode: int, stdout: str, stderr: str) -> tuple[Ou
             return Outcome(False, None, (), "every check passed", warnings), passthrough
         if document.get("passed") is False:
             suppressed = document.get("suppressed") or []
-            note = f"check failed; held for quiet hours: {suppressed}"
+            told = document.get("told_today") or []
+            held = [f"held for quiet hours: {suppressed}"] if suppressed or not told else []
+            held += [f"already told today: {told}"] if told else []
+            note = "check failed; " + "; ".join(held)
             return Outcome(True, None, (), note, warnings), passthrough
         # A passing document with a failing exit status: something after the checks broke.
         reason = f"exited {returncode} after reporting a pass"
@@ -397,13 +400,20 @@ def main(argv: list[str] | None = None) -> int:
     checks = ", ".join(outcome.checks) or (label if outcome.text is not None else "none now")
     carried = len(composition.carried)
     earlier = f"; {carried} earlier alert(s) resent" if carried else ""
+    if composition.deferred:
+        earlier += "; this run's alert did not fit beside them and goes whole next run"
     try:
         token, chat_id = load_credentials(dict(os.environ))
         send_message(composition.text, token=token, chat_id=chat_id, api_base=api_base)
     except DeliveryError as error:
         if pending_file is not None:
             state = pending_alerts.after_failure(
-                state, outcome.text, outcome.checks, now=moment, attempted=composition.carried
+                state,
+                outcome.text,
+                outcome.checks,
+                now=moment,
+                attempted=composition.carried,
+                deferred=composition.deferred,
             )
             pending_alerts.save(pending_file, state)
             kept = f"; kept to resend next run ({len(state.alerts)} waiting in {pending_file})"
@@ -412,8 +422,15 @@ def main(argv: list[str] | None = None) -> int:
         _log(label, f"ALERT NOT DELIVERED: {error} -- failing: {checks}{kept}", log_file)
         return EXIT_NOT_DELIVERED
     if pending_file is not None:
+        # A current alert too long to go beside the oldest kept one waited: it is kept now and goes
+        # whole next run, rather than cut to fit and its tail lost (round-9b verifier, round 2).
         remaining = pending_alerts.after_success(
-            state, composition.carried, composition.reported_dropped
+            state,
+            composition.carried,
+            composition.reported_dropped,
+            deferred=outcome.text if composition.deferred else None,
+            checks=outcome.checks,
+            now=moment,
         )
         pending_alerts.save(pending_file, remaining)
         if len(remaining.alerts) > composition.waiting:

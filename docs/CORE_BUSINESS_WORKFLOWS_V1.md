@@ -157,7 +157,10 @@ The same spine with three differences:
    characters — every field optional, one `delivery_leg_costs` row per leg, append-only. The sheet
    shows the owner's rule for this order's weight (under 20 kg a motorbike, from exactly 20 kg a car;
    nothing when a line is priced by the piece) and picks nothing. A note that looks like a phone
-   number is refused (`NOTE_LOOKS_LIKE_PHONE`), and no note enters an event, audit or outbox row.
+   number -- nine or more digits held together by nothing but spaces and punctuation of any kind
+   (dashes, dots, slashes, brackets), a letter or a date ending the number -- is refused
+   (`NOTE_LOOKS_LIKE_PHONE`; a cash-count correction reason the same way), and no note enters an
+   event, audit or outbox row.
 
 ---
 
@@ -367,8 +370,11 @@ already paid stays owed-for.
   listed as **Đã thay**. A second phone's entry turns the press into a re-read
   (`CASH_COUNT_ALREADY_RECORDED` / `CASH_COUNT_STALE`, 409). Entries — originals and
   corrections alike — are for the shop's today only (`CASH_COUNT_DAY_NOT_TODAY`, 422; the screen
-  says **Đã sang ngày mới**): a past day's count, wrong or missing, cannot be recorded or corrected
-  on the machine. That is the fail-closed reading of `DEC-049`, which does not say whether a past
+  says **Đã sang ngày mới** when a sheet read before midnight is pressed after it): a past day's
+  count, wrong or missing, cannot be recorded or corrected on the machine. A sheet opened after
+  midnight is the new day's, and the server cannot tell last night's drawer from this one, so it
+  takes the count; with no float on that day the closing form names the day and says "đừng ghi số
+  đếm của hôm qua vào đây" (words only, nothing refused). That is the fail-closed reading of `DEC-049`, which does not say whether a past
   day may be corrected or by whom; it stands until the owner decides (round 9b, decisions needed).
   Nothing happens automatically: no adjustment, no money moved. The owner (alone) reads every day's count on **Báo cáo → Đếm két**
   (`GET …/cash-counts?from=&to=`, the report's window rules) and in the evening summary; when

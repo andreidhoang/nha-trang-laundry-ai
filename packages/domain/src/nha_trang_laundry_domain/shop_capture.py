@@ -29,6 +29,7 @@ What this module decides, and nothing else decides:
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -399,14 +400,76 @@ def per_order_vnd(total_vnd: int, orders: int) -> int | None:
 
 # --- notes --------------------------------------------------------------------------------------
 
-#: Nine or more digits held together as one number, the way people punctuate a phone: spaces, dots
-#: and hyphens between the groups, brackets round one group ("(090) 512 3456", "(+84) 905 ..."),
-#: or slashes ("0905/123/456"). Slashes form their own chain, never joined to a bare space, so a
-#: date followed by an amount ("02/10/2026 150k") is not one number.
-_PHONE_LIKE: Final = re.compile(
-    r"\d(?:(?:[\s.\-]|\s?\(\s?|\s?\)\s?)?\d){8,}"
-    r"|\d(?:(?:[.\-]|\s?/\s?)?\d){8,}"
+#: A phone is this many digits or more held together as one number.
+PHONE_DIGITS_MIN: Final = 9
+
+#: At most this many spaces and punctuation marks may stand between two digits of one number
+#: ("0905 - 123", "(090) - 512"); more, or any letter, ends it.
+_PHONE_GAP_MAX: Final = 4
+
+#: Punctuation that never joins a phone's groups: a time ("14:30"), a sentence, a percentage.
+_NEVER_JOINS: Final = frozenset(":;!?%")
+
+#: A date written with one separator throughout -- "02/10/2026", "02-10-2026", "02.10.26" -- or a
+#: day and month with a slash ("02/10"), standing on its own: no digit and no separator-then-digit
+#: on either side, so "09/05/12/34/56" or "09.05.123.456" is never taken for a date.
+_DATE: Final = re.compile(
+    r"(?<!\d)(?<!\d[/.\-])"
+    r"(?P<day>\d{1,2})(?P<sep>[/.\-])(?P<month>\d{1,2})(?:(?P=sep)(?P<year>\d{4}|\d{2}))?"
+    r"(?!\d)(?![/.\-]\d)"
 )
+
+
+def _joins_a_number(character: str) -> bool:
+    """Whether `character` may stand between two groups of one phone number.
+
+    Decided by Unicode class, not by a list of marks: every space, every punctuation mark (dashes
+    of every width, brackets of every shape, dots, commas, slashes, underscores), invisible format
+    characters and the plus and minus signs -- except the marks in `_NEVER_JOINS`.
+    """
+    if character.isspace():
+        return True
+    if character in _NEVER_JOINS:
+        return False
+    category = unicodedata.category(character)
+    return category[0] == "P" or category == "Cf" or character in "+\u2212"
+
+
+def _mask_date(match: re.Match[str]) -> str:
+    day, month, year = int(match["day"]), int(match["month"]), match["year"]
+    if not (1 <= day <= 31 and 1 <= month <= 12):
+        return match.group(0)
+    if year is None and match["sep"] != "/":
+        return match.group(0)
+    if year is not None and len(year) == 4 and year[:2] not in ("19", "20"):
+        return match.group(0)
+    return "D"  # a letter: the date ends any number on either side of it
+
+
+def looks_like_phone(text: str) -> bool:
+    """Whether `text` holds `PHONE_DIGITS_MIN` or more digits held together as one number.
+
+    Digits are held together by up to `_PHONE_GAP_MAX` spaces or punctuation marks between them,
+    however they are punctuated ("0905 - 123 - 456", "[0905] 123 456", "(090) 512/3456",
+    "0905" en-dash "123"). A letter ends the number ("150.000đ 200.000đ"), and so does a date
+    ("sửa máy 02/10/2026 150.000"). Deterministic: the same text always gives the same answer.
+    """
+    digits = 0
+    gap = 0
+    joined = False
+    for character in _DATE.sub(_mask_date, text):
+        if character.isdecimal():
+            digits = digits + 1 if joined else 1
+            if digits >= PHONE_DIGITS_MIN:
+                return True
+            joined = True
+            gap = 0
+        elif joined and _joins_a_number(character):
+            gap += 1
+            joined = gap <= _PHONE_GAP_MAX
+        else:
+            joined = False
+    return False
 
 
 def capture_note(value: str | None) -> str | None:
@@ -423,7 +486,7 @@ def capture_note(value: str | None) -> str | None:
         return None
     if len(note) > NOTE_MAX or _has_control(note):
         raise ShopCaptureError("NOTE_INVALID", f"a note is at most {NOTE_MAX} characters")
-    if _PHONE_LIKE.search(note):
+    if looks_like_phone(note):
         raise ShopCaptureError("NOTE_LOOKS_LIKE_PHONE", "a note must not carry a phone number")
     return note
 
@@ -439,6 +502,7 @@ __all__ = [
     "EXPENSE_MAX_AGE_DAYS",
     "EXPENSE_MAX_VND",
     "NOTE_MAX",
+    "PHONE_DIGITS_MIN",
     "TRIP_COST_MAX_VND",
     "CycleEffect",
     "Expense",
@@ -455,6 +519,7 @@ __all__ = [
     "capture_note",
     "cycle_effect",
     "expense",
+    "looks_like_phone",
     "machine_code",
     "machine_name",
     "missing_core_categories",

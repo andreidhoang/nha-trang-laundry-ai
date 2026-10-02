@@ -751,7 +751,15 @@ def test_expenses_are_idempotent_and_refuse_a_phone_in_the_note(connection: Any)
     assert again.expense_id == first.expense_id
     with pytest.raises(IdempotencyConflictError):
         _expense(connection, shop, ExpenseCategory.LUONG, 7_500_000, key="salary")
-    for note, code in (("gọi 0382 318 492", "NOTE_LOOKS_LIKE_PHONE"), ("x" * 121, "NOTE_INVALID")):
+    for note, code in (
+        ("gọi 0382 318 492", "NOTE_LOOKS_LIKE_PHONE"),
+        # Verification round 4 of 9b: these punctuations were stored as a Sổ thu chi note.
+        ("khach 0905 - 123 - 456", "NOTE_LOOKS_LIKE_PHONE"),
+        ("khach 0905 . 123 . 456", "NOTE_LOOKS_LIKE_PHONE"),
+        ("khach 0905\u2013123\u2013456", "NOTE_LOOKS_LIKE_PHONE"),
+        ("khach [0905] 123 456", "NOTE_LOOKS_LIKE_PHONE"),
+        ("x" * 121, "NOTE_INVALID"),
+    ):
         with pytest.raises(ShopCaptureRefusal) as refused:
             _expense(connection, shop, ExpenseCategory.KHAC, 1_000, note=note)
         assert refused.value.reason_code == code

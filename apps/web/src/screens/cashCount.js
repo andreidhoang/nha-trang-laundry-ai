@@ -224,7 +224,7 @@ export function render_() {
   function drawClosing(day) {
     const entry = day.closing_count;
     if (!entry) {
-      render(closingHost, entryForm("CLOSING_COUNT"));
+      render(closingHost, entryForm("CLOSING_COUNT", day));
       return;
     }
     const words = differenceWords(entry);
@@ -294,9 +294,10 @@ export function render_() {
    * The first entry of a kind: an amount and one press.
    *
    * @param {"OPENING_FLOAT"|"CLOSING_COUNT"} kind
+   * @param {any} [day] the sheet the form records on (closing count only)
    * @returns {HTMLElement}
    */
-  function entryForm(kind) {
+  function entryForm(kind, day) {
     const opening = kind === "OPENING_FLOAT";
     const id = opening ? "cash-float" : "cash-close";
     const alertHost = h("div");
@@ -329,8 +330,27 @@ export function render_() {
         opening ? "Đếm tiền trong két lúc mở cửa" : "Đếm tiền trong két lúc đóng cửa",
       ),
       amount.node,
+      !opening && day && !day.opening_float ? dayWithoutFloatHint(day) : null,
       alertHost,
       gated(save, writeVerdict),
+    );
+  }
+
+  /**
+   * CASH-COUNT-009 (verification round 4): a sheet opened after midnight is the new day's, and
+   * the server records a closing count on it without complaint -- it cannot know the drawer
+   * counted is last night's. With no float on the sheet, the closing form names the day it records
+   * on and says not to put yesterday's count there. Words only: nothing is refused here.
+   *
+   * @param {any} day
+   * @returns {HTMLElement}
+   */
+  function dayWithoutFloatHint(day) {
+    return h(
+      "p",
+      { class: "hint", dataCashDayHint: String(day.business_day) },
+      `Số này ghi cho ${calendarDay(day.business_day)} — ngày này chưa ghi tiền đầu ngày. ` +
+        "Sau 0 giờ là sổ của ngày mới: đừng ghi số đếm của hôm qua vào đây; ghi ra giấy, đưa chủ tiệm.",
     );
   }
 

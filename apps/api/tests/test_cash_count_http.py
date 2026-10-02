@@ -382,7 +382,18 @@ def test_a_malformed_entry_is_answered_without_the_values_it_held(
     # Verification round 3 of 9b: a phone punctuated with brackets or slashes is refused the
     # same way, and nothing is stored -- the correction reason is the shop's books, not a contact
     # list.
-    for punctuated in ("khach (090) 512 3456", "sdt 0905/123/456"):
+    # Verification round 4 of 9b: spaced hyphens or dots, an en-dash, a slash beside a space and
+    # square brackets reached the sheet; every punctuation is refused alike now.
+    for punctuated in (
+        "khach (090) 512 3456",
+        "sdt 0905/123/456",
+        "khach 0905 - 123 - 456 tra thieu",
+        "khach 0905 . 123 . 456",
+        "khach 0905\u2013123\u2013456",
+        "khach 0905/123 456",
+        "khach (090) 512/3456",
+        "khach [0905] 123 456",
+    ):
         refused = _post(
             client,
             shop.store_id,

@@ -193,6 +193,69 @@ def test_a_phone_written_with_brackets_or_slashes_is_refused_too(phone: str) -> 
 
 
 @pytest.mark.parametrize(
+    "phone",
+    [
+        # Verification round 4 of 9b: the forms that still reached the books.
+        "khach 0905 - 123 - 456 tra thieu",
+        "khach 0905 . 123 . 456",
+        "khach 0905\u2013123\u2013456",
+        "khach 0905/123 456",
+        "khach (090) 512/3456",
+        "khach [0905] 123 456",
+        # Their neighbours: every other way the same digits are held together as one number.
+        "khach 0905 \u2013 123 \u2013 456",
+        "khach 0905\u2014123\u2014456",
+        "khach 0905 \u2010 123 \u2010 456",
+        "khach 0905\u2212123\u2212456",
+        "khach 0905 / 123 456",
+        "khach 0905 /123/ 456",
+        "khach {0905} 123 456",
+        "khach 0905_123_456",
+        "khach 0905,123,456",
+        "khach 0905\u00a0123\u00a0456",
+        "khach 0905\u200b123\u200b456",
+        "khach 0905\u202f123\u202f456",
+        "khach \uff10\uff19\uff10\uff15\uff11\uff12\uff13\uff14\uff15\uff16",
+        "khach (090) - 512 - 3456",
+        "khach +84 905-123-456",
+        "khach 84.905.123.456",
+        "khach 0 9 0 5 1 2 3 4 5 6",
+        "khach 09/05/12/34/56",
+        "khach 09.05.123.456",
+        "02/10/2026 khach 0905 - 123 - 456",
+    ],
+)
+def test_a_phone_is_refused_however_its_groups_are_punctuated(phone: str) -> None:
+    """Verification round 4 of 9b: the detector listed separators one at a time, so each round
+    found a punctuation it did not list (spaced hyphens, spaced dots, an en-dash, a slash next to a
+    space, square brackets). A phone is nine or more digits held together by nothing but spaces
+    and punctuation; a letter (đ, k, x ...) or a date ends the number."""
+    with pytest.raises(ShopCaptureError) as refused:
+        capture_note(phone)
+    assert refused.value.reason_code == "NOTE_LOOKS_LIKE_PHONE"
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "sửa máy 02/10 150.000",
+        "sửa máy 02-10-2026 150.000",
+        "sửa máy 02.10.2026 150.000",
+        "hoá đơn 2/10/26 150.000",
+        "giao 14:30 150.000",
+        "điện 1.250.000đ, nước 350.000đ",
+        "Grab 2 chiều 45k - 50k",
+        "3 x 150.000 (2 bao)",
+        "đếm lại: 1.234.567",
+    ],
+)
+def test_a_date_time_or_amounts_beside_each_other_stay_an_ordinary_note(note: str) -> None:
+    """The wider net still lets the shop's own words through: a date (with or without a year), a
+    time, or amounts each ended by a letter are not one number."""
+    assert capture_note(note) == note
+
+
+@pytest.mark.parametrize(
     "note",
     [
         "hoá đơn 02/10/2026",

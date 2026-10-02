@@ -275,13 +275,15 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
    - Đếm nhầm thì bấm **Sửa số đếm**, gõ số đúng và ghi **Vì sao sửa?**; số cũ vẫn hiện, ghi
      **Đã thay**. Máy báo **Người khác vừa ghi số này** nghĩa là máy khác đã ghi trước — màn hình
      tự tải lại, kiểm tra rồi sửa nếu cần.
-   - Máy báo **Sổ đã thay đổi sau lúc đếm** khi có khoản thu, hoàn hay chi từ két ghi sau lúc
-     đếm: đếm lại rồi **Sửa số đếm** nếu cần.
+   - Máy báo **Sổ đã thay đổi sau lúc đếm** khi có khoản thu, hoàn, chi từ két hay tiền đầu ngày
+     ghi hoặc sửa sau lúc đếm: đếm lại rồi **Sửa số đếm** nếu cần.
    - Máy chỉ ghi tiền đầu ngày, số đếm cuối ngày và lần sửa cho **hôm nay** theo giờ của tiệm:
-     đếm và ghi xong **trước 0 giờ**. Qua nửa đêm máy báo **Đã sang ngày mới** — số đó không ghi
-     cho hôm qua được nữa. Số của một ngày đã qua, ghi sai hay quên ghi, cũng **không sửa được
-     trên máy**: ghi ra giấy số đúng và lý do, đưa chủ tiệm. Báo cáo và tóm tắt cuối ngày vẫn hiện
-     số đã ghi của ngày đó.
+     đếm và ghi xong **trước 0 giờ**. Màn hình mở từ trước 0 giờ mà bấm ghi sau 0 giờ thì máy báo
+     **Đã sang ngày mới** và không ghi. Còn mở **Đếm két** sau 0 giờ là sổ của **ngày mới**: máy
+     không biết bạn đang đếm két của hôm qua nên **không chặn**. Khi ngày đó chưa có tiền đầu
+     ngày, ô ghi số đếm nhắc: *đừng ghi số đếm của hôm qua vào đây*. Số của một ngày đã qua, ghi
+     sai hay quên ghi, cũng **không sửa được trên máy**: ghi ra giấy số đúng và lý do, đưa chủ
+     tiệm. Báo cáo và tóm tắt cuối ngày vẫn hiện số đã ghi của ngày đó.
 2. Lệch thì **không tự bù, không sửa gì khác trên máy** — máy chỉ ghi phần thừa thiếu để chủ tiệm
    xem; không tự điều chỉnh tiền, không trừ lương ai. Lần thu đã ghi không sửa được.
 3. Để máy **bật qua đêm** (chỉ tắt màn hình). Bản sao lưu chạy lúc 2 giờ 30 sáng.
@@ -313,7 +315,10 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
    - tiền thu hoặc số đơn khác hẳn các tuần trước cùng thứ (máy ghi cả hai con số; chỉ so sau
      20:00 và khi đã có 3 tuần số liệu), và sau ngày 10, tháng trước còn thiếu khoản chi nào nên
      chưa tính được lãi;
-   - đếm két cuối ngày thừa hoặc thiếu (ghi cả số phải có và số đếm được), hoặc chưa so được
+   - đếm két cuối ngày thừa hoặc thiếu (ghi cả số phải có và số đếm được), hoặc chưa so được;
+     và — **kể cả khi lúc đếm két khớp** — khi có khoản thu, hoàn, chi từ két hay tiền đầu ngày
+     ghi hoặc sửa sau lúc đếm: dòng đó ghi số *lúc đếm*, rồi
+     **Sổ đã thay đổi sau lúc đếm** và bây giờ két phải có bao nhiêu, hoặc vì sao chưa tính được
      (`DEC-049`). Chủ tiệm cũng xem thừa thiếu từng ngày ở **Báo cáo**, mục **Đếm két**.
 
    Không có gì thì máy ghi *Không có việc cần chú ý* — chỉ khi mọi nguồn đều đọc được. Máy đếm

@@ -14098,6 +14098,19 @@ with sync_playwright() as playwright:
         and "Hoàn tiền mặt (1)" in main_text
         and "Chi từ két (1)" in main_text,
     )
+    # Verification round 4 of 9b: a sheet opened after midnight is the new day's and the server
+    # takes a closing count on it; with no float, the closing form names the day it records on and
+    # says not to put yesterday's count there.
+    day_hint = page.locator("[data-cash-day-hint]")
+    check(
+        "with no float the closing form names the sheet's day and warns off yesterday's count",
+        day_hint.count() == 1
+        and day_hint.get_attribute("data-cash-day-hint") == CASH_DAY
+        and "30/09" in day_hint.inner_text()
+        and "đừng ghi số đếm của hôm qua vào đây" in day_hint.inner_text()
+        and page.locator("#cash-close-save").count() == 1,
+        day_hint.inner_text() if day_hint.count() else "no hint",
+    )
     page.locator("#cash-float-amount").fill("12,5")
     page.locator("#cash-float-save").click()
     page.wait_for_timeout(300)
@@ -14129,6 +14142,11 @@ with sync_playwright() as playwright:
         and "Chưa tính 1 lần hoàn chưa rõ cách hoàn (40.000 ₫)" in main_text
         and page.locator("[data-cash-float]").count() == 1,
         main_text[:300].replace("\n", " | "),
+    )
+    check(
+        "once the day has its float, the closing form carries no day warning",
+        page.locator("[data-cash-day-hint]").count() == 0
+        and page.locator("#cash-close-save").count() == 1,
     )
     # A refusal keeps the key (the same press, retried, is the same request); an edit makes a new
     # one.

@@ -620,8 +620,16 @@ EXECUTED_BY = {
     "marketing_delivery.MarketingDeliveryRepository.hold_if_not_authorized": (
         "test_the_marketing_hold_runs_as_laundry_worker"
     ),
+}
+
+#: Withheld paths, each refused to the worker whole by the test named, with its decision recorded
+#: in `OUTBOX_WORKER_PATHS`.
+REFUSED_BY = {
+    "approvals.ApprovalRepository.claim_execution": (
+        "test_the_approval_execution_claim_is_refused_to_the_worker_whole"
+    ),
     "automation.AutomationExecutionRepository.hold_if_disabled": (
-        "test_the_automation_hold_runs_as_laundry_worker"
+        "test_the_automation_hold_is_refused_to_the_worker_whole"
     ),
 }
 
@@ -637,7 +645,8 @@ def test_every_outbox_worker_path_is_granted_or_explicitly_withheld() -> None:
         else:
             # Withheld means the database refuses it as the worker, atomically -- proven below.
             assert designation.reason and "DECISION" in designation.reason.upper()
-            assert name == "approvals.ApprovalRepository.claim_execution"
+            assert name in REFUSED_BY, f"{name} is withheld but nothing proves the refusal"
+            assert REFUSED_BY[name] in globals(), REFUSED_BY[name]
 
 
 def _claimed_marketing_event(
@@ -721,14 +730,8 @@ def test_the_marketing_hold_runs_as_laundry_worker(
     ) == (1, 1, 1)
 
 
-@pytest.mark.parametrize(
-    ("hold_policy", "capability_enabled", "expected"),
-    [("HOLD", False, "HELD"), ("CANCEL", False, "CANCELLED"), ("HOLD", True, "PENDING")],
-)
-def test_the_automation_hold_runs_as_laundry_worker(
-    owner: psycopg.Connection[Any], hold_policy: str, capability_enabled: bool, expected: str
-) -> None:
-    from nha_trang_laundry_db.automation import AutomationExecutionRepository
+def _envelope(owner: psycopg.Connection[Any], *, status: str, hold_policy: str) -> UUID:
+    """An automated-execution envelope and its disabled gate, written as the schema owner."""
 
     envelope_id, outbox_event_id = uuid4(), uuid4()
     capability = f"L2_{uuid4().hex}"
@@ -746,10 +749,20 @@ def test_the_automation_hold_runs_as_laundry_worker(
         cursor.execute(
             """
             INSERT INTO automated_execution_envelopes (
-                id, capability, outbox_event_id, status, hold_policy, created_at
-            ) VALUES (%s, %s, %s, 'PENDING', %s, %s)
+                id, capability, outbox_event_id, status, hold_policy, created_at, held_at,
+                hold_reason
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (envelope_id, capability, outbox_event_id, hold_policy, now),
+            (
+                envelope_id,
+                capability,
+                outbox_event_id,
+                status,
+                hold_policy,
+                now,
+                None if status == "PENDING" else now,
+                None if status == "PENDING" else "AUTOMATION_DISABLED",
+            ),
         )
         cursor.execute(
             """
@@ -757,18 +770,74 @@ def test_the_automation_hold_runs_as_laundry_worker(
                 capability, global_automation_enabled, agent_processing_enabled,
                 agent_outbound_enabled, channel_ingress_enabled, capability_enabled,
                 stage_policy_allows, pdp_allows, version, expires_at, updated_at
-            ) VALUES (%s, TRUE, TRUE, TRUE, TRUE, %s, TRUE, TRUE, 1, %s, %s)
+            ) VALUES (%s, TRUE, TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, 1, %s, %s)
             """,
-            (capability, capability_enabled, now + timedelta(minutes=5), now),
+            (capability, now + timedelta(minutes=5), now),
         )
-    with connect_as(WORKER) as worker:
-        status = AutomationExecutionRepository().hold_if_disabled(
-            worker, envelope_id=envelope_id, actor_id=uuid4(), correlation_id=uuid4(), now=now
+    return envelope_id
+
+
+@pytest.mark.parametrize(
+    ("status", "target"),
+    [
+        ("HELD", "PENDING"),  # the verifier's case: a kill-switch hold undone
+        ("CANCELLED", "PENDING"),
+        ("CANCELLED", "HELD"),
+        ("PENDING", "HELD"),
+    ],
+)
+def test_the_worker_cannot_change_an_execution_envelope(
+    owner: psycopg.Connection[Any], status: str, target: str
+) -> None:
+    """Round-9b verifier (P2): UPDATE(status, held_at, hold_reason, row_version) let the worker set
+    a HELD envelope back to PENDING -- a grant cannot say which values, and the table has no
+    transition trigger. Withdrawn; every transition is refused to the worker, and the row stays."""
+
+    envelope_id = _envelope(owner, status=status, hold_policy="HOLD")
+    with connect_as(WORKER) as worker, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        worker.execute(
+            """
+            UPDATE automated_execution_envelopes
+            SET status = %s, held_at = NULL, hold_reason = NULL, row_version = row_version + 1
+            WHERE id = %s
+            """,
+            (target, envelope_id),
         )
-    assert status == expected
     assert _one(
-        owner, "SELECT status FROM automated_execution_envelopes WHERE id = %s", envelope_id
-    ) == (expected,)
+        owner,
+        "SELECT status, row_version FROM automated_execution_envelopes WHERE id = %s",
+        envelope_id,
+    ) == (status, 1)
+
+
+@pytest.mark.parametrize("hold_policy", ["HOLD", "CANCEL"])
+def test_the_automation_hold_is_refused_to_the_worker_whole(
+    owner: psycopg.Connection[Any], hold_policy: str
+) -> None:
+    """Withheld until a migration gives the envelope table a transition trigger
+    (`OUTBOX_WORKER_PATHS` names the decision). Refused on the first statement -- the envelope's
+    `FOR UPDATE` read -- so no event, audit or outbox row is written and the envelope is as it was:
+    a kill switch the worker cannot apply fails closed, because nothing may execute an envelope
+    whose gate was not re-read."""
+
+    from nha_trang_laundry_db.automation import AutomationExecutionRepository
+
+    envelope_id = _envelope(owner, status="PENDING", hold_policy=hold_policy)
+    with connect_as(WORKER) as worker, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        AutomationExecutionRepository().hold_if_disabled(
+            worker, envelope_id=envelope_id, actor_id=uuid4(), correlation_id=uuid4()
+        )
+    assert _one(
+        owner,
+        "SELECT (SELECT status FROM automated_execution_envelopes WHERE id = %s), "
+        "(SELECT count(*) FROM domain_events WHERE aggregate_id = %s), "
+        "(SELECT count(*) FROM audit_events WHERE aggregate_id = %s), "
+        "(SELECT count(*) FROM outbox_events WHERE idempotency_key = %s)",
+        envelope_id,
+        envelope_id,
+        envelope_id,
+        f"automated-execution:{envelope_id}:held",
+    ) == ("PENDING", 0, 0, 0)
 
 
 def test_the_approval_execution_claim_is_refused_to_the_worker_whole(

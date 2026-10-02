@@ -40,9 +40,12 @@ columns that find a run's enqueue event, never its payload.
 - `webhook_events`, `suppression_entries`, `automation_execution_gates` -- the facts the policy gate
   reads before any model call (`read_agent_run_policy_facts`); `suppression_entries`' `purpose` and
   `channel` too, for the marketing hold below.
-- `automated_execution_envelopes` -- the kill-switch hold
-  (`AutomationExecutionRepository.hold_if_disabled`): the envelope's state, and UPDATE of exactly
-  the columns a hold changes.
+- Not `automated_execution_envelopes`. Round 9b granted the kill-switch hold
+  (`AutomationExecutionRepository.hold_if_disabled`) UPDATE of the envelope's status, and the
+  verifier showed that the same grant lets the worker set a HELD or CANCELLED envelope back to
+  PENDING: a column grant cannot say which values, and the table has no transition trigger. The
+  grant is withdrawn (the base's position) until a migration gives the table one; see
+  `OUTBOX_WORKER_PATHS`.
 
 **Every repository path designated for `OUTBOX_WORKER`** -- the actor that, in a deployment, *is*
 the `laundry_worker` process -- is listed in `OUTBOX_WORKER_PATHS`, either granted (and executed
@@ -185,16 +188,6 @@ WORKER_GRANTS: Final[tuple[TableGrant, ...]] = (
         "suppression_entries", "SELECT", ("contact_binding_id", "purpose", "channel", "state")
     ),
     TableGrant("automation_execution_gates", "SELECT"),
-    TableGrant(
-        "automated_execution_envelopes",
-        "SELECT",
-        ("id", "capability", "status", "hold_policy", "row_version"),
-    ),
-    TableGrant(
-        "automated_execution_envelopes",
-        "UPDATE",
-        ("status", "held_at", "hold_reason", "row_version"),
-    ),
 )
 
 
@@ -225,8 +218,16 @@ OUTBOX_WORKER_PATHS: Final[dict[str, WorkerPath]] = {
         "suppression ledger's key, purpose, channel and state",
     ),
     "automation.AutomationExecutionRepository.hold_if_disabled": WorkerPath(
-        True,
-        "the kill switch re-read before an automated execution: it only ever holds or cancels",
+        False,
+        "DECISION NEEDED before granting: the kill-switch hold only ever moves an envelope from "
+        "PENDING to HELD or CANCELLED, but the UPDATE it needs cannot be limited to those values "
+        "by a grant -- with UPDATE(status) the worker can also set a HELD or CANCELLED envelope "
+        "back to PENDING, undoing a hold (round-9b verifier). The fix is a forward migration with "
+        "a BEFORE UPDATE trigger on automated_execution_envelopes allowing only PENDING -> HELD "
+        "and PENDING -> CANCELLED (as enforce_outbox_status_transition does for the outbox); this "
+        "slice has no migration number. Until then the database refuses the hold to the worker "
+        "on its first statement (SELECT ... FOR UPDATE), so nothing of it can half-happen. "
+        "Nothing calls it outside the eval suites: no automated executor exists.",
     ),
     "approvals.ApprovalRepository.claim_execution": WorkerPath(
         False,

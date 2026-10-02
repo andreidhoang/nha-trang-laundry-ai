@@ -20,7 +20,7 @@ STATE_DIRECTORY="$HOME/Library/Application Support/giatlasachcong"
 REPOSITORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROJECT="nha-trang-laundry-shop"
 
-agents=(checks-data checks-host base-backup)
+agents=(checks-data checks-host checks-daily base-backup)
 
 uninstall() {
     for name in "${agents[@]}"; do
@@ -117,6 +117,8 @@ every_five_minutes='<key>StartInterval</key><integer>300</integer>'
 # `StartCalendarInterval`, not an interval: a missed calendar job runs once on the next wake, which
 # is exactly what a laptop that sleeps overnight needs. 02:30 is chosen because the shop is shut.
 nightly='<key>StartCalendarInterval</key><dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>'
+# 09:00 on the Mac's clock, which is the shop's: inside DEC-025's 07:00-21:00, after opening.
+daily_morning='<key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>'
 
 # Every check goes through the host relay (`SHOP-ALERT-DELIVERY-001`). The check prints its alert as
 # one JSON line and sends nothing; the relay, running here on the host where there is internet,
@@ -161,12 +163,21 @@ host_checks="$relay --label checks-host -- \
   .venv/bin/python scripts/check_shop_operations.py --check flags --check console \
   --check app --app-logs \"$REPOSITORY/.shop/logs/api/api.jsonl\" --emit-alert"
 
+# Once a day, not every five minutes: things that come due in weeks. `--check certificate` reads the
+# console's own certificate and, from 60 days before it expires, tells the owner to renew -- DEC-052
+# keeps no CA key, so renewal is a new CA trusted on every tablet, which takes time to get round.
+# Until round 9b only bootstrap_shop_local.py said so, and nobody runs that in normal operation.
+daily_checks="$relay --label checks-daily -- \
+  .venv/bin/python scripts/check_shop_operations.py --check certificate \
+  --console-certificate \"$REPOSITORY/.shop/secrets/tls_certificate\" --emit-alert"
+
 base_backup="cd \"$REPOSITORY\" && docker compose \
   -f compose.r1.yaml -f compose.shop-local.yaml -f compose.shop-till.yaml \
   --profile self-managed-database exec -T postgres /usr/local/bin/base-backup.sh"
 
 write_agent checks-data "$every_five_minutes" "$data_checks"
 write_agent checks-host "$every_five_minutes" "$host_checks"
+write_agent checks-daily "$daily_morning" "$daily_checks"
 write_agent base-backup "$nightly" "$base_backup"
 
 echo

@@ -55,7 +55,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from zoneinfo import ZoneInfo
 
 import psycopg
 import shop_alert_pending as pending_alerts
@@ -362,6 +361,78 @@ def check_console_reachable(
         passed=healthy,
         detail=f"{url} answered {response.status} {body.strip()[:60]}",
         fields={"url": url, "status": response.status},
+    )
+
+
+#: `DEC-052`: the shop CA's key is not kept, so a console certificate cannot be re-signed; near its
+#: expiry a new CA is minted (`bootstrap_shop_local.py --new-ca`) and trusted on every tablet. From
+#: this many days out the till's daily check tells the owner -- the same line the bootstrap uses,
+#: which a test holds equal. Before round 9b only the bootstrap said it, and nobody runs the
+#: bootstrap in normal operation: the first sign would have been every tablet refusing the console.
+CERTIFICATE_RENEW_BEFORE_DAYS = 60
+CERTIFICATE_RENEWAL_STEP = (
+    "Gia hạn: chạy scripts/bootstrap_shop_local.py --backup-recipient <khóa age1…> --new-ca, rồi "
+    "cài .shop/ca/ca.crt mới lên từng máy và bật tin cậy (docs/runbooks/shop-pilot.md §2)."
+)
+
+
+def check_console_certificate(path: str, *, now: datetime) -> CheckResult:
+    """How long the console's TLS certificate has left, from the certificate itself (`DEC-052`).
+
+    Fails from `CERTIFICATE_RENEW_BEFORE_DAYS` before expiry, when expired, and when the file is
+    missing or not a certificate -- each is a renewal to do, and the message says how. It runs from
+    the till's daily agent at 09:00, so the owner hears once a day, not every five minutes, and it
+    is a quiet-hours check (`shop_alert_pending.QUIET_HOURS_CHECKS`): a Mac that wakes at night
+    holds it for the morning.
+    """
+
+    from cryptography import x509  # the host checks' venv has it; the data-check image need not
+
+    try:
+        leaf = x509.load_pem_x509_certificate(_Path(path).read_bytes())
+    except FileNotFoundError:
+        return CheckResult(
+            "console_certificate",
+            passed=False,
+            detail=f"không thấy chứng chỉ console ở {path} (no certificate). "
+            + CERTIFICATE_RENEWAL_STEP,
+            fields={"path": path, "readable": False},
+        )
+    except (OSError, ValueError) as error:
+        return CheckResult(
+            "console_certificate",
+            passed=False,
+            detail=f"không đọc được chứng chỉ console {path} ({type(error).__name__}). "
+            + CERTIFICATE_RENEWAL_STEP,
+            fields={"path": path, "readable": False},
+        )
+    expires = leaf.not_valid_after_utc
+    remaining = expires - now
+    shown = expires.astimezone(SHOP_TIMEZONE).strftime("%d/%m/%Y")
+    fields: dict[str, object] = {"expires_at": expires.isoformat(), "days_left": remaining.days}
+    if remaining <= timedelta(0):
+        return CheckResult(
+            "console_certificate",
+            passed=False,
+            detail=f"chứng chỉ console đã hết hạn ngày {shown} (expired). "
+            + CERTIFICATE_RENEWAL_STEP,
+            fields=fields,
+        )
+    if remaining <= timedelta(days=CERTIFICATE_RENEW_BEFORE_DAYS):
+        return CheckResult(
+            "console_certificate",
+            passed=False,
+            detail=(
+                f"chứng chỉ console hết hạn ngày {shown} (còn {remaining.days} ngày). "
+                + CERTIFICATE_RENEWAL_STEP
+            ),
+            fields=fields,
+        )
+    return CheckResult(
+        "console_certificate",
+        passed=True,
+        detail=f"console certificate valid until {shown} ({remaining.days} days)",
+        fields=fields,
     )
 
 
@@ -883,7 +954,17 @@ def main() -> int:
     parser.add_argument(
         "--check",
         action="append",
-        choices=["wal", "base", "volume", "outbox", "flags", "console", "app", "all"],
+        choices=[
+            "wal",
+            "base",
+            "volume",
+            "outbox",
+            "flags",
+            "console",
+            "app",
+            "certificate",
+            "all",
+        ],
         help="repeatable; defaults to every check that is configured",
     )
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL"))
@@ -907,6 +988,14 @@ def main() -> int:
         "--console-ca-file",
         default=os.environ.get("R1_CONSOLE_CA_FILE"),
         help="the private CA that signed the console certificate; without it TLS cannot verify",
+    )
+    parser.add_argument(
+        "--console-certificate",
+        default=os.environ.get("R1_CONSOLE_CERTIFICATE_FILE"),
+        help=(
+            "the console's own certificate (.shop/secrets/tls_certificate): `--check certificate` "
+            "says from 60 days out that it needs renewing (DEC-052)"
+        ),
     )
     parser.add_argument(
         "--recovery-mode",
@@ -959,6 +1048,12 @@ def main() -> int:
         ("base", "base_backup_age", arguments.base_backup_marker, "--base-backup-marker"),
         ("flags", "capability_flags", arguments.compose_file, "--compose-file"),
         ("console", "console_reachable", arguments.console_url, "--console-url"),
+        (
+            "certificate",
+            "console_certificate",
+            arguments.console_certificate,
+            "--console-certificate",
+        ),
         # Both, or the check cannot run: without a saved position a run can only look at a window
         # ending at its own start, and a line written between two such windows is counted by
         # neither (round-9 verifier).
@@ -980,6 +1075,9 @@ def main() -> int:
         "flags": lambda: check_capability_flags(str(arguments.compose_file)),
         "console": lambda: check_console_reachable(
             str(arguments.console_url), ca_file=arguments.console_ca_file
+        ),
+        "certificate": lambda: check_console_certificate(
+            str(arguments.console_certificate), now=datetime.now(UTC)
         ),
         "app": lambda: run_application_check(
             str(arguments.app_logs),
@@ -1025,7 +1123,8 @@ def main() -> int:
     if not results:
         raise SystemExit(
             "No check could run. Each one needs its input: --database-url, --volume-path, "
-            "--console-url, --app-logs with --app-signal-cursor. A check that silently does not "
+            "--console-url, --console-certificate, --app-logs with --app-signal-cursor. A check "
+            "that silently does not "
             "run is worse than one that fails."
         )
 
@@ -1089,14 +1188,12 @@ def main() -> int:
     return 0 if not failures else 1
 
 
-#: `DEC-025`. `console_reachable` is the only check whose failure is a visible outage rather than a
-#: silent loss of a guarantee, and a console down at 03:00 that recovers before opening does not
-#: need anybody woken. The other three alert at any hour: a stale archive and a filling disk are
-#: losses nobody would otherwise notice, and a capability flag enabled without a signed manifest is
-#: a security incident under the operations spec.
-QUIET_HOURS_CHECKS = frozenset({"console_reachable"})
-QUIET_HOURS_START = 21
-QUIET_HOURS_END = 7
+#: `DEC-025`'s hours, read from `shop_alert_pending` -- one copy, because the relay applies them
+#: too, to an alert it resends (round-9b verifier: a 20:50 console alert whose send failed was
+#: resent at 02:00). The reasoning is written there.
+QUIET_HOURS_CHECKS = pending_alerts.QUIET_HOURS_CHECKS
+QUIET_HOURS_START = pending_alerts.QUIET_HOURS_START
+QUIET_HOURS_END = pending_alerts.QUIET_HOURS_END
 
 #: The shop is in Nha Trang and the decision is written in the shop's hours. Comparing
 #: `datetime.now(UTC).hour` against them inverted the window exactly: at UTC+7 the script alerted
@@ -1104,7 +1201,7 @@ QUIET_HOURS_END = 7
 #: `production-deploy-day.md` names by name -- "one down at 07:45 needs everybody" -- was 00:45 UTC
 #: and suppressed, while a 22:00 outage nobody needed to see woke the owner. The test encoded the
 #: same UTC hours and called 03:00 UTC "night", so it passed while pinning the bug.
-SHOP_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+SHOP_TIMEZONE = pending_alerts.SHOP_TIMEZONE
 
 
 #: What `--emit-alert` prints and `scripts/relay_shop_alert.py` reads. Versioned because the two run
@@ -1119,8 +1216,7 @@ def _reportable(
 ) -> tuple[list[CheckResult], list[CheckResult]]:
     """Split failures into those that alert now and those `DEC-025` holds for opening hours."""
 
-    local_hour = now.astimezone(SHOP_TIMEZONE).hour
-    quiet = local_hour >= QUIET_HOURS_START or local_hour < QUIET_HOURS_END
+    quiet = pending_alerts.in_quiet_hours(now)
     held = [failure for failure in failures if quiet and failure.name in QUIET_HOURS_CHECKS]
     return [failure for failure in failures if failure not in held], held
 
@@ -1198,7 +1294,9 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
         state, problem = pending_alerts.load(pending_file, now=now)
         if problem:
             _not_delivered(problem)
-    text, carried, reported = pending_alerts.compose(current, state, limit=3800)
+    # A kept console alert waits for 07:00 like a new one (`DEC-025`); `compose` leaves it untried.
+    composition = pending_alerts.compose(current, state, now=now)
+    text = composition.text
     if text is None:
         return False
     checks = tuple(failure.name for failure in _reportable(failures, now=now)[0])
@@ -1206,7 +1304,10 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
     def _kept() -> None:
         if pending_file is not None:
             pending_alerts.save(
-                pending_file, pending_alerts.after_failure(state, current, checks, now=now)
+                pending_file,
+                pending_alerts.after_failure(
+                    state, current, checks, now=now, attempted=composition.carried
+                ),
             )
 
     try:
@@ -1240,7 +1341,10 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
         _not_delivered("telegram did not answer 2xx")
         _kept()
     elif pending_file is not None:
-        pending_alerts.save(pending_file, pending_alerts.after_success(state, carried, reported))
+        pending_alerts.save(
+            pending_file,
+            pending_alerts.after_success(state, composition.carried, composition.reported_dropped),
+        )
     return delivered
 
 

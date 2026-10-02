@@ -299,6 +299,16 @@ def _authority_warning(status: AuthorityStatus, host: str) -> str | None:
         )
     if status.kind == "unreadable":
         return ".shop/ca/ca.crt không đọc được (is not a PEM certificate). " + RENEWAL_STEP
+    if status.kind == "absent":
+        # Only reached with a console certificate on disk (a fresh run mints both). The tablets
+        # need the CA that signed it, and that file is gone; its key was never kept (`DEC-052`),
+        # so the only way back to a CA to install is a new pair.
+        return (
+            "Thiếu .shop/ca/ca.crt: không có CA nào để cài lên máy tính bảng, và không tạo lại "
+            "được CA đã ký chứng chỉ console hiện tại. (.shop/ca/ca.crt is missing: there is no CA "
+            "to install on the tablets, and the one that signed the console certificate cannot "
+            "be made again.) " + RENEWAL_STEP
+        )
     return None
 
 
@@ -586,17 +596,26 @@ def main() -> int:
     )
     print("    CREATE DATABASE keycloak OWNER keycloak;")
     print()
-    print("  Install .shop/ca/ca.crt on every tablet, and switch trust ON for it.")
     # Read from the certificate on disk, not assumed from this version of the script: a CA an
     # earlier version made has no constraint at all, and this line used to call it constrained.
     status = authority_status(SECRET_DIRECTORY.parent / "ca" / "ca.crt", host)
+    if status.kind == "absent":
+        # Round-9b verifier: this used to print "install ca.crt" and "see the warning below" with
+        # no file to install and no warning below. `certificate` warns for exactly this state.
+        print("  There is no .shop/ca/ca.crt to install on the tablets: see the warning below.")
+    else:
+        print("  Install .shop/ca/ca.crt on every tablet, and switch trust ON for it.")
     if status.vouches_only_for_console:
         print(
             f"  It vouches for {host} only (name-constrained); its private key was not kept "
             "(DEC-052)."
         )
-    else:
+    elif status.kind != "absent":
         print(f"  It is NOT limited to {host}: see the warning below.")
+    if not status.vouches_only_for_console and not warnings:
+        # Every state that is not a constrained CA has a warning in `certificate`; should one ever
+        # not, the operator is still told what to do rather than pointed at nothing.
+        warnings = [f"{status.kind}: {RENEWAL_STEP}"]
     for warning in warnings:
         print(f"  WARNING: {warning}")
     print(f"  Point the shop's DNS at this machine for {host}.")

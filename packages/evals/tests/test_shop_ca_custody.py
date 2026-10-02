@@ -371,3 +371,39 @@ def test_new_ca_on_a_fresh_till_mints_without_retiring_anything(bootstrap: Modul
     assert bootstrap.authority_status(
         bootstrap.ROOT / ".shop/ca/ca.crt", HOST
     ).vouches_only_for_console
+
+
+@pytest.mark.parametrize("kind", [*AUTHORITIES, "CA certificate missing"])
+def test_the_closing_lines_never_point_at_a_warning_that_is_not_there(
+    bootstrap: ModuleType,
+    kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Round-9b verifier: with the console certificate present and `.shop/ca/ca.crt` gone, the
+    run said "Install .shop/ca/ca.crt on every tablet" and "see the warning below" -- and printed
+    no warning, so the operator was told nothing to do. Every state that is not a constrained CA
+    now ends in a warning that names `--new-ca`, and the lines never offer a file that is absent."""
+
+    if kind == "CA certificate missing":
+        bootstrap.certificate(HOST, [])
+        (bootstrap.SECRET_DIRECTORY.parent / "ca" / "ca.crt").unlink()
+    else:
+        constraints, critical, _ = AUTHORITIES[kind]
+        authority, key = _authority(constraints, critical=critical)
+        _install(bootstrap, authority, key)
+
+    monkeypatch.setattr(sys, "argv", ["bootstrap_shop_local.py", "--backup-recipient", RECIPIENT])
+    assert bootstrap.main() == 0
+    printed = capsys.readouterr().out
+    points_below = "see the warning below" in printed
+    warnings = [line for line in printed.splitlines() if line.strip().startswith("WARNING:")]
+    assert points_below == bool(warnings), printed
+    if kind == "constrained to the console":
+        assert not warnings and "name-constrained" in printed
+        return
+    assert warnings and all("--new-ca" in line for line in warnings), printed
+    if kind == "CA certificate missing":
+        assert "Install .shop/ca/ca.crt on every tablet" not in printed
+        assert "Thiếu .shop/ca/ca.crt" in printed
+        assert "NOT limited" not in printed

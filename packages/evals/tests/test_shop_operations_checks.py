@@ -491,3 +491,96 @@ def test_the_scheduled_data_checks_include_the_outbox_count() -> None:
     assert "--check wal --check base --check volume --check outbox --emit-alert" in install
     runbook = (ROOT / "docs/runbooks/shop-pilot.md").read_text("utf-8")
     assert "--check wal --check base --check volume --check outbox --emit-alert" in runbook
+
+
+# --- DEC-052: the console certificate's renewal, from the certificate itself (round 9b) ---------
+
+
+def _leaf(path: Path, *, expires: datetime) -> None:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "console.giatlasachcong.lan")])
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(expires - timedelta(days=825))
+        .not_valid_after(expires)
+        .sign(key, hashes.SHA256())
+    )
+    path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+
+
+EXPIRES = datetime(2028, 12, 31, 17, 0, tzinfo=UTC)  # 01/01/2029 00:00 in Nha Trang
+
+
+@pytest.mark.parametrize(
+    ("days_left", "expected"),
+    [
+        # The same boundaries `bootstrap_shop_local.py` prints, so the two never disagree.
+        (61, None),
+        (60, "còn 60 ngày"),
+        (1, "còn 1 ngày"),
+        (0, "đã hết hạn"),
+        (-30, "đã hết hạn"),
+    ],
+)
+def test_the_certificate_check_says_when_to_renew(
+    tmp_path: Path, days_left: int, expected: str | None
+) -> None:
+    certificate = tmp_path / "tls_certificate"
+    _leaf(certificate, expires=EXPIRES)
+    result = CHECKS.check_console_certificate(
+        str(certificate), now=EXPIRES - timedelta(days=days_left)
+    )
+    assert result.name == "console_certificate"
+    if expected is None:
+        assert result.passed and "01/01/2029" in result.detail
+    else:
+        assert not result.passed, result.detail
+        assert expected in result.detail and "01/01/2029" in result.detail
+        assert "--new-ca" in result.detail
+
+
+@pytest.mark.parametrize("content", [None, b"not a certificate"])
+def test_a_missing_or_unreadable_certificate_is_a_renewal_to_do(
+    tmp_path: Path, content: bytes | None
+) -> None:
+    certificate = tmp_path / "tls_certificate"
+    if content is not None:
+        certificate.write_bytes(content)
+    result = CHECKS.check_console_certificate(str(certificate), now=EXPIRES)
+    assert not result.passed and "--new-ca" in result.detail
+
+
+def test_the_check_and_the_bootstrap_renew_from_the_same_day() -> None:
+    bootstrap = importlib.import_module("bootstrap_shop_local")
+    assert bootstrap.RENEW_BEFORE_DAYS == CHECKS.CERTIFICATE_RENEW_BEFORE_DAYS
+
+
+def test_the_renewal_notice_waits_for_opening_hours() -> None:
+    """A Mac asleep at 09:00 runs the daily agent on wake; at night `DEC-025` holds the notice."""
+
+    notice = CHECKS.CheckResult(
+        "console_certificate", passed=False, detail="còn 45 ngày", fields={}
+    )
+    night = CHECKS.alert_document([notice], now=datetime(2026, 10, 1, 20, tzinfo=UTC))  # 03:00
+    assert night["alert"] is None and night["suppressed"] == ["console_certificate"]
+    morning = CHECKS.alert_document([notice], now=datetime(2026, 10, 2, 2, tzinfo=UTC))  # 09:00
+    assert morning["alert"]["checks"] == ["console_certificate"]
+
+
+def test_the_certificate_check_asked_for_without_its_file_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("R1_CONSOLE_CERTIFICATE_FILE", raising=False)
+    monkeypatch.setattr(sys, "argv", ["check_shop_operations.py", "--check", "certificate"])
+    with pytest.raises(SystemExit) as refused:
+        CHECKS.main()
+    assert "certificate needs --console-certificate" in str(refused.value)

@@ -36,7 +36,7 @@ export R1_LOCAL_ARCHIVE_PATH=/Volumes/<your drive>/laundry-archive
 ./deploy/shop-till/install.sh
 ```
 
-It writes three agents into `~/Library/LaunchAgents`, loads them, and prints what it scheduled. It
+It writes four agents into `~/Library/LaunchAgents`, loads them, and prints what it scheduled. It
 is idempotent: run it again after moving the checkout or changing the archive path. It warns if
 either alert file is missing; until they exist, every failing check ends in `ALERT NOT DELIVERED`.
 
@@ -44,6 +44,7 @@ either alert file is missing; until they exist, every failing check ends in `ALE
 |---|---|---|
 | `com.giatlasachcong.checks-data` | every 5 minutes | WAL archive gap, base-backup age, database volume free space |
 | `com.giatlasachcong.checks-host` | every 5 minutes | every capability flag false on the running containers; the console answers `/readyz` |
+| `com.giatlasachcong.checks-daily` | 09:00 daily, or on the next wake | the console certificate: from 60 days before it expires, one message a day saying to renew (`DEC-052`, `bootstrap_shop_local.py --new-ca`) |
 | `com.giatlasachcong.base-backup` | 02:30 daily, or on the next wake | a full base backup into the archive |
 
 ## How an alert reaches a person
@@ -64,6 +65,9 @@ with the token and chat id from `.shop/secrets/alert_telegram_token` and
 | 1 | a check failed and you were told (or it was the console between 21:00 and 07:00, held by `DEC-025`) |
 | 2 | the relay was invoked wrongly; nothing ran |
 | 3 | **a check failed and the alert was NOT delivered** — `alert-delivery.log` says why |
+
+An alert the relay could not send is kept and sent by the next run that can — but a kept console
+alert waits for 07:00 like a new one, so a send that failed at 20:50 does not page anyone at night.
 
 A check that cannot run at all — Docker stopped, the image missing, the secret file gone — is
 reported as an alert in its own right: that is exactly when the backup checks are blind.

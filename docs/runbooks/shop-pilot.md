@@ -87,7 +87,9 @@ after the shop has been trading cannot rotate a password out from under a live s
 the `CREATE ROLE` statements for §4.
 
 **Renewal, and when.** The console certificate lives 825 days (the most an iPad accepts). From 60
-days before it expires every run of this script says so ("Chứng chỉ console hết hạn ngày …"). Then:
+days before it expires the till's daily 09:00 check (`checks-daily`, §6: `check_shop_operations.py
+--check certificate`) sends the owner one Telegram message a day ("chứng chỉ console hết hạn ngày
+… (còn N ngày)"), and every run of this script says so too. Then:
 
 ```bash
 uv run python scripts/bootstrap_shop_local.py --backup-recipient 'age1...' --new-ca
@@ -280,6 +282,16 @@ It used to be `-e DATABASE_URL="$(cat …)"`, which put the migration identity's
   R1_APP_SIGNAL_CURSOR=$HOME/laundry/.shop/app-signal-cursor.json \
   .venv/bin/python scripts/check_shop_operations.py --check flags --check console \
   --check app --app-logs $HOME/laundry/.shop/logs/api/api.jsonl --emit-alert
+
+# Once a day at 09:00. The console certificate: from 60 days before it expires, one message a day
+# saying to renew (DEC-052; the renewal is §2's --new-ca).
+0 9 * * * cd $HOME/laundry && \
+  R1_ALERT_TELEGRAM_TOKEN_FILE=$HOME/laundry/.shop/secrets/alert_telegram_token \
+  R1_ALERT_TELEGRAM_CHAT_ID_FILE=$HOME/laundry/.shop/secrets/alert_telegram_chat_id \
+  R1_ALERT_LOG_FILE=$HOME/laundry/.shop/alert-delivery.log \
+  .venv/bin/python scripts/relay_shop_alert.py --label checks-daily -- \
+  .venv/bin/python scripts/check_shop_operations.py --check certificate \
+  --console-certificate $HOME/laundry/.shop/secrets/tls_certificate --emit-alert
 ```
 
 **An alert that could not be sent is sent again** (`PLATFORM-RESIDUAL-009B` L4). The relay keeps
@@ -288,7 +300,12 @@ it in `alert-pending-<label>.json` — in `R1_ALERT_PENDING_DIRECTORY`, or besid
 "Cảnh báo trước đó chưa gửi được:" with the time it was first raised and how many sends failed,
 until one gets through; then the file is gone. The same alert failing run after run is one entry,
 not a pile. Up to 24 wait (two hours); past that the oldest are dropped and the next message says
-how many. While any wait, the relay exits 3.
+how many. A kept **console** alert keeps `DEC-025`'s hours: between 21:00 and 07:00 it waits, untried,
+and goes with the first run from 07:00 — a console alert raised at 20:50 whose send failed does not
+page anyone at 02:00. An alert that mixed a console line with an any-hour one is kept as two, so the
+any-hour part still goes at once. The oldest kept alert always goes with the next message that can
+be sent (clipped to fit if it is very long), so one long alert cannot hold up the rest. A run whose
+send fails exits 3; a run that only has console alerts waiting for the morning does not.
 
 **`--check outbox`** reports how many rows the outbox holds (`DEC-051`: record-only rows are kept,
 not deleted). Past 1 000 000 rows it **warns** — `WARN outbox_rows` in the schedule's log and a

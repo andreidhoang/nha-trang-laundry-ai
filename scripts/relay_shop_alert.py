@@ -16,6 +16,7 @@ has internet. The database network stays internal.
 
     0   the check passed; nothing to say
     1   the check failed, and the alert was delivered (or held for quiet hours, per DEC-025)
+        -- 0 and 1 also when a kept console alert waits for 07:00: nothing was tried
     2   this script was invoked wrongly; nothing was run
     3   the check failed and the alert was NOT delivered -- a log line says why
 
@@ -71,7 +72,7 @@ EXIT_NOT_DELIVERED = 3
 CHECK_TIMEOUT_SECONDS = 240
 SEND_TIMEOUT_SECONDS = 10
 #: Telegram's limit is 4096 characters; a clipped alert is still an alert.
-MAX_MESSAGE_CHARACTERS = 3800
+MAX_MESSAGE_CHARACTERS = pending_alerts.MAX_MESSAGE_CHARACTERS
 
 ALERT_HEADING = "Bảng vận hành — cần xem ngay:"
 
@@ -248,6 +249,12 @@ def interpret(label: str, returncode: int, stdout: str, stderr: str) -> tuple[Ou
     return Outcome(True, text, (label,), f"check could not run: {reason}"), passthrough
 
 
+def _now() -> datetime:
+    """The run's one reading of the clock -- a function so a test can say what time it is."""
+
+    return datetime.now(UTC)
+
+
 def _log(label: str, message: str, log_file: str | None) -> None:
     moment = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     line = f"{moment} relay_shop_alert[{label}] {message}"
@@ -350,8 +357,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # `PLATFORM-RESIDUAL-009B` L4: an alert that could not be sent is kept and sent again by every
     # later run until one gets through -- the application check counts each line once, so its
-    # alert would otherwise never be repeated.
-    moment = datetime.now(UTC)
+    # alert would otherwise never be repeated. A kept console alert waits for opening hours, as a
+    # new one does (`DEC-025`): `compose` leaves it untried at night.
+    moment = _now()
     pending_file = pending_alerts.pending_path(label, dict(os.environ))
     state = pending_alerts.PendingState()
     if pending_file is not None:
@@ -370,19 +378,33 @@ def main(argv: list[str] | None = None) -> int:
             _log(label, f"WARNING alert delivery is not configured: {error}", log_file)
         return EXIT_PASSED
 
-    message, carried, reported_dropped = pending_alerts.compose(
-        outcome.text, state, limit=MAX_MESSAGE_CHARACTERS
+    composition = pending_alerts.compose(
+        outcome.text, state, limit=MAX_MESSAGE_CHARACTERS, now=moment
     )
+    waiting = (
+        f"; {composition.waiting} earlier alert(s) wait for opening hours (DEC-025, from 07:00)"
+        if composition.waiting
+        else ""
+    )
+    if composition.text is None:
+        # Nothing new to say, and every kept alert is a console alert at night. Not a failed
+        # delivery: nothing was tried. The next run from 07:00 sends them.
+        if outcome.failed:
+            _log(label, outcome.note + waiting, log_file)
+            return EXIT_CHECK_FAILED
+        _log(label, "every check passed" + waiting, log_file)
+        return EXIT_PASSED
     checks = ", ".join(outcome.checks) or (label if outcome.text is not None else "none now")
+    carried = len(composition.carried)
     earlier = f"; {carried} earlier alert(s) resent" if carried else ""
     try:
         token, chat_id = load_credentials(dict(os.environ))
-        if message is None:  # nothing fitted -- cannot happen with a non-empty state, kept safe
-            raise DeliveryError("nothing to send")
-        send_message(message, token=token, chat_id=chat_id, api_base=api_base)
+        send_message(composition.text, token=token, chat_id=chat_id, api_base=api_base)
     except DeliveryError as error:
         if pending_file is not None:
-            state = pending_alerts.after_failure(state, outcome.text, outcome.checks, now=moment)
+            state = pending_alerts.after_failure(
+                state, outcome.text, outcome.checks, now=moment, attempted=composition.carried
+            )
             pending_alerts.save(pending_file, state)
             kept = f"; kept to resend next run ({len(state.alerts)} waiting in {pending_file})"
         else:
@@ -390,11 +412,15 @@ def main(argv: list[str] | None = None) -> int:
         _log(label, f"ALERT NOT DELIVERED: {error} -- failing: {checks}{kept}", log_file)
         return EXIT_NOT_DELIVERED
     if pending_file is not None:
-        remaining = pending_alerts.after_success(state, carried, reported_dropped)
+        remaining = pending_alerts.after_success(
+            state, composition.carried, composition.reported_dropped
+        )
         pending_alerts.save(pending_file, remaining)
-        if not remaining.empty:
-            earlier += f"; {len(remaining.alerts)} still waiting (message full)"
-    _log(label, f"ALERT DELIVERED -- failing: {checks}{earlier}", log_file)
+        if len(remaining.alerts) > composition.waiting:
+            earlier += (
+                f"; {len(remaining.alerts) - composition.waiting} still waiting (message full)"
+            )
+    _log(label, f"ALERT DELIVERED -- failing: {checks}{earlier}{waiting}", log_file)
     return EXIT_CHECK_FAILED if outcome.failed else EXIT_PASSED
 
 

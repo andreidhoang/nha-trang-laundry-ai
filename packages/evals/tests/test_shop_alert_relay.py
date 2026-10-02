@@ -20,6 +20,7 @@ arrives on the owner's phone. That is the owner's first-install step in
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import plistlib
@@ -35,7 +36,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import ModuleType
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -426,7 +429,7 @@ def installed_agents(tmp_path: Path) -> dict[str, dict[str, Any]]:
 def test_every_launch_agent_is_a_plist_launchd_can_load(
     installed_agents: dict[str, dict[str, Any]],
 ) -> None:
-    assert set(installed_agents) == {"checks-data", "checks-host", "base-backup"}
+    assert set(installed_agents) == {"checks-data", "checks-host", "checks-daily", "base-backup"}
     for agent in installed_agents.values():
         assert agent["ProgramArguments"][:2] == ["/bin/bash", "-lc"]
 
@@ -434,7 +437,7 @@ def test_every_launch_agent_is_a_plist_launchd_can_load(
 def test_both_check_agents_deliver_through_the_host_relay(
     installed_agents: dict[str, dict[str, Any]],
 ) -> None:
-    for name in ("checks-data", "checks-host"):
+    for name in ("checks-data", "checks-host", "checks-daily"):
         agent = installed_agents[name]
         script = agent["ProgramArguments"][2]
         assert "scripts/relay_shop_alert.py" in script, name
@@ -836,13 +839,13 @@ def test_a_full_message_leaves_the_rest_waiting_and_drops_are_reported() -> None
         state = pending.after_failure(state, text, ("application_signals",), now=moment)
     assert len(state.alerts) == pending.MAX_PENDING and state.dropped == 5
 
-    message, carried, reported = pending.compose(None, state, limit=3800)
+    message, carried, reported, waiting = pending.compose(None, state, limit=3800, now=moment)
     assert message is not None and len(message) <= 3800
-    assert 0 < carried < pending.MAX_PENDING and not reported
+    assert 0 < len(carried) < pending.MAX_PENDING and not reported and waiting == 0
     rest = pending.after_success(state, carried, reported)
-    assert len(rest.alerts) == pending.MAX_PENDING - carried and rest.dropped == 5
+    assert len(rest.alerts) == pending.MAX_PENDING - len(carried) and rest.dropped == 5
     while rest.alerts:
-        message, carried, reported = pending.compose(None, rest, limit=3800)
+        message, carried, reported, _ = pending.compose(None, rest, limit=3800, now=moment)
         assert message is not None and len(message) <= 3800
         rest = pending.after_success(rest, carried, reported)
     assert rest.empty and "5 cảnh báo cũ hơn" in str(message)
@@ -869,3 +872,391 @@ def test_a_warning_is_logged_by_the_relay_and_sends_nothing(
     assert telegram_stub.requests == []
     log = Path(credentials["R1_ALERT_LOG_FILE"]).read_text("utf-8")
     assert "WARNING outbox_rows: 1 500 000 outbox rows" in log
+
+
+# --- Round-9b verifier: a resent alert keeps DEC-025's hours, and a long one cannot wedge -------
+
+SHOP = ZoneInfo("Asia/Ho_Chi_Minh")
+HEADING = "Bảng vận hành — cần xem ngay:"
+CONSOLE_ALERT = (
+    f"{HEADING}\n• console_reachable: https://console.giatlasachcong.lan:8443/readyz answered 503"
+)
+WAL_LINE = "• wal_archive_gap: the last WAL segment was archived 3600 s ago"
+RAISED = datetime(2026, 9, 30, 20, 50, tzinfo=SHOP)  # the verifier's 20:50, inside opening hours
+
+
+def _pending() -> ModuleType:
+    sys.path.insert(0, str(ROOT / "scripts"))
+    return importlib.import_module("shop_alert_pending")
+
+
+def _kept(text: str, checks: tuple[str, ...]) -> Any:
+    pending = _pending()
+    return pending.after_failure(pending.PendingState(), text, checks, now=RAISED)
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute", "sent"),
+    [
+        (20, 59, True),  # the minute before quiet hours
+        (21, 0, False),
+        (23, 59, False),
+        (2, 0, False),
+        (5, 56, False),  # the verifier's observed resend
+        (6, 59, False),
+        (7, 0, True),  # opening
+        (12, 0, True),
+    ],
+)
+def test_a_kept_console_alert_waits_for_opening_hours(hour: int, minute: int, sent: bool) -> None:
+    """The P1. A console alert raised at 20:50 whose send failed was resent by the next run at any
+    hour; `DEC-025` says the console check alerts only from 07:00 to 21:00."""
+
+    pending = _pending()
+    state = _kept(CONSOLE_ALERT, ("console_reachable",))
+    day = 30 if hour >= 20 else 1
+    month = 9 if day == 30 else 10
+    now = datetime(2026, month, day, hour, minute, tzinfo=SHOP)
+    composition = pending.compose(None, state, now=now)
+    if sent:
+        assert composition.text is not None and "console_reachable" in composition.text
+        assert composition.carried == (0,) and composition.waiting == 0
+    else:
+        assert composition.text is None and composition.carried == ()
+        assert composition.waiting == 1
+        # Untried is not failed: nothing about it changes until a run may send it.
+        assert pending.after_success(state, composition.carried, False) == state
+
+
+@pytest.mark.parametrize(
+    ("checks", "waits_at_night"),
+    [
+        (("console_reachable",), True),
+        (("console_certificate",), True),
+        (("wal_archive_gap",), False),
+        (("application_signals",), False),
+        (("checks-data",), False),  # the relay's own "the check could not run" alert
+    ],
+)
+def test_only_quiet_hours_checks_wait(checks: tuple[str, ...], waits_at_night: bool) -> None:
+    pending = _pending()
+    state = _kept(f"{HEADING}\n• {checks[0]}: something", checks)
+    composition = pending.compose(None, state, now=datetime(2026, 10, 1, 2, 0, tzinfo=SHOP))
+    assert (composition.text is None) is waits_at_night
+    assert composition.waiting == (1 if waits_at_night else 0)
+
+
+def test_a_kept_alert_mixing_the_hours_goes_in_two_parts() -> None:
+    """A 20:50 alert with the console and the WAL gap: at 02:00 the WAL part goes (a guarantee
+    going away wakes somebody) and the console part waits for 07:00."""
+
+    pending = _pending()
+    mixed = f"{CONSOLE_ALERT}\n{WAL_LINE}"
+    state = _kept(mixed, ("console_reachable", "wal_archive_gap"))
+    assert [alert.checks for alert in state.alerts] == [
+        ("wal_archive_gap",),
+        ("console_reachable",),
+    ]
+
+    night = pending.compose(None, state, now=datetime(2026, 10, 1, 2, 0, tzinfo=SHOP))
+    assert night.text is not None and "wal_archive_gap" in night.text
+    assert "console_reachable" not in night.text and night.waiting == 1
+    rest = pending.after_success(state, night.carried, night.reported_dropped)
+    assert [alert.checks for alert in rest.alerts] == [("console_reachable",)]
+
+    morning = pending.compose(None, rest, now=datetime(2026, 10, 1, 7, 0, tzinfo=SHOP))
+    assert morning.text is not None and "console_reachable" in morning.text
+    assert pending.after_success(rest, morning.carried, morning.reported_dropped).empty
+
+
+def test_a_failed_send_at_night_does_not_count_against_a_waiting_alert() -> None:
+    pending = _pending()
+    state = _kept(CONSOLE_ALERT, ("console_reachable",))
+    night = datetime(2026, 10, 1, 2, 0, tzinfo=SHOP)
+    current = f"{HEADING}\n{WAL_LINE}"
+    composition = pending.compose(current, state, now=night)
+    assert composition.text == current and composition.waiting == 1
+    after = pending.after_failure(
+        state, current, ("wal_archive_gap",), now=night, attempted=composition.carried
+    )
+    assert [(alert.checks, alert.attempts) for alert in after.alerts] == [
+        (("console_reachable",), 1),  # not tried, so not failed again
+        (("wal_archive_gap",), 1),
+    ]
+
+
+def _load_relay() -> ModuleType:
+    sys.path.insert(0, str(ROOT / "scripts"))
+    return importlib.import_module("relay_shop_alert")
+
+
+def _passing_check() -> list[str]:
+    document = {
+        "schema": "nha-trang-laundry.shop-alert.v1",
+        "passed": True,
+        "results": {},
+        "alert": None,
+        "suppressed": [],
+        "warnings": {},
+    }
+    return [sys.executable, "-c", f"print({json.dumps(json.dumps(document))})"]
+
+
+def test_the_relay_holds_a_kept_console_alert_until_opening(
+    telegram_stub: _Stub,
+    credentials: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The verifier's reproduction, through the relay itself: the state the relay writes for a
+    20:50 console alert, then a passing run at 05:56 and one at 07:05."""
+
+    pending = _pending()
+    relay = _load_relay()
+    for key, value in {**credentials, "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base}.items():
+        monkeypatch.setenv(key, value)
+    file = pending.pending_path("checks-host", dict(os.environ))
+    assert file is not None
+    pending.save(file, _kept(CONSOLE_ALERT, ("console_reachable",)))
+
+    monkeypatch.setattr(relay, "_now", lambda: datetime(2026, 10, 1, 5, 56, tzinfo=SHOP))
+    assert relay.main(["--label", "checks-host", "--", *_passing_check()]) == 0
+    assert telegram_stub.requests == []
+    assert file.exists()
+    log = Path(credentials["R1_ALERT_LOG_FILE"]).read_text("utf-8")
+    assert "1 earlier alert(s) wait for opening hours" in log
+    assert "NOT DELIVERED" not in log
+
+    monkeypatch.setattr(relay, "_now", lambda: datetime(2026, 10, 1, 7, 5, tzinfo=SHOP))
+    assert relay.main(["--label", "checks-host", "--", *_passing_check()]) == 0
+    (request,) = telegram_stub.requests
+    text = request["form"]["text"]
+    assert "console_reachable" in text and "lúc 20:50 30/09" in text
+    assert not file.exists()
+
+
+def test_the_direct_path_holds_a_kept_console_alert_until_opening(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`check_shop_operations.deliver_alert` resends the same way, so it holds the same way."""
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    checks = importlib.import_module("check_shop_operations")
+
+    pending = _pending()
+    token = tmp_path / "token"
+    token.write_text("probe-token", encoding="utf-8")
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_TOKEN_FILE", str(token))
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_CHAT_ID", "1234")
+    monkeypatch.setenv("R1_ALERT_PENDING_DIRECTORY", str(tmp_path))
+    file = pending.pending_path("direct", {"R1_ALERT_PENDING_DIRECTORY": str(tmp_path)})
+    pending.save(file, _kept(CONSOLE_ALERT, ("console_reachable",)))
+    posted: list[bytes] = []
+
+    class _Response:
+        status = 200
+
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    def _capture(request: Any, timeout: float = 0) -> _Response:
+        posted.append(request.data)
+        return _Response()
+
+    monkeypatch.setattr(checks.urllib.request, "urlopen", _capture)
+    assert checks.deliver_alert([], now=datetime(2026, 10, 1, 2, 0, tzinfo=SHOP)) is False
+    assert posted == [] and file.exists()
+    assert checks.deliver_alert([], now=datetime(2026, 10, 1, 7, 30, tzinfo=SHOP)) is True
+    assert len(posted) == 1 and not file.exists()
+
+
+LONG_ALERT = f"{HEADING}\n• capability_flags: " + "x" * 3750
+
+
+def _document_check(text: str | None) -> list[str]:
+    document = {
+        "schema": "nha-trang-laundry.shop-alert.v1",
+        "passed": text is None,
+        "results": {},
+        "alert": None if text is None else {"text": text, "checks": ["capability_flags"]},
+        "suppressed": [],
+        "warnings": {},
+    }
+    status = 0 if text is None else 1
+    return [
+        sys.executable,
+        "-c",
+        f"import sys; print({json.dumps(json.dumps(document))}); sys.exit({status})",
+    ]
+
+
+def test_a_long_undelivered_alert_is_delivered_by_the_next_run(
+    telegram_stub: _Stub, credentials: dict[str, str]
+) -> None:
+    """The verifier's wedge. A ~3 800-character alert that failed once was never resent: it did
+    not fit beside the redelivery heading, so every later run sent nothing, failed with "nothing to
+    send" and exited 3 -- with Telegram up -- and every alert behind it starved."""
+
+    environment = {**credentials, "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base}
+    telegram_stub.status = 500
+    assert _relay(_document_check(LONG_ALERT), environment, label="checks-host").returncode == 3
+
+    telegram_stub.status = 200
+    second = _relay(_document_check(None), environment, label="checks-host")
+    assert second.returncode == 0, second.stderr
+    assert len(telegram_stub.requests) == 2
+    text = telegram_stub.requests[1]["form"]["text"]
+    assert len(text) <= 3800 and "capability_flags" in text and text.endswith("…")
+    assert _pending_files(credentials) == []
+    assert "nothing to send" not in Path(credentials["R1_ALERT_LOG_FILE"]).read_text("utf-8")
+
+
+def test_a_long_kept_alert_goes_beside_a_long_new_one(
+    telegram_stub: _Stub, credentials: dict[str, str]
+) -> None:
+    """The neighbouring case: the check is still failing with a long alert of its own. Both go in
+    one message within the limit, so the kept one is not starved by a check that stays red."""
+
+    environment = {**credentials, "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base}
+    telegram_stub.status = 500
+    assert _relay(_document_check(LONG_ALERT), environment, label="checks-host").returncode == 3
+
+    telegram_stub.status = 200
+    newer = f"{HEADING}\n• capability_flags: " + "y" * 3750
+    result = _relay(_document_check(newer), environment, label="checks-host")
+    assert result.returncode == 1, result.stderr
+    text = telegram_stub.requests[-1]["form"]["text"]
+    assert len(text) <= 3800 and "yyy" in text and "xxx" in text
+    assert "Cảnh báo trước đó chưa gửi được:" in text
+    assert _pending_files(credentials) == []
+
+
+def test_a_kept_alert_is_stored_no_longer_than_a_message() -> None:
+    pending = _pending()
+    state = _kept(f"{HEADING}\n• capability_flags: " + "z" * 9000, ("capability_flags",))
+    (alert,) = state.alerts
+    assert len(alert.text) <= pending.MAX_MESSAGE_CHARACTERS and alert.text.endswith("…")
+
+
+def test_every_run_that_can_send_carries_the_oldest_waiting_alert() -> None:
+    """A property over many queues: whatever the lengths, the current alert and the hour, a run
+    with something sendable sends a message within the limit that carries the oldest sendable kept
+    alert -- so the queue always drains -- and never one that waits for opening."""
+
+    import random
+
+    pending = _pending()
+    generator = random.Random(20261002)
+    names = ["console_reachable", "wal_archive_gap", "capability_flags", "application_signals"]
+    for _ in range(300):
+        state = pending.PendingState()
+        for index in range(generator.randint(1, 8)):
+            name = generator.choice(names)
+            body = "w" * generator.choice([10, 500, 1900, 3700, 5000])
+            state = pending.after_failure(
+                state,
+                f"{HEADING}\n• {name}: {index} {body}",
+                (name,),
+                now=RAISED + timedelta(minutes=index),
+            )
+        current = (
+            None
+            if generator.random() < 0.5
+            else f"{HEADING}\n• wal_archive_gap: " + "c" * generator.choice([10, 2000, 4000])
+        )
+        now = datetime(2026, 10, 1, generator.randint(0, 23), tzinfo=SHOP)
+        composition = pending.compose(current, state, now=now)
+        sendable = [
+            index
+            for index, alert in enumerate(state.alerts)
+            if not pending.waits_for_opening(alert, now)
+        ]
+        assert composition.waiting == len(state.alerts) - len(sendable)
+        if current is None and not sendable:
+            assert composition.text is None
+            continue
+        assert composition.text is not None and len(composition.text) <= 3800
+        if sendable:
+            assert sendable[0] in composition.carried
+        assert set(composition.carried) <= set(sendable)
+
+
+# --- DEC-052: the renewal notice reaches the owner, from the till's daily agent ------------------
+
+
+def test_the_daily_agent_tells_the_owner_when_the_certificate_needs_renewing(
+    installed_agents: dict[str, dict[str, Any]],
+) -> None:
+    """Round-9b verifier: the 60-day renewal warning was printed only by
+    `bootstrap_shop_local.py`, which nobody runs in normal operation. The till now checks the
+    console certificate every morning and the relay sends what it finds."""
+
+    agent = installed_agents["checks-daily"]
+    assert agent["StartCalendarInterval"] == {"Hour": 9, "Minute": 0}
+    words = shlex.split(agent["ProgramArguments"][2])
+    assert "scripts/relay_shop_alert.py" in words and "--emit-alert" in words
+    assert words[words.index("--label") + 1] == "checks-daily"
+    assert words[words.index("--check") + 1] == "certificate"
+    certificate = Path(words[words.index("--console-certificate") + 1])
+    assert certificate == ROOT / ".shop/secrets/tls_certificate"
+    environment = agent["EnvironmentVariables"]
+    for key in ("R1_ALERT_TELEGRAM_TOKEN_FILE", "R1_ALERT_TELEGRAM_CHAT_ID_FILE"):
+        assert environment[key].startswith(str(ROOT / ".shop/secrets/")), key
+
+
+def _console_certificate(path: Path, *, expires: datetime) -> None:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "console.giatlasachcong.lan")])
+    leaf = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(expires - timedelta(days=825))
+        .not_valid_after(expires)
+        .sign(key, hashes.SHA256())
+    )
+    path.write_bytes(leaf.public_bytes(serialization.Encoding.PEM))
+
+
+@pytest.mark.parametrize(("days_left", "sent"), [(90, False), (45, True), (-3, True)])
+def test_a_certificate_near_expiry_reaches_the_stub_through_the_relay(
+    telegram_stub: _Stub,
+    credentials: dict[str, str],
+    tmp_path: Path,
+    days_left: int,
+    sent: bool,
+) -> None:
+    """The daily agent's own command shape -- relay, `--check certificate`, `--emit-alert` -- run
+    for real against a certificate on disk and a loopback stub."""
+
+    certificate = tmp_path / "tls_certificate"
+    _console_certificate(
+        certificate, expires=datetime.now(UTC) + timedelta(days=days_left, hours=12)
+    )
+    result = _relay(
+        _check("--check", "certificate", "--console-certificate", str(certificate)),
+        {**credentials, "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base},
+        label="checks-daily",
+    )
+    if not sent:
+        assert result.returncode == 0, result.stderr
+        assert telegram_stub.requests == []
+        return
+    # At night (in the shop's clock) DEC-025 holds it for the morning; by day it is delivered.
+    if _pending().in_quiet_hours(datetime.now(UTC)):
+        assert result.returncode == 1 and telegram_stub.requests == []
+        return
+    assert result.returncode == 1, result.stderr
+    (request,) = telegram_stub.requests
+    text = request["form"]["text"]
+    assert "console_certificate" in text and "--new-ca" in text
+    assert ("còn" in text) if days_left > 0 else ("đã hết hạn" in text)

@@ -399,8 +399,14 @@ def per_order_vnd(total_vnd: int, orders: int) -> int | None:
 
 # --- notes --------------------------------------------------------------------------------------
 
-#: Nine or more digits, allowing the spaces, dots and hyphens people type inside a phone number.
-_PHONE_LIKE: Final = re.compile(r"\d(?:[\s.\-]?\d){8,}")
+#: Nine or more digits held together as one number, the way people punctuate a phone: spaces, dots
+#: and hyphens between the groups, brackets round one group ("(090) 512 3456", "(+84) 905 ..."),
+#: or slashes ("0905/123/456"). Slashes form their own chain, never joined to a bare space, so a
+#: date followed by an amount ("02/10/2026 150k") is not one number.
+_PHONE_LIKE: Final = re.compile(
+    r"\d(?:(?:[\s.\-]|\s?\(\s?|\s?\)\s?)?\d){8,}"
+    r"|\d(?:(?:[.\-]|\s?/\s?)?\d){8,}"
+)
 
 
 def capture_note(value: str | None) -> str | None:

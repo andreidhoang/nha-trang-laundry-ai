@@ -379,3 +379,26 @@ def test_a_malformed_entry_is_answered_without_the_values_it_held(
     assert looks_like_phone.json() == {
         "detail": {"reason_code": "CASH_COUNT_REASON_LOOKS_LIKE_PHONE"}
     }
+    # Verification round 3 of 9b: a phone punctuated with brackets or slashes is refused the
+    # same way, and nothing is stored -- the correction reason is the shop's books, not a contact
+    # list.
+    for punctuated in ("khach (090) 512 3456", "sdt 0905/123/456"):
+        refused = _post(
+            client,
+            shop.store_id,
+            {
+                **base,
+                "reason": punctuated,
+                "supersedes_entry_id": sheet["closing_count"]["entry_id"],
+            },
+        )
+        assert refused.json() == {
+            "detail": {"reason_code": "CASH_COUNT_REASON_LOOKS_LIKE_PHONE"}
+        }, punctuated
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM cash_counts"
+            " WHERE store_id = %s AND correction_reason IS NOT NULL",
+            (shop.store_id,),
+        )
+        assert cursor.fetchone()[0] == 0

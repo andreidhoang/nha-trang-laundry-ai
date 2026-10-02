@@ -730,6 +730,7 @@ def _counted(
     expected_now: int | None = None,
     status_now: str | None = None,
     excluded_now: tuple[int, int] = (0, 0),
+    books_over_now: int | None = None,
 ) -> CashCountFigures:
     if status_now is None and expected_now is not None:
         status_now = "COMPLETE"
@@ -747,6 +748,7 @@ def _counted(
         status_now=status_now,  # type: ignore[arg-type]
         excluded_unknown_now_entries=excluded_now[0],
         excluded_unknown_now_vnd=excluded_now[1],
+        books_over_now_vnd=books_over_now,
     )
 
 
@@ -902,12 +904,14 @@ def test_a_count_the_books_moved_after_is_said_as_it_was_at_the_count_and_that_t
         books_over=100_000,
         changed=True,
         expected_now=None,
+        status_now="BOOKS_BELOW_ZERO",
+        books_over_now=60_000,
     )
     assert _attention_lines(cash_count=below) == [
         "Cần chú ý:",
         "- Đếm két cuối ngày được 0đ; lúc đếm sổ ghi tiền ra khỏi két nhiều hơn tiền vào "
-        "100.000đ nên chưa so được. Sổ đã thay đổi sau lúc đếm; bây giờ chưa tính được số phải "
-        "có.",
+        "100.000đ nên chưa so được. Sổ đã thay đổi sau lúc đếm: bây giờ sổ ghi tiền ra khỏi két "
+        "nhiều hơn tiền vào 60.000đ nên chưa tính được số phải có. Kiểm tra Sổ thu chi.",
     ]
     # The figures say it too, for the reader that takes numbers rather than words.
     summary = render_summary(_inputs(attention=dataclasses.replace(CALM, cash_count=short)))
@@ -1009,3 +1013,96 @@ def test_a_now_figure_is_never_taken_without_its_status() -> None:
         _counted(changed=True, expected_now=590_000, status_now="INCOMPLETE", excluded_now=(0, 0))
     with pytest.raises(ValueError, match="status"):
         _counted(changed=True, expected_now=590_000, status_now="FLOAT_MISSING")
+
+
+def test_a_now_with_no_figure_says_why_as_den_ket_does() -> None:
+    """Verification round 3 of 9b: when the books move after the count so that no figure for now
+    can be produced, the summary says why -- the books put the drawer below nothing by how much
+    (and to check Sổ thu chi), or the float is still not recorded -- as Đếm két says it on the same
+    sheet, never a bare "chưa tính được"."""
+    below_now = (
+        "Sổ đã thay đổi sau lúc đếm: bây giờ sổ ghi tiền ra khỏi két nhiều hơn tiền vào 300.000đ "
+        "nên chưa tính được số phải có. Kiểm tra Sổ thu chi."
+    )
+    # Short at the count, a mistyped drawer expense afterwards.
+    short = _counted(
+        counted=3_909_000,
+        expected=3_919_000,
+        changed=True,
+        status_now="BOOKS_BELOW_ZERO",
+        books_over_now=300_000,
+    )
+    assert _attention_lines(cash_count=short) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày thiếu 10.000đ (phải có 3.919.000đ, đếm được 3.909.000đ). "
+        + below_now,
+    ]
+    # Over, even and incomplete at the count: the same "now" sentence, whatever the count said.
+    over = _counted(
+        counted=605_000,
+        difference=5_000,
+        direction="OVER",
+        changed=True,
+        status_now="BOOKS_BELOW_ZERO",
+        books_over_now=300_000,
+    )
+    assert _attention_lines(cash_count=over)[1].endswith(below_now)
+    even = _counted(
+        status="INCOMPLETE",
+        counted=600_000,
+        difference=0,
+        direction="EVEN",
+        excluded=(1, 20_000),
+        changed=True,
+        status_now="BOOKS_BELOW_ZERO",
+        books_over_now=300_000,
+    )
+    assert _attention_lines(cash_count=even) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày khớp (phải có 600.000đ, đếm được 600.000đ). "
+        "Số phải có lúc đó chưa tính 1 khoản hoàn chưa rõ cách hoàn (20.000đ). " + below_now,
+    ]
+    # No float at the count, still none after another drawer movement: said as still missing.
+    no_float = _counted(
+        status="FLOAT_MISSING",
+        counted=300_000,
+        expected=None,
+        difference=None,
+        direction=None,
+        changed=True,
+        status_now="FLOAT_MISSING",
+    )
+    assert _attention_lines(cash_count=no_float) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày được 300.000đ; lúc đếm chưa ghi tiền đầu ngày nên chưa so được. "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ vẫn chưa ghi tiền đầu ngày nên chưa tính được số "
+        "phải có.",
+    ]
+    # The figures carry the status and the amount for the reader that takes numbers.
+    summary = render_summary(_inputs(attention=dataclasses.replace(CALM, cash_count=short)))
+    cash = next(line for line in summary.lines if line.key is LineKey.ATTN_CASH_COUNT)
+    figures = dict(cash.figures)
+    assert figures["cash_expected_now_status"] == "BOOKS_BELOW_ZERO"
+    assert figures["cash_books_over_now_vnd"] == 300_000
+    assert figures["cash_expected_now_vnd"] is None
+    assert "-" not in cash.text[2:] and "\u2212" not in cash.text
+    unchanged = render_summary(_inputs(attention=dataclasses.replace(CALM, cash_count=_counted())))
+    line = next(line for line in unchanged.lines if line.key is LineKey.ATTN_CASH_COUNT)
+    assert dict(line.figures)["cash_books_over_now_vnd"] is None
+
+
+def test_a_now_with_no_figure_is_never_taken_without_its_reason() -> None:
+    """Fail closed: books that moved after the count with no figure for now must say which status
+    stands in for it; BOOKS_BELOW_ZERO names how far below nothing, and only it does."""
+    with pytest.raises(ValueError, match="status"):
+        _counted(changed=True)
+    with pytest.raises(ValueError, match="below nothing"):
+        _counted(changed=True, status_now="BOOKS_BELOW_ZERO")
+    with pytest.raises(ValueError, match="below nothing"):
+        _counted(changed=True, status_now="BOOKS_BELOW_ZERO", books_over_now=0)
+    with pytest.raises(ValueError, match="below nothing"):
+        _counted(changed=True, status_now="FLOAT_MISSING", books_over_now=300_000)
+    with pytest.raises(ValueError, match="below nothing"):
+        _counted(changed=True, expected_now=590_000, books_over_now=300_000)
+    with pytest.raises(ValueError, match="status"):
+        _counted(changed=False, status_now="FLOAT_MISSING")

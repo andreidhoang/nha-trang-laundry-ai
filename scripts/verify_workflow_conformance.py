@@ -11771,6 +11771,74 @@ def scenario_cash_count(console: Console) -> None:
         {"sheet_status": sheet_now.get("status"), "text": text[:500]},
     )
 
+    head("K6", "SỔ XUỐNG DƯỚI 0 SAU LÚC ĐẾM — the summary says why there is no figure now")
+    # Verification round 3 of 9b: a mistyped drawer expense after the count puts the books below
+    # nothing. Đếm két names by how much and to check Sổ thu chi; the owner's summary says the
+    # same, never a bare "chưa tính được". Then the owner voids the wrong line and the figure for
+    # now comes back.
+    held_now = int(sheet_now.get("expected_vnd") or 0)
+    mistyped = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/expenses",
+        {
+            "spent_on": day,
+            "category": "SUA_CHUA",
+            "amount_vnd": held_now + 300_000,
+            "note": "sua may giat",
+            "paid_from_drawer": True,
+        },
+    )
+    ok(
+        "a mistyped drawer expense after the count is recorded",
+        held_now > 0 and mistyped["status"] == 201,
+        mistyped["text"][:200],
+    )
+    below = _cash_sheet(console).get("expected") or {}
+    ok(
+        "the sheet puts the books 300.000 below nothing",
+        below.get("status") == "BOOKS_BELOW_ZERO" and below.get("books_over_vnd") == 300_000,
+        below,
+    )
+    console.open("#/cash-count", settle=2000)
+    screen = console.page.locator("body").first
+    screen_text = (
+        screen.inner_text().replace("\xa0", " ").replace("\u202f", " ") if screen.count() else ""
+    )
+    ok(
+        "Đếm két names the amount and the remedy",
+        "Sổ ghi tiền ra khỏi két nhiều hơn tiền vào 300.000 ₫" in screen_text
+        and "kiểm tra Sổ thu chi" in screen_text,
+        screen_text[:400],
+    )
+    summary = console.call("GET", f"/internal/v1/stores/{STORE}/reports/daily-summary?date={day}")
+    text = str((summary.get("body") or {}).get("text", ""))
+    ok(
+        "the evening summary says why there is no figure now, with the amount",
+        at_count in text
+        and "Sổ đã thay đổi sau lúc đếm: bây giờ sổ ghi tiền ra khỏi két nhiều hơn tiền vào "
+        "300.000đ nên chưa tính được số phải có. Kiểm tra Sổ thu chi."
+        in text
+        and "bây giờ chưa tính được số phải có" not in text,
+        text[:600],
+    )
+    body = mistyped.get("body") or {}
+    voided = console.call(
+        "POST",
+        f"/internal/v1/stores/{STORE}/expenses/{body.get('expense_id')}/void",
+        if_match=body.get("row_version"),
+    )
+    ok("the owner voids the wrong line", voided["status"] == 200, voided["text"][:200])
+    back = _cash_sheet(console).get("expected") or {}
+    summary = console.call("GET", f"/internal/v1/stores/{STORE}/reports/daily-summary?date={day}")
+    text = str((summary.get("body") or {}).get("text", ""))
+    ok(
+        "the figure for now comes back on the sheet and in the summary",
+        back.get("status") == sheet_now.get("status")
+        and back.get("expected_vnd") == held_now
+        and now_sentence in text,
+        {"sheet": back, "text": text[:500]},
+    )
+
 
 SCENARIOS = {
     "money": scenario_money,

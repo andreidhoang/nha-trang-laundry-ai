@@ -91,7 +91,10 @@ from test_reports import AS_OF, DAY, _Order, _person, _seeded_shop, _store
 #: Verification round 2 of 9b: the figure for now is marked incomplete (how many refunds of unknown
 #: method and their total) while the books still leave them out; the unreleased second v5 digest
 #: was `7a9d280c088f4e66`. v5 has not left this slice, so the identifier stays v5.
-PINNED_TEMPLATE_VERSION = "daily-summary-v5:b7647201be330134"
+#: Verification round 3 of 9b: books that moved after the count with no figure for now say why
+#: (how far below nothing the books put the drawer, or the float still missing); the unreleased
+#: third v5 digest was `b7647201be330134`.
+PINNED_TEMPLATE_VERSION = "daily-summary-v5:28793966ffeaa69c"
 
 
 def _database_url() -> str:

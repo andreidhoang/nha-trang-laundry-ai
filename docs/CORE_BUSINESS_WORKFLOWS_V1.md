@@ -331,8 +331,10 @@ already paid stays owed-for.
     count: then said as it was *lúc đếm* with "Sổ đã thay đổi sau lúc đếm" and what the books say
     now, the answer Báo cáo gives — the figure for now marked incomplete ("chưa tính N khoản hoàn
     chưa rõ cách hoàn (X) nên số này chưa đầy đủ") whenever the books still leave refunds of unknown
-    method out, as Đếm két marks it — read by the owner only; another reader gets the line omitted
-    by role and no "nothing needs attention" (`daily-summary-v5`).
+    method out, as Đếm két marks it; when no figure for now can be produced, the reason Đếm két
+    gives — the books put the drawer below nothing by X ("Kiểm tra Sổ thu chi"), or the float is
+    still not recorded — never a bare "chưa tính được" — read by the owner only; another reader
+    gets the line omitted by role and no "nothing needs attention" (`daily-summary-v5`).
 
   It says "Không có việc cần chú ý" only when every source answered. Then the day's figures: orders taken in, completed and
   cancelled; money in split cash / transfer (and refunds when any); finished on time against the

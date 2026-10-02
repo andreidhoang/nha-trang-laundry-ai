@@ -343,7 +343,10 @@ class CashCountFigures:
     Báo cáo and Đếm két say it. `status_now` and `excluded_unknown_now_*` are that figure's own
     status and the refunds of unknown method it still leaves out: a "now" figure is marked
     incomplete exactly when the sheet marks it, never said as final because the count's own
-    exclusion was named "lúc đó".
+    exclusion was named "lúc đó". When no figure for now can be produced, `status_now` says why
+    (`FLOAT_MISSING`, `BOOKS_BELOW_ZERO`) and `books_over_now_vnd` how far below nothing the books
+    put the drawer now -- the reason Đếm két gives on the same sheet, never a bare "chưa tính
+    được".
     """
 
     status: Literal["COMPLETE", "INCOMPLETE", "FLOAT_MISSING", "BOOKS_BELOW_ZERO"]
@@ -359,12 +362,25 @@ class CashCountFigures:
     status_now: Literal["COMPLETE", "INCOMPLETE", "FLOAT_MISSING", "BOOKS_BELOW_ZERO"] | None = None
     excluded_unknown_now_entries: int = 0
     excluded_unknown_now_vnd: int = 0
+    books_over_now_vnd: int | None = None
 
     def __post_init__(self) -> None:
         # Fail closed: a figure for now is never taken without saying whether it is complete, and
-        # an incomplete one never without the refunds it leaves out.
+        # an incomplete one never without the refunds it leaves out; books that moved after the
+        # count never without the status that stands for now, and a figure that could not be
+        # produced never without its reason.
         if self.expected_now_vnd is not None and self.status_now not in ("COMPLETE", "INCOMPLETE"):
             raise ValueError("an expected figure for now needs its status (COMPLETE/INCOMPLETE)")
+        if self.changed_since_count and self.status_now is None:
+            raise ValueError("books that moved after the count need the status of the figure now")
+        if not self.changed_since_count and self.status_now is not None:
+            raise ValueError("a status for now only when the books moved after the count")
+        if self.status_now in ("COMPLETE", "INCOMPLETE") and self.expected_now_vnd is None:
+            raise ValueError("a COMPLETE/INCOMPLETE status for now needs its expected figure")
+        if (self.status_now == "BOOKS_BELOW_ZERO") != (
+            self.books_over_now_vnd is not None and self.books_over_now_vnd > 0
+        ):
+            raise ValueError("BOOKS_BELOW_ZERO now, and only it, names how far below nothing")
         if self.status_now == "INCOMPLETE" and self.excluded_unknown_now_entries <= 0:
             raise ValueError("an INCOMPLETE figure for now names the refunds it leaves out")
         if self.status_now == "COMPLETE" and (
@@ -951,6 +967,7 @@ def _cash_count_line(counted: CashCountFigures) -> SummaryLine | None:
         ("cash_expected_now_status", counted.status_now if moved else None),
         ("cash_excluded_unknown_now_entries", counted.excluded_unknown_now_entries if moved else 0),
         ("cash_excluded_unknown_now_vnd", counted.excluded_unknown_now_vnd if moved else 0),
+        ("cash_books_over_now_vnd", counted.books_over_now_vnd if moved else None),
     )
     sentences: list[str]
     if counted.status in ("FLOAT_MISSING", "BOOKS_BELOW_ZERO"):
@@ -990,8 +1007,20 @@ def _cash_count_line(counted: CashCountFigures) -> SummaryLine | None:
     else:
         return None
     if moved:
-        if counted.expected_now_vnd is None:
-            sentences.append("Sổ đã thay đổi sau lúc đếm; bây giờ chưa tính được số phải có.")
+        if counted.status_now == "BOOKS_BELOW_ZERO":
+            # `DEC-049`: no figure for now, and why -- by how much the books put the drawer below
+            # nothing, and where to look -- as Đếm két says it on the same sheet.
+            sentences.append(
+                "Sổ đã thay đổi sau lúc đếm: bây giờ sổ ghi tiền ra khỏi két nhiều hơn tiền vào "
+                f"{format_vnd(counted.books_over_now_vnd or 0)} nên chưa tính được số phải có. "
+                "Kiểm tra Sổ thu chi."
+            )
+        elif counted.status_now == "FLOAT_MISSING" or counted.expected_now_vnd is None:
+            still = "vẫn chưa" if counted.status == "FLOAT_MISSING" else "chưa"
+            sentences.append(
+                f"Sổ đã thay đổi sau lúc đếm: bây giờ {still} ghi tiền đầu ngày nên chưa tính "
+                "được số phải có."
+            )
         elif counted.status_now == "INCOMPLETE":
             # `DEC-049`: the figure now still leaves refunds of unknown method out -- how many,
             # their total, and that it is not complete, as Đếm két marks the same figure.

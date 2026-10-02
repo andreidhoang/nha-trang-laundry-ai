@@ -496,6 +496,8 @@ def cash_count_figures(
             now.movement.unknown_refunds_entries if moved and now.produced else 0
         ),
         excluded_unknown_now_vnd=now.movement.unknown_refunds_vnd if moved and now.produced else 0,
+        # No figure for now says why, with the amount Đếm két names on the same sheet.
+        books_over_now_vnd=now.books_over_vnd if moved else None,
     )
 
 

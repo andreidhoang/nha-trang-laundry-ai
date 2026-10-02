@@ -239,6 +239,9 @@ def test_entries_are_for_the_shops_today_only() -> None:
         ("  ", True, None, "CASH_COUNT_REASON_REQUIRED"),
         ("lý do", False, None, "CASH_COUNT_REASON_NOT_EXPECTED"),
         ("gọi 0905 123 456", True, None, "CASH_COUNT_REASON_LOOKS_LIKE_PHONE"),
+        ("khach (090) 512 3456", True, None, "CASH_COUNT_REASON_LOOKS_LIKE_PHONE"),
+        ("sdt 0905/123/456", True, None, "CASH_COUNT_REASON_LOOKS_LIKE_PHONE"),
+        ("đếm lại 02/10/2026 150k", True, "đếm lại 02/10/2026 150k", None),
         ("x" * 121, True, None, "CASH_COUNT_REASON_INVALID"),
     ],
 )

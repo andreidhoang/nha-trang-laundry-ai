@@ -611,6 +611,59 @@ def test_a_short_count_then_a_forgotten_drawer_expense_is_never_still_read_as_sh
     assert dict(line.figures)["cash_difference_vnd"] == 10_000  # the recorded one, unchanged
 
 
+def test_books_that_move_below_nothing_after_the_count_are_said_with_the_amount(
+    connection: Any,
+) -> None:
+    """Verification round 3 of 9b: thiếu 10.000 at the count; then a mistyped 1.000.000 drawer
+    expense puts the books below nothing. Đếm két says by how much and to check Sổ thu chi; the
+    owner's summary says the same, never a bare "bây giờ chưa tính được số phải có"."""
+    shop, staff = _the_counted_day(connection)
+    _record(connection, shop.store_id, staff, FLOAT, 500_000)
+    _record(connection, shop.store_id, staff, CLOSE, 590_000)
+    _expense(connection, shop, ExpenseCategory.SUA_CHUA, 1_000_000, drawer=True)
+    sheet = _sheet(connection, shop.store_id, staff)
+    assert sheet.changed_since_count
+    assert sheet.expected.status is ExpectedStatus.BOOKS_BELOW_ZERO
+    assert sheet.expected.books_over_vnd == 400_000
+    summary = _attention(connection, shop.store_id, shop.owner)
+    (line,) = [line for line in summary.rendered.lines if line.key.value == "ATTN_CASH_COUNT"]
+    assert line.text == (
+        "- Lúc đếm, két cuối ngày thiếu 10.000đ (phải có 600.000đ, đếm được 590.000đ). "
+        "Số phải có lúc đó chưa tính 1 khoản hoàn chưa rõ cách hoàn (40.000đ). "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ sổ ghi tiền ra khỏi két nhiều hơn tiền vào "
+        "400.000đ nên chưa tính được số phải có. Kiểm tra Sổ thu chi."
+    )
+    figures = dict(line.figures)
+    assert figures["cash_expected_now_status"] == "BOOKS_BELOW_ZERO"
+    assert figures["cash_books_over_now_vnd"] == 400_000
+    assert figures["cash_expected_now_vnd"] is None
+    assert figures["cash_difference_vnd"] == 10_000  # the recorded one, unchanged
+
+
+def test_a_count_with_no_float_and_books_that_moved_says_the_float_is_still_missing(
+    connection: Any,
+) -> None:
+    """Verification round 3 of 9b: a count with no float, then another drawer movement. The figure
+    for now still cannot be produced because the float is still not recorded -- said so, as Đếm
+    két says it, never a bare "bây giờ chưa tính được số phải có"."""
+    shop, staff = _the_counted_day(connection)
+    _record(connection, shop.store_id, staff, CLOSE, 300_000)
+    _expense(connection, shop, ExpenseCategory.KHAC, 10_000, drawer=True)
+    sheet = _sheet(connection, shop.store_id, staff)
+    assert sheet.changed_since_count
+    assert sheet.expected.status is ExpectedStatus.FLOAT_MISSING
+    summary = _attention(connection, shop.store_id, shop.owner)
+    (line,) = [line for line in summary.rendered.lines if line.key.value == "ATTN_CASH_COUNT"]
+    assert line.text == (
+        "- Đếm két cuối ngày được 300.000đ; lúc đếm chưa ghi tiền đầu ngày nên chưa so được. "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ vẫn chưa ghi tiền đầu ngày nên chưa tính được số "
+        "phải có."
+    )
+    figures = dict(line.figures)
+    assert figures["cash_expected_now_status"] == "FLOAT_MISSING"
+    assert figures["cash_books_over_now_vnd"] is None
+
+
 # --- roles ---
 
 

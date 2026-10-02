@@ -168,6 +168,44 @@ def test_a_note_that_looks_like_a_phone_number_is_refused() -> None:
         with pytest.raises(ShopCaptureError) as refused:
             capture_note(phone)
         assert refused.value.reason_code == "NOTE_LOOKS_LIKE_PHONE"
+
+
+@pytest.mark.parametrize(
+    "phone",
+    [
+        "khach (090) 512 3456",
+        "khach (090)512 3456",
+        "goi 090 (512) 3456",
+        "(+84) 905 123 456",
+        "(+84)905123456",
+        "sdt 0905/123/456",
+        "sdt 0905 / 123 / 456",
+        "0905/123.456",
+    ],
+)
+def test_a_phone_written_with_brackets_or_slashes_is_refused_too(phone: str) -> None:
+    """Verification round 3 of 9b: people write a phone number with brackets round the area code or
+    slashes between the groups as often as with spaces; a note is the shop's books, not a contact
+    list, however the number is punctuated."""
+    with pytest.raises(ShopCaptureError) as refused:
+        capture_note(phone)
+    assert refused.value.reason_code == "NOTE_LOOKS_LIKE_PHONE"
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "hoá đơn 02/10/2026",
+        "sửa máy 02/10/2026 150k",
+        "Grab (2 chiều) 45k",
+        "điện tháng 9 (1.234.000đ)",
+        "mua 2/3 thùng (50k)",
+    ],
+)
+def test_a_date_or_an_amount_in_brackets_is_not_read_as_a_phone(note: str) -> None:
+    """A date written with slashes, followed by an amount, and amounts in brackets stay ordinary
+    notes: only nine or more digits held together as one number are a phone."""
+    assert capture_note(note) == note
     with pytest.raises(ShopCaptureError) as refused:
         capture_note("x" * 121)
     assert refused.value.reason_code == "NOTE_INVALID"

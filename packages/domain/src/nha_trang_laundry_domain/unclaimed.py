@@ -301,6 +301,13 @@ def storage_clock(
     A hold of finished laundry is production `ON_HOLD` resuming to `READY_AT_STORE`: the domain
     permits exactly one exit, back to the shelf, so nothing happens to the laundry while it is held
     and the order is still the customer's to collect once it is lifted.
+
+    An `EXCEPTION` that interrupted `READY_AT_STORE` is the same pause until it is resolved (round 9
+    review, P1). It may go straight back to the shelf with nothing washed, so it cannot be the
+    `STOPPED` that let a payment taken meanwhile settle without the fee and a return to the shelf
+    restart the free days -- the approver-only waiver, bypassed by any operator in two calls. Only a
+    rewash (back into the wash) restarts the count, and that is the order's ready time clearing, not
+    this clock.
     """
 
     if awaiting_pickup(
@@ -312,7 +319,7 @@ def storage_clock(
         return StorageClock.RUNNING
     if (
         commercial is CommercialOrderStatus.ACTIVE
-        and production is ProductionStatus.ON_HOLD
+        and production in SHELF_INTERRUPTIONS
         and resume_to is ProductionStatus.READY_AT_STORE
         and not self_collection_recorded
         and fulfillment_mode not in MODES_EXPECTING_RETURN
@@ -330,6 +337,12 @@ class StorageHold:
     resumed_at: datetime | None
 
 
+#: The production states that interrupt finished laundry without taking it off the shelf for
+#: good: a hold, and an exception not yet resolved. Each pauses the storage fee while it lasts
+#: (`DEC-047`).
+SHELF_INTERRUPTIONS: Final = frozenset({ProductionStatus.ON_HOLD, ProductionStatus.EXCEPTION})
+
+
 class HoldMove(StrEnum):
     """What one production move does to the storage fee's hold record (`DEC-047`)."""
 
@@ -344,17 +357,21 @@ def hold_move(
 ) -> HoldMove | None:
     """`START` for a hold of finished laundry, `END` for its lifting, else `None`. Pure.
 
-    A hold of laundry still being washed is not a pause of a fee -- nothing accrues then -- and a
-    rewash needs no record: holds that began before the laundry was last ready do not count.
+    A hold of laundry still being washed is not a pause of a fee -- nothing accrues then. An
+    exception that interrupts finished laundry is a pause too (`SHELF_INTERRUPTIONS`), and any way
+    out of an exception ends it: back to the shelf continues the count, and a rewash clears the
+    ready time, so the ended record began before the next one and no longer counts.
     """
 
     if (
-        after is ProductionStatus.ON_HOLD
+        after in SHELF_INTERRUPTIONS
         and before is ProductionStatus.READY_AT_STORE
         and resume_to is ProductionStatus.READY_AT_STORE
     ):
         return HoldMove.START
     if before is ProductionStatus.ON_HOLD and after is ProductionStatus.READY_AT_STORE:
+        return HoldMove.END
+    if before is ProductionStatus.EXCEPTION:
         return HoldMove.END
     return None
 
@@ -839,6 +856,7 @@ def disposal_money(*, owed_vnd: int, paid_vnd: int) -> DisposalMoney:
 __all__ = [
     "NOTE_MAX_LENGTH",
     "PHONE_LIKE",
+    "SHELF_INTERRUPTIONS",
     "STORAGE_DECISION_REF",
     "STORAGE_POLICY_CONFIG_TYPE",
     "STORAGE_POLICY_VERSION",

@@ -80,7 +80,8 @@ v3 / window v2 in the ten minutes around the deploy no longer matches the docume
 `EXPORT_APPROVAL_NOT_BOUND`; the remedy is one new request.
 
 **The fee held and kept, and the refund's netting, since `MONEY-LIFECYCLE-009` (round 9).** The
-storage fee in `owed_vnd` is held where it stood while an order is on hold (`DEC-047`) and is never
+storage fee in `owed_vnd` is held where it stood while a finished order is on hold or in an
+exception (`DEC-047`; the exception since the round 9 review, P1) and is never
 below the part of it the payments already cover -- a waiver, a rewash, a withdrawn policy or an
 order that no longer waits leaves that part owed. A refund that nets a remedy credit already spent
 (`DEC-045`) carries the netted part in `refund_netted_remedy_vnd`. The sentence about `owed_vnd`
@@ -268,8 +269,9 @@ EXPORT_MONEY_SOURCES: tuple[ExportMoneySource, ...] = (
         "owed_vnd",
         "quote_revisions.display_total_min_vnd (current revision, when min = max)"
         " + the storage fee (order_storage_fees.amount_vnd once fixed; before that DEC-036's"
-        " accrual while the order waits for pickup, held where it stood while the order is on"
-        " hold (DEC-047), and never below the part of it order_payments already cover"
+        " accrual while the order waits for pickup, held where it stood while the finished order"
+        " is on hold or in an exception (DEC-047), and never below the part of it order_payments"
+        " already cover"
         " (MONEY-LIFECYCLE-009))",
         "produced_at",
     ),
@@ -1729,7 +1731,7 @@ def _money_rows(
             fixed_vnd=_optional_int(fixed),
             # MONEY-LIFECYCLE-009: never below the part of the fee the ledger already holds.
             paid_vnd=int(paid),
-            # DEC-047: held where it stood while the order is on hold.
+            # DEC-047: held where it stood while the finished order is on hold or in an exception.
             holds=holds_from_column(holds),
         )
         try:

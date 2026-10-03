@@ -268,14 +268,18 @@ def test_the_ready_clock_clears_for_a_rewash_and_restamps_when_it_is_finished_ag
     first_ready = _ready_at(connection, order_id)
     assert first_ready is not None, "reaching READY_AT_STORE must stamp the clock"
 
-    # A stain is found. The order goes to EXCEPTION and back to the machine.
+    # A stain is found. The order goes to EXCEPTION and back to the machine. The exception alone
+    # is not rework (round 9 review, P1): it can go straight back to the shelf with nothing washed,
+    # so it keeps the completion as a hold does -- this line used to require it cleared, which let
+    # EXCEPTION -> READY_AT_STORE restart the storage fee's free days. Going back to the machine is
+    # what clears it.
     move(production_target=ProductionStatus.EXCEPTION)
+    assert _ready_at(connection, order_id) == first_ready
+
+    move(production_target=ProductionStatus.IN_PROCESS)
     assert _ready_at(connection, order_id) is None, (
         "an order being rewashed is not finished, so the clock must not still name a completion"
     )
-
-    move(production_target=ProductionStatus.IN_PROCESS)
-    assert _ready_at(connection, order_id) is None
 
     move(production_target=ProductionStatus.QUALITY_CHECK)
     move(production_target=ProductionStatus.READY_AT_STORE)

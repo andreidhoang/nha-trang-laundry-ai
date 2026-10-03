@@ -60,6 +60,7 @@ from nha_trang_laundry_domain.settlement import (
     goods_may_leave,
 )
 from nha_trang_laundry_domain.unclaimed import (
+    SHELF_INTERRUPTIONS,
     HoldMove,
     hold_move,
     order_storage_fee,
@@ -619,6 +620,12 @@ def _ready_clock_effect(
     * A rewash is the one case that must move it. `DEC-024` makes
       `READY_AT_STORE -> EXCEPTION -> IN_PROCESS` legal because a stain found at quality check needs
       one, and while the work is being redone the order is not finished at all.
+    * An exception is not a rewash until the laundry goes back into the line (round 9 review, P1).
+      `READY_AT_STORE -> EXCEPTION -> READY_AT_STORE` washes nothing, yet it cleared the column and
+      stamped a fresh one: the unpaid storage fee, the free days, the disposal and reminder clocks
+      all restarted, which is the approver-only waiver (`DEC-047`) bypassed by any operator in two
+      calls. An exception of finished laundry now keeps the time, as a hold does, and returning to
+      the shelf from it is the same completion; only a move back below the shelf clears it.
 
     Returns `(stamp, keep)`: `stamp` is written when it is not None, and `keep` decides whether the
     existing value survives when nothing is stamped.
@@ -627,11 +634,13 @@ def _ready_clock_effect(
     if not moving_production:
         return None, True
     if after is ProductionStatus.READY_AT_STORE:
-        # Resuming a hold returns to the state the hold interrupted; it is the same completion.
-        return (None, True) if before is ProductionStatus.ON_HOLD else (moment, False)
+        # Returning from a hold or an exception goes back to the state it interrupted; it is the
+        # same completion. (The write falls back to `moment` when no time survives -- an exception
+        # entered before this rule cleared it -- so an order on the shelf always has one.)
+        return (None, True) if before in SHELF_INTERRUPTIONS else (moment, False)
     if after is ProductionStatus.RELEASED:
         return None, True
-    if after is ProductionStatus.ON_HOLD and resume_to is ProductionStatus.READY_AT_STORE:
+    if after in SHELF_INTERRUPTIONS and resume_to is ProductionStatus.READY_AT_STORE:
         return None, True
     return None, False
 
@@ -1261,8 +1270,16 @@ class OrderRepository:
             resume_to=next_state.production_resume_status,
             moment=occurred_at,
         )
-        # DEC-047: a hold of finished laundry pauses the storage fee (a hold row begins); lifting
-        # it ends the row and the count continues. Only these two production moves write it.
+        # On the shelf there is always a ready time: when a hold or an exception returns to it and
+        # none survived, this move is the completion.
+        ready_fallback = (
+            occurred_at
+            if command.production_target is not None
+            and next_state.production is ProductionStatus.READY_AT_STORE
+            else None
+        )
+        # DEC-047: a hold (or an exception) of finished laundry pauses the storage fee (a hold row
+        # begins); lifting it ends the row and the count continues. Only these moves write it.
         storage_hold = (
             hold_move(
                 before=current.production,
@@ -1313,7 +1330,7 @@ class OrderRepository:
                     balance_status = %s,
                     production_resume_status = %s, production_accepted_at = %s,
                     production_ready_at = COALESCE(
-                        %s, CASE WHEN %s THEN production_ready_at ELSE NULL END
+                        %s, CASE WHEN %s THEN production_ready_at ELSE NULL END, %s
                     ),
                     production_released_at = COALESCE(production_released_at, %s),
                     closed_at = COALESCE(closed_at, %s), row_version = row_version + 1
@@ -1333,6 +1350,7 @@ class OrderRepository:
                     next_state.production_accepted_at,
                     ready_now,
                     ready_keep,
+                    ready_fallback,
                     released_now,
                     closed_at,
                     command.order_id,

@@ -53,6 +53,7 @@ from nha_trang_laundry_db.unclaimed import (
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     CustodyResolution,
+    ProductionStatus,
     RewashReason,
 )
 from nha_trang_laundry_domain.order_steps import OrderStep
@@ -155,6 +156,20 @@ EXPECTED: dict[str, dict[str, tuple[int, int, str]]] = {
         "a": (TOTAL_VND + FEE_DAY_25, DEPOSIT, "PARTIALLY_PAID"),
         "b": (TOTAL_VND + FEE_DAY_25, PART_OF_FEE, "PARTIALLY_PAID"),
     },
+    # Round 9 review, P1: an exception of finished laundry is the same pause -- straight back to
+    # the shelf (the per-axis route, an operator, no rewash reason) erased the unpaid fee.
+    "exception": {
+        "a": (TOTAL_VND + FEE_DAY_25, DEPOSIT, "PARTIALLY_PAID"),
+        "b": (TOTAL_VND + FEE_DAY_25, PART_OF_FEE, "PARTIALLY_PAID"),
+    },
+    "exception_then_shelf": {
+        "a": (TOTAL_VND + FEE_DAY_25, DEPOSIT, "PARTIALLY_PAID"),
+        "b": (TOTAL_VND + FEE_DAY_25, PART_OF_FEE, "PARTIALLY_PAID"),
+    },
+    "exception_then_resume": {
+        "a": (TOTAL_VND + FEE_DAY_25, DEPOSIT, "PARTIALLY_PAID"),
+        "b": (TOTAL_VND + FEE_DAY_25, PART_OF_FEE, "PARTIALLY_PAID"),
+    },
     "rewash_in_progress": {
         "a": (TOTAL_VND, DEPOSIT, "PARTIALLY_PAID"),
         "b": (PART_OF_FEE, PART_OF_FEE, "PARTIALLY_PAID"),
@@ -190,6 +205,14 @@ def _apply(connection: Any, event: str, order_id: UUID, staff: Any, shop: _Shop)
         _do(connection, order_id, staff, OrderStep.HOLD)
     elif event == "hold_then_resume":
         _do(connection, order_id, staff, OrderStep.HOLD)
+        _do(connection, order_id, staff, OrderStep.RESUME)
+    elif event == "exception":
+        _production(connection, order_id, staff, ProductionStatus.EXCEPTION)
+    elif event == "exception_then_shelf":
+        _production(connection, order_id, staff, ProductionStatus.EXCEPTION)
+        _production(connection, order_id, staff, ProductionStatus.READY_AT_STORE)
+    elif event == "exception_then_resume":
+        _production(connection, order_id, staff, ProductionStatus.EXCEPTION)
         _do(connection, order_id, staff, OrderStep.RESUME)
     elif event == "rewash_in_progress":
         _do(connection, order_id, staff, OrderStep.REWASH, rewash_reason=RewashReason.NOT_CLEAN)
@@ -238,6 +261,22 @@ def _apply(connection: Any, event: str, order_id: UUID, staff: Any, shop: _Shop)
         )
     else:  # pragma: no cover - the table above names every event
         raise AssertionError(event)
+
+
+def _production(connection: Any, order_id: UUID, staff: Any, target: ProductionStatus) -> Any:
+    """The per-axis production move (`POST .../production-transition`): an operator may send it."""
+
+    return OrderRepository().transition(
+        connection,
+        OrderTransitionCommand(
+            order_id,
+            _read(connection, order_id, staff).row_version,
+            staff,
+            f"production-{uuid4().hex}",
+            uuid4(),
+            production_target=target,
+        ),
+    )
 
 
 def _disposal(connection: Any, order_id: UUID, shop: _Shop) -> Any:
@@ -824,13 +863,15 @@ def test_a_hold_does_not_protect_the_unpaid_fee_from_the_events_that_do_lower_it
             _do(connection, order_id, staff, OrderStep.RESUME)
             _apply(connection, "rewash_ready_again", order_id, staff, shop)
             # The hold ended at RESUME and began before the new ready time: it no longer counts.
+            # Nor does the rewash's own pause (its exception of the finished bag, round 9 review
+            # P1), ended when the bag went back into the wash.
             assert _rows(
                 connection,
                 "SELECT h.resumed_at IS NOT NULL, h.held_at < o.production_ready_at "
                 "FROM order_storage_holds h JOIN orders o ON o.id = h.order_id "
-                "WHERE h.order_id = %s",
+                "WHERE h.order_id = %s ORDER BY h.held_at",
                 order_id,
-            ) == [(True, True)]
+            ) == [(True, True), (True, True)]
         elif fall == "policy_withdrawn":
             publish_storage_policy(
                 connection, actor_id=shop.owner.staff_user_id, payload=withdrawal_document()
@@ -878,12 +919,141 @@ def test_a_hold_record_admits_one_open_hold_and_only_its_end(
             connection.execute(
                 "UPDATE order_storage_holds SET resumed_at = now() WHERE id = %s", (hold_id,)
             )
-        # A hold of laundry still being washed writes no hold record at all.
+        # A hold of laundry still being washed writes no hold record at all. (The rewash's own
+        # exception of the finished bag is a pause, begun and ended within the step -- round 9
+        # review, P1 -- so the HOLD is measured against what the rewash left.)
         washing = _ready_for(connection, shop, staff, None)
         _do(connection, washing, staff, OrderStep.REWASH, rewash_reason=RewashReason.NOT_CLEAN)
-        _do(connection, washing, staff, OrderStep.HOLD)
+        count_sql = "SELECT count(*) FROM order_storage_holds WHERE order_id = %s"
         assert _rows(
-            connection, "SELECT count(*) FROM order_storage_holds WHERE order_id = %s", washing
+            connection,
+            "SELECT count(*) FROM order_storage_holds WHERE order_id = %s AND resumed_at IS NULL",
+            washing,
         ) == [(0,)]
+        rewashed = _rows(connection, count_sql, washing)
+        _do(connection, washing, staff, OrderStep.HOLD)
+        assert _rows(connection, count_sql, washing) == rewashed
     finally:
         connection.rollback()
+
+
+@pytest.mark.parametrize("back", ["per_axis", "resume_step"])
+def test_an_exception_and_straight_back_to_the_shelf_does_not_erase_the_fee(
+    connection: psycopg.Connection[Any], back: str
+) -> None:
+    """Round 9 review, P1, the verifier's reproduction: 25 days on the shelf (25.000 ₫ accrued),
+    an operator sends EXCEPTION and then READY_AT_STORE (or RESUME). Nothing was washed.
+
+    Before: the exception cleared the ready time, the fee read nothing while it lasted, and the
+    return stamped a fresh ready time -- 110.000 ₫ read PAID with no fee fixed, and the free days,
+    days waiting and disposal clock all restarted. Now the exception is a pause like a hold: the fee
+    stands through it, the quoted total taken during it leaves the fee owed, and the return keeps
+    the ready time, the days counted and the contact attempts.
+    """
+
+    now = datetime.now(UTC)
+    shop = _Shop(connection, now)
+    publish_storage_policy(connection, actor_id=shop.owner.staff_user_id, payload=storage_payload())
+    staff = _operator(connection, shop.store_id)
+    try:
+        order_id = _ready_for(connection, shop, staff, None)
+        _age_ready(connection, order_id, 25)
+        _attempt(connection, order_id, staff, at=_shop_day(2, 10))
+        [(ready_at,)] = _rows(
+            connection, "SELECT production_ready_at FROM orders WHERE id = %s", order_id
+        )
+        before = _waiting(connection, shop, staff)[order_id]
+        assert (before.days_waiting, before.attempts_count) == (25, 1)
+
+        _production(connection, order_id, staff, ProductionStatus.EXCEPTION)
+        excepted = _read(connection, order_id, staff)
+        assert (excepted.production, excepted.owed_vnd) == (
+            ProductionStatus.EXCEPTION,
+            TOTAL_VND + FEE_DAY_25,
+        )
+        assert _rows(
+            connection, "SELECT production_ready_at FROM orders WHERE id = %s", order_id
+        ) == [(ready_at,)]
+        _age_hold(connection, order_id, 4)  # four days in the exception
+        storage = _fee(connection, order_id, staff)
+        assert (storage.fee.status, storage.fee.amount_vnd) == (
+            StorageFeeStatus.PAUSED,
+            FEE_DAY_25,
+        )
+        # The quoted total taken during the exception does not settle the fee away.
+        paid = _pay(connection, order_id, staff, TOTAL_VND)
+        assert (paid.balance_status, paid.remaining_vnd) == ("PARTIALLY_PAID", FEE_DAY_25)
+
+        if back == "per_axis":
+            _production(connection, order_id, staff, ProductionStatus.READY_AT_STORE)
+        else:
+            _do(connection, order_id, staff, OrderStep.RESUME)
+        shelf = _read(connection, order_id, staff)
+        assert (shelf.production, shelf.owed_vnd, shelf.paid_vnd, shelf.balance.value) == (
+            ProductionStatus.READY_AT_STORE,
+            TOTAL_VND + FEE_DAY_25,
+            TOTAL_VND,
+            "PARTIALLY_PAID",
+        )
+        # The same completion: the ready time (moved back four days by the harness, with the
+        # exception) is not restamped, the four days do not count, the contact attempt still does.
+        [(ready_after,)] = _rows(
+            connection, "SELECT production_ready_at FROM orders WHERE id = %s", order_id
+        )
+        assert ready_after < now and (now - ready_after).days >= 25
+        after = _waiting(connection, shop, staff)[order_id]
+        assert (after.days_waiting, after.attempts_count) == (25, 1)
+        assert after.remaining_vnd == FEE_DAY_25
+        assert _rows(
+            connection, "SELECT count(*) FROM order_storage_fees WHERE order_id = %s", order_id
+        ) == [(0,)]
+        settled = _pay(connection, order_id, staff, FEE_DAY_25)
+        assert settled.balance_status == "PAID"
+        assert _rows(
+            connection,
+            "SELECT amount_vnd, basis FROM order_storage_fees WHERE order_id = %s",
+            order_id,
+        ) == [(FEE_DAY_25, "ACCRUED")]
+    finally:
+        connection.rollback()
+        publish_storage_policy(
+            connection, actor_id=shop.owner.staff_user_id, payload=withdrawal_document()
+        )
+        connection.commit()
+
+
+@pytest.mark.parametrize("rework", [ProductionStatus.IN_PROCESS, ProductionStatus.QUALITY_CHECK])
+def test_an_exception_that_goes_back_into_the_line_still_restarts_the_free_days(
+    connection: psycopg.Connection[Any], rework: ProductionStatus
+) -> None:
+    """The neighbour: DEC-047 keeps the rewash rule. Back below the shelf is rework (DEC-024); the
+    ready time clears, the pause ended with it, and the next completion restarts the free days."""
+
+    now = datetime.now(UTC)
+    shop = _Shop(connection, now)
+    publish_storage_policy(connection, actor_id=shop.owner.staff_user_id, payload=storage_payload())
+    staff = _operator(connection, shop.store_id)
+    try:
+        order_id = _ready_for(connection, shop, staff, None)
+        _age_ready(connection, order_id, 25)
+        _production(connection, order_id, staff, ProductionStatus.EXCEPTION)
+        _production(connection, order_id, staff, rework)
+        assert _rows(
+            connection,
+            "SELECT o.production_ready_at IS NULL, h.resumed_at IS NOT NULL "
+            "FROM orders o JOIN order_storage_holds h ON h.order_id = o.id WHERE o.id = %s",
+            order_id,
+        ) == [(True, True)]
+        assert _read(connection, order_id, staff).owed_vnd == TOTAL_VND
+        if rework is ProductionStatus.IN_PROCESS:
+            _production(connection, order_id, staff, ProductionStatus.QUALITY_CHECK)
+        _production(connection, order_id, staff, ProductionStatus.READY_AT_STORE)
+        view = _read(connection, order_id, staff)
+        assert (view.owed_vnd, view.remaining_vnd) == (TOTAL_VND, TOTAL_VND)
+        assert _waiting(connection, shop, staff)[order_id].days_waiting == 0
+    finally:
+        connection.rollback()
+        publish_storage_policy(
+            connection, actor_id=shop.owner.staff_user_id, payload=withdrawal_document()
+        )
+        connection.commit()

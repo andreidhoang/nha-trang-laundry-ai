@@ -479,3 +479,45 @@ def test_the_clock_pauses_only_for_finished_laundry_held_for_the_customer() -> N
         {"self_collection_recorded": True},
     ):
         assert storage_clock(**{**base, **change}) is StorageClock.STOPPED  # type: ignore[arg-type]
+
+
+def test_an_exception_of_finished_laundry_pauses_the_fee_like_a_hold() -> None:
+    """Round 9 review, P1: `READY_AT_STORE -> EXCEPTION -> READY_AT_STORE` washes nothing.
+
+    The exception was `STOPPED`, so the fee read nothing while it lasted (a payment then settled
+    without it) and the return to the shelf restarted the free days -- the approver-only waiver
+    bypassed by any operator. It is a pause now; only a rewash restarts the count.
+    """
+
+    from nha_trang_laundry_domain.catalog import FulfillmentMode
+    from nha_trang_laundry_domain.unclaimed import storage_clock
+
+    p = ProductionStatus
+    base = {
+        "commercial": CommercialOrderStatus.ACTIVE,
+        "production": p.EXCEPTION,
+        "resume_to": p.READY_AT_STORE,
+        "fulfillment_mode": FulfillmentMode.SELF_DROP_SELF_COLLECT,
+        "self_collection_recorded": False,
+    }
+    assert storage_clock(**base) is StorageClock.PAUSED  # type: ignore[arg-type]
+    for change in (
+        {"resume_to": p.QUALITY_CHECK},  # an exception at quality check: nothing had accrued
+        {"resume_to": p.IN_PROCESS},
+        {"commercial": CommercialOrderStatus.CANCELLATION_REVIEW},
+        {"fulfillment_mode": FulfillmentMode.PICKUP_AND_RETURN},
+        {"self_collection_recorded": True},
+    ):
+        assert storage_clock(**{**base, **change}) is StorageClock.STOPPED  # type: ignore[arg-type]
+
+    # The pause is recorded like a hold's: it begins when finished laundry meets an exception ...
+    assert hold_move(before=p.READY_AT_STORE, after=p.EXCEPTION, resume_to=p.READY_AT_STORE) is (
+        HoldMove.START
+    )
+    # ... not when the exception interrupts the wash (nothing accrues then) ...
+    for interrupted in (p.QUEUED, p.IN_PROCESS, p.QUALITY_CHECK):
+        assert hold_move(before=interrupted, after=p.EXCEPTION, resume_to=interrupted) is None
+    # ... and every way out of an exception ends it: back to the shelf continues the count, and a
+    # rewash clears the ready time, so the ended record no longer counts.
+    for target in (p.READY_AT_STORE, p.QUALITY_CHECK, p.IN_PROCESS, p.QUEUED):
+        assert hold_move(before=p.EXCEPTION, after=target, resume_to=None) is HoldMove.END

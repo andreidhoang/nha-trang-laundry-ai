@@ -189,7 +189,7 @@ def test_the_window_query_version_is_pinned_to_the_rule_it_names() -> None:
     # (DEC-045) and its method (GOODS-AND-DRAWER-009), as the day's v5; v3 (`43d07dec2e624992`)
     # is retired.
     assert EXPORT_WINDOW_QUERY.identifier == "store-window-orders-export-v4"
-    assert EXPORT_WINDOW_QUERY.label == "store-window-orders-export-v4:399af4d465fbd6f2"
+    assert EXPORT_WINDOW_QUERY.label == "store-window-orders-export-v4:fef6ea1290a21254"
     assert EXPORT_WINDOW_QUERY.label != "store-window-orders-export-v3:43d07dec2e624992"
     assert EXPORT_WINDOW_QUERY.label != EXPORT_QUERY.label
 

@@ -388,7 +388,7 @@ def test_the_export_query_version_is_pinned_to_the_rule_it_names() -> None:
     # applied only while the laundry waited, which stopped being true. v4 is retired: its label is
     # pinned here so a later edit cannot quietly bring it back.
     assert EXPORT_QUERY.identifier == "store-day-orders-export-v5"
-    assert EXPORT_QUERY.label == "store-day-orders-export-v5:9a25c6013bb9bdf9"
+    assert EXPORT_QUERY.label == "store-day-orders-export-v5:453c251c1ba109d2"
     assert EXPORT_QUERY.label != "store-day-orders-export-v4:c2ce1e9e6379d784"
 
 

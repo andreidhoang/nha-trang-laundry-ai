@@ -11754,6 +11754,49 @@ def _held_on_ready_day(console: Console) -> None:
     )
 
 
+def _exception_back_to_the_shelf(console: Console) -> None:
+    """Round 9 review, P1: an operator sent finished laundry EXCEPTION and straight back to
+    READY_AT_STORE on the per-axis route -- nothing washed, no rewash reason. The unpaid storage fee
+    vanished, the quoted total settled the order, and the free days restarted. An exception of
+    finished laundry is a pause like a hold (DEC-047): the fee and the days stand through it."""
+
+    head("33h", "LỖI RỒI VỀ KỆ — an exception and straight back keeps the fee and the days (P1)")
+    order_id = console.build_order(kg="7", stop="ready")["order_id"]
+    _age_ready(order_id, 25)
+    before = console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}
+    ready_at = stored(order_id, "production_ready_at")
+    for target in ("EXCEPTION", "READY_AT_STORE"):
+        moved = console.call(
+            "POST",
+            f"/internal/v1/orders/{order_id}/production-transition",
+            {"target": target},
+            if_match=console.current_version(order_id, None),
+        )
+        if moved["status"] >= 300:
+            raise AssertionError(f"could not move to {target}: {moved['text'][:200]}")
+    after = console.call("GET", f"/internal/v1/orders/{order_id}").get("body") or {}
+    storage = console.call("GET", f"/internal/v1/orders/{order_id}/storage").get("body") or {}
+    ok(
+        "day 25 on the shelf: the fee accrued before the exception is still owed after it",
+        int(before.get("owed_vnd") or 0) > int(before.get("payable_total_vnd") or 0)
+        and after.get("owed_vnd") == before.get("owed_vnd")
+        and after.get("remaining_vnd") == before.get("remaining_vnd"),
+        json.dumps(
+            {
+                "before": {k: before.get(k) for k in ("owed_vnd", "remaining_vnd")},
+                "after": {k: after.get(k) for k in ("owed_vnd", "remaining_vnd")},
+            }
+        ),
+    )
+    ok(
+        "the same completion: the ready time is not restamped and 25 days still count",
+        stored(order_id, "production_ready_at") == ready_at
+        and storage.get("days_waiting") == 25
+        and (storage.get("storage_fee") or {}).get("status") == "ACCRUING",
+        json.dumps({k: storage.get(k) for k in ("days_waiting", "held_days", "storage_fee")})[:240],
+    )
+
+
 def _unknown_ready_first(console: Console) -> None:
     """J1, verification round 2 (P2): an order waiting for pickup with no recorded ready time
     (legacy data `0037` keeps as NULL) has an unknown wait, possibly the longest. Đồ chờ lấy lists
@@ -12037,6 +12080,7 @@ def scenario_money_residual(console: Console) -> None:
     _held_on_ready_day(console)
     _unknown_ready_first(console)
     _midnight_hold_ranks_by_counted_days(console)
+    _exception_back_to_the_shelf(console)
 
     head("33b", "KHÁCH CÔNG NỢ GIAO TẬN NƠI — Ghi vào công nợ beside Thu tiền, then the trip (J5)")
     console.sign_in("demo-owner")

@@ -429,11 +429,19 @@ def main(argv: list[str] | None = None) -> int:
             # A file that cannot be written (a full disk, a directory that is a file) must not
             # turn a failed send into a traceback and exit 1, "delivered" (round-9b verifier).
             problem = pending_alerts.try_save(pending_file, state)
-            kept = (
-                f"; kept to resend next run ({len(state.alerts)} waiting in {pending_file})"
-                if problem is None
-                else f"; NOT kept for a retry: {problem}"
-            )
+            if problem is None:
+                kept = f"; kept to resend next run ({len(state.alerts)} waiting in {pending_file})"
+            elif composition.deferred:
+                # `prepare` wrote this run's (deferred) alert beside the kept ones BEFORE the send,
+                # so everything is still on disk and goes next run; only this attempt is not
+                # counted (round-9b L residual: this said "NOT kept" of alerts that were kept).
+                kept = (
+                    f"; this run's alert was kept before the send ({pending_file}) and goes next "
+                    "run, the earlier alert(s) stay kept; WARNING the failed attempt was not "
+                    f"recorded: {problem}"
+                )
+            else:
+                kept = f"; NOT kept for a retry: {problem}"
         else:
             kept = "; NOT kept for a retry: set R1_ALERT_PENDING_DIRECTORY or R1_ALERT_LOG_FILE"
         _log(label, f"ALERT NOT DELIVERED: {error} -- failing: {checks}{kept}", log_file)

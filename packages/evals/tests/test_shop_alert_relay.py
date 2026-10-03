@@ -1859,3 +1859,86 @@ def test_the_direct_path_with_nowhere_to_keep_a_failed_alert_says_so(
     stderr = capsys.readouterr().err
     assert "ALERT NOT DELIVERED: OSError" in stderr
     assert "NOT kept for a retry" in stderr and "Not a directory" in stderr, stderr
+
+
+def _fills_after_first_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The disk fills during the send: the pending file's first write (`prepare`, before the send)
+    succeeds, every later one fails with ENOSPC."""
+
+    import errno
+
+    original = Path.write_text
+    writes: list[Path] = []
+
+    def _write(self: Path, *arguments: Any, **keywords: Any) -> int:
+        writes.append(self)
+        if len(writes) > 1:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return original(self, *arguments, **keywords)
+
+    monkeypatch.setattr(Path, "write_text", _write)
+
+
+def test_a_deferred_alert_kept_before_a_failed_send_is_not_logged_as_not_kept(
+    telegram_stub: _Stub,
+    credentials: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round-9b L residual (verifier, P2). `prepare` writes the deferred current alert to the
+    pending file BEFORE the send. When the send then fails and the disk fills meanwhile (exactly
+    when volume alerts fire), the after-failure write fails -- and the relay logged "NOT kept for a
+    retry" although both alerts were on disk and went next run. It says what is true now: kept
+    before the send, the failed attempt not recorded."""
+
+    pending = _pending()
+    environment = {
+        **credentials,
+        "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base,
+        "R1_ALERT_PENDING_DIRECTORY": str(tmp_path / "state"),
+    }
+    path = pending.pending_path("checks-data", environment)
+    pending.save(path, _kept(OLD_WAL_ALERT, ("wal_archive_gap",)))
+    current = f"{HEADING}\n• volume_free: " + "v" * 3000
+    document = {**_FAILING_DOCUMENT, "alert": {"text": current, "checks": ["volume_free"]}}
+    telegram_stub.status = 500
+    _fills_after_first_write(monkeypatch)
+
+    code = _run_relay_in_process(monkeypatch, environment, document)
+    log = Path(credentials["R1_ALERT_LOG_FILE"]).read_text("utf-8")
+    assert code == 3, log
+    assert "ALERT NOT DELIVERED" in log and "NOT kept" not in log, log
+    assert "kept before the send" in log and "No space left" in log, log
+    assert "failed attempt was not recorded" in log, log
+    kept, _ = pending.load(path, now=NOON)
+    assert [alert.text for alert in kept.alerts] == [OLD_WAL_ALERT, current]
+
+
+def test_the_direct_path_does_not_call_a_deferred_alert_it_kept_not_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`check_shop_operations.deliver_alert._kept` had the same wording (the verifier named it)."""
+
+    pending = _pending()
+    checks = importlib.import_module("check_shop_operations")
+    token = tmp_path / "token"
+    token.write_text("probe-token", encoding="utf-8")
+    directory = tmp_path / "state"
+    path = pending.pending_path("direct", {"R1_ALERT_PENDING_DIRECTORY": str(directory)})
+    pending.save(path, _kept(OLD_WAL_ALERT, ("wal_archive_gap",)))
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_TOKEN_FILE", str(token))
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_CHAT_ID", "1234")
+    monkeypatch.setenv("R1_ALERT_PENDING_DIRECTORY", str(directory))
+
+    def _refused(request: Any, timeout: float = 0) -> Any:
+        raise OSError("network is unreachable")
+
+    monkeypatch.setattr(checks.urllib.request, "urlopen", _refused)
+    _fills_after_first_write(monkeypatch)
+    failure = checks.CheckResult("volume_free", False, "v" * 3000, {})
+    assert checks.deliver_alert([failure], now=NOON) is False
+    stderr = capsys.readouterr().err
+    assert "ALERT NOT DELIVERED: OSError" in stderr
+    assert "NOT kept" not in stderr and "kept before the send" in stderr, stderr
+    kept, _ = pending.load(path, now=NOON)
+    assert [alert.checks for alert in kept.alerts] == [("wal_archive_gap",), ("volume_free",)]

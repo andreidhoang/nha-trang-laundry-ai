@@ -1401,7 +1401,14 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
                     deferred=composition.deferred,
                 ),
             )
-            if problem is not None:
+            if problem is not None and composition.deferred:
+                # `prepare` kept this run's (deferred) alert before the send: it is on disk and
+                # goes next run (round-9b L residual: this said "NOT kept" of a kept alert).
+                _not_delivered(
+                    "this run's alert was kept before the send and goes next run, the earlier "
+                    f"alert(s) stay kept; the failed attempt was not recorded: {problem}"
+                )
+            elif problem is not None:
                 _not_delivered(f"NOT kept for a retry: {problem}")
 
     try:

@@ -239,6 +239,66 @@ def test_a_delivery_leg_carries_its_trip_cost_and_refuses_a_bad_one(
     )
 
 
+def test_a_malformed_trip_or_any_other_body_is_answered_without_the_values_it_held(
+    connection: Any, client: TestClient
+) -> None:
+    """Round 9 review, P2: the trip note goes through `capture_note` (refused when it looks like a
+    phone), but its path was on none of the redacting handler's path lists, so a framework 422 -- a
+    field missing, the note too long -- echoed the body, phone included. The redaction was opt-in by
+    path and every new free-text route had to remember to join it; it is now every path.
+
+    The matrix: each way the framework refuses a trip body, then the neighbours -- a complaint
+    (free text on a route that was never on a list) and a quote-free body that is not ours at all.
+    Each answers where and what, never the value; a server bound the console words its sentence
+    from (`ctx`, numbers only) is kept.
+    """
+
+    shop = _Shop(connection)
+    order_id, _ = shop.order(FulfillmentMode.PICKUP_AND_RETURN)
+    _as(shop.staff)
+    phone = "0905123456"
+    note = f"goi khach {phone}"
+    path = f"/internal/v1/orders/{order_id}/delivery-legs"
+    base = {"leg_kind": "PICKUP", "outcome": "SUCCEEDED", "note": note}
+    malformed: dict[str, tuple[str, dict[str, Any]]] = {
+        "leg kind missing": (path, {k: v for k, v in base.items() if k != "leg_kind"}),
+        "outcome unknown": (path, {**base, "outcome": phone}),
+        "note too long": (path, {**base, "note": (note + " ") * 20}),
+        "note not text": (path, {**base, "note": [note]}),
+        "a field not ours": (path, {**base, "remark": note}),
+        "cost a string": (path, {**base, "cost_vnd": phone}),
+        "cost below 0": (path, {**base, "cost_vnd": -1}),
+        "km too long": (path, {**base, "km": phone}),
+        "complaint without its order": (
+            f"/internal/v1/stores/{shop.store_id}/incidents",
+            {"evidence_summary": f"khach {phone} bao rach ao"},
+        ),
+    }
+    for name, (target, body) in malformed.items():
+        refused = client.post(target, headers=_headers(), json=body)
+        assert refused.status_code == 422, (name, refused.text)
+        assert phone not in refused.text, name
+        detail = refused.json()["detail"]
+        assert detail and isinstance(detail, list), name
+        for item in detail:
+            assert "input" not in item, name
+            assert set(item) <= {"type", "loc", "msg", "ctx"}, name
+            assert all(
+                isinstance(bound, int | float) and not isinstance(bound, bool)
+                for bound in item.get("ctx", {}).values()
+            ), name
+    # The console's sentence keeps its bound: "Ghi chú: dài quá 200 ký tự".
+    too_long = client.post(
+        path, headers=_headers(), json={**base, "note": (note + " ") * 20}
+    ).json()["detail"]
+    assert [(item["type"], item["loc"], item.get("ctx")) for item in too_long] == [
+        ("string_too_long", ["body", "note"], {"max_length": 200})
+    ]
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM delivery_legs WHERE order_id = %s", (order_id,))
+        assert cursor.fetchone()[0] == 0
+
+
 # --- Sổ thu chi ---------------------------------------------------------------------------------
 
 

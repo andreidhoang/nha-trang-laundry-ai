@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Final
+from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_db.connection import application_connect
@@ -27,10 +27,6 @@ from nha_trang_laundry_db.late_deliveries import (
 from nha_trang_laundry_domain.late_delivery import LateDeliveryDecision, NotStoreFaultReason
 
 from nha_trang_laundry_api.auth import AuthSettings
-
-#: The one route whose body may carry a note a person typed; its malformed-request answers leave
-#: the values out, as the customer and unclaimed routes' do.
-LATE_DELIVERY_FREE_TEXT_MARKER: Final = "/late-deliveries/"
 
 
 class LateDeliveryServiceUnavailable(RuntimeError):
@@ -92,7 +88,6 @@ class LateDeliveryService:
 
 
 __all__ = [
-    "LATE_DELIVERY_FREE_TEXT_MARKER",
     "LATE_DELIVERY_ROLES",
     "LIST_MAX_LIMIT",
     "LateDeliveryAuthorizationError",

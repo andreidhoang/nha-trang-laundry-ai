@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, date, datetime
-from typing import Any, Final
+from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_db.cash_counts import (
@@ -25,12 +25,6 @@ from nha_trang_laundry_db.reports import shop_today
 from nha_trang_laundry_domain.cash_count import CashCountKind
 
 from nha_trang_laundry_api.auth import AuthSettings
-
-#: The drawer's write paths that carry free text a person typed, refused by the rules when it looks
-#: like a phone number: a cash-count correction's reason, and the Sổ thu chi line's note (the body
-#: that carries the "Trả từ két" tick). A body the framework itself refuses on these paths is
-#: answered without the values it held (`main._customer_validation_failed`).
-CASH_COUNT_FREE_TEXT_PATH_SUFFIXES: Final = ("/cash-count", "/expenses")
 
 
 class CashCountUnavailable(RuntimeError):

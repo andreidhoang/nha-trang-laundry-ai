@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Final
+from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_db.connection import application_connect
@@ -40,10 +40,6 @@ from nha_trang_laundry_domain.unclaimed import (
 )
 
 from nha_trang_laundry_api.auth import AuthSettings
-
-#: The two routes whose body carries free text a person typed (a contact note, a waiver reason).
-#: Their malformed-request answers leave the values out, as the customer routes' do.
-UNCLAIMED_FREE_TEXT_PATH_SUFFIXES: Final = ("/contact-attempts", "/storage-fee-waiver")
 
 
 class UnclaimedServiceUnavailable(RuntimeError):
@@ -157,7 +153,6 @@ class UnclaimedService:
 
 __all__ = [
     "DISPOSAL_ROLES",
-    "UNCLAIMED_FREE_TEXT_PATH_SUFFIXES",
     "UNCLAIMED_LIST_MAX_LIMIT",
     "UNCLAIMED_READ_ROLES",
     "WAIVER_ROLES",

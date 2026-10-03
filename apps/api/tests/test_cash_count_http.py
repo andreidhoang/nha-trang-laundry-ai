@@ -338,7 +338,16 @@ def test_a_malformed_entry_is_answered_without_the_values_it_held(
         assert refused.status_code == 422, name
         assert phone not in refused.text, name
         detail = refused.json()["detail"]
-        assert detail and all(set(item) == {"type", "loc", "msg"} for item in detail), name
+        # Where and what -- and, since round 9 review P2, the bound the value was checked against
+        # (`ctx`, numbers only): without it the console read "không được nhỏ hơn " with no number.
+        # Never `input`, never anything else in `ctx`.
+        assert detail and all(set(item) <= {"type", "loc", "msg", "ctx"} for item in detail), name
+        assert all("input" not in item for item in detail), name
+        assert all(
+            isinstance(bound, int) and not isinstance(bound, bool)
+            for item in detail
+            for bound in item.get("ctx", {}).values()
+        ), name
         assert all(item["loc"] and item["loc"][0] == "body" for item in detail), name
     # The neighbour: the Sổ thu chi line that carries the "Trả từ két" tick has a free-text note.
     _as(shop.owner)

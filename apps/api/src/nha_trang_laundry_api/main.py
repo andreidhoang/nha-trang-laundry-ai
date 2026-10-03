@@ -1,20 +1,19 @@
 """Staff-only API entry point. Public customer endpoints are intentionally absent."""
 
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from contextlib import suppress
 from datetime import UTC, date, datetime
 from hashlib import sha256
 from pathlib import Path
 from secrets import token_urlsafe
 from time import perf_counter
-from typing import Annotated, Any, Literal, NoReturn, Self
+from typing import Annotated, Any, Final, Literal, NoReturn, Self
 from urllib.parse import urlencode
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
-from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from nha_trang_laundry_contracts.channel_envelope import ReconciliationState
@@ -268,12 +267,10 @@ from nha_trang_laundry_api.auth import (
 )
 from nha_trang_laundry_api.authorization import RouteGate, register_gate
 from nha_trang_laundry_api.cash_count import (
-    CASH_COUNT_FREE_TEXT_PATH_SUFFIXES,
     CashCountService,
     CashCountUnavailable,
 )
 from nha_trang_laundry_api.customers import (
-    CUSTOMER_PATH_MARKER,
     CustomerService,
     CustomersUnavailable,
     install_access_log_redaction,
@@ -288,7 +285,6 @@ from nha_trang_laundry_api.daily_summary import (
 # EINVOICE-REQUEST-001 (DEC-040).
 from nha_trang_laundry_api.invoice_requests import (
     INVOICE_CLOSE_ROLES,
-    INVOICE_PATH_MARKER,
     INVOICE_READ_ROLES,
     INVOICE_WRITE_ROLES,
     InvoiceRequestService,
@@ -296,7 +292,6 @@ from nha_trang_laundry_api.invoice_requests import (
 )
 from nha_trang_laundry_api.invoice_requests import LIST_MAX_LIMIT as INVOICE_LIST_MAX_LIMIT
 from nha_trang_laundry_api.late_deliveries import (
-    LATE_DELIVERY_FREE_TEXT_MARKER,
     LATE_DELIVERY_ROLES,
     LateDeliveryAuthorizationError,
     LateDeliveryRefused,
@@ -329,7 +324,6 @@ from nha_trang_laundry_api.security import BrowserSecurityMiddleware, RequestSiz
 from nha_trang_laundry_api.shop_capture import ShopCaptureService, ShopCaptureUnavailable
 from nha_trang_laundry_api.unclaimed import (
     DISPOSAL_ROLES,
-    UNCLAIMED_FREE_TEXT_PATH_SUFFIXES,
     UNCLAIMED_LIST_MAX_LIMIT,
     UNCLAIMED_READ_ROLES,
     WAIVER_ROLES,
@@ -4342,42 +4336,58 @@ require_customer_reader = staff_gate(
 )
 
 
+#: The parts of a validation item's `ctx` that are a bound the server checked against -- a number
+#: it chose, never a value a person typed. The console words its sentence from these
+#: ("dài quá 200 ký tự"); anything else in `ctx` (a validator's message, which may quote the value)
+#: is left out.
+_VALIDATION_BOUNDS: Final = frozenset(
+    {"gt", "ge", "lt", "le", "min_length", "max_length", "multiple_of", "max_digits"}
+)
+
+
+def _validation_bounds(item: Mapping[str, Any]) -> dict[str, int | float]:
+    context = item.get("ctx")
+    if not isinstance(context, Mapping):
+        return {}
+    return {
+        str(key): value
+        for key, value in context.items()
+        if key in _VALIDATION_BOUNDS
+        and isinstance(value, int | float)
+        and not isinstance(value, bool)
+    }
+
+
 @app.exception_handler(RequestValidationError)
 async def _customer_validation_failed(request: Request, error: Exception) -> Response:
-    """A malformed customer request is answered without echoing what was sent.
+    """A malformed request is answered without echoing what was sent -- on every path.
 
     FastAPI's default 422 carries each failing value as `input` -- and for a missing field the
-    `input` is the whole body, phone number included. On a customer path the location and the
-    message stay (the console attaches them to the field) and the values go. Every other path keeps
-    the framework's answer unchanged.
+    `input` is the whole body, phone number included. The location and the message stay (the
+    console attaches them to the field), with the bound the value was checked against; the values
+    go.
+
+    This used to apply only to the paths that had been listed (customers, invoice requests, the
+    contact-attempt and waiver notes, the late-delivery note, the cash-count reason and the Sổ thu
+    chi note), and every other path kept the framework's echo. The trip note on a delivery leg goes
+    through the same `capture_note` and was on no list (round 9 review, P2): a list every new
+    free-text field has to remember to join is the defect, so there is no list.
     """
     if not isinstance(error, RequestValidationError):
         raise error
-    # UNCLAIMED-001: a contact note or a waiver reason is free text a person typed, and is refused
-    # when it looks like a phone number -- so it is answered the same way, without its value.
-    # EINVOICE-REQUEST-001: a buyer's name, address or email on an invoice-request path too.
-    # LATE-CREDIT-002: the late-delivery decision's note, the same way.
-    # CASH-COUNT-009: a cash-count correction's reason and a Sổ thu chi note, the same way.
-    if (
-        CUSTOMER_PATH_MARKER not in request.url.path
-        and INVOICE_PATH_MARKER not in request.url.path
-        and not request.url.path.endswith(UNCLAIMED_FREE_TEXT_PATH_SUFFIXES)
-        and LATE_DELIVERY_FREE_TEXT_MARKER not in request.url.path
-        and not request.url.path.endswith(CASH_COUNT_FREE_TEXT_PATH_SUFFIXES)
-    ):
-        return await request_validation_exception_handler(request, error)
+    redacted: list[dict[str, Any]] = []
+    for item in error.errors():
+        entry: dict[str, Any] = {
+            "type": str(item.get("type", "")),
+            "loc": list(item.get("loc", ())),
+            "msg": str(item.get("msg", "")),
+        }
+        bounds = _validation_bounds(item)
+        if bounds:
+            entry["ctx"] = bounds
+        redacted.append(entry)
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        content={
-            "detail": [
-                {
-                    "type": str(item.get("type", "")),
-                    "loc": list(item.get("loc", ())),
-                    "msg": str(item.get("msg", "")),
-                }
-                for item in error.errors()
-            ]
-        },
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content={"detail": redacted}
     )
 
 

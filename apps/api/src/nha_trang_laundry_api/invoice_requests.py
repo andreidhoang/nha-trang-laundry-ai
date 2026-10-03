@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, date, datetime
-from typing import Any, Final
+from typing import Any
 from uuid import UUID, uuid4
 
 from nha_trang_laundry_db.connection import application_connect
@@ -43,10 +43,6 @@ from nha_trang_laundry_domain.invoice_requests import (
 )
 
 from nha_trang_laundry_api.auth import AuthSettings
-
-#: The path fragment every invoice-request route carries. A malformed body on one is answered
-#: without the values it held (a buyer's name or email), as a customer path's is.
-INVOICE_PATH_MARKER: Final = "/invoice-requests"
 
 
 class InvoiceRequestsUnavailable(RuntimeError):
@@ -263,7 +259,6 @@ class InvoiceRequestService:
 
 __all__ = [
     "INVOICE_CLOSE_ROLES",
-    "INVOICE_PATH_MARKER",
     "INVOICE_READ_ROLES",
     "INVOICE_WRITE_ROLES",
     "LIST_MAX_LIMIT",

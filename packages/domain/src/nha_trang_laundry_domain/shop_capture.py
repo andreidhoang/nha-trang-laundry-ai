@@ -432,10 +432,19 @@ _TIME: Final = re.compile(_BEFORE + r"(?P<hour>[0-9]{1,2}):(?P<minute>[0-9]{2})"
 #: A percentage from 0 to 100, "10%" or "2,5 %".
 _PERCENT: Final = re.compile(_BEFORE + r"(?:100|[1-9]?[0-9])(?:[.,][0-9]{1,2})?(?=\s?%)")
 
+#: An amount's boundary is the same except that "/" and "-" may stand between it and the next
+#: number: "285.000/4.351.000" and "1.250.000-50.000" are two amounts, as they are with a space
+#: between them. A phone gains nothing by it -- every digit beside the amount still has to be set
+#: aside on its own terms, exactly as when a space stands there.
+_AMOUNT_BEFORE: Final = r"(?<![0-9])(?<![0-9][.,:])"
+_AMOUNT_AFTER: Final = r"(?![0-9])(?![.,:][0-9])"
+
 #: An amount written with thousands groups and one separator throughout -- "150.000",
 #: "1.250.000", "120,000". Its size and its last two digits are checked in `_amount_digits`.
 _AMOUNT: Final = re.compile(
-    _BEFORE + r"[1-9][0-9]{0,2}(?P<group>[.,])[0-9]{3}(?:(?P=group)[0-9]{3})*" + _AFTER
+    _AMOUNT_BEFORE
+    + r"[1-9][0-9]{0,2}(?P<group>[.,])[0-9]{3}(?:(?P=group)[0-9]{3})*"
+    + _AMOUNT_AFTER
 )
 
 #: A number its unit follows -- "150k", "25kg", "2 bao", "150000₫". The unit (a Latin letter or a
@@ -528,9 +537,10 @@ def looks_like_phone(text: str) -> bool:
     date ("02/10/2026", "2/10/26", "02/10"), a time ("14:30"), a percentage ("10%"), an amount in
     thousands groups that is whole hundreds of đồng and below 100.000.000 ("1.250.000",
     "120,000") or a number its unit follows -- up to three digits at any value ("150k", "2 bao"),
-    longer only as whole hundreds ("150000₫"). The stretch is a phone
-    when it has nine digits or more and ANY of them is not set aside: "1.250.000 - 50.000" is
-    two amounts, "(0905) 12-03-45" is a phone, because "0905" is not a date, time or amount.
+    longer only as whole hundreds ("150000₫"). The stretch is a phone when it has nine digits or
+    more and ANY of them is not set aside: "1.250.000 - 50.000" is two amounts (so are
+    "285.000/4.351.000" and "1.250.000-50.000"), "(0905) 12-03-45" is a phone, because "0905" is
+    not a date, time or amount.
 
     Known limit, by construction: a phone typed so that every group is itself one of those pieces
     ("09/05 12/03/45") is not recognised -- no text rule can tell it from two dates.

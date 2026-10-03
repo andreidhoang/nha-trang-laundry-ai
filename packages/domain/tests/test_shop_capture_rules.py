@@ -277,6 +277,12 @@ def test_a_phone_is_refused_however_its_groups_are_punctuated(phone: str) -> Non
         "khach 0905\ua78f123\ua78f456",
         # Digits written another way are digits.
         "khach \u2460\u2468\u2460\u2464 123 456",
+        # An amount may now stand against "/" or "-": the phone's other digits still count.
+        "khach 0905/123.400",
+        "khach 0905-123.400",
+        "khach 8490-5.123.400",
+        "khach 84/905.123.400",
+        "khach 0905123/400.000",
     ],
 )
 def test_a_phone_is_refused_whatever_stands_between_its_groups(phone: str) -> None:
@@ -307,6 +313,11 @@ def test_a_phone_is_refused_whatever_stands_between_its_groups(phone: str) -> No
         "14:30 thiếu 50.000; 16:45 thừa 20.000",
         "02/10/2026 - 05/10/2026",
         "đếm 5,9 kg 147.500 - 2.500",
+        # Slice I, round 9b fix: two amounts joined by "/" or "-" with no space were refused,
+        # although the same two amounts with a space between them are a note.
+        "đếm lại 285.000/4.351.000đ",
+        "sót 1.250.000-50.000",
+        "chia 120.000/30.000",
     ],
 )
 def test_amounts_dates_and_times_side_by_side_stay_an_ordinary_note(note: str) -> None:

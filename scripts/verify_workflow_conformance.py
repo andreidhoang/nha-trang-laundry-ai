@@ -11730,6 +11730,28 @@ def scenario_cash_count(console: Console) -> None:
         malformed["status"] == 422 and "0905123456" not in malformed["text"],
         malformed["text"][:200],
     )
+    # Verification round 3 of 9b: a phone the counter types into Vì sao sửa? with a symbol between
+    # its groups, or with a date-shaped tail, was stored on a real stack. Pressed through the Sửa
+    # dialog as the counter does, each is refused, the dialog says why, and no row holds it.
+    current_close = (_cash_sheet(console).get("closing_count") or {}).get("counted_vnd")
+    for phone_reason in ("khach 0905|123|456 tra thieu", "khach (0905) 12-03-45"):
+        console.open("#/cash-count", settle=1500)
+        refused_reason = _cash_correct(
+            console, "CLOSING_COUNT", int(current_close or 0), phone_reason
+        )
+        said = console.page.locator("#cash-correct").inner_text().replace("\xa0", " ")
+        ok(
+            f"Sửa số đếm with the reason {phone_reason!r} is refused as a phone and not stored",
+            current_close is not None
+            and refused_reason["status"] == 422
+            and "CASH_COUNT_REASON_LOOKS_LIKE_PHONE" in refused_reason["text"]
+            and "0905" not in refused_reason["text"]
+            and "Lý do không được chứa số điện thoại" in said
+            and sql("select count(*) from cash_counts where correction_reason like '%0905%'")
+            == "0",
+            {"status": refused_reason["status"], "said": said[-160:]},
+        )
+    console.open("#/cash-count", settle=1500)
     # The 10.000 was chemicals paid from the drawer and not written down: the owner records it
     # after the count. The recorded shortfall stays; Báo cáo and the summary both say the books
     # moved after the count, and what they say now.

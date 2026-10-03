@@ -226,6 +226,10 @@ class RemedyRefusal(StrEnum):
     REMEDY_LINE_NOT_PRICED = "REMEDY_LINE_NOT_PRICED"
     #: A 10% credit on a total nobody has settled has nothing to be 10% of.
     REMEDY_ORDER_NOT_SETTLED = "REMEDY_ORDER_NOT_SETTLED"
+    #: `DEC-031` rule 3 re-read at payment: a late-delivery credit proposed while the order was
+    #: settled, whose order has since been cancelled and refunded. Ten percent of a bill handed back
+    #: is nothing, and paying it would leave a full refund *and* a live credit (review round 9).
+    REMEDY_ORDER_REFUNDED = "REMEDY_ORDER_REFUNDED"
     #: The order records no succeeded return leg, so no delivery happened that could be late. The
     #: same shape as `orders._reject_resolution_contradicting_the_record`: only contradictions the
     #: system can check are refused.
@@ -282,6 +286,8 @@ REMEDY_REFUSAL_AUTHORITIES: Final = {
     RemedyRefusal.REMEDY_AMOUNT_NOT_APPLICABLE: "INVARIANT-3",
     RemedyRefusal.REMEDY_LINE_NOT_PRICED: "INVARIANT-3",
     RemedyRefusal.REMEDY_ORDER_NOT_SETTLED: "INVARIANT-3",
+    # DEC-031 rule 3: a refunded bill earns no late-delivery credit, whenever it was refunded.
+    RemedyRefusal.REMEDY_ORDER_REFUNDED: "DEC-031",
     RemedyRefusal.REMEDY_DELIVERY_NOT_RECORDED: "INVARIANT-3",
     # The DEC-031 addendum: which garment a claim is about decides whose limits it spends.
     RemedyRefusal.REMEDY_GARMENT_REQUIRED: "DEC-031",

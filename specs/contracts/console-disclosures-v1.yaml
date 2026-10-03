@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 562
+  DESCRIPTIVE: 563
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 19
   SERVER_GATE: 15
-total: 603
+total: 604
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -1003,6 +1003,15 @@ disclosures:
   key: REASON_NOTE.REMEDY_ORDER_NOT_SETTLED
   text: Đơn chưa tất toán nên không có tổng nào để lấy 10%. Thu tiền xong rồi mới đề nghị giảm trừ cho
     lần sau được.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.REMEDY_ORDER_REFUNDED:d13f20ec0b1a
+  module: core/i18n.js
+  key: REASON_NOTE.REMEDY_ORDER_REFUNDED
+  text: Đơn này đã huỷ và hoàn tiền sau khi lập đề nghị, nên không còn tổng nào để lấy 10%. Không có gì
+    được ghi; khách đã nhận lại tiền.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

@@ -65,6 +65,7 @@ from nha_trang_laundry_domain.quotes import (
 from nha_trang_laundry_domain.remedies import (
     REMEDY_POLICY_CONFIG_TYPE,
     REMEDY_POLICY_VERSION,
+    REMEDY_REFUSAL_AUTHORITIES,
     ItemCompensationTerms,
     RemedyAuthorized,
     RemedyCommitments,
@@ -1925,9 +1926,9 @@ def _recheck_before_paying(
     `0052`, naming no garment -- is re-checked against the garment that leaves it least room,
     because nothing says which it was about. The line's total still binds everything paid on it.
 
-    And one late-delivery credit per order. The order row is locked first, as `propose` locks it,
-    so a proposal and a payment on the same order serialise rather than each checking a sum the
-    other is changing.
+    And one late-delivery credit per order, never paid on a bill refunded since it was proposed.
+    The order row is locked first, as `propose` locks it, so a proposal and a payment on the same
+    order serialise rather than each checking a sum the other is changing.
     """
 
     cursor.execute("SELECT id FROM orders WHERE id = %s FOR UPDATE", (order_id,))
@@ -1946,6 +1947,18 @@ def _recheck_before_paying(
                 "a late-delivery credit has already been paid for this order",
                 reason_code=RemedyRefusal.REMEDY_LATE_DELIVERY_CREDIT_ALREADY_PROPOSED.value,
                 authority="DEC-004",
+            )
+        # `DEC-031` rule 3: the late-delivery credit is refused on a refunded bill, ten percent of
+        # nothing. `propose` refuses it there; this is the same fact re-read under the order lock,
+        # because the order can be cancelled without charge and refunded between the proposal and
+        # its payment. Paying it then left a live credit on an order the customer paid nothing for
+        # -- a full refund and 10% of it (review round 9; `DEC-045` the other way round: there was
+        # no credit yet for the cancellation to void).
+        if _read_order_record(cursor, order_id=order_id).facts.refunded:
+            raise RemedyStateError(
+                "the order was refunded after this late-delivery credit was proposed",
+                reason_code=RemedyRefusal.REMEDY_ORDER_REFUNDED.value,
+                authority=REMEDY_REFUSAL_AUTHORITIES[RemedyRefusal.REMEDY_ORDER_REFUNDED],
             )
         return
     if kind not in (RemedyKind.DAMAGE_COMPENSATION, RemedyKind.LOST_ITEM):

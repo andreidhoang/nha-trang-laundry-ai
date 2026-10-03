@@ -1266,6 +1266,99 @@ def test_a_late_delivery_credit_on_a_fully_refunded_order_is_refused(
     assert refused.value.reason_code == RemedyRefusal.REMEDY_ORDER_NOT_SETTLED.value
 
 
+@pytest.mark.parametrize("owner_needed", [False, True], ids=["staff-authorized", "owner-approved"])
+@pytest.mark.parametrize("refunded_after_proposal", [True, False], ids=["refunded", "not-refunded"])
+def test_a_late_credit_proposed_before_a_no_charge_refund_is_not_paid_after_it(
+    connection: psycopg.Connection[Any], owner_needed: bool, refunded_after_proposal: bool
+) -> None:
+    """Review round 9: DEC-045 the other way round.
+
+    A late-delivery credit proposed while the order was settled, and executed only after the order
+    was cancelled `SHOP_FAULT_NO_CHARGE` and refunded in full, used to issue an unspent credit on a
+    cancelled order the customer paid nothing for -- a full refund *and* 10% of it. `propose`
+    refuses that credit on a refunded bill (`DEC-031` rule 3: ten percent of nothing), and `execute`
+    re-reads the order before paying because the order can be refunded in between. It re-read it
+    for damage and loss only. The neighbouring cases still pay: no refund, staff or owner.
+    """
+
+    store_id, staff, order_id, incident_id = _shop(
+        connection, mode=FulfillmentMode.PICKUP_AND_RETURN, publish=False
+    )
+    # 11.000 d is above a 10.000 d staff limit, so the credit waits for the owner.
+    _publish_policy(
+        connection, staff, **({"staff_approval_ceiling_vnd": 10_000} if owner_needed else {})
+    )
+    DeliveryLegRepository().record(
+        connection,
+        RecordDeliveryLegCommand(
+            order_id=order_id,
+            leg_kind=DeliveryLegKind.RETURN,
+            outcome=DeliveryLegOutcome.SUCCEEDED,
+            principal=staff,
+            correlation_id=uuid4(),
+            recorded_at=NOW,
+        ),
+    )
+    proposal = _propose(
+        connection,
+        store_id,
+        incident_id,
+        staff,
+        kind=RemedyKind.LATE_DELIVERY_CREDIT,
+        store_fault_attested=True,
+        attested_late_by_minutes=150,
+    )
+    assert proposal.amount_vnd == LATE_CREDIT
+    assert proposal.status is (
+        RemedyStatus.OWNER_APPROVAL_REQUIRED if owner_needed else RemedyStatus.STAFF_AUTHORIZED
+    )
+    if owner_needed:
+        assert proposal.approval_id is not None
+        _approve(connection, store_id, proposal.approval_id, NOW + timedelta(minutes=1))
+    if refunded_after_proposal:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT row_version FROM orders WHERE id = %s", (order_id,))
+            row = cursor.fetchone()
+        assert row is not None
+        version = _advance(
+            connection,
+            order_id,
+            staff,
+            int(row[0]),
+            commercial_target=CommercialOrderStatus.CANCELLATION_REVIEW,
+        ).row_version
+        cancelled = _advance(
+            connection,
+            order_id,
+            staff,
+            version,
+            commercial_target=CommercialOrderStatus.CANCELLED,
+            custody_resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE,
+            refund_method=PaymentMethod.TIEN_MAT,
+        )
+        assert cancelled.balance.value == "REFUNDED"
+
+    at = NOW + timedelta(minutes=2)
+    if not refunded_after_proposal:
+        executed = _execute(connection, proposal.proposal_id, staff, at)
+        assert executed.event_type == CREDIT_EXECUTED and executed.amount_vnd == LATE_CREDIT
+        return
+    with pytest.raises(RemedyStateError) as refused:
+        _execute(connection, proposal.proposal_id, staff, at)
+    assert refused.value.reason_code == RemedyRefusal.REMEDY_ORDER_REFUNDED.value
+    assert refused.value.authority == "DEC-031"
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM remedy_credits WHERE remedy_proposal_id = %s",
+            (proposal.proposal_id,),
+        )
+        credits = cursor.fetchone()
+        cursor.execute("SELECT status FROM remedy_proposals WHERE id = %s", (proposal.proposal_id,))
+        status = cursor.fetchone()
+    assert credits is not None and int(credits[0]) == 0
+    assert status is not None and status[0] != RemedyStatus.EXECUTED.value
+
+
 def test_lateness_below_the_published_threshold_is_refused_with_the_threshold_named(
     connection: psycopg.Connection[Any],
 ) -> None:

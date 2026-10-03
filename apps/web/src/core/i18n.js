@@ -371,6 +371,11 @@ export const REASON_NOTE = {
   REMEDY_ORDER_NOT_SETTLED:
     "Đơn chưa tất toán nên không có tổng nào để lấy 10%. Thu tiền xong rồi mới đề nghị giảm trừ " +
     "cho lần sau được.",
+  // Review round 9: a late-delivery credit proposed before the order was cancelled without charge
+  // and refunded is not paid afterwards (DEC-031: 10% of a refunded bill is nothing).
+  REMEDY_ORDER_REFUNDED:
+    "Đơn này đã huỷ và hoàn tiền sau khi lập đề nghị, nên không còn tổng nào để lấy 10%. Không có " +
+    "gì được ghi; khách đã nhận lại tiền.",
   // REMEDY-GARMENT-001 (the DEC-031 addendum): a claim on a line priced per piece names which
   // garment it is, because each garment has its own staff limit and its own 5x ceiling.
   REMEDY_GARMENT_REQUIRED:

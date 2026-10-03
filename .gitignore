@@ -49,6 +49,8 @@ Thumbs.db
 # credentials for a running business -- database passwords, a TLS private key, the Keycloak
 # bootstrap admin -- so the directory is ignored before it exists rather than after.
 .shop/
+# The staging API's log directory (`compose.production.yaml`, `STAGING_API_LOG_DIRECTORY` default).
+.staging/
 
 # Adversarial-review scratch tests. A verifier writes a throwaway probe file, runs it, and deletes
 # it; the review instructions say so in as many words ("a scratch test you delete afterwards").

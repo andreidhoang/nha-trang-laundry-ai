@@ -20,7 +20,7 @@ STATE_DIRECTORY="$HOME/Library/Application Support/giatlasachcong"
 REPOSITORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROJECT="nha-trang-laundry-shop"
 
-agents=(checks-data checks-host base-backup)
+agents=(checks-data checks-host checks-daily base-backup)
 
 uninstall() {
     for name in "${agents[@]}"; do
@@ -102,6 +102,7 @@ write_agent() {
     <key>R1_ALERT_TELEGRAM_TOKEN_FILE</key><string>$(xml "$ALERT_TOKEN_FILE")</string>
     <key>R1_ALERT_TELEGRAM_CHAT_ID_FILE</key><string>$(xml "$ALERT_CHAT_FILE")</string>
     <key>R1_ALERT_LOG_FILE</key><string>$(xml "$LOG_DIRECTORY/alert-delivery.log")</string>
+    <key>R1_ALERT_PENDING_DIRECTORY</key><string>$(xml "$STATE_DIRECTORY")</string>
     <key>R1_DATA_CHECKS_DATABASE_URL_FILE</key><string>$(xml "$SECRETS/migration_database_url")</string>
   </dict>
 </dict>
@@ -116,6 +117,11 @@ every_five_minutes='<key>StartInterval</key><integer>300</integer>'
 # `StartCalendarInterval`, not an interval: a missed calendar job runs once on the next wake, which
 # is exactly what a laptop that sleeps overnight needs. 02:30 is chosen because the shop is shut.
 nightly='<key>StartCalendarInterval</key><dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>'
+# Every hour, for a notice told once a shop day. Not one 09:00 calendar job: a 09:00 missed while
+# the Mac slept runs on its next wake, and at 23:30 DEC-025 holds the notice -- with nothing running
+# again until the next 09:00, so the day's notice was lost (round-9b verifier, round 2). The check
+# records the day it told the owner, so the hourly runs say it once, from 07:00.
+every_hour='<key>StartInterval</key><integer>3600</integer>'
 
 # Every check goes through the host relay (`SHOP-ALERT-DELIVERY-001`). The check prints its alert as
 # one JSON line and sends nothing; the relay, running here on the host where there is internet,
@@ -142,21 +148,34 @@ data_checks="$relay --label checks-data \
   -e R1_PGDATA_PATH=/pgdata -e R1_BASE_BACKUP_MARKER=/staging/last-success \
   --entrypoint python nha-trang-laundry-api:local \
   scripts/check_shop_operations.py --database-url-stdin \
-  --check wal --check base --check volume --emit-alert"
+  --check wal --check base --check volume --check outbox --emit-alert"
 
 # The host checks need the Docker socket and the console's own name over TLS, neither of which
 # exists inside the network. On the till the console is on loopback, so the name resolves through
 # /etc/hosts rather than the router. `/readyz`, not `/healthz`: the console answering while its
 # database is gone is the shop being closed (`OPS-HARDENING-002`).
-# `--check app` (OPS-OBSERVABILITY-009) reads the API's own log through the same Docker socket and
-# counts 5xx answers, database refusals and browser-boundary rejections since the last line the
-# previous run counted, whose instant it keeps in R1_APP_SIGNAL_CURSOR.
+# `--check app` (OPS-OBSERVABILITY-009) reads the API's own log file -- the host folder the API
+# container writes (`.shop/logs/api`, compose.r1.yaml), which outlives the container, unlike
+# `docker compose logs` (PLATFORM-RESIDUAL-009B L4) -- and counts 5xx answers, database refusals
+# and browser-boundary rejections not yet counted, whose position it keeps in R1_APP_SIGNAL_CURSOR.
+# An alert the relay could not send waits in R1_ALERT_PENDING_DIRECTORY and goes with the next run.
 host_checks="$relay --label checks-host -- \
   env R1_CONSOLE_HEALTH_URL=https://console.giatlasachcong.lan:8443/readyz \
   R1_CONSOLE_CA_FILE=\"$REPOSITORY/.shop/ca/ca.crt\" \
   R1_APP_SIGNAL_CURSOR=\"$STATE_DIRECTORY/app-signal-cursor.json\" \
   .venv/bin/python scripts/check_shop_operations.py --check flags --check console \
-  --check app --app-logs compose --emit-alert"
+  --check app --app-logs \"$REPOSITORY/.shop/logs/api/api.jsonl\" --emit-alert"
+
+# Once a day, not every five minutes: things that come due in weeks. `--check certificate` reads the
+# console's own certificate and, from 60 days before it expires, tells the owner to renew -- DEC-052
+# keeps no CA key, so renewal is a new CA trusted on every tablet, which takes time to get round.
+# Until round 9b only bootstrap_shop_local.py said so, and nobody runs that in normal operation.
+# The agent runs hourly; `--certificate-notice-state` (outside the checkout, like the app cursor)
+# holds the shop day the owner was last told, so the message goes once a day, from 07:00.
+daily_checks="$relay --label checks-daily -- \
+  .venv/bin/python scripts/check_shop_operations.py --check certificate \
+  --console-certificate \"$REPOSITORY/.shop/secrets/tls_certificate\" \
+  --certificate-notice-state \"$STATE_DIRECTORY/certificate-notice.json\" --emit-alert"
 
 base_backup="cd \"$REPOSITORY\" && docker compose \
   -f compose.r1.yaml -f compose.shop-local.yaml -f compose.shop-till.yaml \
@@ -164,6 +183,7 @@ base_backup="cd \"$REPOSITORY\" && docker compose \
 
 write_agent checks-data "$every_five_minutes" "$data_checks"
 write_agent checks-host "$every_five_minutes" "$host_checks"
+write_agent checks-daily "$every_hour" "$daily_checks"
 write_agent base-backup "$nightly" "$base_backup"
 
 echo

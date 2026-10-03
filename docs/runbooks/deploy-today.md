@@ -84,7 +84,7 @@ and an unconstrained CA key can mint a certificate those devices accept for any 
 (`PLATFORM-SECURITY-009` P4):
 
 ```bash
-openssl req -x509 -newkey rsa:4096 -days 3650 -nodes -keyout ca.key -out ca.crt \
+openssl req -x509 -newkey rsa:4096 -days 855 -nodes -keyout ca.key -out ca.crt \
   -subj "/CN=Giat La Sach Cong Internal CA" \
   -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
   -addext "keyUsage=critical,keyCertSign,cRLSign" \
@@ -97,11 +97,18 @@ openssl x509 -req -in console.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
 openssl x509 -in ca.crt -noout -ext nameConstraints   # must print the permitted DNS name
 ```
 
-Only `console.crt` and `console.key` go to the server. **`ca.key` never does**: keep it on a
-removable drive (or delete it and re-mint the CA when the console certificate expires in 825 days,
-reinstalling `ca.crt` on each device). The shop-till path does the same through
-`bootstrap_shop_local.py`, which never writes the CA key at all unless `--export-ca-key` names a
-path outside the checkout.
+Only `console.crt` and `console.key` go to the server. **`ca.key` is then deleted** (`DEC-052`:
+no CA key is kept after it signs — not on the server, not on a removable drive):
+
+```bash
+rm -P ca.key 2>/dev/null || shred -u ca.key     # macOS rm -P overwrites; Linux shred
+```
+
+When the console certificate nears its 825 days, make a **new** CA and certificate the same way and
+install the new `ca.crt` on every device; then remove the old one from each device. Use
+`-days 855` for the CA rather than ten years: a CA whose key is gone signs nothing more, so it
+should not outlive its one certificate by more than a month. The shop-till path does all of this
+through `bootstrap_shop_local.py`, which never keeps the CA key and renews with `--new-ca`.
 
 Then, and this is the part that turns into a mysterious morning if it is skipped:
 
@@ -209,6 +216,10 @@ docker compose -f compose.r1.yaml exec postgres psql -U laundry_migrate -d postg
   ALTER ROLE laundry_migrate CREATEROLE;"
 
 docker compose -f compose.r1.yaml up -d migrate          # runs once and exits; must exit 0
+# The API's own log file lives on the host so it outlives the container (PLATFORM-RESIDUAL-009B L4);
+# the folder must be writable by the API's uid before it starts, or the API logs to stdout only and
+# `check_shop_operations.py --check app` reports the silence. Override with R1_API_LOG_DIRECTORY.
+sudo install -d -o 10001 -g 10001 -m 0755 .shop/logs/api
 docker compose -f compose.r1.yaml --profile self-managed-database up -d api worker keycloak tls
 
 ./scripts/shop-admin apply_demo_grants.py

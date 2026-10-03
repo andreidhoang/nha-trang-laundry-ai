@@ -52,12 +52,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from zoneinfo import ZoneInfo
 
 import psycopg
+import shop_alert_pending as pending_alerts
 import workspace_env  # noqa: F401  # keep first: puts the workspace on sys.path
 from nha_trang_laundry_observability import (
     CorrelationContext,
@@ -95,6 +95,49 @@ class CheckResult:
     passed: bool
     detail: str
     fields: dict[str, object]
+    #: Passed, and something is coming due that a person should decide (`outbox_rows`). Shown and
+    #: logged; never an alert -- a warning that paged every five minutes would teach the owner to
+    #: ignore the pager.
+    warning: bool = False
+    #: Failing, and the owner was already told today (`console_certificate`, once a shop day): not
+    #: alerted again by this run, and the run still fails.
+    told_today: bool = False
+
+
+#: `DEC-051`. Record-only outbox rows are kept -- the outbox trigger refuses deletion and no
+#: retention window has been approved -- and the decision is revisited when the table passes this
+#: many rows. At the pilot's pace (about a thousand rows a busy day) that is years away; the check
+#: says so before it is a surprise.
+OUTBOX_ROW_REVIEW_LINE = 1_000_000
+
+
+def _spaced(number: int) -> str:
+    """`1 000 000`, the way the shop writes a large number."""
+
+    return f"{number:,}".replace(",", " ")
+
+
+def check_outbox_rows(database_url: str) -> CheckResult:
+    """How many rows `outbox_events` holds, warning past `OUTBOX_ROW_REVIEW_LINE` (`DEC-051`)."""
+
+    with psycopg.connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM outbox_events")
+        row = cursor.fetchone()
+    rows = int(row[0]) if row else 0
+    over = rows > OUTBOX_ROW_REVIEW_LINE
+    detail = f"{_spaced(rows)} outbox rows"
+    if over:
+        detail += (
+            f", past the {_spaced(OUTBOX_ROW_REVIEW_LINE)} line DEC-051 set: decide outbox "
+            "retention now (record-only rows are kept until a retention window is approved)"
+        )
+    return CheckResult(
+        "outbox_rows",
+        passed=True,
+        detail=detail,
+        fields={"outbox_rows": rows, "review_line": OUTBOX_ROW_REVIEW_LINE},
+        warning=over,
+    )
 
 
 def check_wal_archive_gap(
@@ -324,12 +367,135 @@ def check_console_reachable(
     )
 
 
+#: `DEC-052`: the shop CA's key is not kept, so a console certificate cannot be re-signed; near its
+#: expiry a new CA is minted (`bootstrap_shop_local.py --new-ca`) and trusted on every tablet. From
+#: this many days out the till's daily check tells the owner -- the same line the bootstrap uses,
+#: which a test holds equal. Before round 9b only the bootstrap said it, and nobody runs the
+#: bootstrap in normal operation: the first sign would have been every tablet refusing the console.
+CERTIFICATE_RENEW_BEFORE_DAYS = 60
+CERTIFICATE_RENEWAL_STEP = (
+    "Gia hạn: chạy scripts/bootstrap_shop_local.py --backup-recipient <khóa age1…> --new-ca, rồi "
+    "cài .shop/ca/ca.crt mới lên từng máy và bật tin cậy (docs/runbooks/shop-pilot.md §2)."
+)
+
+
+def check_console_certificate(path: str, *, now: datetime) -> CheckResult:
+    """How long the console's TLS certificate has left, from the certificate itself (`DEC-052`).
+
+    Fails from `CERTIFICATE_RENEW_BEFORE_DAYS` before expiry, when expired, and when the file is
+    missing or not a certificate -- each is a renewal to do, and the message says how. Pure: the
+    till's agent runs it through `run_certificate_check`, which keeps it to one message a shop day.
+    """
+
+    from cryptography import x509  # the host checks' venv has it; the data-check image need not
+
+    try:
+        leaf = x509.load_pem_x509_certificate(_Path(path).read_bytes())
+    except FileNotFoundError:
+        return CheckResult(
+            "console_certificate",
+            passed=False,
+            detail=f"không thấy chứng chỉ console ở {path} (no certificate). "
+            + CERTIFICATE_RENEWAL_STEP,
+            fields={"path": path, "readable": False},
+        )
+    except (OSError, ValueError) as error:
+        return CheckResult(
+            "console_certificate",
+            passed=False,
+            detail=f"không đọc được chứng chỉ console {path} ({type(error).__name__}). "
+            + CERTIFICATE_RENEWAL_STEP,
+            fields={"path": path, "readable": False},
+        )
+    expires = leaf.not_valid_after_utc
+    remaining = expires - now
+    shown = expires.astimezone(SHOP_TIMEZONE).strftime("%d/%m/%Y")
+    fields: dict[str, object] = {"expires_at": expires.isoformat(), "days_left": remaining.days}
+    if remaining <= timedelta(0):
+        return CheckResult(
+            "console_certificate",
+            passed=False,
+            detail=f"chứng chỉ console đã hết hạn ngày {shown} (expired). "
+            + CERTIFICATE_RENEWAL_STEP,
+            fields=fields,
+        )
+    if remaining <= timedelta(days=CERTIFICATE_RENEW_BEFORE_DAYS):
+        return CheckResult(
+            "console_certificate",
+            passed=False,
+            detail=(
+                f"chứng chỉ console hết hạn ngày {shown} (còn {remaining.days} ngày). "
+                + CERTIFICATE_RENEWAL_STEP
+            ),
+            fields=fields,
+        )
+    return CheckResult(
+        "console_certificate",
+        passed=True,
+        detail=f"console certificate valid until {shown} ({remaining.days} days)",
+        fields=fields,
+    )
+
+
+CERTIFICATE_NOTICE_SCHEMA = "nha-trang-laundry.certificate-notice.v1"
+
+
+def run_certificate_check(path: str, *, notice_state: str | None, now: datetime) -> CheckResult:
+    """`check_console_certificate`, told to the owner once a shop day, from opening (`DEC-052`).
+
+    The till's `checks-daily` agent runs this every hour. It used to run once, at 09:00 -- and a
+    09:00 missed while the Mac slept ran on its next wake; at 23:30 `DEC-025` held the notice (a
+    quiet-hours check), the relay had nothing to keep, and nothing ran again until the next 09:00:
+    the notice was dropped for the day, not held for the morning (round-9b verifier, round 2).
+
+    So `notice_state` records the shop day the owner was told. A failing run in opening hours that
+    finds no record for today tells (and records); one that finds today's record is `told_today`,
+    which still fails but alerts nobody; at night nothing is recorded, so the first run from 07:00
+    tells. Recorded when raised, not when delivered: a send that fails is the relay's to retry
+    (`shop_alert_pending`), so the record never swallows a notice. An unreadable record tells again
+    rather than never; one that cannot be written tells and says so. Without `notice_state` (a
+    check run by hand) every failing run tells.
+    """
+
+    result = check_console_certificate(path, now=now)
+    if result.passed or notice_state is None or pending_alerts.in_quiet_hours(now):
+        return result
+    today = now.astimezone(SHOP_TIMEZONE).date().isoformat()
+    record = _Path(notice_state)
+    try:
+        document = json.loads(record.read_text(encoding="utf-8"))
+        told_on = (
+            document.get("told_on")
+            if isinstance(document, dict) and document.get("schema") == CERTIFICATE_NOTICE_SCHEMA
+            else None
+        )
+    except (OSError, ValueError):
+        told_on = None
+    if told_on == today:
+        return replace(result, told_today=True)
+    try:
+        record.parent.mkdir(parents=True, exist_ok=True)
+        temporary = record.with_name(f".{record.name}.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps({"schema": CERTIFICATE_NOTICE_SCHEMA, "told_on": today}) + "\n", "utf-8"
+        )
+        os.replace(temporary, record)
+    except OSError as error:
+        return replace(
+            result,
+            detail=f"{result.detail} (không ghi được {record} -- {error.strerror}; "
+            "sẽ báo lại mỗi giờ)",
+        )
+    return result
+
+
 # --- OPS-OBSERVABILITY-009: what the application itself is doing ---------------------------------
 #
 # Every check above looks at infrastructure. None looked at the application, so payments could
 # answer 500 all afternoon and nobody would be told (review finding P2). This one reads the API's
-# own structured log -- the lines `SafeStructuredLogger` writes, kept by Docker's json-file driver
-# on the shop host -- and counts three things.
+# own structured log -- the lines `SafeStructuredLogger` writes, which the API also appends to a
+# file on a host directory (`STRUCTURED_LOG_FILE`, `PLATFORM-RESIDUAL-009B` L4) so they outlive the
+# container -- and counts three things.
 #
 # **The defaults, in one place.** `docs/runbooks/shop-pilot.md` §6 prints this table and a test
 # holds the two together. A count at or above its figure fails the check.
@@ -356,13 +522,26 @@ def check_console_reachable(
 # two runs only met edge to edge when those took exactly as long both times, and a 500 in between
 # was counted by neither (round-9 verifier). A run delayed or skipped by launchd lost all of its
 # five minutes. Now each run saves the instant of the last line it counted (`AppSignalCursor`) and
-# the next one counts from there, however long ago that was. `server_errors` is the number of new
-# lines; the two rates are the most that fell in any five minutes ending at a new line -- reaching
-# back before the saved instant, so a burst split by a run boundary is still one burst, and an hour
-# of skipped runs does not turn a trickle into one. **Liveness uses a fixed look-back:** the
-# console check asks `/readyz` every five minutes and Docker's healthcheck asks `/healthz` every
-# thirty seconds, so a healthy API always has a line in the last fifteen, and none at all means the
-# stream is not reaching this check -- which is not the same as nothing having failed.
+# the next one counts from there, however long ago that was.
+#
+# **And exactly once when lines arrive out of order** (`PLATFORM-RESIDUAL-009B` L4). Lines are not
+# written in `occurred_at` order -- a request that began first can finish and log second -- and a
+# line read through another transport (a rotated file, `docker compose logs`) is the same event in
+# different bytes. A position that was only an instant lost the first kind for good and counted the
+# second twice. So each run re-reads `APP_SIGNAL_OVERLAP_SECONDS` behind the newest line counted
+# and identifies a line by what it is -- event, correlation id, `occurred_at` -- not by its bytes:
+# a line in the overlap is counted unless its identity is among those already counted, which the
+# position keeps (`recent`) for exactly that long. A line that arrives more than the overlap late
+# is beyond the guarantee and is not counted; fifteen minutes is three runs, and a log line that
+# late is a stalled host, which the liveness rule below reports.
+#
+# `server_errors` is the number of new lines; the two rates are the most that fell in any five
+# minutes ending at a new line -- reaching back before the saved instant, so a burst split by a run
+# boundary is still one burst, and an hour of skipped runs does not turn a trickle into one.
+# **Liveness uses a fixed look-back:** the console check asks `/readyz` every five minutes and
+# Docker's healthcheck asks `/healthz` every thirty seconds, so a healthy API always has a line in
+# the last fifteen, and none at all means the stream is not reaching this check -- which is not the
+# same as nothing having failed.
 APP_SIGNAL_THRESHOLDS: Mapping[str, int] = MappingProxyType(
     {"server_errors": 1, "database_refusals": 5, "browser_boundary_rejections": 10}
 )
@@ -371,21 +550,40 @@ APP_LIVENESS_WINDOW_SECONDS = 15 * 60
 #: Lines written up to this far after `now` are accepted as clock skew between the container and
 #: the host; a line beyond it is left for the run whose clock has reached it.
 APP_CLOCK_SKEW_SECONDS = 60
-APP_SIGNAL_CURSOR_SCHEMA = "nha-trang-laundry.app-signal-cursor.v1"
+#: How far behind the newest counted line each run re-reads, for lines that arrive out of order.
+APP_SIGNAL_OVERLAP_SECONDS = 15 * 60
+APP_SIGNAL_CURSOR_SCHEMA = "nha-trang-laundry.app-signal-cursor.v2"
+#: Round 9's position: an instant and the byte-hashes of the lines at it. Still read, so a till
+#: upgraded mid-week neither starts over nor counts the lines at its saved instant twice.
+APP_SIGNAL_CURSOR_SCHEMA_V1 = "nha-trang-laundry.app-signal-cursor.v1"
 #: `/readyz` answering 503 is the console check's finding (`console_reachable`, quiet at night).
 _READINESS_ROUTE = "/readyz"
 
 
 @dataclass(frozen=True)
 class AppSignalCursor:
-    """Where the last run stopped: every API line up to `through` has been counted once.
+    """Where the last run stopped.
 
-    `seen_at_through` names the lines *at* that instant already counted, so a second line written in
-    the same microsecond and read only by the next run is counted, and the first is not again.
+    `through` is the newest instant counted. Every line at or before `settled_through` is final:
+    counted or, if it arrives now, too late to be. A line after it is counted unless its identity
+    is in `recent` -- the identities (with their instants) of the signal lines already counted
+    after `settled_through`. A v1 position (round 9) has no `recent`; its `seen_at_through` are the
+    byte-hashes of the lines at `through`, and everything before `through` is settled.
     """
 
     through: datetime
-    seen_at_through: frozenset[str]
+    seen_at_through: frozenset[str] = frozenset()
+    recent: tuple[tuple[str, datetime], ...] = ()
+    settled_through: datetime | None = None
+
+    def settled(self) -> datetime:
+        if self.settled_through is not None:
+            return self.settled_through
+        # v1: lines at `through` not among `seen_at_through` are still to count.
+        return self.through - timedelta(microseconds=1)
+
+    def known(self) -> frozenset[str]:
+        return self.seen_at_through | frozenset(key for key, _ in self.recent)
 
 
 @dataclass(frozen=True)
@@ -407,7 +605,11 @@ class _ApiEvent:
     fields: dict[str, object]
     occurred_at: datetime
     correlation_id: str
+    #: What the line is: event, correlation id and instant. The same event read twice -- from a
+    #: rotated file and the live one, or re-serialised by another transport -- has the same key.
     key: str
+    #: The line's own bytes, hashed: how round 9 identified a line, kept to read a v1 position.
+    text_key: str
 
 
 class _Unreadable:
@@ -439,13 +641,39 @@ def _api_event(line: str) -> _ApiEvent | _Unreadable | None:
         return _UNREADABLE
     fields = parsed.get("fields")
     correlation = parsed.get("correlation_id")
+    correlation_id = correlation if isinstance(correlation, str) else ""
+    text_key = hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
+    # Every API line carries the correlation id of the request it belongs to, and no request writes
+    # the same event twice at the same microsecond. A line without one falls back to its bytes.
+    identity = (
+        f"{parsed['event']}|{correlation_id}|{occurred.astimezone(UTC).isoformat()}"
+        if correlation_id
+        else f"bytes|{text_key}"
+    )
     return _ApiEvent(
         event=parsed["event"],
         fields=fields if isinstance(fields, dict) else {},
         occurred_at=occurred,
-        correlation_id=correlation if isinstance(correlation, str) else "",
-        # The line's own bytes: two different lines always differ (instant, correlation id).
-        key=hashlib.sha256(text.encode("utf-8")).hexdigest()[:32],
+        correlation_id=correlation_id,
+        key=hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32],
+        text_key=text_key,
+    )
+
+
+_SIGNAL_EVENTS = frozenset({"database.request_refused", "auth.browser_boundary"})
+
+
+def _could_count(event: _ApiEvent) -> bool:
+    """Whether a line can move a figure -- only those need remembering across runs."""
+
+    if event.event in _SIGNAL_EVENTS:
+        return True
+    status_code = event.fields.get("status_code")
+    return (
+        event.event == "http.request.completed"
+        and isinstance(status_code, int)
+        and not isinstance(status_code, bool)
+        and status_code >= 500
     )
 
 
@@ -463,14 +691,27 @@ def _is_server_error(event: _ApiEvent, refused: frozenset[str]) -> bool:
 def _most_in_any_window(
     new: list[_ApiEvent], every: list[_ApiEvent], name: str, window: timedelta
 ) -> int:
-    """The most `name` events in any `window` ending at one of the `new` ones."""
+    """The most `name` events in any `window` that holds one of the `new` ones.
+
+    Windows ending at a new line reach back before the saved position, so a burst split by a run
+    boundary is one burst. Windows ending *after* a new line matter for a line that arrived late:
+    it belongs to the burst that followed it, which was counted a run ago (L4).
+    """
 
     instants = sorted(event.occurred_at for event in every if event.event == name)
+    fresh = sorted(event.occurred_at for event in new if event.event == name)
+    if not fresh:
+        return 0
+    # Each instant is tried once as a window's end -- when a new line lies inside the window ending
+    # there -- rather than once per new line that reaches it. Trying it per new line visited every
+    # instant of a burst once for each line of the burst: 16 000 lines took 85 s, and a burst big
+    # enough to pass the relay's timeout was re-read and timed out on every run after (round-9b
+    # verifier, round 3). Now it is O(n log n) and gives the same figure.
     most = 0
-    for event in new:
-        if event.event != name:
-            continue
-        end = event.occurred_at
+    for end in sorted(set(instants)):
+        reaches = bisect.bisect_left(fresh, end - window)
+        if reaches == len(fresh) or fresh[reaches] > end:
+            continue  # no new line in [end - window, end]: not a window this run counts
         inside = bisect.bisect_right(instants, end) - bisect.bisect_left(instants, end - window)
         most = max(most, inside)
     return most
@@ -485,11 +726,15 @@ def count_application_signals(
     """
 
     window = timedelta(seconds=APP_SIGNAL_WINDOW_SECONDS)
+    overlap = timedelta(seconds=APP_SIGNAL_OVERLAP_SECONDS)
     latest = now + timedelta(seconds=APP_CLOCK_SKEW_SECONDS)
     liveness_start = now - timedelta(seconds=APP_LIVENESS_WINDOW_SECONDS)
     ahead = cursor is not None and cursor.through > latest
     if cursor is None or ahead:
-        cursor = AppSignalCursor(through=now - window, seen_at_through=frozenset())
+        # A first run counts the last window, closed at its start (a v1-shaped position).
+        cursor = AppSignalCursor(through=now - window)
+    settled = cursor.settled()
+    known = cursor.known()
 
     events: list[_ApiEvent] = []
     unreadable = 0
@@ -500,11 +745,16 @@ def count_application_signals(
         elif event is not None and event.occurred_at <= latest:
             events.append(event)
 
+    # One event read twice in this run (a rotated file and the live one) is still one event.
+    unique: dict[str, _ApiEvent] = {}
+    for event in events:
+        unique.setdefault(event.key, event)
+    events = list(unique.values())
+
     new = [
         event
         for event in events
-        if event.occurred_at > cursor.through
-        or (event.occurred_at == cursor.through and event.key not in cursor.seen_at_through)
+        if event.occurred_at > settled and event.key not in known and event.text_key not in known
     ]
     refused = frozenset(
         event.correlation_id for event in events if event.event == "database.request_refused"
@@ -516,14 +766,23 @@ def count_application_signals(
     )
     alive = sum(1 for event in events if event.occurred_at >= liveness_start)
 
-    if new:
-        through = max(event.occurred_at for event in new)
-        seen = frozenset(event.key for event in new if event.occurred_at == through)
-        if through == cursor.through:
-            seen |= cursor.seen_at_through
-        moved = AppSignalCursor(through=through, seen_at_through=seen)
-    else:
-        moved = cursor
+    through = max([cursor.through, *(event.occurred_at for event in new)])
+    settled_now = max(settled, through - overlap)
+    remembered = {key: instant for key, instant in cursor.recent}
+    remembered.update(
+        (key, cursor.through) for key in cursor.seen_at_through
+    )  # a v1 position's lines are all at its instant
+    remembered.update((event.key, event.occurred_at) for event in new if _could_count(event))
+    moved = AppSignalCursor(
+        through=through,
+        recent=tuple(
+            sorted(
+                ((key, instant) for key, instant in remembered.items() if instant > settled_now),
+                key=lambda item: (item[1], item[0]),
+            )
+        ),
+        settled_through=settled_now,
+    )
     return ApplicationSignalCounts(
         server_errors=server_errors,
         database_refusals=_most_in_any_window(new, events, "database.request_refused", window),
@@ -603,17 +862,40 @@ def load_app_signal_cursor(path: str) -> AppSignalCursor | None:
     )
     try:
         parsed = json.loads(text)
-        if not isinstance(parsed, dict) or parsed.get("schema") != APP_SIGNAL_CURSOR_SCHEMA:
+        if not isinstance(parsed, dict) or parsed.get("schema") not in (
+            APP_SIGNAL_CURSOR_SCHEMA,
+            APP_SIGNAL_CURSOR_SCHEMA_V1,
+        ):
             raise ValueError("not a cursor document")
-        through = datetime.fromisoformat(str(parsed["through"]))
-        if through.tzinfo is None:
-            raise ValueError("no time zone")
+        through = _aware(parsed["through"])
         seen = parsed.get("seen_at_through", [])
         if not isinstance(seen, list) or not all(isinstance(key, str) for key in seen):
             raise ValueError("seen_at_through is not a list of strings")
-    except (ValueError, KeyError) as error:
+        if parsed["schema"] == APP_SIGNAL_CURSOR_SCHEMA_V1:
+            return AppSignalCursor(through=through, seen_at_through=frozenset(seen))
+        recent = parsed.get("recent", [])
+        if not isinstance(recent, list) or not all(
+            isinstance(item, list) and len(item) == 2 and isinstance(item[0], str)
+            for item in recent
+        ):
+            raise ValueError("recent is not a list of [key, instant] pairs")
+        return AppSignalCursor(
+            through=through,
+            seen_at_through=frozenset(seen),
+            recent=tuple((str(key), _aware(instant)) for key, instant in recent),
+            settled_through=(
+                None if parsed.get("settled_through") is None else _aware(parsed["settled_through"])
+            ),
+        )
+    except (ValueError, KeyError, TypeError) as error:
         raise RuntimeError(recovery) from error
-    return AppSignalCursor(through=through, seen_at_through=frozenset(seen))
+
+
+def _aware(value: object) -> datetime:
+    moment = datetime.fromisoformat(str(value))
+    if moment.tzinfo is None:
+        raise ValueError("no time zone")
+    return moment
 
 
 def save_app_signal_cursor(path: str, cursor: AppSignalCursor) -> None:
@@ -621,11 +903,14 @@ def save_app_signal_cursor(path: str, cursor: AppSignalCursor) -> None:
 
     file = _Path(path)
     file.parent.mkdir(parents=True, exist_ok=True)
-    document = {
+    document: dict[str, object] = {
         "schema": APP_SIGNAL_CURSOR_SCHEMA,
         "through": cursor.through.isoformat(),
         "seen_at_through": sorted(cursor.seen_at_through),
+        "recent": [[key, instant.isoformat()] for key, instant in cursor.recent],
     }
+    if cursor.settled_through is not None:
+        document["settled_through"] = cursor.settled_through.isoformat()
     temporary = file.with_name(f".{file.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(document, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(temporary, file)
@@ -641,8 +926,9 @@ def run_application_check(
 
     cursor = load_app_signal_cursor(cursor_path)
     latest = now + timedelta(seconds=APP_CLOCK_SKEW_SECONDS)
+    # From the settled instant, not the newest: the overlap behind it is re-read for late lines.
     start = (
-        cursor.through
+        cursor.settled()
         if cursor is not None and cursor.through <= latest
         else now - timedelta(seconds=APP_SIGNAL_WINDOW_SECONDS)
     )
@@ -659,10 +945,12 @@ def run_application_check(
 def read_application_log(source: str, *, compose_file: str, since: datetime) -> list[str]:
     """The API's log lines from `since` on.
 
-    `compose` reads the `api` service through `docker compose logs`, which is where the shop host
-    keeps them (json-file, rotated by the compose `logging` options). Anything else is a file path,
-    for a host that ships the stream elsewhere, and for a drill; it is read whole, and the count
-    decides which lines are new.
+    A file path is the API's own log file on the host (`STRUCTURED_LOG_FILE`, bind-mounted from
+    `R1_API_LOG_DIRECTORY`), read with its rotated siblings; that is where the shop keeps fourteen
+    days, and it outlives the container (`PLATFORM-RESIDUAL-009B` L4). `compose` reads the `api`
+    service through `docker compose logs`: Docker's json-file log, which is deleted with the
+    container on every recreation, so it is a live view and not the record. The count decides
+    which lines are new either way.
     """
 
     if source == "compose":
@@ -690,7 +978,34 @@ def read_application_log(source: str, *, compose_file: str, since: datetime) -> 
                 f"could not read the api log: {(result.stderr or result.stdout).strip()[:120]}"
             )
         return result.stdout.splitlines()
-    return _Path(source).read_text(encoding="utf-8", errors="replace").splitlines()
+    return _read_log_files(_Path(source), since=since)
+
+
+def _read_log_files(path: _Path, *, since: datetime) -> list[str]:
+    """The live file and the rotated ones (`api.jsonl.1` ... ) that can hold a line from `since`.
+
+    The API's `RotatingFileHandler` renames `api.jsonl` to `.1`, `.1` to `.2`, and so on, so a line
+    written just before a rotation is in `.1` when the next run reads. A rotated file last written
+    before `since` holds nothing newer and is skipped; oldest first, so lines come out in the order
+    they were written. A line in two files (a rotation between two reads) is one event to the count.
+    """
+
+    rotated: list[tuple[int, _Path]] = []
+    for sibling in path.parent.glob(f"{path.name}.*"):
+        suffix = sibling.name[len(path.name) + 1 :]
+        if suffix.isdigit():
+            rotated.append((int(suffix), sibling))
+    floor = since.timestamp()
+    lines: list[str] = []
+    for _, sibling in sorted(rotated, reverse=True):
+        try:
+            if sibling.stat().st_mtime < floor:
+                continue
+            lines.extend(sibling.read_text(encoding="utf-8", errors="replace").splitlines())
+        except FileNotFoundError:
+            continue  # rotated away between the listing and the read; the next run has it
+    lines.extend(path.read_text(encoding="utf-8", errors="replace").splitlines())
+    return lines
 
 
 def main() -> int:
@@ -698,7 +1013,17 @@ def main() -> int:
     parser.add_argument(
         "--check",
         action="append",
-        choices=["wal", "base", "volume", "flags", "console", "app", "all"],
+        choices=[
+            "wal",
+            "base",
+            "volume",
+            "outbox",
+            "flags",
+            "console",
+            "app",
+            "certificate",
+            "all",
+        ],
         help="repeatable; defaults to every check that is configured",
     )
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL"))
@@ -724,6 +1049,22 @@ def main() -> int:
         help="the private CA that signed the console certificate; without it TLS cannot verify",
     )
     parser.add_argument(
+        "--console-certificate",
+        default=os.environ.get("R1_CONSOLE_CERTIFICATE_FILE"),
+        help=(
+            "the console's own certificate (.shop/secrets/tls_certificate): `--check certificate` "
+            "says from 60 days out that it needs renewing (DEC-052)"
+        ),
+    )
+    parser.add_argument(
+        "--certificate-notice-state",
+        default=os.environ.get("R1_CERTIFICATE_NOTICE_STATE"),
+        help=(
+            "the file where `--check certificate` records the shop day it last told the owner, so "
+            "an hourly agent tells once a day, from 07:00 (round 9b); without it, every run tells"
+        ),
+    )
+    parser.add_argument(
         "--recovery-mode",
         choices=("self-managed", "provider-managed"),
         default=os.environ.get("R1_RECOVERY_MODE"),
@@ -733,8 +1074,9 @@ def main() -> int:
         "--app-logs",
         default=os.environ.get("R1_APP_LOGS"),
         help=(
-            "where the API's structured log is: `compose` reads the api service through "
-            "`docker compose -f <--compose-file> logs`; anything else is a file path"
+            "where the API's structured log is: the API's own file on the host (with its rotated "
+            "siblings), e.g. .shop/logs/api/api.jsonl -- the record that outlives the container; "
+            "`compose` reads `docker compose -f <--compose-file> logs api`, a live view only"
         ),
     )
     parser.add_argument(
@@ -768,10 +1110,17 @@ def main() -> int:
     # makes the "explicitly asked for, cannot run" case expressible at all.
     planned: list[tuple[str, str, object, str]] = [
         ("wal", "wal_archive_gap", arguments.database_url, "--database-url"),
+        ("outbox", "outbox_rows", arguments.database_url, "--database-url"),
         ("volume", "database_volume", arguments.volume_path, "--volume-path"),
         ("base", "base_backup_age", arguments.base_backup_marker, "--base-backup-marker"),
         ("flags", "capability_flags", arguments.compose_file, "--compose-file"),
         ("console", "console_reachable", arguments.console_url, "--console-url"),
+        (
+            "certificate",
+            "console_certificate",
+            arguments.console_certificate,
+            "--console-certificate",
+        ),
         # Both, or the check cannot run: without a saved position a run can only look at a window
         # ending at its own start, and a line written between two such windows is counted by
         # neither (round-9 verifier).
@@ -787,11 +1136,17 @@ def main() -> int:
         "wal": lambda: check_wal_archive_gap(
             str(arguments.database_url), recovery_mode=arguments.recovery_mode
         ),
+        "outbox": lambda: check_outbox_rows(str(arguments.database_url)),
         "volume": lambda: check_database_volume(str(arguments.volume_path)),
         "base": lambda: check_base_backup_age(str(arguments.base_backup_marker)),
         "flags": lambda: check_capability_flags(str(arguments.compose_file)),
         "console": lambda: check_console_reachable(
             str(arguments.console_url), ca_file=arguments.console_ca_file
+        ),
+        "certificate": lambda: run_certificate_check(
+            str(arguments.console_certificate),
+            notice_state=arguments.certificate_notice_state,
+            now=datetime.now(UTC),
         ),
         "app": lambda: run_application_check(
             str(arguments.app_logs),
@@ -837,7 +1192,8 @@ def main() -> int:
     if not results:
         raise SystemExit(
             "No check could run. Each one needs its input: --database-url, --volume-path, "
-            "--console-url, --app-logs with --app-signal-cursor. A check that silently does not "
+            "--console-url, --console-certificate, --app-logs with --app-signal-cursor. A check "
+            "that silently does not "
             "run is worse than one that fails."
         )
 
@@ -858,9 +1214,17 @@ def main() -> int:
             StructuredEvent(
                 component="operations",
                 name=result.name,
-                outcome="success" if result.passed else "failure",
+                outcome=(
+                    "failure" if not result.passed else "warning" if result.warning else "success"
+                ),
                 correlation=correlation,
-                severity=EventSeverity.INFO if result.passed else EventSeverity.ERROR,
+                severity=(
+                    EventSeverity.ERROR
+                    if not result.passed
+                    else EventSeverity.WARNING
+                    if result.warning
+                    else EventSeverity.INFO
+                ),
                 fields=result.fields,
             )
         )
@@ -877,9 +1241,8 @@ def main() -> int:
         )
     else:
         for result in results:
-            print(
-                f"  {'OK ' if result.passed else '!!!'} {result.name}: {result.detail}", file=human
-            )
+            mark = "!!!" if not result.passed else "WARN" if result.warning else "OK "
+            print(f"  {mark} {result.name}: {result.detail}", file=human)
 
     failures = [result for result in results if not result.passed]
     moment = datetime.now(UTC)
@@ -887,20 +1250,19 @@ def main() -> int:
         # The relay on the host delivers. Nothing here opens a socket, which is the point: on the
         # self-managed branch this runs on `database-private`, and that network has no way out.
         print(json.dumps(alert_document(results, now=moment), ensure_ascii=False), flush=True)
-    elif failures:
+    else:
+        # Also when this run passed: an alert an earlier run could not send is sent now (L4).
         deliver_alert(failures, now=moment)
 
     return 0 if not failures else 1
 
 
-#: `DEC-025`. `console_reachable` is the only check whose failure is a visible outage rather than a
-#: silent loss of a guarantee, and a console down at 03:00 that recovers before opening does not
-#: need anybody woken. The other three alert at any hour: a stale archive and a filling disk are
-#: losses nobody would otherwise notice, and a capability flag enabled without a signed manifest is
-#: a security incident under the operations spec.
-QUIET_HOURS_CHECKS = frozenset({"console_reachable"})
-QUIET_HOURS_START = 21
-QUIET_HOURS_END = 7
+#: `DEC-025`'s hours, read from `shop_alert_pending` -- one copy, because the relay applies them
+#: too, to an alert it resends (round-9b verifier: a 20:50 console alert whose send failed was
+#: resent at 02:00). The reasoning is written there.
+QUIET_HOURS_CHECKS = pending_alerts.QUIET_HOURS_CHECKS
+QUIET_HOURS_START = pending_alerts.QUIET_HOURS_START
+QUIET_HOURS_END = pending_alerts.QUIET_HOURS_END
 
 #: The shop is in Nha Trang and the decision is written in the shop's hours. Comparing
 #: `datetime.now(UTC).hour` against them inverted the window exactly: at UTC+7 the script alerted
@@ -908,7 +1270,7 @@ QUIET_HOURS_END = 7
 #: `production-deploy-day.md` names by name -- "one down at 07:45 needs everybody" -- was 00:45 UTC
 #: and suppressed, while a 22:00 outage nobody needed to see woke the owner. The test encoded the
 #: same UTC hours and called 03:00 UTC "night", so it passed while pinning the bug.
-SHOP_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+SHOP_TIMEZONE = pending_alerts.SHOP_TIMEZONE
 
 
 #: What `--emit-alert` prints and `scripts/relay_shop_alert.py` reads. Versioned because the two run
@@ -921,11 +1283,15 @@ ALERT_HEADING = "Bảng vận hành — cần xem ngay:"
 def _reportable(
     failures: list[CheckResult], *, now: datetime
 ) -> tuple[list[CheckResult], list[CheckResult]]:
-    """Split failures into those that alert now and those `DEC-025` holds for opening hours."""
+    """Split failures into those that alert now and those held: by `DEC-025` for opening hours,
+    or because the owner was told today (`told_today`)."""
 
-    local_hour = now.astimezone(SHOP_TIMEZONE).hour
-    quiet = local_hour >= QUIET_HOURS_START or local_hour < QUIET_HOURS_END
-    held = [failure for failure in failures if quiet and failure.name in QUIET_HOURS_CHECKS]
+    quiet = pending_alerts.in_quiet_hours(now)
+    held = [
+        failure
+        for failure in failures
+        if failure.told_today or (quiet and failure.name in QUIET_HOURS_CHECKS)
+    ]
     return [failure for failure in failures if failure not in held], held
 
 
@@ -959,7 +1325,11 @@ def alert_document(results: list[CheckResult], *, now: datetime) -> dict[str, ob
             if text is None
             else {"text": text, "checks": [failure.name for failure in reportable]}
         ),
-        "suppressed": [failure.name for failure in held],
+        "suppressed": [failure.name for failure in held if not failure.told_today],
+        # Failing and already told today: the relay logs it and sends nothing.
+        "told_today": [failure.name for failure in held if failure.told_today],
+        # Passed with something coming due (`DEC-051`): the relay logs these and sends nothing.
+        "warnings": {r.name: r.detail for r in results if r.passed and r.warning},
     }
 
 
@@ -987,14 +1357,58 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
     if not token_file or not chat_id:
         return False
 
-    text = alert_text(failures, now=now)
+    # `PLATFORM-RESIDUAL-009B` L4, as the relay does it: with `R1_ALERT_PENDING_DIRECTORY` set, an
+    # alert that could not be sent is kept and sent again by the next run until it gets through.
+    current = alert_text(failures, now=now)
+    pending_file = (
+        pending_alerts.pending_path("direct", {"R1_ALERT_PENDING_DIRECTORY": directory})
+        if (directory := os.environ.get("R1_ALERT_PENDING_DIRECTORY", "").strip())
+        else None
+    )
+    state = pending_alerts.PendingState()
+    if pending_file is not None:
+        state, problem = pending_alerts.load(pending_file, now=now)
+        if problem:
+            _not_delivered(problem)
+    # A kept console alert waits for 07:00 like a new one (`DEC-025`); `compose` leaves it untried.
+    # A current alert is deferred only once `prepare` has kept it (round-9b verifier, round 4).
+    checks = tuple(failure.name for failure in _reportable(failures, now=now)[0])
+    composition, not_deferred = pending_alerts.prepare(
+        current, checks, state, pending_file, now=now
+    )
+    if not_deferred is not None:
+        print(
+            "check_shop_operations: WARNING this run's alert did not fit beside the oldest kept "
+            f"alert and cannot be kept for the next run ({not_deferred}): it goes now, first and "
+            "whole, beside it",
+            file=_sys.stderr,
+            flush=True,
+        )
+    text = composition.text
     if text is None:
         return False
+
+    def _kept() -> None:
+        if pending_file is not None:
+            problem = pending_alerts.try_save(
+                pending_file,
+                pending_alerts.after_failure(
+                    state,
+                    current,
+                    checks,
+                    now=now,
+                    attempted=composition.carried,
+                    deferred=composition.deferred,
+                ),
+            )
+            if problem is not None:
+                _not_delivered(f"NOT kept for a retry: {problem}")
 
     try:
         token = _Path(token_file).read_text(encoding="utf-8").strip()
     except OSError as error:
         _not_delivered(f"cannot read R1_ALERT_TELEGRAM_TOKEN_FILE ({error.strerror})")
+        _kept()
         return False
 
     body = urllib.parse.urlencode(
@@ -1015,9 +1429,30 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
         # `SHOP-ALERT-DELIVERY-001` was a swallowed `URLError` here that nobody could see.
         reason = str(getattr(error, "reason", error)).replace(token, "<token>")
         _not_delivered(f"{type(error).__name__}: {reason}"[:200])
+        _kept()
         return False
     if not delivered:
         _not_delivered("telegram did not answer 2xx")
+        _kept()
+    elif pending_file is not None:
+        remaining = pending_alerts.after_success(
+            state,
+            composition.carried,
+            composition.reported_dropped,
+            deferred=current if composition.deferred else None,
+            checks=checks,
+            now=now,
+        )
+        # Unchanged (a clipped kept alert stays kept): nothing to write. A deferred alert is
+        # already kept whatever the write says: `prepare` wrote it before the send.
+        problem = None if remaining == state else pending_alerts.try_save(pending_file, remaining)
+        if problem is not None:
+            print(
+                f"check_shop_operations: WARNING the kept alerts were not updated ({problem}): "
+                "an earlier alert delivered now may be sent again",
+                file=_sys.stderr,
+                flush=True,
+            )
     return delivered
 
 

@@ -156,3 +156,117 @@ def test_a_later_dictconfig_cannot_silently_disable_the_stream() -> None:
     assert structured_logging_is_live() is True
     logging.getLogger(STRUCTURED_LOGGER_NAME).info('{"event": "back"}')
     assert "back" in buffer.getvalue()
+
+
+# --- PLATFORM-RESIDUAL-009B L4: the record outlives the container -------------------------------
+
+
+def _signal_event(name: str = "http.request.completed") -> StructuredEvent:
+    return StructuredEvent(
+        component="api",
+        name=name,
+        outcome="completed",
+        correlation=CorrelationContext.new(),
+        fields={"status_code": 500, "route": "/internal/v1/x", "method": "GET"},
+    )
+
+
+def _close_file_handlers() -> None:
+    for handler in list(logging.getLogger(STRUCTURED_LOGGER_NAME).handlers):
+        if hasattr(handler, "baseFilename"):
+            handler.close()
+
+
+def test_a_configured_log_file_receives_every_line_the_stream_does(tmp_path: object) -> None:
+    from pathlib import Path
+
+    path = Path(str(tmp_path)) / "api.jsonl"
+    stream = io.StringIO()
+    configure_structured_logging(stream=stream, log_file=str(path))
+    configure_structured_logging(stream=stream, log_file=str(path))  # idempotent
+    try:
+        assert SafeStructuredLogger().emit(_signal_event())
+        filed = path.read_text(encoding="utf-8").splitlines()
+        assert filed == stream.getvalue().splitlines()
+        assert json.loads(filed[0])["event"] == "http.request.completed"
+    finally:
+        _close_file_handlers()
+
+
+def test_the_file_is_named_by_the_environment_the_container_sets(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pathlib import Path
+
+    from nha_trang_laundry_observability import logging_setup
+
+    path = Path(str(tmp_path)) / "api.jsonl"
+    monkeypatch.setenv(logging_setup.LOG_FILE_VARIABLE, str(path))
+    configure_structured_logging(stream=io.StringIO())
+    try:
+        SafeStructuredLogger().emit(_signal_event())
+        assert len(path.read_text(encoding="utf-8").splitlines()) == 1
+    finally:
+        _close_file_handlers()
+    # Unset again (the worker, a test): the file handler goes, stdout stays.
+    monkeypatch.delenv(logging_setup.LOG_FILE_VARIABLE)
+    configure_structured_logging(stream=io.StringIO())
+    assert not [
+        handler
+        for handler in logging.getLogger(STRUCTURED_LOGGER_NAME).handlers
+        if hasattr(handler, "baseFilename")
+    ]
+
+
+def test_a_second_process_appends_to_what_the_first_wrote(tmp_path: object) -> None:
+    """Container recreation is a new process on the same host file: it appends, never truncates."""
+
+    from pathlib import Path
+
+    path = Path(str(tmp_path)) / "api.jsonl"
+    configure_structured_logging(stream=io.StringIO(), log_file=str(path))
+    SafeStructuredLogger().emit(_signal_event())
+    _close_file_handlers()
+    configure_structured_logging(stream=io.StringIO(), log_file="")
+    configure_structured_logging(stream=io.StringIO(), log_file=str(path))
+    try:
+        SafeStructuredLogger().emit(_signal_event("database.request_refused"))
+        events = [json.loads(line)["event"] for line in path.read_text("utf-8").splitlines()]
+        assert events == ["http.request.completed", "database.request_refused"]
+    finally:
+        _close_file_handlers()
+
+
+def test_the_file_rotates_by_size_and_keeps_a_bounded_history(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pathlib import Path
+
+    from nha_trang_laundry_observability import logging_setup
+
+    monkeypatch.setattr(logging_setup, "LOG_FILE_MAX_BYTES", 2000)
+    monkeypatch.setattr(logging_setup, "LOG_FILE_BACKUP_COUNT", 3)
+    path = Path(str(tmp_path)) / "api.jsonl"
+    configure_structured_logging(stream=io.StringIO(), log_file=str(path))
+    try:
+        for _ in range(40):
+            SafeStructuredLogger().emit(_signal_event())
+        files = sorted(item.name for item in Path(str(tmp_path)).iterdir())
+        assert files == ["api.jsonl", "api.jsonl.1", "api.jsonl.2", "api.jsonl.3"]
+        assert all(item.stat().st_size <= 2000 for item in Path(str(tmp_path)).iterdir())
+    finally:
+        _close_file_handlers()
+
+
+def test_an_unwritable_log_file_is_said_and_the_stream_carries_on(
+    tmp_path: object, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from pathlib import Path
+
+    stream = io.StringIO()
+    missing = Path(str(tmp_path)) / "no-such-directory" / "api.jsonl"
+    configure_structured_logging(stream=stream, log_file=str(missing))
+    assert "cannot be opened" in capsys.readouterr().err
+    assert SafeStructuredLogger().emit(_signal_event())
+    assert len(stream.getvalue().splitlines()) == 1
+    assert structured_logging_is_live()

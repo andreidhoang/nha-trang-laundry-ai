@@ -173,3 +173,66 @@ def test_operations_the_api_cannot_serve_are_a_server_error(
     assert response.json()["detail"] == "operations unavailable"
     counts = CHECKS.count_application_signals(written, now=datetime.now(UTC))
     assert (counts.server_errors, counts.database_refusals) == (1, 0)
+
+
+# --- PLATFORM-RESIDUAL-009B L4: the API's own file, across a restart ----------------------------
+
+
+def test_the_api_writes_its_record_to_the_host_file_and_a_restart_keeps_it(
+    tmp_path: Path,
+) -> None:
+    """The real app, its real logger, the file `STRUCTURED_LOG_FILE` names, and the real check.
+
+    A recreated container is a new process appending to the same host file: what the first wrote is
+    still there, and the check counts each 500 once across the restart."""
+
+    import logging
+
+    from nha_trang_laundry_observability import STRUCTURED_LOGGER_NAME, configure_structured_logging
+
+    log = tmp_path / "logs" / "api.jsonl"
+    log.parent.mkdir()
+    cursor = tmp_path / "cursor.json"
+    logger = logging.getLogger(STRUCTURED_LOGGER_NAME)
+    saved = list(logger.handlers)
+
+    def _start_process() -> None:
+        configure_structured_logging(log_file=str(log))
+
+    def _stop_process() -> None:
+        for handler in list(logger.handlers):
+            if hasattr(handler, "baseFilename"):
+                logger.removeHandler(handler)
+                handler.close()
+
+    app.dependency_overrides[current_principal] = lambda: StaffPrincipal(
+        OWNER_ID, "owner-test-subject", frozenset({StaffRole.OWNER_ADMIN}), True
+    )
+    app.dependency_overrides[get_operations_service] = lambda: _Exploding(RuntimeError("boom"))
+    client = TestClient(app, raise_server_exceptions=False)
+    try:
+        _start_process()
+        assert client.get("/internal/v1/queue-recovery").status_code == 500
+        first = CHECKS.run_application_check(
+            str(log), compose_file="unused", cursor_path=str(cursor), now=datetime.now(UTC)
+        )
+        _stop_process()  # the container is recreated
+
+        _start_process()
+        assert client.get("/internal/v1/queue-recovery").status_code == 500
+        second = CHECKS.run_application_check(
+            str(log), compose_file="unused", cursor_path=str(cursor), now=datetime.now(UTC)
+        )
+        third = CHECKS.run_application_check(
+            str(log), compose_file="unused", cursor_path=str(cursor), now=datetime.now(UTC)
+        )
+    finally:
+        _stop_process()
+        logger.handlers = saved
+        app.dependency_overrides.clear()
+
+    assert [run.fields["server_errors"] for run in (first, second, third)] == [1, 1, 0]
+    assert (
+        len([line for line in log.read_text("utf-8").splitlines() if '"status_code":500' in line])
+        == 2
+    )

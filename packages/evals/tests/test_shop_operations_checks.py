@@ -394,3 +394,289 @@ def test_a_wal_chain_with_no_base_backup_is_reported(tmp_path: Path) -> None:
     stale = CHECKS.check_base_backup_age(str(marker), now=datetime.now(UTC) + timedelta(hours=27))
     assert stale.passed is False
     assert stale.fields["base_backup_age_s"] > CHECKS.MAX_BASE_BACKUP_AGE_SECONDS
+
+
+def test_a_direct_alert_that_failed_is_sent_by_the_next_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`PLATFORM-RESIDUAL-009B` L4 on the direct path (a check run with egress, not through the
+    relay): with `R1_ALERT_PENDING_DIRECTORY`, a failed send is kept and the next run -- even a
+    passing one -- sends it, then forgets it."""
+
+    token = tmp_path / "token"
+    token.write_text("probe-token", encoding="utf-8")
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_TOKEN_FILE", str(token))
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_CHAT_ID", "1234")
+    monkeypatch.setenv("R1_ALERT_PENDING_DIRECTORY", str(tmp_path / "pending"))
+    posted: list[str] = []
+    reachable = {"up": False}
+
+    def _post(request: object, timeout: float = 0) -> object:
+        if not reachable["up"]:
+            raise OSError("no route to host")
+        posted.append(getattr(request, "data", b"").decode())
+
+        class _Response:
+            status = 200
+
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+        return _Response()
+
+    monkeypatch.setattr(CHECKS.urllib.request, "urlopen", _post)
+    day = datetime(2026, 9, 3, 3, tzinfo=UTC)  # 10:00 in the shop
+    assert CHECKS.deliver_alert([_failure("application_signals")], now=day) is False
+    assert list((tmp_path / "pending").glob("*.json"))
+
+    reachable["up"] = True
+    assert CHECKS.deliver_alert([], now=day + timedelta(minutes=5)) is True
+    assert len(posted) == 1 and "application_signals" in CHECKS.urllib.parse.unquote_plus(posted[0])
+    assert not list((tmp_path / "pending").glob("*.json"))
+    assert CHECKS.deliver_alert([], now=day + timedelta(minutes=10)) is False
+    assert len(posted) == 1
+
+
+# --- PLATFORM-RESIDUAL-009B L5 / DEC-051: the outbox row count -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("rows", "warned"),
+    [(0, False), (56_000, False), (1_000_000, False), (1_000_001, True), (4_200_000, True)],
+)
+def test_the_outbox_row_count_is_reported_and_warns_past_a_million(
+    monkeypatch: pytest.MonkeyPatch, rows: int, warned: bool
+) -> None:
+    """`DEC-051` keeps record-only outbox rows (the trigger refuses deletion) and asks for the
+    count, with a warning past 1 000 000 rows -- when retention is decided again. A warning, not a
+    failure: it is a decision coming due, not something broken, so it never pages anybody."""
+
+    _archiver(monkeypatch, [(rows,)])
+    result = CHECKS.check_outbox_rows("postgresql://unused")
+    assert result.name == "outbox_rows"
+    assert result.passed is True
+    assert result.fields["outbox_rows"] == rows
+    assert result.warning is warned
+    assert f"{rows:,}".replace(",", " ") in result.detail
+    if warned:
+        assert "DEC-051" in result.detail and "1 000 000" in result.detail
+
+
+def test_the_outbox_count_runs_with_the_data_checks_and_its_warning_is_visible(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _archiver(monkeypatch, [(1_500_000,)])
+    monkeypatch.setattr(
+        CHECKS._sys,
+        "argv",
+        ["check_shop_operations.py", "--check", "outbox", "--database-url", "x", "--emit-alert"],
+    )
+    assert CHECKS.main() == 0  # a warning does not fail the run
+    captured = capsys.readouterr()
+    assert "WARN outbox_rows: 1 500 000 outbox rows" in captured.err
+    import json
+
+    document = json.loads(
+        next(line for line in captured.out.splitlines() if "shop-alert.v1" in line)
+    )
+    assert document["passed"] is True and document["alert"] is None
+    assert document["warnings"] == {"outbox_rows": document["results"]["outbox_rows"]["detail"]}
+
+
+def test_the_scheduled_data_checks_include_the_outbox_count() -> None:
+    install = (ROOT / "deploy/shop-till/install.sh").read_text("utf-8")
+    assert "--check wal --check base --check volume --check outbox --emit-alert" in install
+    runbook = (ROOT / "docs/runbooks/shop-pilot.md").read_text("utf-8")
+    assert "--check wal --check base --check volume --check outbox --emit-alert" in runbook
+
+
+# --- DEC-052: the console certificate's renewal, from the certificate itself (round 9b) ---------
+
+
+def _leaf(path: Path, *, expires: datetime) -> None:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "console.giatlasachcong.lan")])
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(expires - timedelta(days=825))
+        .not_valid_after(expires)
+        .sign(key, hashes.SHA256())
+    )
+    path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+
+
+EXPIRES = datetime(2028, 12, 31, 17, 0, tzinfo=UTC)  # 01/01/2029 00:00 in Nha Trang
+
+
+@pytest.mark.parametrize(
+    ("days_left", "expected"),
+    [
+        # The same boundaries `bootstrap_shop_local.py` prints, so the two never disagree.
+        (61, None),
+        (60, "còn 60 ngày"),
+        (1, "còn 1 ngày"),
+        (0, "đã hết hạn"),
+        (-30, "đã hết hạn"),
+    ],
+)
+def test_the_certificate_check_says_when_to_renew(
+    tmp_path: Path, days_left: int, expected: str | None
+) -> None:
+    certificate = tmp_path / "tls_certificate"
+    _leaf(certificate, expires=EXPIRES)
+    result = CHECKS.check_console_certificate(
+        str(certificate), now=EXPIRES - timedelta(days=days_left)
+    )
+    assert result.name == "console_certificate"
+    if expected is None:
+        assert result.passed and "01/01/2029" in result.detail
+    else:
+        assert not result.passed, result.detail
+        assert expected in result.detail and "01/01/2029" in result.detail
+        assert "--new-ca" in result.detail
+
+
+@pytest.mark.parametrize("content", [None, b"not a certificate"])
+def test_a_missing_or_unreadable_certificate_is_a_renewal_to_do(
+    tmp_path: Path, content: bytes | None
+) -> None:
+    certificate = tmp_path / "tls_certificate"
+    if content is not None:
+        certificate.write_bytes(content)
+    result = CHECKS.check_console_certificate(str(certificate), now=EXPIRES)
+    assert not result.passed and "--new-ca" in result.detail
+
+
+def test_the_check_and_the_bootstrap_renew_from_the_same_day() -> None:
+    bootstrap = importlib.import_module("bootstrap_shop_local")
+    assert bootstrap.RENEW_BEFORE_DAYS == CHECKS.CERTIFICATE_RENEW_BEFORE_DAYS
+
+
+def test_the_renewal_notice_waits_for_opening_hours() -> None:
+    """A run at night (the hourly agent, or one on a night wake): `DEC-025` holds the notice."""
+
+    notice = CHECKS.CheckResult(
+        "console_certificate", passed=False, detail="còn 45 ngày", fields={}
+    )
+    night = CHECKS.alert_document([notice], now=datetime(2026, 10, 1, 20, tzinfo=UTC))  # 03:00
+    assert night["alert"] is None and night["suppressed"] == ["console_certificate"]
+    morning = CHECKS.alert_document([notice], now=datetime(2026, 10, 2, 2, tzinfo=UTC))  # 09:00
+    assert morning["alert"]["checks"] == ["console_certificate"]
+
+
+def test_the_certificate_check_asked_for_without_its_file_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("R1_CONSOLE_CERTIFICATE_FILE", raising=False)
+    monkeypatch.setattr(sys, "argv", ["check_shop_operations.py", "--check", "certificate"])
+    with pytest.raises(SystemExit) as refused:
+        CHECKS.main()
+    assert "certificate needs --console-certificate" in str(refused.value)
+
+
+# --- Round-9b verifier, round 2: a notice found at night is told that morning, once a day -------
+
+SHOP = CHECKS.SHOP_TIMEZONE
+NEAR = datetime(2028, 11, 15, tzinfo=SHOP)  # 46 days before EXPIRES
+
+
+def _notice(tmp_path: Path, at: datetime, state: Path | None = None) -> Any:
+    certificate = tmp_path / "tls_certificate"
+    if not certificate.exists():
+        _leaf(certificate, expires=EXPIRES)
+    return CHECKS.run_certificate_check(
+        str(certificate),
+        notice_state=str(state if state is not None else tmp_path / "certificate-notice.json"),
+        now=at,
+    )
+
+
+def test_a_renewal_notice_found_at_night_is_told_from_opening_once_a_shop_day(
+    tmp_path: Path,
+) -> None:
+    """The daily agent's run on a night wake used to be suppressed for quiet hours and kept by
+    nobody -- the notice was lost for the day, not held. Now the agent looks every hour and the
+    check remembers the shop day it last told the owner: nothing at night, once from 07:00."""
+
+    state = tmp_path / "certificate-notice.json"
+    night = _notice(tmp_path, NEAR.replace(day=14, hour=23, minute=30))
+    assert not night.passed and not night.told_today
+    document = CHECKS.alert_document([night], now=NEAR.replace(day=14, hour=23, minute=30))
+    assert document["alert"] is None and document["suppressed"] == ["console_certificate"]
+    assert not state.exists(), "a notice nobody was told is not recorded as told"
+
+    morning = _notice(tmp_path, NEAR.replace(hour=7, minute=5))
+    assert not morning.passed and not morning.told_today
+    document = CHECKS.alert_document([morning], now=NEAR.replace(hour=7, minute=5))
+    assert document["alert"]["checks"] == ["console_certificate"]
+
+    later = _notice(tmp_path, NEAR.replace(hour=8, minute=5))
+    assert not later.passed and later.told_today, "still failing, but told already today"
+    document = CHECKS.alert_document([later], now=NEAR.replace(hour=8, minute=5))
+    assert document["alert"] is None and document["told_today"] == ["console_certificate"]
+    assert document["passed"] is False
+
+    tomorrow = _notice(tmp_path, NEAR.replace(day=16, hour=7, minute=5))
+    assert not tomorrow.told_today
+    assert CHECKS.alert_document([tomorrow], now=NEAR.replace(day=16, hour=7, minute=5))["alert"]
+
+
+def test_a_shop_day_is_counted_in_the_shop_clock(tmp_path: Path) -> None:
+    """06:30 UTC on the 15th is 13:30 in Nha Trang; 18:30 UTC is 01:30 on the 16th there."""
+
+    told = _notice(tmp_path, datetime(2028, 11, 15, 6, 30, tzinfo=UTC))
+    assert not told.told_today
+    assert _notice(tmp_path, datetime(2028, 11, 15, 13, 0, tzinfo=UTC)).told_today  # 20:00
+    next_morning = _notice(tmp_path, datetime(2028, 11, 16, 0, 30, tzinfo=UTC))  # 07:30 on 16th
+    assert not next_morning.told_today
+
+
+@pytest.mark.parametrize("content", ["{not json", '{"schema": "something else"}', '"x"'])
+def test_an_unreadable_notice_record_tells_again_rather_than_never(
+    tmp_path: Path, content: str
+) -> None:
+    state = tmp_path / "certificate-notice.json"
+    state.write_text(content, encoding="utf-8")
+    result = _notice(tmp_path, NEAR.replace(hour=9))
+    assert not result.passed and not result.told_today
+    assert _notice(tmp_path, NEAR.replace(hour=10)).told_today
+
+
+def test_a_notice_record_that_cannot_be_written_still_tells_and_says_so(tmp_path: Path) -> None:
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    state = blocker / "certificate-notice.json"
+    first = _notice(tmp_path, NEAR.replace(hour=9), state)
+    assert not first.passed and not first.told_today
+    assert "không ghi được" in first.detail
+    assert not _notice(tmp_path, NEAR.replace(hour=10), state).told_today
+
+
+def test_a_valid_certificate_records_nothing(tmp_path: Path) -> None:
+    state = tmp_path / "certificate-notice.json"
+    result = _notice(tmp_path, EXPIRES - timedelta(days=200))
+    assert result.passed and not state.exists()
+
+
+def test_without_a_notice_record_the_check_tells_every_run(tmp_path: Path) -> None:
+    """A check run by hand (no record named) says what it sees, every time."""
+
+    certificate = tmp_path / "tls_certificate"
+    _leaf(certificate, expires=EXPIRES)
+    for hour in (9, 10):
+        result = CHECKS.run_certificate_check(
+            str(certificate), notice_state=None, now=NEAR.replace(hour=hour)
+        )
+        assert not result.passed and not result.told_today

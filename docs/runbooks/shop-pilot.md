@@ -77,15 +77,38 @@ uv run python scripts/bootstrap_shop_local.py --backup-recipient 'age1...'
 That writes the database passwords, the OIDC settings and a private CA with a certificate for
 `console.giatlasachcong.lan`, all `0600` under `.shop/`, which is gitignored before it exists.
 The CA is **name-constrained** to that host (a tablet told to trust it still rejects a certificate
-it signs for any other site), and **its private key is never written to this machine**: it signs
-the console certificate in memory and is dropped (`PLATFORM-SECURITY-009` P4). To be able to renew
-the console certificate in 825 days without reinstalling the CA on every tablet, add
-`--export-ca-key /Volumes/<usb>/laundry-ca.key` — it asks for a passphrase, refuses a path inside
-the checkout, and a later run with `--ca-key` that file renews. Without it, renewal means moving
-`.shop/ca` aside, re-running, and reinstalling the new `ca.crt` on each tablet. A `.shop/ca/ca.key`
-left by an earlier version is reported on every run: that CA has no name constraints, so re-mint. It
-refuses to overwrite anything, so re-running after the shop has been trading cannot rotate a
-password out from under a live system. It prints the `CREATE ROLE` statements for §4.
+it signs for any other site), and **its private key is never kept** (`DEC-052`): it signs the
+console certificate in memory and is dropped — not written to this machine, not exported anywhere.
+`--export-ca-key` and `--ca-key` are refused, with this reason, whatever is already on disk. Every
+run reads `.shop/ca/ca.crt` and says what it is: a CA an earlier version made has no name
+constraints and is reported as **"CA cũ không giới hạn tên miền — hãy tạo lại"**; a `.shop/ca/ca.key`
+left by an earlier version is reported too, and is never used to sign. That holds when the console
+certificate is missing as well: the run stops (nothing more written), says what the CA is and
+whether an old key is on disk, and names `--new-ca` (below) as the way back. The script refuses to
+overwrite anything, so re-running
+after the shop has been trading cannot rotate a password out from under a live system. It prints
+the `CREATE ROLE` statements for §4.
+
+**Renewal, and when.** The console certificate lives 825 days (the most an iPad accepts). From 60
+days before it expires the till's hourly check (`checks-daily`, §6: `check_shop_operations.py
+--check certificate`) sends the owner one Telegram message a shop day, the first hour from 07:00
+the till is awake ("chứng chỉ console hết hạn ngày … (còn N ngày)"); it remembers the day it told
+in `--certificate-notice-state`, and it never sends at night (`DEC-025`). Every run of this script
+says so too. Then:
+
+```bash
+uv run python scripts/bootstrap_shop_local.py --backup-recipient 'age1...' --new-ca
+docker compose -f compose.r1.yaml -f compose.shop-local.yaml -f compose.shop-till.yaml \
+  --profile self-managed-database up -d --force-recreate tls   # serve the new certificate
+```
+
+`--new-ca` moves the old `ca.crt` and the console's certificate and key to `.shop/retired/<time>/`
+(and deletes a legacy `ca.key` outright), mints a new CA and certificate, and changes nothing else.
+Install the new `.shop/ca/ca.crt` on **every** tablet and switch trust on, exactly as below (and in
+the till Mac's keychain, `shop-till-mac.md`); once
+every tablet opens the console, delete `.shop/retired/<time>/` and remove the old CA profile from
+each tablet. To undo before then, move the three retired files back. The new CA lives only as long
+as its one certificate (plus a month), so an old CA left on a tablet stops being trusted by itself.
 
 Then the two steps that turn into a mysterious morning if they are skipped:
 
@@ -249,7 +272,7 @@ It used to be `-e DATABASE_URL="$(cat …)"`, which put the migration identity's
   -e R1_PGDATA_PATH=/pgdata -e R1_BASE_BACKUP_MARKER=/staging/last-success \
   --entrypoint python nha-trang-laundry-api:local \
   scripts/check_shop_operations.py --database-url-stdin \
-  --check wal --check base --check volume --emit-alert
+  --check wal --check base --check volume --check outbox --emit-alert
 
 # Every five minutes. The host checks: capability flags need the Docker socket, and the console
 # check has to reach the console the way a tablet does, by name, over TLS -- and asks `/readyz`,
@@ -263,25 +286,66 @@ It used to be `-e DATABASE_URL="$(cat …)"`, which put the migration identity's
   R1_CONSOLE_CA_FILE=$HOME/laundry/.shop/ca/ca.crt \
   R1_APP_SIGNAL_CURSOR=$HOME/laundry/.shop/app-signal-cursor.json \
   .venv/bin/python scripts/check_shop_operations.py --check flags --check console \
-  --check app --app-logs compose --emit-alert
+  --check app --app-logs $HOME/laundry/.shop/logs/api/api.jsonl --emit-alert
+
+# Every hour; one message a shop day. The console certificate: from 60 days before it expires,
+# the first run from 07:00 tells the owner to renew, and the notice record keeps the rest of the
+# day's runs quiet (DEC-052; the renewal is §2's --new-ca). Hourly rather than once at 09:00:
+# a single daily run that lands at night is held by DEC-025 and nothing would run again that day.
+0 * * * * cd $HOME/laundry && \
+  R1_ALERT_TELEGRAM_TOKEN_FILE=$HOME/laundry/.shop/secrets/alert_telegram_token \
+  R1_ALERT_TELEGRAM_CHAT_ID_FILE=$HOME/laundry/.shop/secrets/alert_telegram_chat_id \
+  R1_ALERT_LOG_FILE=$HOME/laundry/.shop/alert-delivery.log \
+  .venv/bin/python scripts/relay_shop_alert.py --label checks-daily -- \
+  .venv/bin/python scripts/check_shop_operations.py --check certificate \
+  --console-certificate $HOME/laundry/.shop/secrets/tls_certificate \
+  --certificate-notice-state $HOME/laundry/.shop/certificate-notice.json --emit-alert
 ```
 
+**An alert that could not be sent is sent again** (`PLATFORM-RESIDUAL-009B` L4). The relay keeps
+it in `alert-pending-<label>.json` — in `R1_ALERT_PENDING_DIRECTORY`, or beside
+`R1_ALERT_LOG_FILE` when that is not set — and every later run, passing or failing, sends it under
+"Cảnh báo trước đó chưa gửi được:" with the time it was first raised and how many sends failed,
+until one gets through; then the file is gone. The same alert failing run after run is one entry,
+not a pile. Up to 24 wait (two hours); past that the oldest are dropped and the next message says
+how many. A kept **console** alert keeps `DEC-025`'s hours: between 21:00 and 07:00 it waits, untried,
+and goes with the first run from 07:00 — a console alert raised at 20:50 whose send failed does not
+page anyone at 02:00. An alert that mixed a console line with an any-hour one is kept as two, so the
+any-hour part still goes at once. The oldest kept alert always goes, whole, with the next message
+that can be sent, so one long alert cannot hold up the rest. When it and this run's alert are too
+long for one message, it goes alone, ending "còn một cảnh báo mới hơn — gửi ở tin sau", and this
+run's alert is written to the file **before** the send and goes whole next run. If the file cannot
+be written (the disk is full), nothing is put off: this run's alert goes first and whole, the old
+one goes beside it cut to fit — ending "cảnh báo cũ bị cắt cho vừa tin; bản đầy đủ vẫn được giữ" —
+and stays in the file, and `alert-delivery.log` says `WARNING … cannot be kept`. Free the disk and
+the next run sends the old one whole. A run whose send fails exits 3; a run that only has console
+alerts waiting for the morning does not.
+
+**`--check outbox`** reports how many rows the outbox holds (`DEC-051`: record-only rows are kept,
+not deleted). Past 1 000 000 rows it **warns** — `WARN outbox_rows` in the schedule's log and a
+`WARNING` line in `alert-delivery.log` — without paging anybody: retention is then due to be
+decided, and nothing is broken.
+
 **`--check app` is the one that watches the application rather than the machine**
-(`OPS-OBSERVABILITY-009`). It reads the API's own structured log through `docker compose logs api`
-— the json-file log the host already keeps, fourteen busy days of it (`compose.r1.yaml`,
-`x-api-logging`, where the arithmetic is written out, Docker's own healthcheck included) — and fails
-when a count reaches its figure. **Each run counts from the last line the previous run counted**,
-whose instant it keeps in `R1_APP_SIGNAL_CURSOR` (on the till, `~/Library/Application
-Support/giatlasachcong/app-signal-cursor.json`, outside the checkout). So nothing written between two
-runs is missed, a run launchd delayed or skipped is caught up by the next one, and one incident
-alerts once. The two rates are judged over any 5 minutes, wherever a run boundary falls. If that
+(`OPS-OBSERVABILITY-009`). It reads the API's own structured log from the file the API writes on
+the host — `.shop/logs/api/api.jsonl` and its rotated `.1` … `.49`, about 17 busy days in 100 MiB
+(`compose.r1.yaml`, where the arithmetic is written out, Docker's own healthcheck included). Not
+`docker compose logs api`: Docker deletes that log with the container, and every image update
+recreates the container, so it is a live view and not the record (`PLATFORM-RESIDUAL-009B` L4). It
+fails when a count reaches its figure. **Each run counts what the previous runs have not**: it
+keeps its position in `R1_APP_SIGNAL_CURSOR` (on the till, `~/Library/Application
+Support/giatlasachcong/app-signal-cursor.json`, outside the checkout), re-reads the 15 minutes
+behind it for lines that arrived late, and knows a line by its event, request id and time rather
+than its bytes. So nothing written between two runs is missed, a line that arrives after a newer
+one is still counted, a run launchd delayed or skipped is caught up by the next one, and one
+incident alerts once. The two rates are judged over any 5 minutes, wherever a run boundary falls. If that
 file is ever unreadable the check fails and says so; deleting it makes the next run start from the
 last 5 minutes, and anything older than that is then never checked. The figures live in one place,
 `APP_SIGNAL_THRESHOLDS` in `scripts/check_shop_operations.py`; a test holds this table to them.
 
 | Signal | Alert at | What it is | What to do |
 |---|---|---|---|
-| `server_errors` | 1 | an answer 500–599, except a 503 the API wrote `database.request_refused` for (the next row) and `/readyz`'s 503 (the console check's finding, quiet at night by `DEC-025`). A 500 told staff "Máy chủ gặp lỗi. Đừng thử lại": the outcome is unknown. Any other 503 — "staff identity unavailable", "operations unavailable" — is an outage nothing else reports: nobody can sign in, or the API is missing a service it needs | Find the request by time in `docker compose logs api`. A 500: check the order it touched before anyone retries it. A 503 on `/internal/v1/auth/session`: the identity provider; anything else: the API's configuration |
+| `server_errors` | 1 | an answer 500–599, except a 503 the API wrote `database.request_refused` for (the next row) and `/readyz`'s 503 (the console check's finding, quiet at night by `DEC-025`). A 500 told staff "Máy chủ gặp lỗi. Đừng thử lại": the outcome is unknown. Any other 503 — "staff identity unavailable", "operations unavailable" — is an outage nothing else reports: nobody can sign in, or the API is missing a service it needs | Find the request by time in `.shop/logs/api/api.jsonl` (`grep '"status_code":500'`). A 500: check the order it touched before anyone retries it. A 503 on `/internal/v1/auth/session`: the identity provider; anything else: the API's configuration |
 | `database_refusals` | 5 in 5 minutes | `database.request_refused`: the database was busy or unreachable, nothing was written, the console asked staff to retry | One is a normal collision. Five in five minutes: `--check volume`, `--check wal`, then the database container |
 | `browser_boundary_rejections` | 10 in 5 minutes | `auth.browser_boundary`: a request refused for its origin or CSRF token | A tab left open across an update makes a few. Ten means something other than the console is sending requests |
 

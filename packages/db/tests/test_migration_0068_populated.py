@@ -9,6 +9,7 @@ already ISSUED its snapshot from the value the pre-`0068` read computed at migra
   which is what the pre-`0068` read and download showed -- so a month issued without a deposit is
   then flagged `AMOUNT_CHANGED_AFTER_ISSUE` with the figure the order really cost (review M5);
 * an order already cancelled and refunded when it was issued records that, and is not flagged;
+  one cancelled or refunded only *after* its issue records that it was not, and is flagged;
 * an open request gets no snapshot, and is issued afterwards by the new code with one.
 
 The requests are issued the way the pre-`0068` repository did -- the row's state only -- because
@@ -28,6 +29,7 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from nha_trang_laundry_db.migrations import MIGRATIONS_DIRECTORY, apply_migrations
+from nha_trang_laundry_db.orders import OrderStateError
 from nha_trang_laundry_db.payments import PaymentCommand, PaymentRepository
 from nha_trang_laundry_db.privacy_notice import read_published_privacy_notice
 from nha_trang_laundry_db.storage_fees import publish_storage_policy
@@ -285,3 +287,91 @@ def test_0068_fixes_what_each_issued_request_was_issued_for(
         assert (datetime.now(UTC) - timedelta(minutes=5)) < _read(
             shop, open_request
         ).amount.fixed_at.astimezone(UTC)
+
+
+def _cancel(
+    shop: Shop,
+    order_id: UUID,
+    *,
+    paid: bool,
+    resolution: CustodyResolution = CustodyResolution.RETURNED_UNWASHED_REFUNDED,
+) -> None:
+    _step(
+        shop.connection,
+        order_id,
+        shop.counter,
+        _read_order(shop.connection, order_id, shop.counter).row_version,
+        OrderStep.CANCEL,
+        custody_resolution=resolution,
+        refund_method=PaymentMethod.TIEN_MAT if paid else None,
+    )
+
+
+def test_0068_does_not_record_a_cancellation_or_refund_after_the_issue_as_at_the_issue(
+    scratch_database: str, migrations_before: Path
+) -> None:
+    """Pre-production review 9: the backfill read "cancelled/refunded at issue" from the state at
+    migration time, so an order cancelled or refunded *after* its invoice was issued -- the case
+    review M6 exists to surface -- was recorded as already so at the issue, and
+    `CANCELLED_AFTER_ISSUE` / `REFUNDED_AFTER_ISSUE` could never be raised for it. The backfill now
+    compares the refund's and the cancellation's own times with the request's `closed_at`.
+
+    Matrix for an order request: {paid, unpaid} x {cancelled before the issue, after it}. An
+    account month's order cannot be cancelled today, which the test pins.
+    """
+
+    with psycopg.connect(scratch_database, autocommit=True) as connection:
+        apply_migrations(connection, migrations_before)
+        shop = Shop(connection)
+        closer = shop.owner.staff_user_id
+
+        # Order requests.
+        before = _walk_in_order(shop)
+        before_request = _create_as_before(shop, order_id=before)
+        _pay(shop, before, TOTAL_VND)
+        _cancel(shop, before, paid=True)
+        _issue_as_before(connection, before_request, "1", closer)
+
+        refunded_after = _walk_in_order(shop)
+        refunded_after_request = _create_as_before(shop, order_id=refunded_after)
+        _pay(shop, refunded_after, TOTAL_VND)
+        _issue_as_before(connection, refunded_after_request, "2", closer)
+        _cancel(shop, refunded_after, paid=True)
+
+        cancelled_before = _walk_in_order(shop)
+        cancelled_before_request = _create_as_before(shop, order_id=cancelled_before)
+        _cancel(shop, cancelled_before, paid=False)
+        _issue_as_before(connection, cancelled_before_request, "4", closer)
+
+        cancelled_after = _walk_in_order(shop)
+        cancelled_after_request = _create_as_before(shop, order_id=cancelled_after)
+        _issue_as_before(connection, cancelled_after_request, "3", closer)
+        _cancel(shop, cancelled_after, paid=False)
+
+        # Account months: an order on the account cannot be cancelled at all today (`ON_ACCOUNT` is
+        # not a cancellable balance), so neither month cell can arise. The backfill compares times
+        # there too; this pins why the month half of the matrix has no fixture.
+        customer = shop.customer()
+        shop.open(customer, 5_000_000)
+        on_account = shop.ready_order(customer)
+        _pay(shop, on_account, DEPOSIT)
+        shop.charge(on_account)
+        with pytest.raises(OrderStateError, match=r"^NOT_SUPPORTED"):
+            _cancel(shop, on_account, paid=True, resolution=CustodyResolution.SHOP_FAULT_NO_CHARGE)
+
+        apply_migrations(connection)
+
+        assert _lines(connection, before_request) == [(before, TOTAL_VND, True, True)]
+        assert _read(shop, before_request).flags == ()
+        assert _lines(connection, refunded_after_request) == [
+            (refunded_after, TOTAL_VND, False, False)
+        ]
+        assert _read(shop, refunded_after_request).flags == ("REFUNDED_AFTER_ISSUE",)
+        assert _lines(connection, cancelled_after_request) == [
+            (cancelled_after, TOTAL_VND, False, False)
+        ]
+        assert _read(shop, cancelled_after_request).flags == ("CANCELLED_AFTER_ISSUE",)
+        assert _lines(connection, cancelled_before_request) == [
+            (cancelled_before, TOTAL_VND, True, False)
+        ]
+        assert _read(shop, cancelled_before_request).flags == ()

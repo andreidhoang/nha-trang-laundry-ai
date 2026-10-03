@@ -36,6 +36,10 @@
 --   deposit before it went on the account, the next read flags `AMOUNT_CHANGED_AFTER_ISSUE`: the
 --   invoice was issued without the deposit (review M5), and the bookkeeper is told.
 --
+-- Whether each covered order was already cancelled or refunded is read as of the request's
+-- `closed_at` (the issue), from the refund's own time and the cancellation's event -- not from the
+-- order's state at migration time, which would hide a cancellation or refund made after the issue.
+--
 -- Forward-only. Rolling the code back leaves two tables the older code never reads, and the
 -- deferred check below would refuse the older code's issue (it writes no snapshot): a rollback of
 -- the code must be to a build that writes one, or this constraint trigger is dropped by a later
@@ -190,6 +194,39 @@ END;
 $$;
 
 -- 5. Backfill the requests issued before this migration (see the header), then arm the checks.
+--
+-- "Cancelled / refunded at issue" is what was true when the request was issued (`closed_at`), not
+-- what is true now: an order cancelled or refunded *after* its invoice was issued is exactly what
+-- `CANCELLED_AFTER_ISSUE` / `REFUNDED_AFTER_ISSUE` exist to flag (review M6), and reading today's
+-- state here would record it as already so at the issue and silence the flag for good. A refund
+-- carries its own `refunded_at`; a cancellation's moment is its `ORDER_STATE_TRANSITIONED` event
+-- (dimension `commercial`, target `CANCELLED`) in the append-only event ledger. A cancelled order
+-- whose event cannot be found is read as cancelled *after* the issue: the bookkeeper is asked to
+-- check one invoice too many rather than never told about one (fail closed). The two functions are
+-- dropped once the backfill has run.
+CREATE FUNCTION invoice_backfill_cancelled_by(
+    p_order_id UUID, p_commercial_status TEXT, p_issued_at TIMESTAMPTZ
+) RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+    SELECT p_commercial_status = 'CANCELLED' AND EXISTS (
+        SELECT 1 FROM domain_events e
+        WHERE e.aggregate_type = 'ORDER' AND e.aggregate_id = p_order_id
+          AND e.event_type = 'ORDER_STATE_TRANSITIONED'
+          AND e.payload ->> 'dimension' = 'commercial'
+          AND e.payload ->> 'target' = 'CANCELLED'
+          AND e.occurred_at <= p_issued_at
+    )
+$$;
+
+CREATE FUNCTION invoice_backfill_refunded_by(p_order_id UUID, p_issued_at TIMESTAMPTZ)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM order_refunds x
+        WHERE x.order_id = p_order_id AND x.refunded_at <= p_issued_at
+    )
+$$;
+
 INSERT INTO invoice_request_snapshots (
     request_id, store_id, subject_kind, origin, total_vnd, storage_fee_vnd, quote_id,
     quote_revision, order_count, taken_at
@@ -210,8 +247,9 @@ INSERT INTO invoice_request_snapshot_orders (
     request_id, position, order_id, account_charge_id, amount_vnd, cancelled_at_issue,
     refunded_at_issue
 )
-SELECT s.request_id, 1, r.order_id, NULL, s.total_vnd, o.commercial_status = 'CANCELLED',
-       EXISTS (SELECT 1 FROM order_refunds x WHERE x.order_id = o.id)
+SELECT s.request_id, 1, r.order_id, NULL, s.total_vnd,
+       invoice_backfill_cancelled_by(o.id, o.commercial_status, r.closed_at),
+       invoice_backfill_refunded_by(o.id, r.closed_at)
 FROM invoice_request_snapshots s
 JOIN invoice_requests r ON r.id = s.request_id
 JOIN orders o ON o.id = r.order_id
@@ -238,8 +276,9 @@ INSERT INTO invoice_request_snapshot_orders (
 )
 SELECT r.id,
        row_number() OVER (PARTITION BY r.id ORDER BY c.charged_at, c.id),
-       c.order_id, c.id, c.amount_vnd, o.commercial_status = 'CANCELLED',
-       EXISTS (SELECT 1 FROM order_refunds x WHERE x.order_id = o.id)
+       c.order_id, c.id, c.amount_vnd,
+       invoice_backfill_cancelled_by(o.id, o.commercial_status, r.closed_at),
+       invoice_backfill_refunded_by(o.id, r.closed_at)
 FROM invoice_requests r
 JOIN invoice_request_snapshots s ON s.request_id = r.id
 JOIN customer_account_charges c
@@ -249,6 +288,9 @@ JOIN customer_account_charges c
      AT TIME ZONE 'Asia/Ho_Chi_Minh'
 JOIN orders o ON o.id = c.order_id
 WHERE r.subject_kind = 'ACCOUNT_MONTH';
+
+DROP FUNCTION invoice_backfill_cancelled_by(UUID, TEXT, TIMESTAMPTZ);
+DROP FUNCTION invoice_backfill_refunded_by(UUID, TIMESTAMPTZ);
 
 -- Every issued request now has its snapshot; one that does not (an issued month whose charges are
 -- gone, which the append-only charges make impossible) stops the migration rather than pass.

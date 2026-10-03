@@ -2746,6 +2746,8 @@ state = {
     "order_view": None,
 }
 held_ticket_routes: list[Route] = []
+#: Pre-production review 9: order-page writes held open while a section signs out another tab.
+held_order_write_routes: list[Route] = []
 #: Section 27 (COUNTER-UI-RACE-009): a quote press, and a part-amount QR read, held open.
 held_quote_routes: list[Route] = []
 held_qr_routes: list[tuple[Route, dict[str, object]]] = []
@@ -3582,6 +3584,10 @@ with sync_playwright() as playwright:
                     "key": route.request.headers.get("idempotency-key"),
                 }
             )
+            # Pre-production review 9: the answer held until the section releases it.
+            if state.get("hold_order_write"):
+                held_order_write_routes.append(route)
+                return
             # Section 27: an answer lost on the way back -- the press may have landed.
             if state.pop("order_write_abort", False):
                 route.abort("failed")
@@ -16100,6 +16106,59 @@ with sync_playwright() as playwright:
         out_other["text"][:200],
     )
     other.close()
+    state["logout_answer"] = None
+    state["authenticated"] = True
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(700)
+
+    # Pre-production review 9: "Thu tiền" in flight in the other tab when this one presses Thoát.
+    # The answer (201) arrived after the other tab had cleared itself, and its success toast --
+    # amount and ticket of the person who left -- came back on the signed-out screen, because a
+    # toast re-creates its host on the page body.
+    paying = context.new_page()
+    paying.on("pageerror", lambda e: errors.append(str(e)))
+    paying.route("**/internal/**", route_api)
+    state["order_view"] = order_view(
+        "PICKUP_ONLY",
+        balance="UNPAID",
+        collected=False,
+        steps=[step("TAKE_PAYMENT", True, requires=["amount_vnd", "method"])],
+        hand_over=True,
+    )
+    paying.goto(f"http://localhost:{PORT}/#/orders/{PICKUP_ORDER_ID}", wait_until="networkidle")
+    paying.wait_for_timeout(900)
+    paying.locator(".action-bar--v2 button[data-step=TAKE_PAYMENT]").click()
+    paying.wait_for_timeout(400)
+    state["hold_order_write"] = True
+    state["order_writes"] = []
+    paying.locator("dialog[open] #payment-submit").click()
+    paying.wait_for_timeout(500)
+    in_flight = len(held_order_write_routes) == 1
+    page.bring_to_front()
+    state["logout_answer"] = (200, {"end_session_url": None})
+    press_sign_out()
+    page.wait_for_timeout(900)
+    # The server took the payment before the session ended: the held answer is its 201.
+    state["hold_order_write"] = False
+    state["authenticated"] = True
+    for held_route in list(held_order_write_routes):
+        route_api(held_route)
+    held_order_write_routes.clear()
+    state["authenticated"] = False
+    paying.wait_for_timeout(900)
+    after_write = str(paying.evaluate("() => document.body.textContent || ''"))
+    check(
+        "R9 a write answered after the other tab's Thoát leaves no toast of it on the "
+        "signed-out screen",
+        in_flight
+        and "Chưa đăng nhập" in after_write
+        and "Đã thu" not in after_write
+        and paying.locator(".toast").count() == 0
+        and paying.locator("dialog[open]").count() == 0,
+        f"in_flight={in_flight} " + after_write[:240],
+    )
+    paying.close()
     state["logout_answer"] = None
     state["authenticated"] = True
     page.goto("about:blank")

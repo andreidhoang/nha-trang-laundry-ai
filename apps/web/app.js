@@ -24,7 +24,7 @@ import * as router from "./src/core/router.js";
 import * as session from "./src/core/session.js";
 import { ROUTES } from "./src/screens/index.js";
 import { errorNotice, icon } from "./src/ui/components.js";
-import { avatar, section, sheet } from "./src/ui/kit.js";
+import { avatar, sealWorkspace, section, sheet } from "./src/ui/kit.js";
 import { deviceList, devicesInfo } from "./src/ui/sessions.js";
 
 const screenTitle = document.querySelector("#screen-title");
@@ -1071,6 +1071,9 @@ function contentKey() {
  *     notice. Screens drop their own hand-offs through `session.onSignOut`.
  */
 function wipeWorkspace() {
+  // Pre-production review 9: nothing the person who left still had in flight -- a payment's
+  // success toast, a sheet a late answer reopens -- may put itself back on the page afterwards.
+  sealWorkspace(true);
   for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
   for (const node of [...document.body.children]) {
     if (!SHELL_NODES.has(node)) node.remove();
@@ -1151,6 +1154,8 @@ async function boot() {
   let renderedKey = null;
   session.subscribe(() => {
     const state = session.snapshot();
+    // Someone is signed in again: the page is theirs, toasts and sheets with it.
+    if (state.principal && !state.signedOut) sealWorkspace(false);
     // K2: a destination held while the session was out is not named once it is back (or gone).
     if (state.signedOut || (state.status !== "ended" && state.status !== "unreachable")) {
       heldDestination = null;

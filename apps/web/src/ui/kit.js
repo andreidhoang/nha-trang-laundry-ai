@@ -642,6 +642,29 @@ export function inlineAlert(spec) {
 let toastHost = /** @type {HTMLElement|null} */ (null);
 
 /**
+ * Pre-production review 9: true from a sign-out until someone signs in again. Work the person who
+ * left had in flight (a payment in another tab when this one pressed "Thoát") still finishes after
+ * the shell has cleared the page, and a toast or a sheet re-attaches itself to `<body>` -- which
+ * put "Đã thu 110.000 ₫ · Phiếu 12" back on the signed-out screen. While sealed, neither attaches:
+ * nothing of the last customer comes back (C1).
+ */
+let sealed = false;
+
+/**
+ * Seal the page at a sign-out (`true`), or open it again once a person is signed in (`false`).
+ * Only the shell calls this. Sealing also drops the toasts already on show.
+ *
+ * @param {boolean} value
+ */
+export function sealWorkspace(value) {
+  sealed = value;
+  if (value && toastHost) {
+    toastHost.remove();
+    toastHost = null;
+  }
+}
+
+/**
  * A short confirmation that a write landed ("Đã bắt đầu giặt · Phiếu 17"). Announced politely,
  * gone after four seconds. Only for success: a refusal is never a toast — it stays inline at the
  * control, where the person can read it and act (spec §2.8).
@@ -649,6 +672,7 @@ let toastHost = /** @type {HTMLElement|null} */ (null);
  * @param {string} text
  */
 export function toast(text) {
+  if (sealed) return;
   if (!toastHost || !toastHost.isConnected) {
     toastHost = h("div", { class: "toasts", role: "status", "aria-live": "polite" });
     document.body.append(toastHost);
@@ -724,8 +748,12 @@ export function sheet(spec) {
     node,
     body,
     open() {
+      if (!node.isConnected) {
+        // A sheet the sign-out took off the page is not put back on it (see `sealWorkspace`).
+        if (sealed) return;
+        document.body.append(node);
+      }
       opener = document.activeElement;
-      if (!node.isConnected) document.body.append(node);
       if (!node.open) node.showModal();
     },
     close() {

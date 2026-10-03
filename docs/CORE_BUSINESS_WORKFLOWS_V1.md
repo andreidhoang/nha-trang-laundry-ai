@@ -164,8 +164,12 @@ The same spine with three differences:
    together; within such a stretch, a valid date, a time, a percentage, an amount in thousands
    groups that is whole hundreds of đồng below 100.000.000, or a number its unit follows ("150k",
    "2 bao") is set aside, and the stretch is a phone when it has nine digits or more and any of them
-   is not set aside. So "1.250.000 - 50.000" and "285.000/4.351.000" are notes and
-   "(0905) 12-03-45" a phone. Fail-closed side: "150000 200000", an amount not in whole hundreds beside another number, and a bare number
+   is not set aside. So "1.250.000 - 50.000" and "285.000/4.351.000" are notes, so are ranges
+   joined by "-" with no space ("01/09-30/09", "8:00-10:00"), and "(0905) 12-03-45" is a phone.
+   Every character Unicode gives a digit value is read as that digit first (fullwidth, circled,
+   dingbat ❶ ➀ ⓿, superscript, other scripts), and a symbol NFKC spells with Latin letters (ⓐ № ™
+   º, the roman numeral one) is a symbol, not a letter: it holds digits together. Fail-closed side:
+   "150000 200000", an amount not in whole hundreds beside another number, and a bare number
    with no thousands dot and no unit beside amounts ("(1) 150.000", "chi 400, 133.700") are refused
    when the stretch reaches nine digits (write đ or k, or a word between). Known limit: a phone typed
    so that every group is itself a date, time, percentage or amount ("09/05 12/03/45") is not

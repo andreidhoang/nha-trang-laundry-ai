@@ -386,6 +386,71 @@ def test_a_date_or_an_amount_in_brackets_is_not_read_as_a_phone(note: str) -> No
     assert capture_note("   ") is None
 
 
+@pytest.mark.parametrize(
+    "phone",
+    [
+        # Round-9b residual (the I verifier, P2): digits with a digit value but no NFKC
+        # decomposition -- negative circled, dingbat, double circled -- were not digits at all.
+        "khach \u24ff\u277e\u24ff\u277a\u2776\u2777\u2778\u2779\u277a\u277b",  # ⓿❾⓿❺❶❷❸❹❺❻
+        "khach \u2780\u2788\u2780\u2784 \u2780\u2781\u2782 \u2783\u2784\u2785",  # ➀➈➀➄ ➀➁➂ ➃➄➅
+        "khach 0905 \u2776\u2777\u2778 \u2779\u277a\u277b",  # 0905 ❶❷❸ ❹❺❻
+        "khach \u278a\u2792\u278a\u278e 123 456",  # ➊➒➊➎
+        "khach \u24f5\u24fd\u24f5\u24f9 123 456",  # ⓵⓽⓵⓹ (⓾ is ten, not a digit)
+        "khach 090\u277f 123 456",  # ❿: a number with no digit value of its own, read as 10
+        # Neighbours: digit forms that were already digits, still refused after the rewrite.
+        "khach \u2460\u2468\u2460\u2464 123 456",
+        "khach \u0660\u0669\u0660\u0665\u0661\u0662\u0663\u0664\u0665\u0666",
+        "khach \U0001d7ce\U0001d7d7\U0001d7ce\U0001d7d3 123 456",
+        "khach \u2070\u2079\u2070\u2075 123 456",
+        # Round-9b residual (P2): a symbol NFKC turns into Latin letters ended the number.
+        "khach 0905\u24d0123\u24d0456",  # ⓐ
+        "khach 0905\u24b6123\u24b6456",  # Ⓐ
+        "khach 0905\u2116123\u2116456",  # №
+        "khach 0905\u2121123\u2121456",  # ℡
+        "khach 0905\u2122123\u2122456",  # ™
+        "khach 0905\u2160123\u2160456",  # ROMAN NUMERAL ONE (looks like "|", as U+01C0 does)
+        "khach 0905\u217c123\u217c456",  # SMALL ROMAN NUMERAL FIFTY
+        "khach 0905\u00ba123\u00ba456",  # º
+        "khach 0905\u02b0123\u02b0456",  # ʰ
+        # The '-' a range may now stand on gives a phone nothing: its other digits still count.
+        "khach 09-05-12-03-45",
+        "khach 0905-12/03-45",
+        "khach 01/09-0905123456",
+        "khach 8:00-090512345",
+        "khach 0905-123-456",
+    ],
+)
+def test_every_digit_form_counts_and_no_letter_like_symbol_ends_a_number(phone: str) -> None:
+    """Round-9b integration (the slice-I verifier's residuals): the text is read as digits for
+    every character Unicode gives a digit value, before the stretch logic; and only a Latin letter
+    typed as a letter ends a number -- a symbol NFKC spells with Latin letters does not."""
+    with pytest.raises(ShopCaptureError) as refused:
+        capture_note(phone)
+    assert refused.value.reason_code == "NOTE_LOOKS_LIKE_PHONE"
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        # Round-9b residual (the I verifier, P2): ranges joined by "-" with no space were refused.
+        "nước 01/09-30/09 345.600đ",
+        "điện 02/09/2026-02/10/2026",
+        "giao 8:00-10:00 14:00-16:00",
+        "sửa máy 02/10-03/10 150.000",
+        "tiền điện kỳ 15/09-15/10: 1.234.500đ",
+        "đếm lại ca 14:30-16:00 1.250.000",
+        # Controls: the same with spaces (accepted before), and a typed letter still ends a number
+        # when it is a fullwidth or mathematical letter.
+        "nước 01/09 - 30/09 345.600đ",
+        "giao 8:00 - 10:00 14:00 - 16:00",
+        "mua 12345\uff4b 6789",
+        "mua 12345\U0001d424 6789",
+    ],
+)
+def test_date_and_time_ranges_and_typed_letters_stay_an_ordinary_note(note: str) -> None:
+    assert capture_note(note) == note
+
+
 # --- Sổ thu chi ---------------------------------------------------------------------------------
 
 

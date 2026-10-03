@@ -258,6 +258,15 @@ def test_entries_are_for_the_shops_today_only() -> None:
         ("đếm lại 02/10/2026 150k", True, "đếm lại 02/10/2026 150k", None),
         ("đếm lại 02/10 150.000", True, "đếm lại 02/10 150.000", None),
         ("x" * 121, True, None, "CASH_COUNT_REASON_INVALID"),
+        # Round-9b integration (the I verifier's residuals, live on the stack).
+        (
+            "khach \u24ff\u277e\u24ff\u277a\u2776\u2777\u2778\u2779\u277a\u277b",
+            True,
+            None,
+            "CASH_COUNT_REASON_LOOKS_LIKE_PHONE",
+        ),
+        ("khach 0905\u2160123\u2160456", True, None, "CASH_COUNT_REASON_LOOKS_LIKE_PHONE"),
+        ("đếm lại ca 14:30-16:00 1.250.000", True, "đếm lại ca 14:30-16:00 1.250.000", None),
     ],
 )
 def test_a_correction_says_why_and_an_original_does_not(

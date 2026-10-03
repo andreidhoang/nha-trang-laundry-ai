@@ -417,17 +417,28 @@ _QUANTITY_DIGITS_FREE: Final = 3
 _BEFORE: Final = r"(?<![0-9])(?<![0-9][/.,:\-])"
 _AFTER: Final = r"(?![0-9])(?![/.,:\-][0-9])"
 
+#: A date's or a time's boundary is the same except that "-" may stand between it and the next
+#: number: "01/09-30/09" and "8:00-10:00" are ranges, as they are with spaces round the "-"
+#: (round-9b integration: the slice-I verifier found them refused as a phone). A phone gains
+#: nothing by it, as with an amount: every digit beside the date or time still has to be set
+#: aside on its own terms ("09-05-12-03-45" leaves "03" and "45"). "/" stays a boundary, so a
+#: phone written in slashed pairs is never read as a string of day-and-month dates.
+_RANGE_BEFORE: Final = r"(?<![0-9])(?<![0-9][/.,:])"
+_RANGE_AFTER: Final = r"(?![0-9])(?![/.,:][0-9])"
+
 #: A date written with one separator throughout -- "02/10/2026", "02-10-2026", "2/10/26" -- or a
 #: day and month with a slash ("02/10"). Day and month are checked in `_date_digits`.
 _DATE: Final = re.compile(
-    _BEFORE
+    _RANGE_BEFORE
     + r"(?P<day>[0-9]{1,2})(?P<sep>[/.\-])(?P<month>[0-9]{1,2})"
     + r"(?:(?P=sep)(?P<year>[0-9]{4}|[0-9]{2}))?"
-    + _AFTER
+    + _RANGE_AFTER
 )
 
 #: A time of day, "14:30" or "9:05". Hour and minute are checked in `_time_digits`.
-_TIME: Final = re.compile(_BEFORE + r"(?P<hour>[0-9]{1,2}):(?P<minute>[0-9]{2})" + _AFTER)
+_TIME: Final = re.compile(
+    _RANGE_BEFORE + r"(?P<hour>[0-9]{1,2}):(?P<minute>[0-9]{2})" + _RANGE_AFTER
+)
 
 #: A percentage from 0 to 100, "10%" or "2,5 %".
 _PERCENT: Final = re.compile(_BEFORE + r"(?:100|[1-9]?[0-9])(?:[.,][0-9]{1,2})?(?=\s?%)")
@@ -459,10 +470,66 @@ def _ends_a_number(character: str) -> bool:
     character, a letter of another script, an uncased Latin sign that looks like a mark (U+01C0
     dental click, U+A78F sinological dot), any run of them -- holds digits together. Decided by the
     Unicode database, so the answer never depends on a list of marks somebody remembered.
+
+    Asked of `_reading`'s text, in which a Latin letter only ever stands for a letter typed as one.
     """
     return unicodedata.category(character) in ("Lu", "Ll", "Lt") and unicodedata.name(
         character, ""
     ).startswith("LATIN")
+
+
+#: What `_reading` writes for a symbol that NFKC would spell with Latin letters: a mark, so it
+#: holds digits together like any other symbol and is no unit either.
+_LETTER_LIKE_SYMBOL: Final = "\u2022"
+
+
+def _digit_value(character: str) -> str | None:
+    """The digits a character stands for, when Unicode gives it a digit or a whole-number value.
+
+    Its decimal or digit value first -- which covers every script's digits, superscripts and the
+    circled, negative circled, dingbat and double circled digits (❶ ➀ ➊ ⓵ ⓿), many of which have
+    no NFKC decomposition and so were not digits at all (round-9b integration, the slice-I
+    verifier's residual) -- then, for an other-number sign (category No) that has neither, its whole
+    value up to 99 (❿ is "10", as NFKC writes ⑩).
+    """
+    value = unicodedata.decimal(character, None)
+    if value is None:
+        value = unicodedata.digit(character, None)
+    if value is not None:
+        return str(value)
+    if unicodedata.category(character) == "No":
+        number = unicodedata.numeric(character, None)
+        if number is not None and number == int(number) and 0 <= number <= 99:
+            return str(int(number))
+    return None
+
+
+def _reading(text: str) -> str:
+    """`text` as the phone rule reads it: every digit form an ASCII digit, compatibility forms
+    folded, and no symbol turned into a letter.
+
+    Each character is read on its own (after NFC composes accents). A digit in any form becomes its
+    ASCII digits (`_digit_value`) before the stretch logic runs. Any other character becomes its
+    NFKC form -- fullwidth punctuation is punctuation, a fullwidth or mathematical letter is that
+    letter and still ends a number -- except one that is not itself a cased Latin letter but which
+    NFKC spells with Latin letters (ⓐ № ℡ ™ º, and the roman numerals one and fifty, which look like
+    "|"): those used to end a number, splitting a phone into short runs (round-9b integration, the
+    slice-I verifier's residual). They read as a symbol (`_LETTER_LIKE_SYMBOL`), which holds digits
+    together.
+    """
+    read: list[str] = []
+    for character in unicodedata.normalize("NFC", text):
+        digits = _digit_value(character)
+        if digits is not None:
+            read.append(digits)
+            continue
+        folded = unicodedata.normalize("NFKC", character)
+        typed_as_letter = unicodedata.category(character) in ("Lu", "Ll", "Lt")
+        if not typed_as_letter and any(_ends_a_number(part) for part in folded):
+            read.append(_LETTER_LIKE_SYMBOL)
+        else:
+            read.append(folded)
+    return "".join(read)
 
 
 def _date_digits(match: re.Match[str], _: str) -> bool:
@@ -530,23 +597,24 @@ def looks_like_phone(text: str) -> bool:
     between them, not all of which are set aside as a date, a time, a percentage, an amount or a
     quantity.
 
-    The text is read in NFKC form, so fullwidth, circled or superscript digits are digits. Only a
-    Latin letter ends a number ("150.000đ 200.000đ", "khach 0905 so 123"): whatever else stands
-    between digits, and however much of it, holds them together ("0905|123|456",
-    "0905 ... 123 ... 456"). Inside one such stretch, a piece is set aside only when it is a valid
-    date ("02/10/2026", "2/10/26", "02/10"), a time ("14:30"), a percentage ("10%"), an amount in
-    thousands groups that is whole hundreds of đồng and below 100.000.000 ("1.250.000",
-    "120,000") or a number its unit follows -- up to three digits at any value ("150k", "2 bao"),
-    longer only as whole hundreds ("150000₫"). The stretch is a phone when it has nine digits or
-    more and ANY of them is not set aside: "1.250.000 - 50.000" is two amounts (so are
-    "285.000/4.351.000" and "1.250.000-50.000"), "(0905) 12-03-45" is a phone, because "0905" is
-    not a date, time or amount.
+    The text is read by `_reading`: every character with a digit value is that digit (fullwidth,
+    circled, dingbat, superscript, other scripts), and a symbol NFKC would spell with Latin letters
+    is a symbol. Only a Latin letter ends a number ("150.000đ 200.000đ", "khach 0905 so 123"):
+    whatever else stands between digits, and however much of it, holds them together
+    ("0905|123|456", "0905 ... 123 ... 456"). Inside one such stretch, a piece is set aside only
+    when it is a valid date ("02/10/2026", "2/10/26", "02/10"), a time ("14:30"), a percentage
+    ("10%"), an amount in thousands groups that is whole hundreds of đồng and below 100.000.000
+    ("1.250.000", "120,000") or a number its unit follows -- up to three digits at any value
+    ("150k", "2 bao"), longer only as whole hundreds ("150000₫"). The stretch is a phone when it has
+    nine digits or more and ANY of them is not set aside: "1.250.000 - 50.000" is two amounts (so
+    are "285.000/4.351.000" and "1.250.000-50.000"), "01/09-30/09" and "8:00-10:00" are ranges,
+    "(0905) 12-03-45" is a phone, because "0905" is not a date, time or amount.
 
     Known limit, by construction: a phone typed so that every group is itself one of those pieces
     ("09/05 12/03/45") is not recognised -- no text rule can tell it from two dates.
     Deterministic: the same text always gives the same answer.
     """
-    normal = unicodedata.normalize("NFKC", text)
+    normal = _reading(text)
     held = _set_aside(normal)
     digits = 0
     loose = 0

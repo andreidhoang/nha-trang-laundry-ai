@@ -18,7 +18,7 @@ import { shortId } from "./src/core/format.js";
 import { request } from "./src/core/api.js";
 import { focusContainer, h, render } from "./src/core/dom.js";
 import { enumVi } from "./src/core/i18n.js";
-import { FOLD_GROUP, navOwns, navPlan } from "./src/core/nav.js";
+import { FOLD_GROUP, NAV_ITEMS, navOwns, navPlan } from "./src/core/nav.js";
 import { can } from "./src/core/rbac.js";
 import * as router from "./src/core/router.js";
 import * as session from "./src/core/session.js";
@@ -108,6 +108,8 @@ function isActive(entry, shown, path) {
 /**
  * One nav destination. Only destinations this person can open are rendered (C6); a shut one is
  * listed with whom to ask on `#/more`, and its route still opens the guard screen with the reason.
+ * One exception (K2): "Nhận đồ" for a counter role whose session lacks two-step verification is
+ * rendered shut, its reason in words (`navPlan`'s `denied`).
  *
  * @param {import("./src/core/nav.js").NavEntry} entry
  * @param {import("./src/core/nav.js").NavEntry[]} shown
@@ -117,17 +119,27 @@ function navLink(entry, shown) {
   const { item } = entry;
   const active = isActive(entry, shown, currentPath());
   const badge = item.path === "/approvals" && approvalsWaiting;
+  // K2: shown and shut ("Nhận đồ" for a session without two-step verification) -- disabled, its
+  // reason in words; a press still opens the route's guard screen with the whole sentence.
+  const shut = entry.denied || null;
   return h(
     "a",
     {
       class: ["nav__link", item.primary && "nav__link--primary"],
       href: `#${item.path}`,
       "aria-current": active ? "page" : null,
-      title: item.hint ? `${item.label} — ${item.hint}` : item.label,
+      "aria-disabled": shut ? "true" : null,
+      title: shut
+        ? `${item.label} — ${shut.reason}`
+        : item.hint
+          ? `${item.label} — ${item.hint}`
+          : item.label,
       dataNavLink: item.path,
+      dataNavDenied: shut ? item.path : null,
     },
     item.primary ? h("span", { class: "nav__plus" }, icon(item.icon)) : icon(item.icon),
     h("span", null, item.label),
+    shut ? h("span", { class: "nav__reason" }, shut.short || shut.reason) : null,
     badge
       ? h(
           "span",
@@ -159,6 +171,33 @@ function navItem(entry, shown) {
 }
 
 /**
+ * Who the navigation is drawn for (CONSOLE-RESIDUAL-009B, K2).
+ *
+ * An idle expiry or a lost server is not a sign-out: the screen is kept, the banner says what
+ * happened, and the navigation stays where it was -- it used to vanish with the principal, which
+ * left the person on a page with no way around it and no sign that one would come back. So the
+ * last person's destinations are kept while the session is `ended` (not by "Thoát") or
+ * `unreachable`. A press on one still goes nowhere that needs the server without saying so: the
+ * screen worked on is held and the banner names the destination not opened (`holdScreen`); where
+ * nothing is held (nothing typed or pressed, or a guard's screen on show), the route's guard screen
+ * says the session ended, or that the server is not answering (`guard`). "Thoát" -- here or in another tab -- forgets them
+ * with everything else.
+ *
+ * @type {import("./src/core/session.js").Principal|null}
+ */
+let lastPrincipal = null;
+
+function navPrincipal() {
+  const state = session.snapshot();
+  if (state.principal) {
+    lastPrincipal = state.principal;
+    return state.principal;
+  }
+  if (state.signedOut) lastPrincipal = null;
+  return state.status === "ended" || state.status === "unreachable" ? lastPrincipal : null;
+}
+
+/**
  * Whether the sidebar's closed "Khác" group is open. In memory only (UX spec §2 invariant 3): a
  * preference for this page's lifetime, never written to the device. Opened by a press, and kept
  * open while the screen on show is one of its entries so the active entry is never hidden.
@@ -166,7 +205,7 @@ function navItem(entry, shown) {
 let foldOpen = false;
 
 function renderNav() {
-  const { shown } = navPlan(session.principal());
+  const { shown } = navPlan(navPrincipal());
   const path = currentPath();
   const children = [];
   const folded = [];
@@ -506,8 +545,14 @@ function renderBanners() {
       h(
         "div",
         { class: "banner", dataState: "danger", role: "alert" },
-        "Mất liên lạc với máy chủ. Chưa biết phiên còn hay hết — đây không phải đã đăng xuất. " +
-          "Những gì bạn đang nhập vẫn còn trên màn hình; kiểm tra mạng rồi bấm gửi lại.",
+        // K2: the navigation stays through this, so the screen behind the banner may be the
+        // session screen a press opened -- then nothing typed is on show, and it is not said.
+        sessionScreenShown
+          ? "Mất liên lạc với máy chủ. Chưa biết phiên còn hay hết — đây không phải đã đăng xuất. " +
+              "Kiểm tra mạng rồi bấm “Kiểm tra lại phiên”."
+          : "Mất liên lạc với máy chủ. Chưa biết phiên còn hay hết — đây không phải đã đăng xuất. " +
+              "Những gì bạn đang nhập vẫn còn trên màn hình; kiểm tra mạng rồi bấm gửi lại.",
+        heldLine(),
         h(
           "button",
           { type: "button", dataVariant: "quiet", onClick: () => void session.refresh() },
@@ -528,8 +573,26 @@ function renderBanners() {
         "div",
         { class: "banner", dataState: "danger", role: "alert" },
         state.lastError ||
-          "Phiên đăng nhập đã kết thúc. Những gì bạn đang nhập vẫn còn trên màn hình — " +
-            "đăng nhập lại rồi bấm gửi một lần nữa.",
+          // K2: "still on screen" only while it is -- not on the session screen a press opened.
+          (sessionScreenShown
+            ? "Phiên đăng nhập đã kết thúc. Đăng nhập lại rồi bấm “Kiểm tra lại phiên”."
+            : "Phiên đăng nhập đã kết thúc. Những gì bạn đang nhập vẫn còn trên màn hình — " +
+              "đăng nhập lại rồi bấm gửi một lần nữa."),
+        heldLine(),
+        // K2 (round-9b verification): the way back in without leaving the kept screen -- the
+        // sign-in opens in a tab of its own, and "Kiểm tra lại phiên" here picks the session up.
+        !sessionScreenShown && configuredSignInPath()
+          ? h(
+              "a",
+              {
+                href: configuredSignInPath(),
+                target: "_blank",
+                rel: "noopener",
+                dataSignInElsewhere: "true",
+              },
+              "Đăng nhập lại ở thẻ mới",
+            )
+          : null,
         h(
           "button",
           {
@@ -605,15 +668,13 @@ function unreachableScreen() {
  */
 function signedOutScreen() {
   const state = session.snapshot();
-  const configured = document
-    .querySelector('meta[name="console-signin-path"]')
-    ?.getAttribute("content")
-    ?.trim();
-  // Same-origin only. A sign-in path pointing at another origin would be an open redirect sitting
-  // in the one place staff are trained to trust.
-  const signInPath =
-    configured && configured.startsWith("/") && !configured.startsWith("//") ? configured : "";
+  const signInPath = configuredSignInPath();
 
+  // K2: a destination pressed after an idle expiry while nothing was held -- the screen on show was
+  // only looked at, or was a guard's or a "not found" screen (one worked on is held instead --
+  // `holdScreen`). What is behind it needs the server, and this says why it is not shown -- not
+  // "never signed in".
+  const expired = state.status === "ended" && !state.signedOut && lastPrincipal !== null;
   return h(
     "section",
     { class: "screen" },
@@ -626,6 +687,22 @@ function signedOutScreen() {
     h(
       "div",
       { class: "card stack" },
+      expired
+        ? h(
+            "p",
+            { dataSessionExpired: "true" },
+            "Phiên đăng nhập đã kết thúc, nên màn hình này (cần máy chủ) chưa mở được. Đăng nhập " +
+              "lại rồi bấm “Kiểm tra lại phiên”.",
+          )
+        : null,
+      state.signedOutElsewhere
+        ? h(
+            "p",
+            { class: "hint", dataSignedOutElsewhere: "true" },
+            "Đã thoát ở một thẻ khác của trình duyệt này, nên thẻ này cũng thoát.",
+          )
+        : null,
+      // How sign-in works stays said in both cases; an expiry only adds why this screen is shown.
       state.lastError
         ? h("div", { class: "notice", dataState: "danger" }, state.lastError)
         : h(
@@ -656,6 +733,21 @@ function signedOutScreen() {
 }
 
 /**
+ * The deployment's sign-in entry point, from `<meta name="console-signin-path">`. Same-origin
+ * only: a sign-in path pointing at another origin would be an open redirect sitting in the one
+ * place staff are trained to trust.
+ *
+ * @returns {string} the path, or "" when none is declared
+ */
+function configuredSignInPath() {
+  const configured = document
+    .querySelector('meta[name="console-signin-path"]')
+    ?.getAttribute("content")
+    ?.trim();
+  return configured && configured.startsWith("/") && !configured.startsWith("//") ? configured : "";
+}
+
+/**
  * Hold route rendering until both the session and its store scope have been resolved.
  *
  * Deep-linking to a store-scoped screen used to build that screen while `refresh()` was still
@@ -680,6 +772,136 @@ function sessionLoadingScreen() {
 }
 
 /**
+ * Whether the outlet shows one of the session screens above rather than the route's own (K2). A
+ * destination pressed during an idle expiry shows the session screen; when the session is back
+ * under the same key, the route is rendered again instead of leaving that screen up.
+ */
+let sessionScreenShown = false;
+
+/**
+ * Whether that session screen is "Đang kiểm tra phiên" for a session read again because the server
+ * answered while the session was out (K2, `guard`). It gives way to whatever the read finds -- the
+ * route, or the session screen if the session is out after all -- never left up.
+ */
+let rereadShown = false;
+
+/**
+ * The destination a press asked for while the screen on show was held (K2), for the banner to
+ * name. Cleared when the session is back -- the person presses it again then.
+ *
+ * @type {string|null}
+ */
+let heldDestination = null;
+
+/**
+ * Whether the screen on show stays rather than give way to `context` (round-9b verification, K2).
+ *
+ * The navigation is kept through an idle expiry or a lost server, and the banner says that what
+ * was typed is still on screen. A press on a destination used to replace that screen with the
+ * session screen -- and the typed line was gone, one press after the console had said it was safe.
+ * Every destination needs the server while the session is out, so the press now goes nowhere and
+ * the banner says so; the screen, and what is typed on it, stays. Only until the server answers a
+ * request sent since (`answered`, round-9b verification 2): the session is out no longer, as far
+ * as anyone knows, and is being read again. The router asks only for a
+ * screen the person has worked on (typed, ticked, pressed); one only looked at gives way to the
+ * session screen with its "Tới trang đăng nhập", as before -- a device signed out from another
+ * (lost phone) still lands there at its next press. Not after "Thoát": the person chose to leave
+ * and the page has been cleared.
+ *
+ * @param {import("./src/core/router.js").RouteContext} context
+ * @param {boolean} moved the address changed (a press, Back) -- not a redraw of the same one
+ * @returns {boolean}
+ */
+function holdScreen(context, moved) {
+  const state = session.snapshot();
+  if (state.signedOut) return false;
+  if (state.status !== "ended" && state.status !== "unreachable") return false;
+  // Round-9b verification 2: a request sent since has succeeded -- the person signed in again, or
+  // the server is back -- and the session is being read again. The premise of the hold is gone:
+  // the move a write just made (to the order it created) is not held as if the server were out.
+  if (state.answered) return false;
+  if (moved) {
+    heldDestination = destinationLabel(context.path);
+    renderBanners();
+    revealHeldLine();
+    recheckForHeld();
+  }
+  return true;
+}
+
+/** Whether a session read made for a held press is on its way (`recheckForHeld`). */
+let heldRecheck = false;
+
+/**
+ * A held press reads the session again (round-9b verification 3, K2). The banner offers sign-in
+ * in a tab of its own, and the guide says: signed in again, press it again. That press used to be
+ * held like the first -- nothing here had asked the server since -- and "cần máy chủ" stayed up
+ * with the server answering, until "Kiểm tra lại phiên" was found. Now the press asks: still out,
+ * and the screen stays held as it was; the same person signed in again, and the press goes where
+ * it was pressed (`router.resumeHeld`). Someone else signed in: nothing is carried over to them --
+ * the screen is drawn again for them by the session's subscriber, the last person's typing gone.
+ * One read at a time; a second press meanwhile is the one made when the read answers.
+ */
+function recheckForHeld() {
+  if (heldRecheck) return;
+  const who = lastPrincipal?.staffUserId || "";
+  heldRecheck = true;
+  void session
+    .refresh()
+    .catch(() => {})
+    .then(() => {
+      heldRecheck = false;
+      const state = session.snapshot();
+      if (state.status === "active" && who && state.principal?.staffUserId === who) {
+        router.resumeHeld();
+      }
+    });
+}
+
+/**
+ * The name of the destination `path` belongs to, as this device shows it (round-9b verification
+ * 2): "Thêm" on a phone and "Tất cả màn hình" on a desk are the same address, and the banner names
+ * the one the person saw and pressed. The phone-only entries are hidden from 64rem up (layout.css)
+ * and the desk-only ones below it.
+ *
+ * @param {string} path
+ * @returns {string} "" when no destination owns the path
+ */
+function destinationLabel(path) {
+  const desk = window.matchMedia("(min-width: 64rem)").matches;
+  const items = NAV_ITEMS.filter((candidate) => (desk ? !candidate.phoneOnly : !candidate.deskOnly));
+  const item =
+    items.find((candidate) => candidate.path === path) ||
+    items.find((candidate) => candidate.path !== "/" && navOwns(candidate, path));
+  return item ? item.label : "";
+}
+
+/**
+ * A held press is answered in the banner, and on a phone the banner scrolls away with the page
+ * (round-9b verification 2): the screen kept is often long and scrolled, and a tab press then did
+ * nothing anyone could see. When the sentence is out of view the page goes back to the top, where
+ * the banner says what was not opened and offers the way back in. On a desk the banner never
+ * leaves the view (the content pane scrolls by itself), so nothing moves there.
+ */
+function revealHeldLine() {
+  const line = banners?.querySelector("[data-held-destination]");
+  if (!line) return;
+  const box = line.getBoundingClientRect();
+  if (box.top < 0 || box.bottom > window.innerHeight) window.scrollTo({ top: 0 });
+}
+
+/** The banner's sentence for a destination pressed while the screen is held (K2). */
+function heldLine() {
+  if (heldDestination === null) return null;
+  return h(
+    "p",
+    { class: "banner__held", dataHeldDestination: "true" },
+    `Chưa mở ${heldDestination ? `“${heldDestination}”` : "màn hình đó"}: cần máy chủ, nên màn ` +
+      "hình đang làm được giữ nguyên.",
+  );
+}
+
+/**
  * Refuse a screen before it renders, with the reason.
  *
  * A courtesy, not a control. The server re-checks every call, and a screen that slips through this
@@ -691,12 +913,22 @@ function sessionLoadingScreen() {
  */
 function guard(_context, route) {
   const state = session.snapshot();
+  sessionScreenShown = true;
+  rereadShown = false;
   if (state.status === "unknown") return sessionLoadingScreen();
+  // K2 (round-9b verification 2): the server has answered since the session went out, and the
+  // session is being read again -- the next moment says who is signed in. Not "Chưa đăng nhập" for
+  // the order a write has just created; the route follows the read (`boot`'s subscriber).
+  if (state.answered && (state.status === "ended" || state.status === "unreachable")) {
+    rereadShown = true;
+    return sessionLoadingScreen();
+  }
   // Before the signed-out branch on purpose: `unreachable` also has a null principal, and telling
   // an operator they are signed out when the truth is "we could not ask" is the defect this exists
   // to prevent.
   if (state.status === "unreachable") return unreachableScreen();
   if (!state.principal) return signedOutScreen();
+  sessionScreenShown = false;
   if (!route) return null;
 
   if (route.capability) {
@@ -845,6 +1077,7 @@ function wipeWorkspace() {
   }
   render(accountSheet.body);
   accountDevices = null;
+  lastPrincipal = null;
   approvalsWaiting = false;
   signOutFailure = null;
   foldOpen = false;
@@ -917,9 +1150,13 @@ async function boot() {
   /** @type {string|null} null until an authenticated screen has been rendered at least once. */
   let renderedKey = null;
   session.subscribe(() => {
+    const state = session.snapshot();
+    // K2: a destination held while the session was out is not named once it is back (or gone).
+    if (state.signedOut || (state.status !== "ended" && state.status !== "unreachable")) {
+      heldDestination = null;
+    }
     syncChrome();
     void pollApprovals();
-    const state = session.snapshot();
 
     // A session ending must not rebuild the screen. That is the single worst moment to discard a
     // half-typed incident, and `session.js` promises it does not happen — the banner says what
@@ -936,21 +1173,28 @@ async function boot() {
     //
     // A sign-out is the opposite case (C1): the person chose to leave, `wipeWorkspace()` has
     // already emptied the page, and the signed-out screen is rendered in its place at once.
+    //
+    // K2 (round-9b verification 2): unless the outlet shows "Đang kiểm tra phiên" for a read made
+    // because the server answered -- that screen gives way to what the read found.
+    const reread = rereadShown && !state.answered;
     if (
       (state.status === "ended" || state.status === "unreachable") &&
       renderedKey !== null &&
-      !state.signedOut
+      !state.signedOut &&
+      !reread
     ) {
       return;
     }
 
     const key = contentKey();
-    if (key === renderedKey) return;
+    if (key === renderedKey && !(sessionScreenShown && state.status === "active") && !reread) {
+      return;
+    }
     renderedKey = key;
     void router.render();
   });
 
-  router.start({ outlet, routes: ROUTES, guard, onChange: syncChrome });
+  router.start({ outlet, routes: ROUTES, guard, onChange: syncChrome, hold: holdScreen });
   // A rotation or a soft keyboard changes the bar's height without re-rendering it.
   window.addEventListener("resize", publishNavHeight, { passive: true });
 

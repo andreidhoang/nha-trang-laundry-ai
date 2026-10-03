@@ -26,19 +26,12 @@ import { request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
 import { UUID } from "../core/format.js";
 import { can } from "../core/rbac.js";
+import { navigate } from "../core/router.js";
 import { principal, storeId } from "../core/session.js";
 import { errorNotice, gated } from "./components.js";
 import { button } from "./kit.js";
 
 export const NEW_ORDER_LABEL = "Tạo đơn cho khách này";
-
-/**
- * @param {string} binding
- * @returns {string}
- */
-export function newOrderHref(binding) {
-  return `#/new?contact=${encodeURIComponent(binding)}`;
-}
 
 /**
  * The hand-off for a binding this screen already read from the server.
@@ -57,9 +50,8 @@ export function newOrderForContact(binding, ownerStore) {
     icon: "plus",
     variant: "quiet",
     data: { newOrderContact: contact },
-    onClick: () => {
-      location.hash = newOrderHref(contact);
-    },
+    // Through the router (round-9b verification 3): a held screen stays, with no history entry.
+    onClick: () => navigate("/new", { contact }),
   });
   return gated(control, can(principal(), "QUOTES_WRITE"));
 }
@@ -95,7 +87,7 @@ export function newOrderForDraft(ownerStore, draftId) {
         if (!UUID.test(contact) || read?.store_id !== store) {
           throw new Error("the draft's binding read did not name a customer of this store");
         }
-        location.hash = newOrderHref(contact);
+        navigate("/new", { contact });
       } catch (error) {
         if (control.getAttribute("data-denied") !== "true") control.disabled = false;
         render(errorHost, errorNotice(error));

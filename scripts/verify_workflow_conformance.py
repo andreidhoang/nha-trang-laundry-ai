@@ -4419,18 +4419,21 @@ _WEEKDAY_VI = ("thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu",
 _TET_FIXTURE = "2027-02-05,2027-02-06,2027-02-07,2027-02-08,2027-02-09,2027-02-10"
 
 
-def _promise_text(value: str) -> str:
+def _promise_text(value: str, *, paper: bool = False) -> str:
     """ "13:00 thứ Bảy 26/09" -- the instant in Asia/Ho_Chi_Minh (UTC+7 all year).
 
     `format.promiseTime`'s convention (CONSOLE-COPY-A11Y-009, C9): two-digit day and month, and
-    the year only when it is not the shop's current one ("13:00 thứ Bảy 02/01/2027").
+    the year only when it is not the shop's current one ("13:00 thứ Bảy 02/01/2027"). `paper`:
+    a printed receipt always carries the year ("13:00 thứ Bảy 26/09/2026", CONSOLE-RESIDUAL-009B
+    K3), like the receipt's other dates.
     """
 
     from datetime import datetime, timedelta, timezone
 
     shop = timezone(timedelta(hours=7))
     moment = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(shop)
-    day = f"{moment:%d/%m}" if moment.year == datetime.now(shop).year else f"{moment:%d/%m/%Y}"
+    this_year = moment.year == datetime.now(shop).year
+    day = f"{moment:%d/%m}" if this_year and not paper else f"{moment:%d/%m/%Y}"
     return f"{moment:%H:%M} {_WEEKDAY_VI[moment.weekday()]} {day}"
 
 
@@ -4673,7 +4676,7 @@ def scenario_promise(console: Console) -> None:
     ok(
         "the receipt prints 'Hẹn trả: …' in place of 'Tiệm sẽ báo khi đồ sẵn sàng'",
         closing.count() == 1
-        and closing.first.inner_text().strip() == f"Hẹn trả: {_promise_text(promised)}",
+        and closing.first.inner_text().strip() == f"Hẹn trả: {_promise_text(promised, paper=True)}",
         closing.first.inner_text() if closing.count() else "absent",
     )
 
@@ -10620,18 +10623,68 @@ def scenario_copy_a11y(console: Console) -> None:
                 all(re.fullmatch(r"Cập nhật lúc \d{2}:\d{2}", stamp) for stamp in stamps),
                 stamps,
             )
-    promised = str(read().get("current_promise_at") or "")
-    if promised:
-        console.open_order(order_id)
+    _copy_a11y_promise(console)
+
+
+def _copy_a11y_promise(console: Console) -> None:
+    """C9's promise, always (CONSOLE-RESIDUAL-009B, K3). The order above climbs its ladder on the
+    routes and so never meets Nhận đồ, which is what sets a promise; this one is taken in at the
+    counter, so the check has a promise to read on every run instead of skipping when there is
+    none. The turnaround policy the stack publishes is used when it is in force; on a stack without
+    one it is published with the owner's script and withdrawn again afterwards, so the scenario
+    still leaves nothing behind. A run that can do neither fails here -- it is never a skip."""
+
+    order = console.build_order(kg="4", stop="created")
+    read = console.call("GET", f"/internal/v1/orders/{order['order_id']}/promise")
+    published_here = False
+    if not (read["status"] == 200 and (read["body"] or {}).get("policy_published")):
+        if not (READS_DATABASE and arguments.database_url):
+            ok(
+                "C9: a promise to read -- the turnaround policy is published, or --database-url "
+                "is given so the owner's script can publish it",
+                False,
+                read["text"][:160],
+            )
+            return
+        published = _publish_turnaround("--tet-dates", _TET_FIXTURE)
+        published_here = published.returncode == 0
+        ok(
+            "C9 set-up: the owner's script publishes the turnaround policy for this check",
+            published_here,
+            (published.stdout + published.stderr)[-200:],
+        )
+    try:
+        _clear_of_minute_edge()
+        _open_receive(console, order["order_id"])
+        answer = _press_receive(console)
+        promised = str(
+            ((answer["body"] or {}) if answer["status"] == 200 else {}).get("current_promise_at")
+            or ""
+        )
+        ok(
+            "C9 set-up: Nhận đồ at the counter sets the order's promise",
+            bool(promised),
+            answer["text"][:200],
+        )
+        if not promised:
+            return
+        console.open_order(order["order_id"])
         ok(
             "C9: the order's promise reads as format.js writes it (13:00 thứ Bảy 26/09)",
             _promise_text(promised) in console.text(),
-            _promise_text(promised),
+            f"{_promise_text(promised)} not in {console.text()[:200]!r}",
         )
-    else:
-        note(
-            "no promise on this order (its ladder ran on the routes); the promise scenario pins it"
+        console.open(f"#/orders/{order['order_id']}/receipt", settle=2200)
+        closing = console.page.locator("#receipt-paper [data-field=closing]")
+        printed = closing.first.inner_text().strip() if closing.count() else ""
+        ok(
+            "K3: the receipt prints the same promise with its year (paper leaves the shop)",
+            printed == f"Hẹn trả: {_promise_text(promised, paper=True)}",
+            f"{printed!r} vs {_promise_text(promised, paper=True)!r}",
         )
+    finally:
+        if published_here:
+            _publish_turnaround("--withdraw")
 
 
 # --- GOODS-AND-DRAWER-009 (round 9, review M2 and M4) ---------------------------------------------
@@ -12199,6 +12252,787 @@ def scenario_money_residual(console: Console) -> None:
     _residual_shot(console, "j6a-flagged")
 
 
+# --- CONSOLE-RESIDUAL-009B (round 9b, slice K): the address, the shift, the tabs --------------
+
+
+def _token_without_two_step(subject: str) -> str:
+    """HARNESS STEP (documented, round 9b): an identity token for `subject` that carries no
+    two-step claim, signed with the demo identity provider's own key (`.demo/idp`, the demo
+    stack's test-only key, read from disk -- the provider on :9000 is not touched). The provider's
+    HTTP endpoint always adds the claim, and the case this proves is an operator whose sign-in did
+    not include it. `DEMO_MATERIAL_DIR` names the material when it is not this checkout's `.demo`
+    (a worktree that parks its link while the test suite runs). Empty when the files are not on
+    this machine; the caller fails then."""
+
+    root = os.environ.get("DEMO_MATERIAL_DIR") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".demo"
+    )
+
+    def read(*parts: str) -> str:
+        with open(os.path.join(root, *parts), encoding="utf-8") as handle:
+            return handle.read().strip()
+
+    try:
+        from demo_identity_provider import DemoIdentityProvider
+
+        provider = DemoIdentityProvider(
+            private_key_pem=read("idp", "private_key.pem"),
+            jwks=json.loads(read("idp", "jwks.json")),
+            issuer=read("secrets", "oidc_issuer"),
+            audience=read("secrets", "oidc_audience"),
+            mfa_claim=read("secrets", "oidc_mfa_claim"),
+            mfa_value=read("secrets", "oidc_mfa_value"),
+        )
+    except (OSError, ValueError, ImportError) as error:
+        note(f"no demo identity files to sign a token without two-step verification: {error}")
+        return ""
+    return provider.mint(subject, with_mfa=False)
+
+
+def _hold_first_read(held: list[Any]) -> Any:
+    """A route handler that holds the first GET it sees in `held` and lets everything else pass:
+    the address's own read, while the waiting list and a pressed row's reads answer (K1d).
+
+    One parameter: Playwright passes the request as a second one when a handler declares it."""
+
+    def handler(route: Any) -> None:
+        if not held and route.request.method == "GET":
+            held.append(route)
+        else:
+            route.continue_()
+
+    return handler
+
+
+def _session_with(console: Console, id_token: str) -> int:
+    """Exchange a token for the session cookie in this page, without a reload (as `sign_in`)."""
+
+    return int(
+        console.page.evaluate(
+            """async (t) => {
+                const r = await fetch('/internal/v1/auth/session', {
+                    method: 'POST', credentials: 'include',
+                    headers: {'Authorization': 'Bearer ' + t}
+                });
+                return r.status;
+            }""",
+            id_token,
+        )
+    )
+
+
+def scenario_console_residual(console: Console) -> None:
+    """CONSOLE-RESIDUAL-009B against the real API: a walk-in that supersedes `?request=` drops the
+    address and says so, and the waiting customer is still in the list (K1); step 1 is shut while
+    an intake is being written (K1); an idle expiry keeps the navigation (K2); one "Thoát" clears
+    every tab (K2); an operator without two-step verification sees "Nhận đồ" shut with why (K2).
+    The receipt's promise year (K3) is in copy_a11y and promise."""
+
+    page = console.page
+
+    def visible_nav() -> list[str]:
+        return list(
+            page.evaluate(
+                """() => [...document.querySelectorAll('nav.nav a.nav__link')]
+                    .filter((n) => n.checkVisibility({visibilityProperty: true}))
+                    .map((n) => n.getAttribute('href'))"""
+            )
+        )
+
+    head("K1", "KHÁCH VÃNG LAI THAY KHÁCH ĐANG MỞ — the address forgets X; X is still waiting")
+    console.sign_in("demo-operations")
+    waiting = console.walk_in()
+    x_id = str((waiting.get("intake") or {}).get("order_request_id") or "")
+    held: list[Any] = []
+
+    def hold(route: Any) -> None:
+        held.append(route)
+
+    pattern = f"**/order-requests/{x_id}"
+    page.route(pattern, hold)
+    page.goto("about:blank")
+    # Not "networkidle": the held read keeps the network busy by design.
+    page.goto(f"{CONSOLE}#/new?request={x_id}", wait_until="domcontentloaded")
+    page.wait_for_timeout(1500)
+    ticket, intake = console.press_capturing(
+        page.locator("#new-walk-in"), "/counter-tickets", "/order-requests"
+    )
+    touched("newOrder.walk-in")
+    page.wait_for_timeout(1200)
+    address = str(page.evaluate("() => location.hash"))
+    line = page.locator("#new-resume-dropped")
+    said = line.first.inner_text() if line.count() else ""
+    ok(
+        "a walk-in pressed while ?request=X is still reading drops X from the address (#/new)",
+        intake["status"] == 201 and address == "#/new",
+        f"{intake['status']} {address}",
+    )
+    ok(
+        "and says so in one quiet line: 'Đã bỏ khách đang chờ … vẫn còn trong danh sách'",
+        said.startswith("Đã bỏ khách đang chờ") and said.endswith("vẫn còn trong danh sách."),
+        said or "no line",
+    )
+    for route in held:
+        route.continue_()
+    page.unroute(pattern, hold)
+    page.wait_for_timeout(1500)
+    x_ticket = (waiting.get("ticket") or {}).get("ticket_number")
+    named = line.first.inner_text() if line.count() else ""
+    ok(
+        "X's late read names X on that line, so the counter knows whom to look for",
+        named == f"Đã bỏ khách đang chờ “Phiếu {x_ticket}” — vẫn còn trong danh sách.",
+        named or "no line",
+    )
+    b_ticket = (ticket.get("body") or {}).get("ticket_number")
+    hero = page.locator("#new-ticket")
+    hero_text = hero.first.inner_text() if hero.count() else ""
+    ok(
+        "X's late read changes nothing: the new customer's ticket is on screen, the address #/new",
+        f"Phiếu {b_ticket}" in hero_text.replace("\n", " ")
+        and page.evaluate("() => location.hash") == "#/new",
+        hero_text[:80],
+    )
+    page.reload(wait_until="networkidle")
+    page.wait_for_timeout(1500)
+    ok(
+        "a reload starts clean -- X is not resumed -- and X is still in 'Khách đang chờ'",
+        page.locator("#new-ticket").count() == 0
+        and page.locator(f"#new-waiting [data-request='{x_id}']").count() == 1,
+        page.locator("main").inner_text()[:160],
+    )
+
+    head("K1b", "ĐANG MỞ LƯỢT TIẾP NHẬN — step 1 is shut until the write answers")
+    posts: list[Any] = []
+
+    def hold_post(route: Any) -> None:
+        if route.request.method == "POST":
+            posts.append(route)
+        else:
+            route.continue_()
+
+    intake_pattern = f"**/stores/{STORE}/order-requests"
+    page.route(intake_pattern, hold_post)
+    page.locator("#new-walk-in").click()
+    page.wait_for_timeout(1500)
+    shut = page.evaluate(
+        """() => {
+            const rows = [...document.querySelectorAll('#new-waiting button.row-item')];
+            return {rows: rows.length, shut: rows.filter((r) => r.disabled).length,
+                    busy: document.querySelector('.new-step1')?.getAttribute('data-busy')};
+        }"""
+    )
+    ok(
+        "while the walk-in's intake is being written, every waiting row is disabled",
+        shut["rows"] >= 1 and shut["shut"] == shut["rows"] and shut["busy"] == "true",
+        shut,
+    )
+    for route in posts:
+        route.continue_()
+    page.unroute(intake_pattern, hold_post)
+    with contextlib.suppress(Exception):
+        page.wait_for_selector("#new-ticket", timeout=15000)
+    ok("then the write lands and its customer is on screen", page.locator("#new-ticket").count())
+
+    head("K1c", "KHÁCH ĐANG CHỜ THAY KHÁCH ĐANG MỞ — the line survives the row's own redraw")
+    # Round-9b verification: a "Khách đang chờ" row pressed while ?request=X reads drew its own
+    # skeleton where the quiet line stood, in the same task -- X was dropped without a word.
+    y_waiting = console.walk_in()
+    y_id = str((y_waiting.get("intake") or {}).get("order_request_id") or "")
+    y_ticket = (y_waiting.get("ticket") or {}).get("ticket_number")
+    held.clear()
+    page.route(pattern, hold)
+    page.goto("about:blank")
+    page.goto(f"{CONSOLE}#/new?request={x_id}", wait_until="domcontentloaded")
+    page.wait_for_timeout(1800)
+    y_row = page.locator(f"#new-waiting [data-request='{y_id}']")
+    pressed = y_row.count() == 1
+    if pressed:
+        y_row.first.click()
+        touched("newOrder.resume")
+    page.wait_for_timeout(300)
+    soon = line.first.inner_text() if line.count() else ""
+    page.wait_for_timeout(1500)
+    later = line.first.inner_text() if line.count() else ""
+    ok(
+        "a waiting row Y pressed while ?request=X reads: the address is #/new and one quiet line "
+        "says X was dropped -- still there after Y's own reads",
+        pressed
+        and page.evaluate("() => location.hash") == "#/new"
+        and soon.startswith("Đã bỏ khách")
+        and later == soon,
+        f"pressed={pressed} soon={soon!r} later={later!r}",
+    )
+    for route in held:
+        route.continue_()
+    page.unroute(pattern, hold)
+    page.wait_for_timeout(2000)
+    named = line.first.inner_text() if line.count() else ""
+    hero_text = hero.first.inner_text() if hero.count() else ""
+    ok(
+        "X's late read names X on that line, and Y is the customer on screen",
+        named == f"Đã bỏ khách đang chờ “Phiếu {x_ticket}” — vẫn còn trong danh sách."
+        and f"Phiếu {y_ticket}" in hero_text.replace("\n", " "),
+        f"line={named!r} hero={hero_text[:60]!r}",
+    )
+
+    head("K1d", "KHÁCH CỦA CHÍNH ĐƯỜNG DẪN — ?quote= / ?contact=, its own row: nothing dropped")
+    # Round-9b verification 2: the row pressed while the address still read was the very customer
+    # it names. A `?quote=` names X's quote and a `?contact=` X's conversation (a walk-in's ticket
+    # is its intake's binding); the line said X was dropped beside X on screen, and the address no
+    # longer named X, so a reload lost them.
+    own = console.walk_in()
+    own_id = str((own.get("intake") or {}).get("order_request_id") or "")
+    own_binding = str((own.get("intake") or {}).get("contact_binding_id") or "")
+    own_ticket = (own.get("ticket") or {}).get("ticket_number")
+    console.add_line("STANDARD_WASH_DRY", "3")
+    own_quote = str((console.price().get("body") or {}).get("quote_id") or "")
+    for query, matcher, label in (
+        (
+            f"?quote={own_quote}",
+            re.compile(rf"/quotes/{re.escape(own_quote)}$"),
+            "?quote=X",
+        ),
+        (
+            f"?contact={own_binding}",
+            re.compile(rf"/stores/{STORE}/order-requests\?"),
+            "?contact=X",
+        ),
+    ):
+        first: list[Any] = []
+        hold_first = _hold_first_read(first)
+
+        page.route(matcher, hold_first)
+        page.goto("about:blank")
+        page.goto(f"{CONSOLE}#/new{query}", wait_until="domcontentloaded")
+        page.wait_for_timeout(1800)
+        own_row = page.locator(f"#new-waiting [data-request='{own_id}']")
+        pressed = own_row.count() == 1 and bool(first)
+        if own_row.count():
+            own_row.first.click()
+            touched("newOrder.resume")
+        page.wait_for_timeout(1500)
+        while_held = line.first.inner_text() if line.count() else ""
+        for route in first:
+            route.continue_()
+        page.unroute(matcher, hold_first)
+        page.wait_for_timeout(2000)
+        after = line.first.inner_text() if line.count() else ""
+        hero_text = hero.first.inner_text() if hero.count() else ""
+        ok(
+            f"{label} still reading, X's own waiting row pressed: X opens and no line says X was "
+            "dropped -- not while the address reads, not after",
+            pressed
+            and not while_held
+            and not after
+            and f"Phiếu {own_ticket}" in hero_text.replace("\n", " "),
+            f"pressed={pressed} held={while_held!r} after={after!r} hero={hero_text[:40]!r}",
+        )
+        ok(
+            f"{label}: the address names X again (?request=X), so a reload resumes X",
+            page.evaluate("() => location.hash") == f"#/new?request={own_id}",
+            page.evaluate("() => location.hash"),
+        )
+
+    head("K2", "HẾT PHIÊN GIỮA CA — the navigation stays; a press on it keeps what was typed")
+    order = console.build_order(stop="created")
+    order_id = order["order_id"]
+    # Nhận đồ step 2 with a weight being typed: what an expiry must not throw away.
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "3.5")
+    page.wait_for_timeout(300)
+    on_new = str(page.evaluate("() => location.hash"))
+    before = visible_nav()
+
+    def qty() -> Any:
+        return page.evaluate("() => document.querySelector('#new-line-0-qty')?.value ?? null")
+
+    session_id = str(
+        (console.call("GET", "/internal/v1/session").get("body") or {}).get("session_id") or ""
+    )
+    if not (READS_DATABASE and session_id):
+        ok("an idle expiry needs --database-url (the session's idle deadline is moved)", False)
+    else:
+        # HARNESS STEP: eight hours idle, without waiting eight hours -- the server's own deadline
+        # is moved into the past; the next request is refused exactly as an idle one is.
+        sql(
+            "update staff_sessions set idle_expires_at = now() - interval '1 second' "
+            f"where id = '{session_id}'"
+        )
+        page.evaluate(
+            "async () => { const api = await import('/staff/src/core/api.js');"
+            " await api.request('/internal/v1/session').catch(() => null); }"
+        )
+        page.wait_for_timeout(1200)
+        banner = page.locator("#banners").inner_text()
+        ok(
+            "the banner says the session ended and the typed input is on screen -- it is: 3.5",
+            "Phiên đăng nhập đã kết thúc" in banner
+            and "vẫn còn trên màn hình" in banner
+            and qty() == "3.5",
+            f"qty={qty()!r} {banner[:120]!r}",
+        )
+        ok(
+            "the navigation is still there, with the same destinations",
+            len(before) >= 3 and visible_nav() == before,
+            f"{before} -> {visible_nav()}",
+        )
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(1000)
+        banner = page.locator("#banners").inner_text()
+        ok(
+            "Đơn hàng pressed: the screen stays with 3.5 typed, the address does not move",
+            qty() == "3.5"
+            and page.evaluate("() => location.hash") == on_new
+            and page.locator("main [data-session-expired]").count() == 0,
+            f"{page.evaluate('() => location.hash')} qty={qty()!r}",
+        )
+        ok(
+            "and the banner names what was not opened, and why",
+            "Chưa mở “Đơn hàng”: cần máy chủ, nên màn hình đang làm được giữ nguyên." in banner,
+            banner[:200],
+        )
+        way_in = page.locator("#banners a[data-sign-in-elsewhere]")
+        ok(
+            "and offers the way back in without leaving it: 'Đăng nhập lại ở thẻ mới' (a new tab)",
+            way_in.count() == 1
+            and way_in.first.get_attribute("target") == "_blank"
+            and bool(way_in.first.get_attribute("href")),
+            way_in.first.get_attribute("href") if way_in.count() else "no link",
+        )
+        ok(
+            "signed in again (in this browser), 'Kiểm tra lại phiên' in the banner",
+            _session_with(console, token("demo-operations")) == 200,
+        )
+        recheck = page.locator("#banners button", has_text="Kiểm tra lại phiên")
+        if recheck.count():
+            recheck.first.click()
+        page.wait_for_timeout(1500)
+        ok(
+            "-- the same line with 3.5 kg is still there, and the banner is gone",
+            qty() == "3.5"
+            and "Phiên đăng nhập đã kết thúc" not in page.locator("#banners").inner_text(),
+            f"qty={qty()!r}",
+        )
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(1500)
+        ok(
+            "and the next press on Đơn hàng opens it",
+            page.evaluate("() => location.hash").startswith("#/orders")
+            and page.locator("main h1").first.inner_text() == "Đơn hàng",
+            page.locator("main").inner_text()[:120],
+        )
+
+    head("K2d", "ĐĂNG NHẬP LẠI RỒI BẤM GỬI — the server's answer ends the hold; the order opens")
+    # Round-9b verification 2: the banner says "đăng nhập lại rồi bấm gửi một lần nữa". Done so --
+    # signed in again in this browser, without "Kiểm tra lại phiên" -- the order was created, and
+    # the hold kept the console on Nhận đồ saying "Chưa mở “Đơn hàng”: cần máy chủ".
+    console.sign_in("demo-operations")
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "7")
+    made = str((console.price().get("body") or {}).get("quote_id") or "")
+    page.locator("#new-next").click()
+    page.wait_for_selector("#new-confirm")
+    page.locator("#new-source [data-value='WALK_IN']").click()
+    page.wait_for_timeout(300)
+    session_id = str(
+        (console.call("GET", "/internal/v1/session").get("body") or {}).get("session_id") or ""
+    )
+    if not (READS_DATABASE and session_id):
+        ok("an idle expiry needs --database-url (the session's idle deadline is moved)", False)
+    else:
+        # The screen is scrolled to its end, as a phone's is at the button (a desk's pane too).
+        page.evaluate(
+            "() => { window.scrollTo(0, document.documentElement.scrollHeight);"
+            " const m = document.querySelector('#main'); if (m) m.scrollTop = m.scrollHeight; }"
+        )
+        # HARNESS STEP: eight hours idle, as in K2.
+        sql(
+            "update staff_sessions set idle_expires_at = now() - interval '1 second' "
+            f"where id = '{session_id}'"
+        )
+        page.evaluate(
+            "async () => { const api = await import('/staff/src/core/api.js');"
+            " await api.request('/internal/v1/session').catch(() => null); }"
+        )
+        page.wait_for_timeout(1200)
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(1000)
+        in_view = page.evaluate(
+            """() => { const n = document.querySelector('#banners [data-held-destination]');
+                if (!n) return null; const r = n.getBoundingClientRect();
+                return r.top >= 0 && r.bottom <= window.innerHeight; }"""
+        )
+        ok(
+            "Đơn hàng pressed on the scrolled confirmation: held, and the banner's 'Chưa mở' line "
+            "is in view (on a phone the page goes back to the top for it)",
+            page.evaluate("() => location.hash").startswith("#/new") and in_view is True,
+            f"{page.evaluate('() => location.hash')} in_view={in_view}",
+        )
+        ok(
+            "signed in again in this browser (as 'Đăng nhập lại ở thẻ mới' does)",
+            _session_with(console, token("demo-operations")) == 200,
+        )
+        accepted, created = console.press_capturing(
+            page.locator("#new-confirm"), "/acceptance", "/orders"
+        )
+        touched("newOrder.confirm")
+        page.wait_for_timeout(2500)
+        new_order = str((created.get("body") or {}).get("order_id") or "")
+        landed = str(page.evaluate("() => location.hash"))
+        ok(
+            "'Khách đồng ý — tạo đơn' pressed again: accepted and created (201, 201), and the "
+            "order opens by itself -- its own move is not held",
+            accepted["status"] == 201
+            and created["status"] == 201
+            and bool(new_order)
+            and landed == f"#/orders/{new_order}"
+            and page.locator("main h1").first.inner_text() != "Nhận đồ",
+            f"{accepted['status']}/{created['status']} {landed} "
+            f"h1={page.locator('main h1').first.inner_text()!r}",
+        )
+        banner = page.locator("#banners").inner_text()
+        ok(
+            "the session is picked up by itself: no 'Phiên đăng nhập đã kết thúc', no 'Chưa mở … "
+            "cần máy chủ', and 'In phiếu cho khách' is offered",
+            "Phiên đăng nhập đã kết thúc" not in banner
+            and "Chưa mở" not in banner
+            and page.locator("#order-created button[data-receipt]").count() == 1,
+            banner[:160],
+        )
+        ok(
+            "the server agrees: one order for that quote",
+            sql(f"select count(*) from orders where current_quote_id = '{made}'").strip() == "1",
+            sql(f"select count(*) from orders where current_quote_id = '{made}'"),
+        )
+
+    head("K2e", "ĐĂNG NHẬP LẠI Ở THẺ KHÁC RỒI BẤM LẠI — the press goes; the history has no copy")
+    # Round-9b verification 3: signed in again in another tab, the destination pressed again (the
+    # guide's "Đăng nhập lại xong thì bấm lại") stayed held, saying "cần máy chủ"; and an address
+    # written while held left a second copy of the held screen in the history -- a dead Back.
+    console.sign_in("demo-operations")
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "3.5")
+    page.wait_for_timeout(300)
+    on_new = str(page.evaluate("() => location.hash"))
+    session_id = str(
+        (console.call("GET", "/internal/v1/session").get("body") or {}).get("session_id") or ""
+    )
+    if not (READS_DATABASE and session_id):
+        ok("an idle expiry needs --database-url (the session's idle deadline is moved)", False)
+    else:
+        # HARNESS STEP: eight hours idle, as in K2.
+        sql(
+            "update staff_sessions set idle_expires_at = now() - interval '1 second' "
+            f"where id = '{session_id}'"
+        )
+        page.evaluate(
+            "async () => { const api = await import('/staff/src/core/api.js');"
+            " await api.request('/internal/v1/session').catch(() => null); }"
+        )
+        page.wait_for_timeout(1200)
+        # An address written past the navigation (typed in the bar, or by code): held as a press.
+        page.evaluate("() => { location.hash = '#/orders'; }")
+        page.wait_for_timeout(1500)
+        ok(
+            "an address typed while the session is out: held -- Nhận đồ with 3.5 kg stays",
+            page.evaluate("() => location.hash") == on_new and qty() == "3.5",
+            f"{page.evaluate('() => location.hash')} qty={qty()!r}",
+        )
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(1500)
+        ok(
+            "Đơn hàng pressed, still signed out: held, and the banner says why",
+            page.evaluate("() => location.hash") == on_new
+            and qty() == "3.5"
+            and "Chưa mở" in page.locator("#banners").inner_text(),
+            page.locator("#banners").inner_text()[:160],
+        )
+        other = page.context.new_page()
+        other.goto(CONSOLE, wait_until="domcontentloaded")
+        signed = int(
+            other.evaluate(
+                """async (t) => (await fetch('/internal/v1/auth/session', {method: 'POST',
+                    credentials: 'include', headers: {'Authorization': 'Bearer ' + t}})).status""",
+                token("demo-operations"),
+            )
+        )
+        other.close()
+        page.bring_to_front()
+        ok("signed in again in another tab of this browser", signed == 200, str(signed))
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(2500)
+        banner = page.locator("#banners").inner_text()
+        ok(
+            "Đơn hàng pressed again, as the guide says: it opens -- no 'Kiểm tra lại phiên' "
+            "needed, no 'Phiên đăng nhập đã kết thúc', no 'Chưa mở … cần máy chủ'",
+            page.evaluate("() => location.hash").startswith("#/orders")
+            and page.locator("main h1").first.inner_text() == "Đơn hàng"
+            and "Phiên đăng nhập đã kết thúc" not in banner
+            and "Chưa mở" not in banner,
+            f"{page.evaluate('() => location.hash')} {banner[:120]!r}",
+        )
+        if not page.evaluate("() => location.hash").startswith("#/orders"):
+            # The history check below stands by itself: on its way to Đơn hàng whichever way.
+            recheck = page.locator("#banners button", has_text="Kiểm tra lại phiên")
+            if recheck.count():
+                recheck.first.click()
+            page.wait_for_timeout(1500)
+            console.nav("Đơn hàng", "/orders")
+            page.wait_for_timeout(1500)
+        trail = []
+        for _ in range(2):
+            page.go_back()
+            page.wait_for_timeout(1500)
+            trail.append(
+                page.url if page.url.startswith("about:") else page.evaluate("() => location.hash")
+            )
+        ok(
+            "Back reaches Nhận đồ, and the next Back leaves it -- one entry for the held screen, "
+            "no dead Back",
+            trail[0].startswith("#/new") and trail[1] == "about:blank",
+            repr(trail),
+        )
+
+    head("K2f", "BẤM KHI BỊ GIỮ — not made late; a jump of two keeps its size; no copy without API")
+    # Round-9b verification 4. (a) A held press read the session; on a slow network the read came
+    # back after the person had gone on typing on the screen the banner said was kept, and the
+    # press was made then -- the screen left, the typing lost. (b) A held Back of two entries
+    # resumed as one. (c) Without the Navigation API, an address typed while the held screen was
+    # not the last entry left a second copy of it in the history -- a dead Back.
+
+    def expire_now(where: Console) -> bool:
+        sid = str(
+            (where.call("GET", "/internal/v1/session").get("body") or {}).get("session_id") or ""
+        )
+        if not (READS_DATABASE and sid):
+            return False
+        # HARNESS STEP: eight hours idle, as in K2.
+        sql(
+            "update staff_sessions set idle_expires_at = now() - interval '1 second' "
+            f"where id = '{sid}'"
+        )
+        where.page.evaluate(
+            "async () => { const api = await import('/staff/src/core/api.js');"
+            " await api.request('/internal/v1/session').catch(() => null); }"
+        )
+        where.page.wait_for_timeout(1200)
+        return True
+
+    def signed_in_elsewhere(where: Console) -> int:
+        other = where.page.context.new_page()
+        other.goto(CONSOLE, wait_until="domcontentloaded")
+        status = int(
+            other.evaluate(
+                """async (t) => (await fetch('/internal/v1/auth/session', {method: 'POST',
+                    credentials: 'include', headers: {'Authorization': 'Bearer ' + t}})).status""",
+                token("demo-operations"),
+            )
+        )
+        other.close()
+        where.page.bring_to_front()
+        return status
+
+    def hash_of(target: Any) -> str:
+        if target.url.startswith("about:"):
+            return str(target.url)
+        return str(target.evaluate("() => location.hash"))
+
+    console.sign_in("demo-operations")
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "3.5")
+    page.wait_for_timeout(300)
+    if not expire_now(console):
+        ok("an idle expiry needs --database-url (the session's idle deadline is moved)", False)
+    else:
+        ok("(a) signed in again in another tab", signed_in_elsewhere(console) == 200)
+        # HARNESS STEP: a slow network -- this page's session reads take 4 s to come back.
+        page.evaluate(
+            "() => { const f = window.fetch; window.fetch = (u, i) =>"
+            " String(u).endsWith('/internal/v1/session')"
+            " ? new Promise((r) => setTimeout(r, 4000)).then(() => f(u, i)) : f(u, i); }"
+        )
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(600)
+        held_first = (
+            hash_of(page).startswith("#/new")
+            and qty() == "3.5"
+            and "Chưa mở" in page.locator("#banners").inner_text()
+        )
+        page.locator("#new-line-0-qty").fill("4.5")
+        page.wait_for_timeout(5000)
+        banner = page.locator("#banners").inner_text()
+        ok(
+            "(a) Đơn hàng pressed on a slow network, then 4.5 typed while the banner says the "
+            "screen is kept: the late session read does not make the press -- Nhận đồ stays "
+            "with 4.5, and 'Chưa mở' is gone with the session back",
+            held_first
+            and hash_of(page).startswith("#/new")
+            and qty() == "4.5"
+            and "Chưa mở" not in banner,
+            f"held={held_first} {hash_of(page)} qty={qty()!r} {banner[:120]!r}",
+        )
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(2000)
+        ok(
+            "(a) and Đơn hàng pressed again opens it",
+            hash_of(page).startswith("#/orders")
+            and page.locator("main h1").first.inner_text() == "Đơn hàng",
+            hash_of(page),
+        )
+
+    console.sign_in("demo-operations")
+    console.open("#/")
+    if console.nav("Đơn hàng", "/orders"):
+        touched("shell.nav.orders")
+    page.wait_for_timeout(1200)
+    page.evaluate("() => { location.hash = '#/customers'; }")
+    page.wait_for_timeout(1500)
+    page.locator("#customers-search").fill("3456")
+    page.wait_for_timeout(300)
+    if expire_now(console):
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(1500)
+        held_back = (
+            hash_of(page) == "#/customers"
+            and page.locator("#customers-search").input_value() == "3456"
+        )
+        ok("(b) signed in again in another tab", signed_in_elsewhere(console) == 200)
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(2500)
+        reached = hash_of(page)
+        forward = []
+        for _ in range(2):
+            page.go_forward()
+            page.wait_for_timeout(1500)
+            forward.append(hash_of(page))
+        ok(
+            "(b) a Back of two entries, held, then asked again after signing in: Hôm nay, two "
+            "entries back -- and Forward still goes Đơn hàng, Khách hàng",
+            held_back and reached == "#/" and forward == ["#/orders", "#/customers"],
+            f"held={held_back} reached={reached} forward={forward}",
+        )
+
+    plain = console.context.new_page()
+    plain.add_init_script(
+        "Object.defineProperty(window, 'navigation', {value: undefined, configurable: true});"
+    )
+    bare = Console(plain, console.context)
+    try:
+        bare.sign_in("demo-operations")
+        no_api = plain.evaluate("() => typeof window.navigation") == "undefined"
+        bare.open("#/orders")
+        # Set-up by address, so a phone's "Thêm" adds no entry of its own to the trail below.
+        for hop in ("#/customers", "#/"):
+            plain.evaluate(f"() => {{ location.hash = '{hop}'; }}")
+            plain.wait_for_timeout(1500)
+        plain.go_back()
+        plain.wait_for_timeout(1500)
+        plain.locator("#customers-search").fill("3456")
+        plain.wait_for_timeout(300)
+        if expire_now(bare):
+            plain.evaluate("() => { location.hash = '#/pickup'; }")
+            plain.wait_for_timeout(1500)
+            typed_held = (
+                hash_of(plain) == "#/customers"
+                and plain.locator("#customers-search").input_value() == "3456"
+            )
+            ok("(c) signed in again in another tab", signed_in_elsewhere(bare) == 200)
+            if bare.nav("Đơn hàng", "/orders"):
+                touched("shell.nav.orders")
+            plain.wait_for_timeout(2500)
+            reached = hash_of(plain)
+            trail = []
+            for _ in range(3):
+                plain.go_back()
+                plain.wait_for_timeout(1500)
+                trail.append(hash_of(plain))
+            ok(
+                "(c) no Navigation API, the held screen reached by Back, an address typed while "
+                "held: after signing in, Đơn hàng opens and three Backs go Khách hàng, Đơn hàng, "
+                "out -- no second copy of the held screen, no dead Back",
+                no_api
+                and typed_held
+                and reached == "#/orders"
+                and trail == ["#/customers", "#/orders", "about:blank"],
+                f"api_hidden={no_api} held={typed_held} reached={reached} trail={trail}",
+            )
+    finally:
+        plain.close()
+        page.bring_to_front()
+
+    head("K2b", "MỘT LẦN THOÁT, MỌI THẺ — the other tab clears itself")
+    console.sign_in("demo-operations")
+    console.open_order(order_id)
+    other = console.context.new_page()
+    try:
+        other.goto(f"{CONSOLE}#/orders/{order_id}", wait_until="networkidle")
+        other.wait_for_timeout(1500)
+        ok(
+            "set-up: a second tab shows the same order",
+            order_id in str(other.evaluate("() => document.body.textContent")),
+        )
+        page.bring_to_front()
+        page.locator("button", has_text="Thoát").first.click()
+        touched("shell.sign-out")
+        page.wait_for_timeout(1500)
+        out = other.evaluate(
+            """() => ({heading: document.querySelector('main h1')?.textContent || '',
+                       text: document.body.textContent || '', hash: location.hash,
+                       elsewhere: document.querySelectorAll(
+                           '[data-signed-out-elsewhere]').length})"""
+        )
+        ok(
+            "Thoát in this tab shows the signed-out screen in the other one, without a reload",
+            out["heading"] == "Chưa đăng nhập" and out["elsewhere"] == 1 and out["hash"] == "#/",
+            {k: out[k] for k in ("heading", "elsewhere", "hash")},
+        )
+        ok("and the order is nowhere in the other tab's page", order_id not in out["text"])
+        ok(
+            "the server agrees: the other tab has no session either",
+            other.evaluate(
+                "() => fetch('/internal/v1/session', {credentials: 'same-origin'})"
+                ".then((r) => r.status)"
+            )
+            == 401,
+        )
+    finally:
+        other.close()
+
+    head("K2c", "CHƯA XÁC THỰC HAI BƯỚC — the server never lets one in; the console still says why")
+    # The console shows "Nhận đồ" shut with "Cần xác thực hai bước" for a counter role whose session
+    # lacks the proof (the stub suite, section 29, proves that screen). Against this server that
+    # session cannot exist, and that is what is proved here: no session is opened for a sign-in
+    # without the proof, and a session row without it is not accepted -- so the console's
+    # rendering is the defensive case, never a way in.
+    id_token = _token_without_two_step("demo-operations")
+    page.goto(CONSOLE, wait_until="networkidle")
+    ok(
+        "the server refuses to open a session for a sign-in without two-step verification",
+        bool(id_token) and _session_with(console, id_token) == 401,
+        "no demo identity files" if not id_token else "",
+    )
+    console.sign_in("demo-operations")
+    session_id = str(
+        (console.call("GET", "/internal/v1/session").get("body") or {}).get("session_id") or ""
+    )
+    if not (READS_DATABASE and session_id):
+        ok("a session row without two-step verification needs --database-url", False)
+        return
+    # HARNESS STEP: the session row as one recorded without the proof would read.
+    sql(f"update staff_sessions set mfa_verified = false where id = '{session_id}'")
+    ok(
+        "and a session row without it is not accepted (401), so no screen is served under it",
+        console.session_status() == 401,
+    )
+
+
 SCENARIOS = {
     "money": scenario_money,
     "exit": scenario_exit,
@@ -12286,6 +13120,10 @@ SCENARIOS = {
     # PLATFORM-SECURITY-009 (slice G). Publishes nothing and reads nothing another scenario counts;
     # it adds two pending export requests, after export_range has made its own before/after count.
     "platform_bounds": scenario_platform_bounds,
+    # CONSOLE-RESIDUAL-009B (slice K): the address after a walk-in supersedes a resume, step 1
+    # shut while an intake is written, the navigation through an idle expiry, one Thoát for every
+    # tab, "Nhận đồ" without two-step verification. Publishes nothing; signs out when done.
+    "console_residual": scenario_console_residual,
     # OPS-OBSERVABILITY-009 (review P6). Last: it reads the outbox every scenario above wrote to.
     "queue_pending": scenario_queue_pending,
 }

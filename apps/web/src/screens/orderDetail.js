@@ -17,7 +17,7 @@
  *     readiness facts itself; `slot_approved` is the one it cannot know. The confirmation sheet asks
  *     for it as an explicit tick — the button alone never asserts it.
  *   - **Hẹn trả is the server's** (`PROMISE-001`, `DEC-037`). The Nhận đồ sheet shows the time the
- *     server says pressing now would promise ("Hẹn trả: 13:00 thứ Sáu 26/9"), with the choices it
+ *     server says pressing now would promise ("Hẹn trả: 13:00 thứ Bảy 26/09"), with the choices it
  *     offers (24/48 giờ, gấp 2 giờ, tự chọn giờ) or a date-time picker when a person must set it;
  *     the page shows the promise and its state, and "Hẹn lại" moves it with a reason.
  *   - **Giặt lại and Không nhận đồ need a person's reason** (ORDER-STEPS-002). The server never

@@ -14,7 +14,7 @@
  * @module core/session
  */
 
-import { request, whenSessionEnds } from "./api.js";
+import { request, whenServerAnswers, whenSessionEnds } from "./api.js";
 import { visibleMessage } from "./errors.js";
 
 const STORE_KEY = "staff_store_id";
@@ -50,7 +50,20 @@ const state = {
   // person who chose to leave -- whose screen must be cleared -- from an idle expiry, whose screen
   // is deliberately kept so the typed input survives (`end()`). Cleared by the next session read.
   signedOut: false,
+  // CONSOLE-RESIDUAL-009B (K2): the "Thoát" was pressed in another tab of this browser. The
+  // signed-out screen says so, so nobody wonders why this tab left too.
+  signedOutElsewhere: false,
+  // CONSOLE-RESIDUAL-009B (K2, round-9b verification 2): the session is `ended` or `unreachable`
+  // here, but a request sent since has been answered with a success -- the person signed in again
+  // elsewhere, or the server is back. The session is being read again (`refresh`); until it is,
+  // the shell holds nothing on the strength of "the server is out". Cleared by that read.
+  answered: false,
 };
+
+/** When the session was last found out (`ended` or `unreachable`), on `performance.now()`. */
+let outSince = Number.NEGATIVE_INFINITY;
+/** Whether a session read is on its way. */
+let refreshing = false;
 
 /** @type {Set<() => void>} what must be forgotten when this person signs out (C1) */
 const signOutListeners = new Set();
@@ -94,6 +107,7 @@ export function storeId() {
  * @returns {Promise<void>}
  */
 export async function refresh() {
+  refreshing = true;
   try {
     const body = await request("/internal/v1/session");
     state.principal = {
@@ -105,6 +119,7 @@ export async function refresh() {
     state.status = "active";
     state.lastError = "";
     state.signedOut = false;
+    state.signedOutElsewhere = false;
     await loadMemberStores();
   } catch (error) {
     state.principal = null;
@@ -124,8 +139,28 @@ export async function refresh() {
       state.status = "unreachable";
       state.lastError = visibleMessage(error);
     }
+    outSince = performance.now();
   }
+  refreshing = false;
+  state.answered = false;
   notify();
+}
+
+/**
+ * A request sent after the session was found out has been answered with a success (K2, round-9b
+ * verification 2). The local status is stale: say so (`answered`) at once -- before the caller
+ * acts on the answer -- and read the session again to learn who is signed in now. Not after
+ * "Thoát" (the page was cleared; nothing is held), and not for a request sent before the session
+ * went out, whose answer says nothing about now.
+ *
+ * @param {number} sentAt when the request was sent, on `performance.now()`
+ */
+function serverAnswered(sentAt) {
+  if (state.signedOut) return;
+  if (state.status !== "ended" && state.status !== "unreachable") return;
+  if (sentAt < outSince) return;
+  state.answered = true;
+  if (!refreshing) void refresh();
 }
 
 /**
@@ -197,6 +232,8 @@ export function selectStore(value) {
  * still on screen after signing in again in another tab.
  */
 export function end() {
+  outSince = performance.now();
+  state.answered = false;
   if (state.status === "ended" && !state.principal) return;
   state.principal = null;
   state.status = "ended";
@@ -223,11 +260,14 @@ export function onSignOut(listener) {
  * session read restores it); every registered listener drops what it held; then the subscribers
  * are told, and the shell renders the signed-out screen in the place of whatever was open.
  */
-function forget() {
+function forget(elsewhere = false) {
+  outSince = performance.now();
+  state.answered = false;
   state.principal = null;
   state.status = "ended";
   state.lastError = "";
   state.signedOut = true;
+  state.signedOutElsewhere = elsewhere;
   state.memberStoreIds = [];
   state.storeNames = {};
   state.storeScopeKnown = false;
@@ -268,6 +308,9 @@ export async function signOut() {
     if (/** @type {any} */ (error)?.kind !== "SESSION_ENDED") return { signedOut: false, error };
   }
   forget();
+  // K2: every other console tab of this origin shares the cookie that just ended -- they are
+  // signed out too, and must not keep the last customer on show.
+  announceSignOut();
 
   // Ending our session and leaving the issuer's alive is how a shop tablet hands the next person a
   // silent sign-in as whoever used it last: their Keycloak cookies survive, so the next
@@ -281,6 +324,47 @@ export async function signOut() {
   if (endSessionUrl) location.assign(endSessionUrl);
   return { signedOut: true, error: null };
 }
+
+// --- CONSOLE-RESIDUAL-009B (K2): one "Thoát" clears every tab ---------------------------------
+
+/**
+ * The tabs of this console in one browser share one session cookie, so a "Thoát" the server
+ * answered in one tab has ended the session in all of them -- and each of the others was still
+ * showing whatever its last screen held: a customer's name, a phone number, an order. They are
+ * told on a `BroadcastChannel` (same origin only, nothing written to the device, nothing kept
+ * after the message), and each clears itself exactly as the tab that pressed did (`forget`).
+ * A browser without `BroadcastChannel` keeps the old behaviour: the other tab finds out at its
+ * next request (401), with its screen kept as for an idle expiry.
+ */
+const SIGN_OUT_CHANNEL = "staff-console-session";
+
+/** @type {BroadcastChannel|null} */
+const signOutChannel = (() => {
+  try {
+    return typeof BroadcastChannel === "function" ? new BroadcastChannel(SIGN_OUT_CHANNEL) : null;
+  } catch {
+    return null;
+  }
+})();
+
+function announceSignOut() {
+  try {
+    signOutChannel?.postMessage({ type: "signed-out" });
+  } catch {
+    /* A tab that cannot be told learns at its next request, as before. */
+  }
+}
+
+// A channel keeps a Node process alive (the shell's rules are pinned under Node); a browser has
+// no `unref` and keeps listening for as long as the tab is open, which is the point.
+/** @type {any} */ (signOutChannel)?.unref?.();
+
+signOutChannel?.addEventListener("message", (event) => {
+  if (event?.data?.type !== "signed-out") return;
+  // Already out by its own press: nothing more to clear.
+  if (state.signedOut && state.status === "ended") return;
+  forget(true);
+});
 
 /**
  * Keep the online flag current. Offline is a first-class state: reads may still be served from
@@ -299,3 +383,4 @@ export function watchConnectivity() {
 // enough for a 401 anywhere to reach `end()`. A registration a caller can forget is one that will
 // eventually be forgotten, and the symptom — a console that still looks signed in — is silent.
 whenSessionEnds(end);
+whenServerAnswers(serverAnswered);

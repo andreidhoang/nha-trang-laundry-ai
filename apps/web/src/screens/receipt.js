@@ -11,7 +11,7 @@
  *     taken, and a short reference. A store minted before the registry has no name, and then the
  *     receipt has no name line — it never invents one.
  *   - **The promised-ready time, when the order has one** (`PROMISE-001`, `DEC-037`, replacing
- *     R4's line): "Hẹn trả: 13:00 thứ Sáu 26/09" — the time the server stored at Nhận đồ under the
+ *     R4's line): "Hẹn trả: 13:00 thứ Bảy 26/09/2026" (paper prints the year) — the time the server stored at Nhận đồ under the
  *     owner's published turnaround rules, or the later one a Hẹn lại set. An order taken before the
  *     owner published those rules has none, and the receipt says "Tiệm sẽ báo khi đồ sẵn sàng"
  *     (R4) where the shop can reach the customer (a phone on their record, or the chat the order
@@ -138,8 +138,12 @@ function closingLine(order) {
   if (order.production === "READY_AT_STORE" || order.production === "RELEASED") {
     return "Đồ đã giặt xong.";
   }
-  // PROMISE-001: the time the server stored at Nhận đồ, or the later one a Hẹn lại set.
-  if (order.current_promise_at) return `Hẹn trả: ${promiseTime(order.current_promise_at)}`;
+  // PROMISE-001: the time the server stored at Nhận đồ, or the later one a Hẹn lại set. Paper
+  // leaves the shop, so it carries the year like the receipt's other dates (`format.js`, K3):
+  // "Hẹn trả: 13:00 thứ Bảy 26/09/2026".
+  if (order.current_promise_at) {
+    return `Hẹn trả: ${promiseTime(order.current_promise_at, { year: true })}`;
+  }
   // CUSTOMER-001: without a promise, "Tiệm sẽ báo" only where the shop can reach the customer -- a
   // phone on their record, or the chat channel the order came from. A ticket alone reaches nobody.
   const reachable =

@@ -718,7 +718,7 @@ def test_the_board_ranks_by_the_order_promise_and_says_which_rule(
     connection: psycopg.Connection[Any], shop: tuple[UUID, StaffPrincipal, StaffPrincipal]
 ) -> None:
     store_id, owner, operator = shop
-    # Accepted first, before publication: the stated rule's mark is 17:00 + 8 h = 01:00 on 26/9.
+    # Accepted first, before publication: the stated rule's mark is 17:00 + 8 h = 01:00 on 26/09.
     unpromised = _order(connection, store_id, operator, (STANDARD,))
     _receive(connection, unpromised, operator)
     _publish(connection, owner)

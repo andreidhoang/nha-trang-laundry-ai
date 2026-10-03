@@ -20,7 +20,8 @@ export const FOLD_GROUP = "Khác";
  * destinations, grouped, with "Nhận đồ" as its primary button. `phoneOnly` entries exist only on
  * the tab bar.
  *
- * CONSOLE-SHELL-009 (C6). The navigation lists only what this person can open (`navPlan`): a new
+ * CONSOLE-SHELL-009 (C6). The navigation lists only what this person can open (`navPlan`; one
+ * exception since CONSOLE-RESIDUAL-009B K2: "Nhận đồ" shut for a missing second step): a new
  * member of staff met 24 entries, half of them shut, and could not tell the ones that were their
  * job from the ones that were not. A shut destination is not silently absent: `#/more` lists each
  * one, disabled, with whom to ask, under a closed "Cần quyền khác" -- and a deep link to it still
@@ -266,7 +267,11 @@ export const TAB_FOUR = [
  * @typedef {object} NavEntry
  * @property {(typeof NAV_ITEMS)[number]} item
  * @property {number|null} tab the phone tab slot this entry occupies for this person, if any
+ * @property {NavVerdict} [denied] shown, but shut, with this verdict (K2: see `navPlan`)
  */
+
+/** `shortReason` for a role that holds the capability in a session without two-step verification. */
+export const MFA_SHORT = "Cần xác thực hai bước";
 
 /**
  * What the navigation shows this person, and what it does not (C6).
@@ -295,6 +300,12 @@ export function navPlan(principal) {
     const verdict = navVerdict(principal, item);
     if (!verdict.allowed) {
       if (!item.phoneOnly && !item.deskOnly) denied.push({ item, verdict });
+      // CONSOLE-RESIDUAL-009B (K2): "Nhận đồ" is the counter's job. A counter role whose session
+      // has not passed two-step verification is shown it shut, with that reason -- it is theirs
+      // once they sign in with it, and a missing button teaches nobody what is missing.
+      if (item.primary && verdict.short === MFA_SHORT) {
+        shown.push({ item, tab: item.tab || null, denied: verdict });
+      }
       continue;
     }
     shown.push({ item, tab: item.tab || (!item.fold && item.path === four ? 4 : null) });
@@ -350,6 +361,6 @@ function shortReason(principal, capability) {
   if (!principal || !rule) return "Chưa đăng nhập";
   const held = principal.roles.filter((role) => rule.roles.includes(role));
   if (held.length === 0) return `Chỉ ${rule.roles.map((role) => enumVi(role)).join(", ")}`;
-  return "Cần xác thực hai bước";
+  return MFA_SHORT;
 }
 

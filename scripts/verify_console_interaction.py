@@ -553,6 +553,17 @@ ORDER_REQUEST = {
     "created_at": "2026-08-16T03:00:00+00:00",
 }
 ORDER_REQUEST_CREATED = {**ORDER_REQUEST, "store_id": STORE, "replayed": False}
+#: Section 29 (K1, round-9b verification): a second waiting customer, Y, with a ticket and no
+#: quote yet, listed only while `state["waiting_y"]` is set -- the press that supersedes X.
+WAITING_Y = {
+    "order_request_id": "33333333-4444-4333-8444-999999999999",
+    "contact_binding_id": None,
+    "status": "DRAFT",
+    "row_version": 1,
+    "created_at": "2026-08-16T03:30:00+00:00",
+    "ticket_number": 203,
+    "ticket_issued_on": "2026-08-16",
+}
 
 #: CUSTOMER-001 (DEC-034): one regular of the store, as `GET …/customers?q=` returns them, the
 #: notice before and after the owner publishes it, and the record `POST …/customers` answers with.
@@ -2730,6 +2741,14 @@ with sync_playwright() as playwright:
             )
             return
         if url.endswith("/internal/v1/session"):
+            # CONSOLE-RESIDUAL-009B (K2): the server not answering (not a 401) -- `unreachable`.
+            if state.get("session_unreachable"):
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps({"detail": "operations unavailable"}),
+                )
+                return
             body = SESSION_OK
         elif url.split("?")[0].endswith("/internal/v1/auth/logout"):
             # CONSOLE-SHELL-009 (C1): "Thoát", answered as the section asks -- 200 by default. A
@@ -2987,6 +3006,9 @@ with sync_playwright() as playwright:
             body = {"store_ids": [STORE]}
         elif "/customer-privacy-notice" in url:
             body = NOTICE_PUBLISHED if state.get("notice_published") else NOTICE_UNPUBLISHED
+            # CONSOLE-RESIDUAL-009B (K3): the read held, to see the sheet before it lands.
+            if hold_step1("privacy_notice", route, 200, body):
+                return
         elif "/account/payments" in url and route.request.method == "POST":
             # PAYMENT-002: Thu công nợ, captured with its key and If-Match.
             state.setdefault("account_writes", []).append(
@@ -3068,6 +3090,18 @@ with sync_playwright() as playwright:
         elif "/contacts/recent" in url:
             state.setdefault("recent_reads", []).append(url)
             body = RECENT_CONTACTS
+            if state.get("recent_waiting_y"):
+                # Section 29: the recent customer already has Y open -- a press resumes Y.
+                body = {
+                    **RECENT_CONTACTS,
+                    "contacts": [
+                        {
+                            **RECENT_CONTACTS["contacts"][0],
+                            "waiting_order_request_id": WAITING_Y["order_request_id"],
+                        },
+                        *RECENT_CONTACTS["contacts"][1:],
+                    ],
+                }
         elif "/service-messaging/release" in url and route.request.method == "POST":
             # `DEC-033`, section 19. Captured with its key: the property is that the evidence sent
             # is the one picked from the server's own list, under an idempotency key.
@@ -3760,6 +3794,12 @@ with sync_playwright() as playwright:
                 )
                 return
             body = ORDER_REQUEST
+            if state.get("waiting_y") and WAITING_Y["order_request_id"] in url:
+                # Y is read when a recent row whose waiting intake is Y is pressed; never held.
+                route.fulfill(
+                    status=200, content_type="application/json", body=json.dumps(WAITING_Y)
+                )
+                return
             if hold_step1("intake_read", route, 200, body):
                 return
         elif "/order-requests" in url:
@@ -3790,7 +3830,7 @@ with sync_playwright() as playwright:
                     return
                 route.fulfill(status=201, content_type="application/json", body=json.dumps(reply))
                 return
-            body = [ORDER_REQUEST]
+            body = [ORDER_REQUEST, *([WAITING_Y] if state.get("waiting_y") else [])]
             if hold_step1("intake_list", route, 200, body):
                 return
         elif "/acceptance" in url and route.request.method == "POST":
@@ -4085,8 +4125,11 @@ with sync_playwright() as playwright:
     print("=" * 74)
 
     # Section 3 ended the session; a fresh boot signs back in against the stub. The hash alone
-    # does not reload the page, so the reload is explicit.
+    # does not reload the page, so the reload is explicit. Since CONSOLE-RESIDUAL-009B (K2) a
+    # change of address while the session is out is held on the screen on show (what was typed
+    # stays), so the new address is loaded from a blank page rather than set on this one.
     state["authenticated"] = True
+    page.goto("about:blank")
     page.goto(f"http://localhost:{PORT}/#/assistant")
     page.reload(wait_until="networkidle")
     page.wait_for_timeout(1000)
@@ -8745,12 +8788,12 @@ with sync_playwright() as playwright:
     page.reload()
     page.wait_for_timeout(1500)
     check(
-        "an order with a promise prints 'Hẹn trả: 13:00 thứ Bảy 26/09' in place of R4's sentence",
-        # The fixture is in 2026; from 2027 the paper adds the year ("26/09/2026", format.js C9).
-        paper.locator("[data-field=closing]")
-        .inner_text()
-        .strip()
-        .startswith("Hẹn trả: 13:00 thứ Bảy 26/09"),
+        "an order with a promise prints 'Hẹn trả: 13:00 thứ Bảy 26/09/2026' in place of R4's "
+        "sentence -- paper always carries the year (format.js), exactly",
+        # CONSOLE-RESIDUAL-009B (K3): exact equality again. The round-9 form only checked a
+        # prefix, which let the paper drop its year in the shop's current year.
+        paper.locator("[data-field=closing]").inner_text().strip()
+        == "Hẹn trả: 13:00 thứ Bảy 26/09/2026",
         paper.locator("[data-field=closing]").inner_text(),
     )
     state["receipt_order"] = None
@@ -12006,12 +12049,14 @@ with sync_playwright() as playwright:
     state["intake_reply"] = INTAKE_B
 
     # 5. The other way round: B's walk-in in flight, then X tapped -- the tap is not taken, so no
-    #    resume read is even made, and B lands clean.
+    #    resume read is even made, and B lands clean. Since CONSOLE-RESIDUAL-009B (K1) X's row is
+    #    disabled while B's write is out, so the press is forced: a person's tap on it does nothing.
     fresh_new()
     state["hold_intake"] = True
     tap("#new-walk-in")
     page.wait_for_timeout(500)
-    tap("#new-waiting [data-request]")
+    if page.locator("#new-waiting [data-request]").count():
+        page.locator("#new-waiting [data-request]").first.click(force=True, timeout=5000)
     page.wait_for_timeout(1000)
     read_during = list(state["quote_list_reads"])
     release_step1("intake")
@@ -14589,6 +14634,1440 @@ with sync_playwright() as playwright:
     race_shot("j6-invoice-flags")
     state["invoice_lists"] = None
     state["invoice_writes"] = []
+
+    # Slice K's section runs on the desk size and owner session it was written against (it was
+    # written to follow slice A's section 28; slice J's section 28 now runs between them).
+    page.set_viewport_size({"width": 1280, "height": 900})
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    state["order_view"] = None
+    state["invoice_subject"] = None
+
+    # ============================================================================================
+    print()
+    print("=" * 74)
+    print("29. CONSOLE-RESIDUAL-009B — địa chỉ, ca làm, giấy in (K1, K2, K3)")
+    print("=" * 74)
+    # Each check below failed on d5fa939 (the round-9 integration), except the ones named
+    # "control" -- those hold on both, so the checks next to them are about the fix.
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    SESSION_OK["mfa_verified"] = True
+    state["authenticated"] = True
+    state["order_view"] = None
+    state["quotes_listed"] = True
+    state["intake_reply"] = INTAKE_B
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    def address() -> str:
+        return str(page.evaluate("() => location.hash"))
+
+    # Section 27's `hero` is a plain string by now (later sections reuse the name), so this
+    # section reads the ticket for itself.
+    def k_hero() -> str:
+        node = page.locator("#new-ticket")
+        return (node.first.text_content() or "") if node.count() else ""
+
+    def k_b_walked_in() -> bool:
+        return "Phiếu" in k_hero() and " 1" in k_hero() and X_ID not in k_hero()
+
+    def dropped_line() -> str:
+        node = page.locator("#new-resume-dropped")
+        return node.first.inner_text() if node.count() else ""
+
+    # --- K1: a walk-in that supersedes a boot resume leaves the address -----------------------
+    for query, held, label, says in (
+        (f"?request={X_ID}", "intake_read", "?request=X", "vẫn còn trong danh sách"),
+        (f"?quote={EXACT_QUOTE}", "quote_read", "?quote=X", "vẫn còn trong danh sách"),
+        (f"?contact={CONTACT}", "intake_list", "?contact=X", "chưa tạo gì cho khách đó"),
+    ):
+        state[f"hold_{held}"] = True
+        fresh_new(query)
+        tap("#new-walk-in")
+        page.wait_for_timeout(1300)
+        superseded = address()
+        line = dropped_line()
+        race_shot("k1-dropped-" + held)
+        release_step1(held)
+        page.wait_for_timeout(1500)
+        check(
+            f"K1 ({label} held, walk-in B): the address drops X at once -- #/new",
+            superseded == "#/new",
+            superseded,
+        )
+        check(
+            f"K1 ({label}): one quiet line says X was dropped, and where it is",
+            line.startswith("Đã bỏ khách") and says in line,
+            line or "no line",
+        )
+        check(
+            f"K1 ({label}): X's late read does not put X back in the address; B is on screen",
+            address() == "#/new" and k_b_walked_in(),
+            f"{address()} hero={k_hero()[:60]!r}",
+        )
+        if held == "intake_read":
+            check(
+                "K1 (?request=X): once X's read lands, the quiet line names X -- and only then "
+                "says, without a condition, that X is still in the list",
+                dropped_line()
+                == "Đã bỏ khách đang chờ “Khách nhắn qua kênh” — vẫn còn trong danh sách.",
+                dropped_line(),
+            )
+        state["quote_list_reads"] = []
+        posts_before = len(state.get("intake_posts", []))
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_timeout(1500)
+        check(
+            f"K1 ({label}): a reload starts clean -- X is not resumed, nothing is opened for it",
+            address() == "#/new"
+            and page.locator("#new-walk-in").count() == 1
+            and page.locator("#new-ticket").count() == 0
+            and len(state.get("intake_posts", [])) == posts_before,
+            f"{address()} ticket={page.locator('#new-ticket').count()}",
+        )
+
+    # --- K1 (round-9b verification): the press that supersedes X is a waiting or a recent row --
+    # Those presses draw their own skeleton where the quiet line stood, in the same task, so X was
+    # dropped without a word and its late read had nowhere to be named. The line has its own place.
+    Y_ID = str(WAITING_Y["order_request_id"])
+    state["waiting_y"] = True
+    # `at_once`: whether it can be told at the press that Y is not the customer the address names.
+    # A `?request=` names an intake, so it can. A `?quote=` names a quote whose intake is known
+    # only once its read lands (round-9b verification 2): until then the row pressed may be that
+    # very customer, and "Đã bỏ" beside them would be false -- so the line waits for the read.
+    for query, held, label, press, named, at_once in (
+        (
+            f"?request={X_ID}",
+            "intake_read",
+            "?request=X held, waiting row Y",
+            f"#new-waiting [data-request='{Y_ID}']",
+            "Đã bỏ khách đang chờ “Khách nhắn qua kênh” — vẫn còn trong danh sách.",
+            True,
+        ),
+        (
+            f"?quote={EXACT_QUOTE}",
+            "quote_read",
+            "?quote=X held, waiting row Y",
+            f"#new-waiting [data-request='{Y_ID}']",
+            # A quote's intake is not known until its read lands, and that read is X's own: the
+            # line keeps its conditional wording rather than guess a name.
+            "Đã bỏ khách đang chờ mở từ đường dẫn — nếu chưa thành đơn thì vẫn còn trong "
+            "danh sách.",
+            False,
+        ),
+        (
+            f"?request={X_ID}",
+            "intake_read",
+            "?request=X held, recent row whose waiting intake is Y",
+            f"#new-recent-list [data-contact='{RECENT_CONTACT}']",
+            "Đã bỏ khách đang chờ “Khách nhắn qua kênh” — vẫn còn trong danh sách.",
+            True,
+        ),
+    ):
+        state["recent_waiting_y"] = "recent" in label
+        state[f"hold_{held}"] = True
+        fresh_new(query)
+        row = page.locator(press)
+        if row.count():
+            row.first.click()
+        page.wait_for_timeout(300)
+        soon = dropped_line()
+        page.wait_for_timeout(1500)
+        later = dropped_line()
+        superseded = address()
+        race_shot("k1-row-dropped-" + held)
+        release_step1(held)
+        page.wait_for_timeout(1500)
+        if at_once:
+            check(
+                f"K1 ({label}): one quiet line says X was dropped -- and it stays while Y opens",
+                soon.startswith("Đã bỏ khách") and later == soon and superseded == "#/new",
+                f"{superseded} soon={soon!r} later={later!r}",
+            )
+        else:
+            check(
+                f"K1 ({label}): while X's read is out nothing claims X was dropped -- Y may be "
+                "X -- and the address no longer names X",
+                not soon and not later and superseded == "#/new",
+                f"{superseded} soon={soon!r} later={later!r}",
+            )
+        check(
+            f"K1 ({label}): Y is on screen, and once X's read lands the line says where X is",
+            "Phiếu 203" in k_hero() and dropped_line() == named and address() == "#/new",
+            f"hero={k_hero()[:40]!r} line={dropped_line()!r}",
+        )
+    state["recent_waiting_y"] = False
+
+    # Neighbour: the row pressed is X itself, the customer the address names -- that is not a
+    # supersession. No "Đã bỏ" line (it would be false), the address keeps naming X.
+    state["hold_intake_read"] = True
+    fresh_new(f"?request={X_ID}")
+    row = page.locator(f"#new-waiting [data-request='{X_ID}']")
+    if row.count():
+        row.first.click()
+    page.wait_for_timeout(1200)
+    release_step1("intake_read")
+    page.wait_for_timeout(1200)
+    check(
+        "K1 (?request=X held, X's own waiting row pressed): X opens, no 'Đã bỏ' line, the address "
+        "still names X",
+        not dropped_line()
+        and address() == f"#/new?request={X_ID}"
+        and page.locator("#new-line-0-qty").count() == 1,
+        f"{address()} line={dropped_line()!r}",
+    )
+
+    # Round-9b verification 2: the same neighbour for the two addresses that do not name an intake
+    # outright. `?quote=` names X's quote, `?contact=` X's conversation; the row pressed is X's own.
+    # The line said X was dropped beside X on screen, never went, and the address no longer named
+    # X, so a reload lost them.
+    for query, held, label in (
+        (f"?quote={EXACT_QUOTE}", "quote_read", "?quote=X held"),
+        (f"?contact={CONTACT}", "intake_list", "?contact=X held"),
+    ):
+        state[f"hold_{held}"] = True
+        fresh_new(query)
+        held_lists = held_step1.get(held, [])
+        if held == "intake_list" and len(held_lists) >= 2:
+            # Answer the waiting list's own read; keep the hand-off's (the first) held.
+            waiting_read = held_lists.pop(1)
+            waiting_read[0].fulfill(
+                status=waiting_read[1],
+                content_type="application/json",
+                body=json.dumps(waiting_read[2]),
+            )
+            page.wait_for_timeout(800)
+        row = page.locator(f"#new-waiting [data-request='{X_ID}']")
+        pressed_row = row.count() == 1
+        if pressed_row:
+            row.first.click()
+        page.wait_for_timeout(1200)
+        while_held = dropped_line()
+        release_step1(held)
+        page.wait_for_timeout(1500)
+        race_shot("k1-own-row-" + held)
+        check(
+            f"K1 ({label}, X's own waiting row pressed): X opens, no 'Đã bỏ' line -- not while X's "
+            "read is out, not after it lands",
+            pressed_row
+            and not while_held
+            and not dropped_line()
+            and page.locator("#new-line-0-qty").count() == 1
+            and "Khách nhắn qua kênh" in k_hero(),
+            f"row={pressed_row} held={while_held!r} after={dropped_line()!r} "
+            f"hero={k_hero()[:40]!r}",
+        )
+        check(
+            f"K1 ({label}, X's own waiting row pressed): the address names X again, so a reload "
+            "resumes X",
+            address() == f"#/new?request={X_ID}",
+            address(),
+        )
+
+    # Neighbour: `?contact=X` held, and the row pressed is Y -- another conversation's customer.
+    # That can be told at the press (the conversations differ): the line is there at once.
+    state["hold_intake_list"] = True
+    fresh_new(f"?contact={CONTACT}")
+    held_lists = held_step1.get("intake_list", [])
+    if len(held_lists) >= 2:
+        waiting_read = held_lists.pop(1)
+        waiting_read[0].fulfill(
+            status=waiting_read[1],
+            content_type="application/json",
+            body=json.dumps(waiting_read[2]),
+        )
+        page.wait_for_timeout(800)
+    row = page.locator(f"#new-waiting [data-request='{Y_ID}']")
+    if row.count():
+        row.first.click()
+    page.wait_for_timeout(600)
+    at_press = dropped_line()
+    release_step1("intake_list")
+    page.wait_for_timeout(1300)
+    check(
+        "K1 control (?contact=X held, waiting row Y): the line says X's conversation was dropped, "
+        "at once and after X's read lands; Y is on screen, the address is #/new",
+        at_press == "Đã bỏ khách mở từ cuộc trò chuyện — chưa tạo gì cho khách đó."
+        and dropped_line() == at_press
+        and "Phiếu 203" in k_hero()
+        and address() == "#/new",
+        f"{address()} at_press={at_press!r} after={dropped_line()!r} hero={k_hero()[:40]!r}",
+    )
+
+    # Neighbour: X dropped (its read lands and names it), then X itself is opened from step 1 --
+    # the line is about X and is no longer true, so it goes.
+    state["hold_intake_read"] = True
+    fresh_new(f"?request={X_ID}")
+    state["hold_intake"] = True
+    tap("#new-walk-in")
+    page.wait_for_timeout(500)
+    for held_route, _status, _body in held_step1.pop("intake", []):
+        held_route.fulfill(
+            status=503,
+            content_type="application/json",
+            body=json.dumps({"detail": "operations unavailable"}),
+        )
+    state["hold_intake"] = False
+    release_step1("intake_read")
+    page.wait_for_timeout(1200)
+    named_before = dropped_line()
+    row = page.locator(f"#new-waiting [data-request='{X_ID}']")
+    if row.count():
+        row.first.click()
+    page.wait_for_timeout(1500)
+    check(
+        "K1 (X dropped by a walk-in that failed, then X opened from the list): the line named X, "
+        "and it goes once X is back on screen",
+        named_before.startswith("Đã bỏ khách đang chờ “Khách nhắn qua kênh”")
+        and not dropped_line()
+        and page.locator("#new-line-0-qty").count() == 1,
+        f"before={named_before!r} after={dropped_line()!r}",
+    )
+    check(
+        "K1 (X dropped, then opened again from the list): the address names X again -- a reload "
+        "resumes the customer on screen",
+        address() == f"#/new?request={X_ID}",
+        address(),
+    )
+    state["waiting_y"] = False
+
+    # Control: X's resume lands alone; the address keeps naming X (a reload resumes X).
+    fresh_new(f"?request={X_ID}")
+    check(
+        "K1 control: ?request=X resumed alone keeps ?request=X, with no 'Đã bỏ' line",
+        address() == f"#/new?request={X_ID}"
+        and page.locator("#new-line-0-qty").count() == 1
+        and not dropped_line(),
+        address(),
+    )
+    # ... and once X is on screen, "Khách khác" is an explicit abandon: the address goes, quietly.
+    tap("button[data-back]")
+    page.wait_for_timeout(500)
+    tap("#new-restart")
+    page.wait_for_timeout(700)
+    check(
+        "K1: 'Khách khác' after X landed leaves the address too, without a 'Đã bỏ' line",
+        address() == "#/new" and not dropped_line(),
+        f"{address()} line={dropped_line()!r}",
+    )
+
+    # --- K1: step 1 is visibly shut while a walk-in or bind write is in flight ----------------
+    def step1_state() -> dict:
+        return dict(
+            page.evaluate(
+                """() => {
+                    const root = document.querySelector('.new-step1');
+                    const rows = [...document.querySelectorAll(
+                        '#new-waiting button.row-item, #new-recent-list button.row-item')];
+                    return {
+                      busy: root?.getAttribute('data-busy') || '',
+                      rows: rows.length,
+                      shut: rows.filter((r) => r.disabled
+                        && r.getAttribute('aria-disabled') === 'true').length,
+                      add: document.querySelector('#new-customer-add')?.disabled ?? null,
+                    };
+                }"""
+            )
+        )
+
+    def toasts() -> str:
+        return str(
+            page.evaluate(
+                "() => [...document.querySelectorAll('.toast, [role=status]')]"
+                ".map((n) => n.textContent).join(' | ')"
+            )
+        )
+
+    fresh_new()
+    idle = step1_state()
+    check(
+        "K1 control: with nothing in flight the step-1 rows are live",
+        idle["rows"] >= 2 and idle["shut"] == 0 and not idle["busy"],
+        repr(idle),
+    )
+    state["hold_intake"] = True
+    tap("#new-walk-in")
+    page.wait_for_timeout(500)
+    during = step1_state()
+    race_shot("k1-walk-in-in-flight")
+    check(
+        "K1 (walk-in in flight): every waiting and recent row is disabled, and says so",
+        during["busy"] == "true" and during["rows"] >= 2 and during["shut"] == during["rows"],
+        repr(during),
+    )
+    check(
+        "K1 (walk-in in flight): 'Thêm khách mới' is shut too",
+        during["add"] is True,
+        repr(during),
+    )
+    # Round-9b verification 3: the guide says a dimmed row cannot be pressed until the ticket is
+    # on screen. A real press on one (a mouse, not a forced click) changes and sends nothing.
+    dimmed_row = page.locator("#new-waiting [data-request]")
+    sent_before = len(state.get("intake_posts", []))
+    told_before = toasts()
+    pressed_dimmed = False
+    if dimmed_row.count():
+        box = dimmed_row.first.bounding_box()
+        if box:
+            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            pressed_dimmed = True
+    page.wait_for_timeout(400)
+    check(
+        "K1 control (walk-in in flight): a real press on a dimmed waiting row does nothing -- "
+        "nothing sent, no customer opened, the walk-in still the one on its way",
+        pressed_dimmed
+        and len(state.get("intake_posts", [])) == sent_before
+        and toasts() == told_before
+        and step1_state()["busy"] == "true",
+        f"pressed={pressed_dimmed} {toasts()[:120]!r}",
+    )
+    # A search answer drawn while the write is out: dimmed as shut, and a press on it is told.
+    page.locator("#new-customer-search").click()
+    page.keyboard.type("3456", delay=20)
+    page.wait_for_timeout(900)
+    found = page.locator(f"#new-customer-search-list [data-customer='{CUSTOMER_ID}']")
+    looks_shut = bool(
+        found.count()
+        and found.first.evaluate(
+            "(n) => Boolean(n.closest('.new-step1[data-busy=\"true\"]'))"
+            " && getComputedStyle(n).cursor !== 'pointer'"
+        )
+    )
+    posts = len(state.get("intake_posts", []))
+    if found.count():
+        found.first.click(force=True)
+    page.wait_for_timeout(400)
+    told = toasts()
+    check(
+        "K1 (walk-in in flight): a search result drawn meanwhile reads as shut",
+        looks_shut,
+        f"found={found.count()}",
+    )
+    check(
+        "K1 (walk-in in flight): pressing it anyway is told why -- nothing is silently ignored, "
+        "and nothing is sent for it",
+        "chờ xong rồi bấm lại" in told and len(state.get("intake_posts", [])) == posts,
+        told[:160],
+    )
+    # The write fails: the rows come back.
+    for held_route, _status, _body in held_step1.pop("intake", []):
+        held_route.fulfill(
+            status=503,
+            content_type="application/json",
+            body=json.dumps({"detail": "operations unavailable"}),
+        )
+    state["hold_intake"] = False
+    page.wait_for_timeout(1000)
+    after_fail = step1_state()
+    check(
+        "K1 (the walk-in write failed): the rows are live again, and the press can be repeated",
+        not after_fail["busy"]
+        and after_fail["shut"] == 0
+        and page.locator("#new-walk-in").first.is_enabled(),
+        repr(after_fail),
+    )
+    # A regular's bind in flight (a tap on a search result): the same.
+    state["hold_intake"] = True
+    found = page.locator(f"#new-customer-search-list [data-customer='{CUSTOMER_ID}']")
+    if found.count():
+        found.first.click()
+    page.wait_for_timeout(500)
+    binding = step1_state()
+    walk_in_shut = (
+        page.locator("#new-walk-in").count() == 1
+        and page.locator("#new-walk-in").first.is_disabled()
+    )
+    release_step1("intake")
+    page.wait_for_timeout(1200)
+    check(
+        "K1 (a regular's intake in flight): rows and the walk-in button are disabled meanwhile",
+        binding["busy"] == "true" and binding["shut"] == binding["rows"] and walk_in_shut,
+        repr(binding),
+    )
+    check(
+        "K1 (a regular's intake in flight): then that customer is on screen",
+        "chị Lan" in k_hero(),
+        k_hero()[:80],
+    )
+    state["hold_intake"] = False
+    for name in list(held_step1):
+        release_step1(name)
+    state["quotes_listed"] = False
+    state["intake_reply"] = None
+
+    # --- K2: an idle expiry keeps the navigation; a press on it says the session ended --------
+    def nav_links() -> list[str]:
+        return list(
+            page.evaluate(
+                """() => [...document.querySelectorAll('nav.nav a.nav__link')]
+                    .filter((n) => n.checkVisibility({visibilityProperty: true}))
+                    .map((n) => n.getAttribute('href'))"""
+            )
+        )
+
+    def expire() -> None:
+        """Eight hours idle: the next request anywhere (a poll, a press) is answered 401."""
+        state["authenticated"] = False
+        page.evaluate(
+            "async () => { const api = await import('/src/core/api.js');"
+            " await api.request('/internal/v1/session').catch(() => null); }"
+        )
+        page.wait_for_timeout(1000)
+
+    def press_orders() -> None:
+        target = page.locator("nav.nav a.nav__link[href='#/orders']")
+        if target.count():
+            target.first.click()
+        page.wait_for_timeout(900)
+
+    def banner_text() -> str:
+        return page.locator("#banners").inner_text()
+
+    def recheck_in_banner() -> None:
+        state["authenticated"] = True
+        button_recheck = page.locator("#banners button", has_text="Kiểm tra lại phiên")
+        if button_recheck.count():
+            button_recheck.first.click()
+        page.wait_for_timeout(1300)
+
+    def search_value() -> str:
+        node = page.locator("#customers-search")
+        return node.first.input_value() if node.count() else ""
+
+    def same_screen() -> bool:
+        return bool(page.evaluate("() => Boolean(document.querySelector('main [data-k2-kept]'))"))
+
+    page.goto("about:blank")
+    # Đơn hàng first, so Back has an address of this page to go to.
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.wait_for_timeout(500)
+    page.evaluate("() => { location.hash = '#/customers'; }")
+    page.wait_for_timeout(900)
+    page.locator("#customers-search").fill("3456")
+    page.locator("#customers-search").press("Enter")
+    page.wait_for_timeout(800)
+    # The screen's own node, marked: if it is rebuilt the mark is gone.
+    page.evaluate("() => document.querySelector('main section')?.setAttribute('data-k2-kept', '1')")
+    before_nav = nav_links()
+    expire()
+    kept = shell_text()
+    expired_nav = nav_links()
+    shell_shot("stub-k2-expired-desk")
+    check(
+        "K2 (idle expiry): the banner says the session ended and the screen is kept",
+        "Phiên đăng nhập đã kết thúc" in kept and "chị Lan" in kept,
+        kept[:160],
+    )
+    check(
+        "K2 (idle expiry): the navigation is still there -- the same destinations as before",
+        len(before_nav) >= 5 and expired_nav == before_nav,
+        f"before={len(before_nav)} after={expired_nav}",
+    )
+    # Round-9b verification: one press on the kept navigation used to replace the screen with the
+    # session screen, and what was typed was gone -- one press after the banner said it was safe.
+    press_orders()
+    held_banner = banner_text()
+    shell_shot("stub-k2-held-desk")
+    check(
+        "K2 (idle expiry, Đơn hàng pressed): the screen stays -- the same screen, the typed search "
+        "and its customer -- and the address does not move",
+        same_screen()
+        and search_value() == "3456"
+        and "chị Lan" in page.locator("main").inner_text()
+        and address() == "#/customers"
+        and page.locator("main [data-session-expired]").count() == 0,
+        f"{address()} kept={same_screen()} search={search_value()!r}",
+    )
+    check(
+        "K2 (idle expiry, Đơn hàng pressed): the banner names what was not opened and why, and its "
+        "promise that the typed input is on screen is still true",
+        "Chưa mở “Đơn hàng”: cần máy chủ, nên màn hình đang làm được giữ nguyên." in held_banner
+        and "vẫn còn trên màn hình" in held_banner,
+        held_banner[:220],
+    )
+    way_in = page.evaluate(
+        """() => { const a = document.querySelector('#banners a[data-sign-in-elsewhere]');
+            return a ? {text: a.textContent, href: a.getAttribute('href'),
+                        target: a.target, rel: a.rel} : null; }"""
+    )
+    check(
+        "K2 (idle expiry, screen held): the way back in is in the banner -- the sign-in opens in "
+        "a tab of its own, so the held screen is not left",
+        way_in
+        == {
+            "text": "Đăng nhập lại ở thẻ mới",
+            "href": "/signin/",
+            "target": "_blank",
+            "rel": "noopener",
+        },
+        repr(way_in),
+    )
+    # Back (a phone's back gesture) is held the same way.
+    page.go_back()
+    page.wait_for_timeout(900)
+    check(
+        "K2 (idle expiry, Back): the screen stays and the address comes back to it",
+        same_screen() and search_value() == "3456" and address() == "#/customers",
+        f"{address()} kept={same_screen()}",
+    )
+    recheck_in_banner()
+    check(
+        "K2: signed in again, 'Kiểm tra lại phiên' keeps the same screen with what was typed, and "
+        "the banner is gone",
+        same_screen()
+        and search_value() == "3456"
+        and "Phiên đăng nhập đã kết thúc" not in banner_text()
+        and "Chưa mở" not in banner_text(),
+        f"kept={same_screen()} banner={banner_text()[:80]!r}",
+    )
+    press_orders()
+    check(
+        "K2: and the next press on Đơn hàng opens it",
+        address() == "#/orders" and page.locator("main h1").first.inner_text() == "Đơn hàng",
+        f"{address()} {page.locator('main').inner_text()[:80]!r}",
+    )
+
+    # The verifier's case: a weight being typed on Nhận đồ step 2 survives a press on Đơn hàng.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    page.locator("#new-walk-in").click()
+    page.wait_for_timeout(1200)
+    page.locator("#new-add-line").click()
+    page.wait_for_timeout(400)
+    page.locator("#new-picker [data-code='STD_WASH_DRY_LT6']").click()
+    page.wait_for_timeout(400)
+    page.locator("#new-line-0-qty").fill("3.5")
+    page.wait_for_timeout(200)
+    on_new = address()
+    expire()
+    press_orders()
+    qty_held = page.evaluate("() => document.querySelector('#new-line-0-qty')?.value ?? null")
+    check(
+        "K2 (idle expiry on Nhận đồ step 2, Đơn hàng pressed): the typed 3.5 kg is still there",
+        qty_held == "3.5" and address() == on_new,
+        f"{address()} qty={qty_held!r}",
+    )
+    recheck_in_banner()
+    qty_after = page.evaluate("() => document.querySelector('#new-line-0-qty')?.value ?? null")
+    check(
+        "K2 (signed in again): the same line, with 3.5 kg, ready to be sent",
+        qty_after == "3.5" and "Phiên đăng nhập đã kết thúc" not in banner_text(),
+        f"qty={qty_after!r} banner={banner_text()[:80]!r}",
+    )
+
+    # Neighbour: a screen only looked at -- nothing typed, ticked or pressed on it. Nothing to
+    # keep, so the press goes where it went before K2's hold: the session screen with the way in
+    # (a device signed out from another, a lost phone, lands there at its next press).
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    expire()
+    target = page.locator("nav.nav a.nav__link[href='#/customers']")
+    if target.count():
+        target.first.click()
+    page.wait_for_timeout(900)
+    check(
+        "K2 (idle expiry on a screen only looked at, Khách hàng pressed): the session screen, "
+        "saying why, with 'Tới trang đăng nhập'",
+        address() == "#/customers"
+        and page.locator("main [data-session-expired]").count() == 1
+        and page.locator("main a.button", has_text="Tới trang đăng nhập").count() == 1,
+        f"{address()} {page.locator('main').inner_text()[:100]!r}",
+    )
+    state["authenticated"] = True
+    page.evaluate(
+        "async () => { const s = await import('/src/core/session.js'); await s.refresh(); }"
+    )
+    page.wait_for_timeout(900)
+
+    # Neighbour: nothing a route drew is on show (a "not found" screen) -- nothing to hold, so the
+    # press opens the destination's session screen, which says why it is not shown.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/no-such-screen", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    expire()
+    press_orders()
+    main_text = page.locator("main").inner_text()
+    expired_line = page.locator("main [data-session-expired]")
+    banner_now = banner_text()
+    check(
+        "K2 (idle expiry, nothing held): the banner does not claim typed input is on screen",
+        "Phiên đăng nhập đã kết thúc" in banner_now and "vẫn còn trên màn hình" not in banner_now,
+        banner_now[:160],
+    )
+    check(
+        "K2 (idle expiry, nothing held): a destination pressed says the session ended and that the "
+        "screen needs the server -- not a bare 'Chưa đăng nhập', not an empty or broken screen",
+        address() == "#/orders"
+        and expired_line.count() == 1
+        and "Phiên đăng nhập đã kết thúc" in expired_line.first.inner_text()
+        and "cần máy chủ" in main_text,
+        main_text[:160],
+    )
+    state["authenticated"] = True
+    recheck = page.locator("main button", has_text="Kiểm tra lại phiên")
+    if recheck.count():
+        recheck.first.click()
+    page.wait_for_timeout(1300)
+    check(
+        "K2: signed in again, 'Kiểm tra lại phiên' opens the destination that was pressed",
+        address() == "#/orders"
+        and page.locator("main [data-session-expired]").count() == 0
+        and page.locator("main h1").first.inner_text() == "Đơn hàng"
+        and "Kiểm tra lại phiên" not in page.locator("main").inner_text(),
+        f"{address()} {page.locator('main').inner_text()[:80]!r}",
+    )
+    # Unreachable mid-shift: the same -- the navigation stays, the screen stays, a press is held.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/customers", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    page.locator("#customers-search").fill("3456")
+    page.locator("#customers-search").press("Enter")
+    page.wait_for_timeout(800)
+    page.evaluate("() => document.querySelector('main section')?.setAttribute('data-k2-kept', '1')")
+    before_nav = nav_links()
+    state["session_unreachable"] = True
+    page.evaluate(
+        "async () => { const s = await import('/src/core/session.js'); await s.refresh(); }"
+    )
+    page.wait_for_timeout(600)
+    lost = shell_text()
+    check(
+        "K2 (server unreachable): the banner says so, the screen and the navigation stay",
+        "Mất liên lạc với máy chủ" in lost and "chị Lan" in lost and nav_links() == before_nav,
+        f"nav={nav_links()} {lost[:100]!r}",
+    )
+    press_orders()
+    check(
+        "K2 (server unreachable, Đơn hàng pressed): the screen stays, and the banner says why",
+        same_screen()
+        and search_value() == "3456"
+        and address() == "#/customers"
+        and "Chưa mở “Đơn hàng”" in banner_text(),
+        f"{address()} kept={same_screen()} banner={banner_text()[:120]!r}",
+    )
+    state["session_unreachable"] = False
+    page.evaluate(
+        "async () => { const s = await import('/src/core/session.js'); await s.refresh(); }"
+    )
+    page.wait_for_timeout(600)
+    check(
+        "K2 (server back): the held line goes with the banner; the screen is the same",
+        "Chưa mở" not in banner_text() and same_screen() and search_value() == "3456",
+        banner_text()[:120],
+    )
+
+    # --- K2 (round-9b verification 2): the hold's own premise, its history, its phone ------------
+    # A server answer is the end of "the server is out". The banner says: sign in again, press the
+    # same button. Done -- in the tab it offers, without "Kiểm tra lại phiên" -- the write
+    # succeeded, and the hold then kept its own move to the order it had just made, saying it needs
+    # the server.
+    state["accept_posts"] = []
+    state["order_posts"] = []
+    state["order_refuse_once"] = False
+    state["accept_fail_once"] = False
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    tap("#new-walk-in")
+    page.wait_for_timeout(1000)
+    tap("#new-add-line")
+    page.wait_for_timeout(300)
+    tap("#new-picker [data-code='STD_WASH_DRY_LT6']")
+    page.wait_for_timeout(300)
+    page.keyboard.type("5.9", delay=8)
+    tap("#new-price")
+    page.wait_for_timeout(1200)
+    tap("#new-next")
+    page.wait_for_timeout(600)
+    at_confirm = page.locator("#new-confirm").count() == 1
+    expire()
+    state["authenticated"] = True
+    tap("#new-confirm")
+    page.wait_for_timeout(2000)
+    created_at = address()
+    shell_shot("stub-k2-write-after-sign-in")
+    check(
+        "K2 (signed in again in another tab, 'Khách đồng ý — tạo đơn' pressed): the order is "
+        "created and opens by itself -- its own move is not held",
+        at_confirm
+        and len(state["order_posts"]) == 1
+        and created_at == f"#/orders/{ORDER_CREATED['order_id']}"
+        and "Đã tạo đơn" in page.locator("main").inner_text(),
+        f"confirm={at_confirm} orders={len(state['order_posts'])} {created_at} "
+        f"{page.locator('main').inner_text()[:80]!r}",
+    )
+    check(
+        "K2 (the server answered): the session is picked up by itself -- no 'Phiên đăng nhập đã "
+        "kết thúc', no 'Chưa mở … cần máy chủ', and 'In phiếu cho khách' is there",
+        "Phiên đăng nhập đã kết thúc" not in banner_text()
+        and "Chưa mở" not in banner_text()
+        and page.locator("#order-created button[data-receipt]").count() == 1,
+        banner_text()[:160],
+    )
+
+    # Neighbour: the server answers a read while the session read itself still fails -- the hold
+    # stays (nothing moves, nothing claims the session is back); once the session read answers,
+    # the first answer the server gives clears the banner, "Kiểm tra lại phiên" not needed.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/customers", wait_until="networkidle")
+    page.wait_for_timeout(700)
+    page.locator("#customers-search").fill("3456")
+    page.locator("#customers-search").press("Enter")
+    page.wait_for_timeout(800)
+    page.evaluate("() => document.querySelector('main section')?.setAttribute('data-k2-kept', '1')")
+    state["session_unreachable"] = True
+    page.evaluate(
+        "async () => { const s = await import('/src/core/session.js'); await s.refresh(); }"
+    )
+    page.wait_for_timeout(600)
+    read_answered = (
+        "async () => { const api = await import('/src/core/api.js');"
+        f" await api.request('/internal/v1/stores/{STORE}/customers?q=3456')"
+        ".catch(() => null); }"
+    )
+    page.evaluate(read_answered)
+    page.wait_for_timeout(800)
+    press_orders()
+    check(
+        "K2 control (a read answered, the session read still failing): the banner stays, the "
+        "screen is held, the press is named",
+        "Mất liên lạc với máy chủ" in banner_text()
+        and same_screen()
+        and address() == "#/customers"
+        and "Chưa mở “Đơn hàng”" in banner_text(),
+        f"{address()} kept={same_screen()} {banner_text()[:120]!r}",
+    )
+    state["session_unreachable"] = False
+    page.evaluate(read_answered)
+    page.wait_for_timeout(900)
+    check(
+        "K2 (server back): the first answer the server gives clears the banner and its held line; "
+        "the screen is the same",
+        "Mất liên lạc" not in banner_text()
+        and "Chưa mở" not in banner_text()
+        and same_screen()
+        and search_value() == "3456",
+        banner_text()[:120],
+    )
+
+    # A held Back used to overwrite the entry it reached with the held screen's address: that
+    # screen was gone from the history, and the next Back after signing in left the console.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.wait_for_timeout(500)
+    page.evaluate("() => { location.hash = '#/customers'; }")
+    page.wait_for_timeout(900)
+    page.locator("#customers-search").fill("3456")
+    page.locator("#customers-search").press("Enter")
+    page.wait_for_timeout(800)
+    page.evaluate("() => document.querySelector('main section')?.setAttribute('data-k2-kept', '1')")
+    length_before = page.evaluate("() => history.length")
+    expire()
+    page.go_back()
+    page.wait_for_timeout(1000)
+    held_back = address()
+    held_kept = same_screen() and search_value() == "3456"
+    recheck_in_banner()
+    page.go_back()
+    page.wait_for_timeout(1200)
+    check(
+        "K2 (Back held, then signed in again): the screen was kept through the held Back, and the "
+        "next Back reaches Đơn hàng -- the entry before is still there",
+        held_back == "#/customers"
+        and held_kept
+        and address() == "#/orders"
+        and page.locator("main h1").first.inner_text() == "Đơn hàng"
+        and page.evaluate("() => history.length") == length_before,
+        f"held={held_back} kept={held_kept} now={page.url} "
+        f"length={page.evaluate('() => history.length')}/{length_before}",
+    )
+
+    # On a phone the document scrolls and the banner with it: a held tab press on a long, scrolled
+    # screen answered off-screen and looked like nothing at all.
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    tap("#new-walk-in")
+    page.wait_for_timeout(1200)
+    tap("#new-add-line")
+    page.wait_for_timeout(400)
+    tap("#new-picker [data-code='STD_WASH_DRY_LT6']")
+    page.wait_for_timeout(400)
+    page.locator("#new-line-0-qty").fill("3.5")
+    page.wait_for_timeout(200)
+    page.evaluate("() => window.scrollTo(0, document.documentElement.scrollHeight)")
+    page.wait_for_timeout(300)
+    scrolled = page.evaluate("() => window.scrollY")
+    expire()
+    phone_tab = page.locator("nav.nav a.nav__link[href='#/orders']")
+    if phone_tab.count() and phone_tab.first.is_visible():
+        phone_tab.first.click()
+    page.wait_for_timeout(900)
+    in_view = page.evaluate(
+        """() => { const n = document.querySelector('#banners [data-held-destination]');
+            if (!n) return null; const r = n.getBoundingClientRect();
+            return r.top >= 0 && r.bottom <= window.innerHeight; }"""
+    )
+    shell_shot("stub-k2-held-phone-scrolled")
+    check(
+        "K2 (phone, Nhận đồ scrolled down, Đơn hàng tab pressed): the banner's 'Chưa mở “Đơn "
+        "hàng”' is in view, and the typed 3.5 kg is still there",
+        scrolled > 0
+        and in_view is True
+        and "Chưa mở “Đơn hàng”" in banner_text()
+        and page.evaluate("() => document.querySelector('#new-line-0-qty')?.value") == "3.5",
+        f"scrolled={scrolled} in_view={in_view} {banner_text()[:100]!r}",
+    )
+    recheck_in_banner()
+
+    # "Thêm" on a phone and "Tất cả màn hình" on a desk are one address: the banner names the one
+    # this device shows.
+    for viewport, label, opener in (
+        ({"width": 390, "height": 844}, "Thêm", None),
+        ({"width": 1280, "height": 900}, "Tất cả màn hình", "nav.nav [data-nav-fold]"),
+    ):
+        page.set_viewport_size(viewport)
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/customers", wait_until="networkidle")
+        page.wait_for_timeout(700)
+        page.locator("#customers-search").fill("3456")
+        page.locator("#customers-search").press("Enter")
+        page.wait_for_timeout(800)
+        expire()
+        if opener and page.locator(opener).count():
+            page.locator(opener).first.click()
+            page.wait_for_timeout(200)
+        more_link = page.locator("nav.nav a.nav__link[href='#/more']", has_text=label)
+        visible = more_link.count() > 0 and more_link.first.is_visible()
+        if visible:
+            more_link.first.click()
+        page.wait_for_timeout(900)
+        named = banner_text()
+        check(
+            f"K2 ({'phone' if label == 'Thêm' else 'desk control'}, '{label}' pressed): the "
+            f"banner names “{label}”, the destination this device shows",
+            visible
+            and f"Chưa mở “{label}”" in named
+            and address() == "#/customers"
+            and search_value() == "3456",
+            f"visible={visible} {address()} {named[:160]!r}",
+        )
+        recheck_in_banner()
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    # --- K2 (round-9b verification 3): the press after signing in elsewhere; an address typed ---
+    # The guide's "Đăng nhập lại xong thì bấm lại": signed in again in the tab the banner opens,
+    # back here, the destination pressed again. A held press never read the session, so it stayed
+    # held -- "cần máy chủ" with the server answering -- until "Kiểm tra lại phiên" was found.
+    session_reads: list[str] = []
+
+    def note_session_read(request: object) -> None:
+        if str(getattr(request, "url", "")).endswith("/internal/v1/session"):
+            session_reads.append(str(getattr(request, "url", "")))
+
+    page.on("request", note_session_read)
+
+    def typed_on_new() -> None:
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
+        page.wait_for_timeout(1200)
+        tap("#new-walk-in")
+        page.wait_for_timeout(1200)
+        tap("#new-add-line")
+        page.wait_for_timeout(400)
+        tap("#new-picker [data-code='STD_WASH_DRY_LT6']")
+        page.wait_for_timeout(400)
+        page.locator("#new-line-0-qty").fill("3.5")
+        page.wait_for_timeout(200)
+
+    def qty_now() -> object:
+        return page.evaluate("() => document.querySelector('#new-line-0-qty')?.value ?? null")
+
+    def press_visible(path: str) -> bool:
+        links = page.locator(f"nav.nav a.nav__link[href='#{path}']")
+        for index in range(links.count()):
+            if links.nth(index).is_visible():
+                links.nth(index).click()
+                page.wait_for_timeout(1200)
+                return True
+        return False
+
+    for viewport, tag in (
+        ({"width": 1280, "height": 900}, "desk"),
+        ({"width": 390, "height": 844}, "phone"),
+    ):
+        page.set_viewport_size(viewport)
+        typed_on_new()
+        expire()
+        reads_before = len(session_reads)
+        press_visible("/orders")
+        check(
+            f"K2 ({tag}, session still out, Đơn hàng pressed): held -- 3.5 kg kept, the "
+            "banner names it -- and the press read the session again to find out",
+            address() == "#/new"
+            and qty_now() == "3.5"
+            and "Chưa mở “Đơn hàng”" in banner_text()
+            and len(session_reads) > reads_before,
+            f"{address()} qty={qty_now()!r} reads={len(session_reads) - reads_before} "
+            f"{banner_text()[:100]!r}",
+        )
+        # Signed in again in the other tab: nothing here knows yet. The guide says press again.
+        state["authenticated"] = True
+        press_visible("/orders")
+        shell_shot(f"stub-k2-pressed-again-{tag}")
+        check(
+            f"K2 ({tag}, signed in again elsewhere, Đơn hàng pressed again): it opens -- no "
+            "'Kiểm tra lại phiên' needed, no 'Phiên đăng nhập đã kết thúc', no 'Chưa mở'",
+            address() == "#/orders"
+            and page.locator("main h1").first.inner_text() == "Đơn hàng"
+            and "Phiên đăng nhập đã kết thúc" not in banner_text()
+            and "Chưa mở" not in banner_text(),
+            f"{address()} {page.locator('main h1').first.inner_text()!r} {banner_text()[:100]!r}",
+        )
+        page.go_back()
+        page.wait_for_timeout(1200)
+        check(
+            f"K2 ({tag}): and Back from Đơn hàng returns to Nhận đồ -- one Back, one screen",
+            address() == "#/new" and page.locator("#new-walk-in").count() == 1,
+            f"{address()}",
+        )
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    # Neighbour: Back held, then signed in elsewhere, Back pressed again: it goes.
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.wait_for_timeout(500)
+    page.evaluate("() => { location.hash = '#/customers'; }")
+    page.wait_for_timeout(900)
+    page.locator("#customers-search").fill("3456")
+    page.locator("#customers-search").press("Enter")
+    page.wait_for_timeout(800)
+    expire()
+    page.go_back()
+    page.wait_for_timeout(1000)
+    back_held = address() == "#/customers" and search_value() == "3456"
+    state["authenticated"] = True
+    page.go_back()
+    page.wait_for_timeout(1500)
+    check(
+        "K2 (Back held, signed in again elsewhere, Back pressed again): Đơn hàng opens",
+        back_held
+        and address() == "#/orders"
+        and page.locator("main h1").first.inner_text() == "Đơn hàng"
+        and "Chưa mở" not in banner_text(),
+        f"held={back_held} {address()} {banner_text()[:100]!r}",
+    )
+
+    # Neighbour: someone else signed in elsewhere. The press is not carried over to them; the
+    # screen is drawn again for the person now signed in -- nothing typed by the last one stays.
+    typed_on_new()
+    expire()
+    press_visible("/orders")
+    SESSION_OK["staff_user_id"] = "00000000-0000-4000-8000-0000000000bb"
+    state["authenticated"] = True
+    press_visible("/orders")
+    check(
+        "K2 (another person signed in elsewhere, Đơn hàng pressed again): not carried to them -- "
+        "Nhận đồ is drawn afresh, the 3.5 kg typed by the last person is gone, no banner",
+        address() == "#/new"
+        and qty_now() is None
+        and page.locator("#new-walk-in").count() == 1
+        and "Chưa mở" not in banner_text()
+        and "Phiên đăng nhập đã kết thúc" not in banner_text(),
+        f"{address()} qty={qty_now()!r} {banner_text()[:100]!r}",
+    )
+    SESSION_OK["staff_user_id"] = "00000000-0000-4000-8000-0000000000aa"
+    page.evaluate(
+        "async () => { const s = await import('/src/core/session.js'); await s.refresh(); }"
+    )
+    page.wait_for_timeout(900)
+    page.remove_listener("request", note_session_read)
+
+    # An address written while held -- typed in the bar, or set by code that does not ask
+    # `navigate` -- made a history entry of its own, which was rewritten to the held screen: two
+    # entries of one screen, and one Back later did nothing at all.
+    for follow, label in ((False, "Kiểm tra lại phiên"), (True, "signed in elsewhere")):
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+        page.wait_for_timeout(500)
+        page.evaluate("() => { location.hash = '#/customers'; }")
+        page.wait_for_timeout(900)
+        page.locator("#customers-search").fill("3456")
+        page.locator("#customers-search").press("Enter")
+        page.wait_for_timeout(800)
+        expire()
+        if follow:
+            state["authenticated"] = True
+        page.evaluate("() => { location.hash = '#/orders'; }")
+        page.wait_for_timeout(1500)
+        typed_held = address() == "#/customers" and search_value() == "3456"
+        if not follow:
+            recheck_in_banner()
+            press_orders()
+            page.wait_for_timeout(600)
+        reached = address()
+        trail = []
+        for _ in range(2):
+            page.go_back()
+            page.wait_for_timeout(1200)
+            trail.append(address())
+        check(
+            f"K2 (an address typed while held, then {label}): "
+            + ("held first, " if not follow else "")
+            + "Đơn hàng opens, and two Backs reach the first Đơn hàng -- no dead Back, no second "
+            "copy of the held screen in the history",
+            (typed_held or follow)
+            and reached == "#/orders"
+            and trail == ["#/customers", "#/orders"],
+            f"held={typed_held} reached={reached} trail={trail}",
+        )
+        state["authenticated"] = True
+
+    # --- K2 (round-9b verification 4): a held press is not made late; a held Back keeps its size --
+    # A held press reads the session. On a slow network that read answers seconds later -- while
+    # the banner already says the screen is kept, and the person has gone on with it. The press
+    # was then made anyway: the screen left, and what was typed after the banner was gone.
+    slow_session_read = (
+        "() => { const f = window.fetch; window.fetch = (u, i) =>"
+        " String(u).endsWith('/internal/v1/session')"
+        " ? new Promise((r) => setTimeout(r, 2500)).then(() => f(u, i)) : f(u, i); }"
+    )
+    for viewport, tag, carry_on in (
+        ({"width": 1280, "height": 900}, "desk", True),
+        ({"width": 390, "height": 844}, "phone", True),
+        ({"width": 1280, "height": 900}, "desk", False),
+    ):
+        page.set_viewport_size(viewport)
+        typed_on_new()
+        expire()
+        state["authenticated"] = True
+        page.evaluate(slow_session_read)
+        press_visible("/orders")
+        held_late = (
+            address() == "#/new" and qty_now() == "3.5" and "Chưa mở “Đơn hàng”" in banner_text()
+        )
+        if carry_on:
+            page.locator("#new-line-0-qty").fill("4.5")
+        page.wait_for_timeout(2800)
+        if carry_on:
+            check(
+                f"K2 ({tag}, slow session read, the person went on typing after the banner said "
+                "the screen is kept): the late read does not carry the press out -- Nhận đồ "
+                "stays with 4.5 kg, and the banner no longer says 'Chưa mở'",
+                held_late
+                and address() == "#/new"
+                and qty_now() == "4.5"
+                and "Chưa mở" not in banner_text(),
+                f"held={held_late} {address()} qty={qty_now()!r} {banner_text()[:100]!r}",
+            )
+            press_visible("/orders")
+            check(
+                f"K2 ({tag}): and Đơn hàng pressed again then opens",
+                address() == "#/orders"
+                and page.locator("main h1").first.inner_text() == "Đơn hàng",
+                f"{address()}",
+            )
+        else:
+            check(
+                "K2 (desk, slow session read, nothing done meanwhile): the press is made when the "
+                "read answers -- Đơn hàng opens",
+                held_late
+                and address() == "#/orders"
+                and page.locator("main h1").first.inner_text() == "Đơn hàng",
+                f"held={held_late} {address()}",
+            )
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    # A held Back (or Forward) of more than one entry -- the browser's history list, a long press
+    # on Back -- resumed as one step: it did not go where it was pressed.
+    def held_jump(nonav: bool) -> None:
+        tag = "no Navigation API" if nonav else "Navigation API"
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+        page.wait_for_timeout(500)
+        for hop in ("#/orders", "#/customers"):
+            page.evaluate(f"() => {{ location.hash = '{hop}'; }}")
+            page.wait_for_timeout(900)
+        page.locator("#customers-search").fill("3456")
+        page.wait_for_timeout(200)
+        expire()
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(1500)
+        held_back = address() == "#/customers" and search_value() == "3456"
+        state["authenticated"] = True
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(2000)
+        reached = address()
+        forward = []
+        for _ in range(2):
+            page.go_forward()
+            page.wait_for_timeout(1000)
+            forward.append(address())
+        check(
+            f"K2 ({tag}, Back of two entries held, signed in again, pressed again): it reaches "
+            "Hôm nay, two entries back -- and the history is whole (Forward: Đơn hàng, Khách hàng)",
+            held_back and reached == "#/" and forward == ["#/orders", "#/customers"],
+            f"held={held_back} reached={reached} forward={forward}",
+        )
+        # Forward of two entries, held on a screen worked on two entries back.
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(1200)
+        for hop in ("#/customers", "#/orders", "#/pickup"):
+            page.evaluate(f"() => {{ location.hash = '{hop}'; }}")
+            page.wait_for_timeout(900)
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(1200)
+        page.locator("#customers-search").fill("3456")
+        page.wait_for_timeout(200)
+        expire()
+        page.evaluate("() => history.go(2)")
+        page.wait_for_timeout(1500)
+        held_forward = address() == "#/customers" and search_value() == "3456"
+        state["authenticated"] = True
+        page.evaluate("() => history.go(2)")
+        page.wait_for_timeout(2000)
+        check(
+            f"K2 ({tag}, Forward of two entries held, signed in again, pressed again): it "
+            "reaches Nhận lại đồ, two entries on",
+            held_forward and address() == "#/pickup",
+            f"held={held_forward} {address()}",
+        )
+
+    held_jump(False)
+
+    # An address written while the held screen is not the last entry (Back pressed earlier),
+    # without the Navigation API (Safari before 26.2, Firefox before 147): it replaced the entry
+    # ahead without growing the history, was rewritten to the held screen -- a second copy of it,
+    # and one Back later did nothing.
+    def typed_mid_history(nonav: bool) -> None:
+        tag = "no Navigation API" if nonav else "Navigation API"
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+        page.wait_for_timeout(500)
+        api_seen = page.evaluate("() => typeof window.navigation?.currentEntry?.index")
+        for hop in ("#/customers", "#/"):
+            page.evaluate(f"() => {{ location.hash = '{hop}'; }}")
+            page.wait_for_timeout(900)
+        page.go_back()
+        page.wait_for_timeout(1000)
+        length_before = page.evaluate("() => history.length")
+        page.locator("#customers-search").fill("3456")
+        page.wait_for_timeout(200)
+        expire()
+        page.evaluate("() => { location.hash = '#/pickup'; }")
+        page.wait_for_timeout(1500)
+        typed_held = address() == "#/customers" and search_value() == "3456"
+        state["authenticated"] = True
+        press_orders()
+        page.wait_for_timeout(600)
+        reached = address()
+        trail = []
+        for _ in range(2):
+            page.go_back()
+            page.wait_for_timeout(1200)
+            trail.append(address())
+        check(
+            f"K2 ({tag}, the held screen not the last entry, an address typed while held, signed "
+            "in again, Đơn hàng pressed): two Backs reach Khách hàng then the first Đơn hàng -- no "
+            "second copy of the held screen, no dead Back",
+            (api_seen == ("undefined" if nonav else "number"))
+            and typed_held
+            and reached == "#/orders"
+            and trail == ["#/customers", "#/orders"],
+            f"api={api_seen} len={length_before} held={typed_held} reached={reached} trail={trail}",
+        )
+
+    typed_mid_history(False)
+
+    # The same two without the Navigation API: a page of its own whose `navigation` is hidden.
+    main_page = page
+    nonav_page = context.new_page()
+    nonav_page.on("pageerror", lambda e: errors.append(str(e)))
+    nonav_page.add_init_script(
+        "Object.defineProperty(window, 'navigation', {value: undefined, configurable: true});"
+    )
+    nonav_page.route("**/internal/**", route_api)
+    page = nonav_page
+    try:
+        held_jump(True)
+        typed_mid_history(True)
+    finally:
+        page = main_page
+        nonav_page.close()
+    page.bring_to_front()
+    state["authenticated"] = True
+
+    # --- K2: one Thoát clears every tab --------------------------------------------------------
+    customer_on_screen()
+    other = context.new_page()
+    other.on("pageerror", lambda e: errors.append(str(e)))
+    other.route("**/internal/**", route_api)
+    other.goto(f"http://localhost:{PORT}/#/customers", wait_until="networkidle")
+    other.wait_for_timeout(700)
+    other.locator("#customers-search").fill("3456")
+    other.locator("#customers-search").press("Enter")
+    other.wait_for_timeout(800)
+
+    def other_text() -> str:
+        return str(other.evaluate("() => document.body.textContent || ''"))
+
+    check(
+        "set-up: a second tab shows the same customer",
+        "chị Lan" in other_text() and phone_digits_in(other_text()),
+        other_text()[:120],
+    )
+    # A Thoát that did not end the session ends nothing anywhere (neighbouring case).
+    state["logout_answer"] = (503, {"detail": "operations unavailable"})
+    page.bring_to_front()
+    press_sign_out()
+    page.wait_for_timeout(900)
+    check(
+        "K2 control: a Thoát the server refused leaves the other tab exactly as it was",
+        "chị Lan" in other_text() and other.locator(".appbar__account").count() == 1,
+        other_text()[:120],
+    )
+    state["logout_answer"] = (200, {"end_session_url": None})
+    press_sign_out()
+    page.wait_for_timeout(900)
+    out_other = other.evaluate(
+        """() => ({
+            heading: document.querySelector('main h1')?.textContent || '',
+            text: document.body.textContent || '',
+            dialogs: document.querySelectorAll('dialog').length,
+            hash: location.hash,
+            elsewhere: document.querySelectorAll('[data-signed-out-elsewhere]').length,
+        })"""
+    )
+    shell_shot("stub-k2-other-tab-desk", other)
+    check(
+        "K2: Thoát in one tab shows the signed-out screen in the other tab too, with no reload",
+        out_other["heading"] == "Chưa đăng nhập" and out_other["elsewhere"] == 1,
+        repr({k: out_other[k] for k in ("heading", "elsewhere", "hash")}),
+    )
+    check(
+        "K2: and no customer name or number is left in the other tab's page",
+        "chị Lan" not in out_other["text"]
+        and not phone_digits_in(out_other["text"])
+        and out_other["dialogs"] == 0
+        and out_other["hash"] == "#/",
+        out_other["text"][:200],
+    )
+    other.close()
+    state["logout_answer"] = None
+    state["authenticated"] = True
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(700)
+
+    # --- K2: "Nhận đồ" for an operator without two-step verification ---------------------------
+    def new_entry() -> dict:
+        return dict(
+            page.evaluate(
+                """() => {
+                    const link = [...document.querySelectorAll("nav.nav a.nav__link[href='#/new']")]
+                      .find((n) => n.checkVisibility({visibilityProperty: true}));
+                    if (!link) return {shown: false};
+                    const reason = link.querySelector('.nav__reason');
+                    return {
+                      shown: true,
+                      shut: link.getAttribute('aria-disabled') === 'true',
+                      reason: reason && reason.checkVisibility() ? reason.textContent : '',
+                    };
+                }"""
+            )
+        )
+
+    def home_new() -> str:
+        quick = page.locator(".today__quick")
+        return quick.first.inner_text() if quick.count() else ""
+
+    for roles, mfa, expect, label in (
+        (["OPERATOR"], False, "shut", "an operator without two-step verification"),
+        (["OPERATOR"], True, "open", "control: an operator with it"),
+        (["AUDITOR"], False, "absent", "control: a role that never takes laundry in"),
+    ):
+        SESSION_OK["roles"] = roles
+        SESSION_OK["mfa_verified"] = mfa
+        for tag, size in (("desk", (1366, 900)), ("phone", (390, 844))):
+            page.set_viewport_size({"width": size[0], "height": size[1]})
+            page.goto("about:blank")
+            page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+            page.wait_for_timeout(900)
+            entry = new_entry()
+            home = home_new()
+            if expect == "shut":
+                shell_shot(f"stub-k2-no-mfa-{tag}")
+                check(
+                    f"K2 ({label}, {tag}): 'Nhận đồ' is in the navigation, disabled, with "
+                    "'Cần xác thực hai bước' in words",
+                    entry.get("shown")
+                    and entry.get("shut")
+                    and entry.get("reason") == "Cần xác thực hai bước",
+                    repr(entry),
+                )
+                button_new = page.locator(".today__quick button", has_text="Nhận đồ")
+                check(
+                    f"K2 ({label}, {tag}): Hôm nay shows 'Nhận đồ' disabled with the same reason",
+                    button_new.count() == 1
+                    and button_new.first.is_disabled()
+                    and "Cần xác thực hai bước" in home,
+                    home[:160],
+                )
+            elif expect == "open":
+                check(
+                    f"K2 ({label}, {tag}): 'Nhận đồ' is live, no reason under it",
+                    entry.get("shown") and not entry.get("shut") and not entry.get("reason"),
+                    repr(entry),
+                )
+            else:
+                check(
+                    f"K2 ({label}, {tag}): no 'Nhận đồ' in the navigation (C6), and Hôm nay "
+                    "still says why",
+                    not entry.get("shown") and "Nhận đồ" in home,
+                    repr(entry),
+                )
+    SESSION_OK["roles"] = ["OWNER_ADMIN"]
+    SESSION_OK["mfa_verified"] = True
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    # --- K3: the new-customer ticks have a name before the privacy notice arrives --------------
+    state["notice_published"] = True
+    state["hold_privacy_notice"] = True
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/new", wait_until="domcontentloaded")
+    page.wait_for_timeout(1200)
+    tap("#new-customer-add")
+    page.wait_for_timeout(500)
+    unnamed = unnamed_fields("#customer-new-sheet")
+    ticks_shut = page.evaluate(
+        "() => ['#customer-new-consent', '#customer-new-marketing']"
+        ".map((id) => document.querySelector(id)?.disabled)"
+    )
+    check(
+        "K3: before the notice loads, every field in 'Thêm khách mới' has a name (the two ticks)",
+        unnamed == [] and page.locator("#customer-new-consent").count() == 1,
+        repr(unnamed),
+    )
+    check(
+        "K3: and the two ticks are shut until the notice's own words are on screen",
+        ticks_shut == [True, True],
+        repr(ticks_shut),
+    )
+    release_step1("privacy_notice")
+    state["hold_privacy_notice"] = False
+    page.wait_for_timeout(900)
+    consent_label = page.evaluate(
+        "() => document.querySelector('#customer-new-consent')?.labels?.[0]?.textContent || ''"
+    )
+    check(
+        "K3: once it loads, the tick reads the notice's own words and can be ticked",
+        str(consent_label).strip() == str(NOTICE_PUBLISHED.get("service_consent_label", "")).strip()
+        and page.locator("#customer-new-consent").first.is_enabled(),
+        repr(consent_label),
+    )
+    page.keyboard.press("Escape")
+    state["notice_published"] = False
 
     print()
     check("no uncaught page errors throughout", not errors, "; ".join(errors[:3]))

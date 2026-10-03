@@ -304,11 +304,18 @@ export function render_(context) {
    * A ticket issued by a walk-in whose intake failed stays (`flow.ticket`): the next walk-in press
    * resumes it with the same number.
    *
+   * CONSOLE-RESIDUAL-009B (K1): unless this context is the one the address names (`fromAddress`),
+   * the address stops naming a customer (`leaveAddress`), so a reload never brings back the one
+   * just superseded.
+   *
+   * @param {boolean} [fromAddress] the context is the boot resume the address names
+   * @param {Who|null} [who] the customer the press opens, as far as it is known (`leaveAddress`)
    * @returns {number} the new context, for an async caller to compare after each await
    */
-  function newContext() {
+  function newContext(fromAddress = false, who = null) {
+    const leaving = flow.request;
     flow.session += 1;
-    flow.busy = false;
+    setBusy(false);
     Object.assign(flow, {
       request: null,
       mode: "SELF_DROP_SELF_COLLECT",
@@ -329,6 +336,7 @@ export function render_(context) {
     orderSub.reset();
     accepting = null;
     render(resumeHost);
+    if (!fromAddress) leaveAddress(leaving, who);
     return flow.session;
   }
 
@@ -340,11 +348,317 @@ export function render_(context) {
    * theirs. Otherwise it is a new context, and whatever an earlier one is still reading is dropped
    * when it arrives -- the last press wins, and a late read never lands on another customer (C2).
    *
+   * Not taken is never silent (K1): the step-1 rows are shown disabled while the write is in
+   * flight, and a press that reaches here anyway hears why (`heldNotice`).
+   *
+   * K1 (round-9b verification 2): a press that opens the very customer the address names is not
+   * a supersession -- it is taken like the boot resume itself (`addressNamesCustomer`).
+   *
+   * @param {boolean} [fromAddress] the boot resume the address names, and its own later steps
+   * @param {Who|null} [who] the customer the press opens, as far as it is known; null for a
+   *   walk-in, whose new ticket no address can name
    * @returns {number|null} the context to compare after each await; null when not taken
    */
-  function beginIntent() {
-    if (flow.busy) return null;
-    return newContext();
+  function beginIntent(fromAddress = false, who = null) {
+    if (flow.busy) {
+      heldNotice();
+      return null;
+    }
+    return newContext(fromAddress || addressNamesCustomer(who), who);
+  }
+
+  /**
+   * CONSOLE-RESIDUAL-009B (K1): a step-1 press while a ticket or intake write is in flight. The
+   * rows are disabled then; a row drawn meanwhile (a search answer) may still take a press, and it
+   * is told, never ignored.
+   */
+  function heldNotice() {
+    toast("Đang mở lượt tiếp nhận cho khách vừa chọn — chờ xong rồi bấm lại.");
+  }
+
+  /**
+   * CONSOLE-RESIDUAL-009B (K1). Whether a ticket or intake write is in flight, kept in one place
+   * so the step-1 screen shows it: every row and button on it is disabled while the write is out
+   * (`data-busy-held` marks the ones disabled here, so only those are given back), and a row drawn
+   * meanwhile is dimmed by `.new-step1[data-busy]` (kit.css). A control disabled for another reason
+   * -- a denial (`data-denied`), being offline -- stays as it was.
+   *
+   * @param {boolean} on
+   */
+  function setBusy(on) {
+    flow.busy = on;
+    const root = step1Node;
+    if (!root || !root.isConnected) return;
+    if (on) {
+      root.setAttribute("data-busy", "true");
+      root.setAttribute("aria-busy", "true");
+      for (const control of root.querySelectorAll("button")) {
+        if (control.disabled) continue;
+        control.disabled = true;
+        control.setAttribute("aria-disabled", "true");
+        control.setAttribute("data-busy-held", "true");
+      }
+      return;
+    }
+    root.removeAttribute("data-busy");
+    root.removeAttribute("aria-busy");
+    for (const control of root.querySelectorAll("[data-busy-held]")) {
+      control.removeAttribute("data-busy-held");
+      if (control.getAttribute("data-denied") === "true") continue;
+      if (control.hasAttribute("data-requires-network") && !navigator.onLine) {
+        // Offline meanwhile: the shell's own mark, so it gives the control back when online.
+        control.setAttribute("data-offline-disabled", "true");
+        continue;
+      }
+      control.disabled = false;
+      control.removeAttribute("aria-disabled");
+    }
+  }
+
+  /** @type {HTMLElement|null} the step-1 screen on show, which `setBusy` marks */
+  let step1Node = null;
+
+  /**
+   * CONSOLE-RESIDUAL-009B (K1). Whether the address still names a customer -- `?request=`,
+   * `?quote=` or `?contact=` at boot, or the `?request=` a hand-off settled on -- and whether that
+   * boot resume is still on its way.
+   */
+  let addressNames = Boolean(handOffContact || resumeQuote || resumeRequest);
+  let addressPending = false;
+  /** the intake id the address names, when it names one (`?request=`) */
+  let addressRequest = handOffContact || resumeQuote ? "" : resumeRequest;
+  /** the conversation binding the address names (`?contact=`), until it settles on an intake */
+  let addressContact = handOffContact;
+
+  /**
+   * @typedef {{id?: string, binding?: string}} Who what is known, at a press, of the customer it
+   *   opens: their intake's id and/or their conversation binding
+   */
+
+  /**
+   * The customer an intake read describes, for `sameCustomer`. A cancelled intake is not the one
+   * a conversation's hand-off would open, so its binding does not count.
+   *
+   * @param {any} item an order-request read
+   * @returns {Who}
+   */
+  function whoOf(item) {
+    return {
+      id: String(item?.order_request_id || ""),
+      binding: item?.status === "CANCELLED" ? "" : String(item?.contact_binding_id || ""),
+    };
+  }
+
+  /**
+   * Whether `who` is the customer `about` names (K1, round-9b verification 2): true, false, or
+   * null when it cannot be told yet -- a `?quote=` whose intake is still being read, or a press
+   * that has not found its customer's intake yet. A walk-in (`who` null) is nobody an address
+   * names: a new ticket.
+   *
+   * @param {Who|null} who
+   * @param {{request: string, contact: string}} about
+   * @returns {boolean|null}
+   */
+  function sameCustomer(who, about) {
+    if (!who) return false;
+    if (about.request && who.id) return who.id === about.request;
+    // An intake read carries its binding (none: not a conversation's) -- it can be told.
+    if (about.contact && (who.binding || who.id)) return who.binding === about.contact;
+    return null;
+  }
+
+  /**
+   * Whether the address names the customer `who` -- the intake `?request=` names, or the binding
+   * `?contact=` names. Opening them is not superseding them: the address keeps naming them, and
+   * nothing is "dropped".
+   *
+   * @param {Who|null} who
+   */
+  function addressNamesCustomer(who) {
+    return (
+      addressNames &&
+      sameCustomer(who, { request: addressRequest, contact: addressContact }) === true
+    );
+  }
+
+  /**
+   * The boot resume a press superseded, while the quiet line may still be about it (K1).
+   * `request`/`contact` say who it was as far as known (`request` arrives with a `?quote=`'s read);
+   * `leaving` is its intake once read; `opened` the intake a press put on screen while that was
+   * not known; `drawn` whether the line is on screen. A press whose customer cannot yet be told
+   * apart from it draws nothing until it can (`decideDrop`) -- the line is never on screen beside
+   * the customer it says was dropped.
+   *
+   * @type {{leaving: any|null, request: string, contact: string, quote: boolean, missing: boolean,
+   *   opened: string, drawn: boolean}|null}
+   */
+  let drop = null;
+
+  /**
+   * Another customer is being served than the one the address names: the address goes back to
+   * `#/new` (no new history entry, no rebuild), so a reload starts clean instead of resuming the
+   * one just left. A boot resume superseded before it landed says so in one quiet line -- the
+   * customer it was opening is not lost, and the person knows where to find them.
+   *
+   * @param {any|null} leaving the intake on screen (or being resumed) until now
+   * @param {Who|null} who the customer the press opens, as far as it is known
+   */
+  function leaveAddress(leaving, who) {
+    if (!addressNames) {
+      // Already left by a press whose customer could not be told apart yet: this press decides it
+      // if it can (a walk-in can: a new ticket is nobody the address named).
+      if (drop && !drop.drawn && sameCustomer(who, drop) === false) showDrop();
+      return;
+    }
+    const named = addressRequest;
+    const contact = addressContact;
+    addressNames = false;
+    addressRequest = "";
+    addressContact = "";
+    if (location.hash.startsWith("#/new")) history.replaceState(history.state, "", "#/new");
+    if (!addressPending) return;
+    addressPending = false;
+    drop = {
+      leaving,
+      request: named || String(leaving?.order_request_id || ""),
+      contact,
+      quote: Boolean(resumeQuote),
+      missing: false,
+      opened: "",
+      drawn: false,
+    };
+    if (sameCustomer(who, drop) === false) showDrop();
+  }
+
+  /** Draw the "Đã bỏ khách" line for the boot resume superseded (`drop`). */
+  function showDrop() {
+    if (!drop) return;
+    drop.drawn = true;
+    droppedLine = h(
+      "p",
+      { class: "hint new-dropped", id: "new-resume-dropped", role: "status" },
+      dropText(),
+    );
+    render(droppedHost, droppedLine);
+  }
+
+  /** What the line says about `drop`, from what has been read of it. */
+  function dropText() {
+    if (drop?.missing) return "Đã bỏ khách mở từ đường dẫn — cửa hàng đang chọn không có khách này.";
+    if (drop?.contact && !drop.leaving) {
+      return "Đã bỏ khách mở từ cuộc trò chuyện — chưa tạo gì cho khách đó.";
+    }
+    return droppedText(drop?.leaving || null);
+  }
+
+  /**
+   * A press that superseded the boot resume has put its customer on screen (K1, round-9b
+   * verification 2). The very customer the address named -- the intake `?request=` named, the
+   * conversation `?contact=` named, the intake a `?quote=` belongs to: nothing was dropped. The
+   * line goes (or is never drawn), and the address names them again so a reload resumes them. Any
+   * other customer: the line is drawn, if it was waiting for this. A `?quote=` still being read:
+   * its read decides (`quoteLanded`).
+   *
+   * @param {any} item the intake now on screen
+   */
+  function decideDrop(item) {
+    if (!drop) return;
+    const who = whoOf(item);
+    const same = sameCustomer(who, drop);
+    if (same === null) {
+      drop.opened = who.id || "";
+      return;
+    }
+    if (same) {
+      clearDropped();
+      if (!item?.order_id) settleAddress(who.id);
+      return;
+    }
+    if (!drop.drawn) showDrop();
+  }
+
+  /**
+   * A press that superseded the boot resume failed before any customer was on screen: whoever the
+   * address named is not on screen either, and the line says so.
+   */
+  function pressFailed() {
+    if (drop && !drop.drawn && !drop.opened) showDrop();
+  }
+
+  /**
+   * The superseded `?quote=` read has landed after all (K1, round-9b verification 2): now it is
+   * known whose intake it was. The customer put on screen meanwhile is that one -- nothing was
+   * dropped, and the address names them again -- or another, and the line is drawn.
+   *
+   * @param {string} intakeId the quote's intake, "" when it has none or was not read
+   * @param {boolean} [missing] the store has no such quote
+   */
+  function quoteLanded(intakeId, missing = false) {
+    if (!drop || !drop.quote || drop.request || drop.missing) return;
+    if (!intakeId) {
+      drop.missing = missing;
+      if (drop.drawn && droppedLine?.isConnected) droppedLine.textContent = dropText();
+      else if (!drop.drawn) showDrop();
+      return;
+    }
+    drop.request = intakeId;
+    if (drop.drawn) return;
+    const opened = drop.opened || String(flow.request?.order_request_id || "");
+    if (!opened) return;
+    if (opened === intakeId) {
+      clearDropped();
+      settleAddress(intakeId);
+      return;
+    }
+    showDrop();
+  }
+
+  /**
+   * The "Đã bỏ khách" line has a host of its own (K1, round-9b verification): `resumeHost` is
+   * redrawn by the very press that supersedes the boot resume -- a waiting customer's row draws its
+   * skeleton there in the same task -- and the line went with it, so X was dropped without a word.
+   * Only "Khách khác" (`reset`) and the dropped customer coming back on screen take it away.
+   */
+  const droppedHost = h("div");
+
+  /** @type {HTMLElement|null} the "Đã bỏ khách" line, while it may still be on screen */
+  let droppedLine = null;
+
+  /** Take the "Đã bỏ khách" line away, and forget what it was about. */
+  function clearDropped() {
+    droppedLine = null;
+    drop = null;
+    render(droppedHost);
+  }
+
+  /**
+   * What the quiet line can truthfully say about the customer dropped: named once their intake
+   * has been read, and only then "still in the list" without a condition -- an intake that became
+   * an order meanwhile, or one the store does not have, is not waiting anywhere.
+   *
+   * @param {any|null} item the intake dropped, when it has been read
+   */
+  function droppedText(item) {
+    if (!item) {
+      return "Đã bỏ khách đang chờ mở từ đường dẫn — nếu chưa thành đơn thì vẫn còn trong danh sách.";
+    }
+    if (item.order_id) return `Đã bỏ “${customerLabel(item)}” — khách này đã thành đơn.`;
+    return `Đã bỏ khách đang chờ “${customerLabel(item)}” — vẫn còn trong danh sách.`;
+  }
+
+  /**
+   * The dropped resume's read arrived after all: it names the customer on the quiet line (the
+   * counter knows whom to look for in the list) and changes nothing else. `null` with `missing`:
+   * the store has no such intake.
+   *
+   * @param {any|null} item
+   * @param {boolean} [missing]
+   */
+  function nameDropped(item, missing = false) {
+    if (!drop) return;
+    if (item) drop.leaving = item;
+    drop.missing = missing;
+    if (droppedLine?.isConnected) droppedLine.textContent = dropText();
   }
 
   /** An answer to a press made for the customer before: say where it went, change nothing. */
@@ -358,6 +672,7 @@ export function render_(context) {
   /** Start over for the next customer. The last one's intake stays in the waiting list. */
   function reset() {
     newContext();
+    clearDropped();
     flow.ticket = null;
     for (const sub of [
       ticketSub,
@@ -390,9 +705,9 @@ export function render_(context) {
       id: "new-walk-in",
       onClick: () => void issueWalkIn(walkIn, alertHost),
     });
-    return h(
+    step1Node = h(
       "div",
-      { class: "stack" },
+      { class: "stack new-step1" },
       customerSection(),
       section({
         card: false,
@@ -435,6 +750,7 @@ export function render_(context) {
       recentSection(),
       waitingSection(),
     );
+    return step1Node;
   }
 
   /** The customer this flow is serving, when the person came back to step 1. */
@@ -466,7 +782,7 @@ export function render_(context) {
   async function issueWalkIn(control, alertHost) {
     const session = beginIntent();
     if (session === null) return;
-    flow.busy = true;
+    setBusy(true);
     control.disabled = true;
     control.setAttribute("aria-busy", "true");
     render(alertHost, h("p", { class: "hint", role: "status" }, "Đang phát phiếu…"));
@@ -496,11 +812,11 @@ export function render_(context) {
         order_id: null,
       };
       flow.ticket = null;
-      flow.busy = false;
+      setBusy(false);
       go(2);
     } catch (error) {
       if (session !== flow.session) return;
-      flow.busy = false;
+      setBusy(false);
       control.removeAttribute("aria-busy");
       if (control.getAttribute("data-denied") !== "true") control.disabled = false;
       show(
@@ -588,16 +904,20 @@ export function render_(context) {
    * @param {HTMLElement|null} control the pressed row, marked busy while the write is in flight
    */
   async function bindCustomer(customer, alertHost, control) {
-    if (flow.busy) return;
+    if (flow.busy) {
+      heldNotice();
+      return;
+    }
     const customerId = String(customer?.customer_id || "");
     if (!UUID.test(customerId)) return;
-    const session = beginIntent();
+    // Whether this regular is the customer the address names is known once their intake is.
+    const session = beginIntent(false, {});
     if (session === null) return;
     if (customerKeyFor !== customerId) {
       customerRequestSub.reset();
       customerKeyFor = customerId;
     }
-    flow.busy = true;
+    setBusy(true);
     control?.setAttribute("aria-busy", "true");
     render(alertHost, h("p", { class: "hint", role: "status" }, "Đang mở lượt tiếp nhận…"));
     try {
@@ -609,7 +929,7 @@ export function render_(context) {
         (item) => item.customer_id === customerId && !item.order_id && item.status !== "CANCELLED",
       );
       if (waiting) {
-        flow.busy = false;
+        setBusy(false);
         render(alertHost);
         await resumeFromRequest(waiting);
         return;
@@ -622,17 +942,19 @@ export function render_(context) {
       customerRequestSub.reset();
       customerKeyFor = "";
       if (session !== flow.session) return;
-      flow.busy = false;
+      setBusy(false);
       render(alertHost);
       flow.request = {
         ...created,
         order_id: null,
         customer_name: customer.display_name || null,
       };
+      decideDrop(flow.request);
       go(2);
     } catch (error) {
       if (session !== flow.session) return;
-      flow.busy = false;
+      setBusy(false);
+      pressFailed();
       control?.removeAttribute("aria-busy");
       show(
         alertHost,
@@ -663,16 +985,19 @@ export function render_(context) {
    * @param {string} binding
    * @param {HTMLElement} alertHost
    * @param {HTMLElement|null} control the pressed control, marked busy while the write is in flight
+   * @param {boolean} [fromAddress] the hand-off the address names (`?contact=`), not a press
    * @returns {Promise<boolean>} whether the intake exists now
    */
-  async function bindChannel(binding, alertHost, control) {
-    const session = beginIntent();
+  async function bindChannel(binding, alertHost, control, fromAddress = false) {
+    // K1: the binding `?contact=` names, pressed or typed -- that customer, not a supersession.
+    const own = !fromAddress && addressNamesCustomer({ binding });
+    const session = beginIntent(fromAddress, { binding });
     if (session === null) return false;
     if (channelKeyFor !== binding) {
       channelRequestSub.reset();
       channelKeyFor = binding;
     }
-    flow.busy = true;
+    setBusy(true);
     control?.setAttribute("aria-busy", "true");
     render(alertHost, h("p", { class: "hint", role: "status" }, "Đang mở lượt tiếp nhận…"));
     try {
@@ -684,14 +1009,19 @@ export function render_(context) {
       channelRequestSub.reset();
       channelKeyFor = "";
       if (session !== flow.session) return false;
-      flow.busy = false;
+      setBusy(false);
       render(alertHost);
       flow.request = { ...created, ticket_number: null, ticket_issued_on: null, order_id: null };
+      if (own) settleAddress(flow.request.order_request_id);
+      else if (!fromAddress) {
+        decideDrop({ ...flow.request, contact_binding_id: flow.request.contact_binding_id || binding });
+      }
       go(2);
       return true;
     } catch (error) {
       if (session !== flow.session) return false;
-      flow.busy = false;
+      setBusy(false);
+      if (!fromAddress) pressFailed();
       control?.removeAttribute("aria-busy");
       show(
         alertHost,
@@ -844,25 +1174,32 @@ export function render_(context) {
    * @param {HTMLElement} alertHost
    */
   async function pickContact(item, row, alertHost) {
-    if (flow.busy) return;
+    if (flow.busy) {
+      heldNotice();
+      return;
+    }
     const waiting = String(item.waiting_order_request_id || "");
     if (UUID.test(waiting)) {
       // An intake is already open for this customer: resume it rather than open a second.
-      const session = beginIntent();
+      const session = beginIntent(false, {
+        id: waiting,
+        binding: String(item.contact_binding_id || ""),
+      });
       if (session === null) return;
-      flow.busy = true;
+      setBusy(true);
       row.setAttribute("aria-busy", "true");
       try {
         const intake = await request(
           `/internal/v1/stores/${encodeURIComponent(store)}/order-requests/${encodeURIComponent(waiting)}`,
         );
         if (session !== flow.session) return;
-        flow.busy = false;
+        setBusy(false);
         render(alertHost);
         await resumeFromRequest(intake);
       } catch (error) {
         if (session !== flow.session) return;
-        flow.busy = false;
+        setBusy(false);
+        pressFailed();
         row.removeAttribute("aria-busy");
         show(alertHost, errorNotice(error, { onRetry: () => void pickContact(item, row, alertHost) }));
       }
@@ -963,7 +1300,7 @@ export function render_(context) {
    * @param {string} binding
    */
   async function handOff(binding) {
-    const session = beginIntent();
+    const session = beginIntent(true);
     if (session === null) return;
     render(
       resumeHost,
@@ -994,13 +1331,15 @@ export function render_(context) {
     }
     if (waiting) {
       render(resumeHost);
-      await resumeFromRequest(waiting);
+      await resumeFromRequest(waiting, true);
       if (flow.request?.order_request_id === waiting.order_request_id) {
         settleAddress(waiting.order_request_id);
       }
       return;
     }
-    if (await bindChannel(binding, resumeHost, null)) settleAddress(flow.request?.order_request_id);
+    if (await bindChannel(binding, resumeHost, null, true)) {
+      settleAddress(flow.request?.order_request_id);
+    }
   }
 
   /**
@@ -1011,7 +1350,12 @@ export function render_(context) {
    */
   function settleAddress(requestId) {
     if (typeof requestId !== "string" || !UUID.test(requestId)) return;
+    // Left for another screen meanwhile: that screen's address is not this one's to change.
+    if (!location.hash.startsWith("#/new")) return;
     history.replaceState(history.state, "", `#/new?request=${encodeURIComponent(requestId)}`);
+    addressNames = true;
+    addressRequest = requestId;
+    addressContact = "";
   }
 
   /** "Tiếp tục một khách đang chờ": intakes that have not become an order yet. */
@@ -1082,10 +1426,20 @@ export function render_(context) {
 
   /**
    * @param {any} item an order-request summary
+   * @param {boolean} [fromAddress] the resume the address names (boot, or its retry), not a press
    */
-  async function resumeFromRequest(item) {
-    const session = beginIntent();
+  async function resumeFromRequest(item, fromAddress = false) {
+    const who = whoOf(item);
+    const session = beginIntent(fromAddress, who);
     if (session === null) return;
+    if (!fromAddress) {
+      // K1 (round-9b verification 2): the customer the address names, opened from a row -- the
+      // address keeps naming them (a `?contact=` settles on their intake). Any other: whether the
+      // boot resume it superseded was dropped, now that this customer is known.
+      if (addressNamesCustomer(who)) {
+        if (!item.order_id) settleAddress(who.id);
+      } else decideDrop(item);
+    }
     if (item.order_id) {
       // Converted already: nothing to resume, and binding it would offer a second order.
       go(1);
@@ -1107,23 +1461,27 @@ export function render_(context) {
         go(2);
         return;
       }
-      await adoptQuote(String(found.quote_id), item, session);
+      await adoptQuote(String(found.quote_id), item, session, fromAddress);
     } catch (error) {
       if (session !== flow.session) return;
       go(1);
-      show(resumeHost, errorNotice(error, { onRetry: () => void resumeFromRequest(item) }));
+      show(
+        resumeHost,
+        errorNotice(error, { onRetry: () => void resumeFromRequest(item, fromAddress) }),
+      );
     }
   }
 
   /**
    * @param {string} quoteId
    * @param {any|null} known the intake, when the caller already read it
+   * @param {boolean} [fromAddress] the resume the address names (`?quote=`, or its retry)
    */
-  async function resumeFromQuote(quoteId, known) {
-    const session = beginIntent();
+  async function resumeFromQuote(quoteId, known, fromAddress = false) {
+    const session = beginIntent(fromAddress);
     if (session === null) return;
     render(resumeHost, skeleton(1));
-    await adoptQuote(quoteId, known, session);
+    await adoptQuote(quoteId, known, session, fromAddress);
   }
 
   /**
@@ -1133,13 +1491,21 @@ export function render_(context) {
    * @param {string} quoteId
    * @param {any|null} known the intake, when the caller already read it
    * @param {number} session from the `beginIntent` that started this resume
+   * @param {boolean} [fromAddress] the resume the address names, for a retry to stay one
    */
-  async function adoptQuote(quoteId, known, session) {
+  async function adoptQuote(quoteId, known, session, fromAddress = false) {
+    // K1: the `?quote=` read, superseded by a press, still says whose intake the address named.
+    const bootQuote = fromAddress && quoteId === resumeQuote;
+    /** @type {any} */
+    let detail = null;
     try {
-      const detail = await request(
+      detail = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/quotes/${encodeURIComponent(quoteId)}`,
       );
-      if (session !== flow.session) return;
+      if (session !== flow.session) {
+        if (bootQuote) quoteLanded(String(detail?.order_request_id || ""));
+        return;
+      }
       let intake = known;
       if (!intake) {
         if (!detail.order_request_id) {
@@ -1157,7 +1523,10 @@ export function render_(context) {
         intake = await request(
           `/internal/v1/stores/${encodeURIComponent(store)}/order-requests/${encodeURIComponent(detail.order_request_id)}`,
         );
-        if (session !== flow.session) return;
+        if (session !== flow.session) {
+          if (bootQuote) quoteLanded(String(detail.order_request_id));
+          return;
+        }
       }
       if (intake.order_id) {
         flow.request = null;
@@ -1179,7 +1548,15 @@ export function render_(context) {
       render(resumeHost);
       go(!revise && detail.status === "ACCEPTED_FINAL" ? 3 : 2);
     } catch (error) {
-      if (session !== flow.session) return;
+      if (session !== flow.session) {
+        if (bootQuote) {
+          quoteLanded(
+            String(detail?.order_request_id || ""),
+            !detail && /** @type {any} */ (error).kind === "MISSING",
+          );
+        }
+        return;
+      }
       go(1);
       show(
         resumeHost,
@@ -1191,7 +1568,9 @@ export function render_(context) {
                 "Mã có thể thuộc cửa hàng khác hoặc đã sai — máy chủ trả lời giống nhau cho cả hai, " +
                 "nên màn hình này cũng không đoán. Không có gì được điền sẵn.",
             })
-          : errorNotice(error, { onRetry: () => void resumeFromQuote(quoteId, known) }),
+          : errorNotice(error, {
+              onRetry: () => void resumeFromQuote(quoteId, known, fromAddress),
+            }),
       );
     }
   }
@@ -2566,7 +2945,9 @@ export function render_(context) {
                       label: "Đọc lại báo giá",
                       icon: "refresh",
                       variant: "quiet",
-                      onClick: () => void resumeFromQuote(String(flow.quote.quote_id), flow.request),
+                      // The same customer read again: the address, if it names them, stays.
+                      onClick: () =>
+                        void resumeFromQuote(String(flow.quote.quote_id), flow.request, true),
                     }),
                   ],
             }),
@@ -2610,8 +2991,22 @@ export function render_(context) {
   // ============================================================================================
 
   void loadCatalog();
+  /**
+   * K1: the boot resume the address names, while it is on its way. A step-1 press meanwhile
+   * supersedes it (`leaveAddress` says so); once it has landed or failed, a later press only
+   * clears the address.
+   *
+   * @param {Promise<unknown>} chain
+   */
+  function bootResume(chain) {
+    addressPending = true;
+    void chain.finally(() => {
+      addressPending = false;
+    });
+  }
+
   if (handOffContact) {
-    if (UUID.test(handOffContact)) void handOff(handOffContact);
+    if (UUID.test(handOffContact)) bootResume(handOff(handOffContact));
     else {
       show(
         resumeHost,
@@ -2623,39 +3018,40 @@ export function render_(context) {
       );
     }
   } else if (resumeQuote) {
-    if (UUID.test(resumeQuote)) void resumeFromQuote(resumeQuote, null);
+    if (UUID.test(resumeQuote)) bootResume(resumeFromQuote(resumeQuote, null, true));
     else show(resumeHost, inlineAlert({ state: "warn", title: "Mã báo giá trong đường dẫn không hợp lệ" }));
   } else if (resumeRequest) {
     if (UUID.test(resumeRequest)) {
-      // A step-1 intent like any other: a walk-in pressed while this reads makes it moot (C2).
-      const session = beginIntent();
+      // A step-1 intent like any other: a walk-in pressed while this reads makes it moot (C2),
+      // and the address stops naming it (K1).
+      const session = beginIntent(true);
       render(resumeHost, skeleton(1));
-      void request(
+      const chain = request(
         `/internal/v1/stores/${encodeURIComponent(store)}/order-requests/${encodeURIComponent(resumeRequest)}`,
       ).then(
-        (item) => {
-          if (session === flow.session) void resumeFromRequest(item);
-        },
+        (item) => (session === flow.session ? resumeFromRequest(item, true) : nameDropped(item)),
         (error) =>
-          session === flow.session &&
-          show(
-            resumeHost,
-            /** @type {any} */ (error).kind === "MISSING"
-              ? h(
-                  "div",
-                  { class: "notice", dataState: "warn", id: "new-request-missing" },
-                  h("p", { class: "notice__title" }, "Không tìm thấy yêu cầu này trong cửa hàng đang chọn"),
-                  h(
-                    "p",
-                    null,
-                    "Mã có thể thuộc cửa hàng khác hoặc đã bị gõ sai — máy chủ trả lời cùng một cách cho " +
-                      "cả hai, nên màn hình này cũng không đoán. Không có dữ kiện nào được điền sẵn; " +
-                      "hãy chọn từ danh sách bên dưới.",
-                  ),
-                )
-              : errorNotice(error),
-          ),
+          session !== flow.session
+            ? nameDropped(null, /** @type {any} */ (error).kind === "MISSING")
+            : show(
+                resumeHost,
+                /** @type {any} */ (error).kind === "MISSING"
+                  ? h(
+                      "div",
+                      { class: "notice", dataState: "warn", id: "new-request-missing" },
+                      h("p", { class: "notice__title" }, "Không tìm thấy yêu cầu này trong cửa hàng đang chọn"),
+                      h(
+                        "p",
+                        null,
+                        "Mã có thể thuộc cửa hàng khác hoặc đã bị gõ sai — máy chủ trả lời cùng một cách cho " +
+                          "cả hai, nên màn hình này cũng không đoán. Không có dữ kiện nào được điền sẵn; " +
+                          "hãy chọn từ danh sách bên dưới.",
+                      ),
+                    )
+                  : errorNotice(error),
+              ),
       );
+      bootResume(chain);
     } else {
       show(resumeHost, inlineAlert({ state: "warn", title: "Mã yêu cầu trong đường dẫn không hợp lệ" }));
     }
@@ -2667,6 +3063,7 @@ export function render_(context) {
     { class: "screen" },
     page({ title: "Nhận đồ" }),
     progressHost,
+    droppedHost,
     resumeHost,
     body,
     picker.node,

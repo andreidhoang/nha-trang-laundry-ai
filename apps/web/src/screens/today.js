@@ -33,6 +33,7 @@ import { h, render } from "../core/dom.js";
 import { visibleMessage } from "../core/errors.js";
 import { TIMEZONE, UNKNOWN, businessDate, calendarDay, count, money, shopHour } from "../core/format.js";
 import { PAYMENT_METHOD_VI, enumVi } from "../core/i18n.js";
+import { MFA_SHORT, NAV_ITEMS, navVerdict } from "../core/nav.js";
 import { can } from "../core/rbac.js";
 import { snapshot } from "../core/session.js";
 import { errorNotice, gated, icon, markUpdated } from "../ui/components.js";
@@ -748,7 +749,7 @@ export function render_() {
 
   // --- Quick actions ---------------------------------------------------------------------------
   const state = snapshot();
-  const newOrderVerdict = can(state.principal, "QUOTES_WRITE");
+  const newOrderVerdict = newOrderShut(state.principal);
   const ordersVerdict = can(state.principal, "ORDERS_READ");
   const quick = h(
     "div",
@@ -820,3 +821,21 @@ export const screen = {
   title: "Hôm nay",
   render: render_,
 };
+
+/**
+ * "＋ Nhận đồ" on Hôm nay, with the navigation's own verdict (CONSOLE-RESIDUAL-009B, K2): a counter
+ * role whose session has not passed two-step verification reads that first, in the words the nav
+ * shows beside the same entry, and what to do about it.
+ *
+ * @param {ReturnType<typeof snapshot>["principal"]} principal
+ * @returns {{allowed: boolean, reason: string}}
+ */
+function newOrderShut(principal) {
+  const verdict = can(principal, "QUOTES_WRITE");
+  if (verdict.allowed) return verdict;
+  const entry = NAV_ITEMS.find((item) => item.path === "/new");
+  if (entry && navVerdict(principal, entry).short === MFA_SHORT) {
+    return { allowed: false, reason: `${MFA_SHORT} — thoát rồi đăng nhập lại.` };
+  }
+  return verdict;
+}

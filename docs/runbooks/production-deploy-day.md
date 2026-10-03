@@ -196,13 +196,15 @@ invisible to it until that list names it. Re-running the grant script narrows a 
 under the old, API-shaped grant; the verifier audits the worker per column and names any drift.
 Its INSERTs into the outbox, domain-event and audit ledgers are column-level too
 (`PLATFORM-RESIDUAL-009B` L2): an outbox row the worker writes cannot set its recipient, purpose or
-status. Every repository path reserved for `OUTBOX_WORKER` is listed in
-`role_grants.OUTBOX_WORKER_PATHS` -- granted and tested as `laundry_worker`, or withheld with the
-decision that would grant it. Two are withheld, and the database refuses both to the worker on their
-first statement: the approval execution claim (no sender exists yet; granting it means giving the
-worker reads on orders, quotes, drafts and exports) and the automation kill-switch hold (its UPDATE
-of an envelope's status cannot be limited by a grant to PENDING -> HELD/CANCELLED; that needs a
-transition trigger, i.e. a migration). Neither has a caller outside the eval suites today.
+status. Every repository path that names `OUTBOX_WORKER` is listed once in
+`nha_trang_laundry_db.role_grants`: a worker path in `OUTBOX_WORKER_PATHS`, granted and tested as
+`laundry_worker`, or a path in `UNDESIGNATED_WORKER_PATHS` that is not the worker's in this
+release. Two are un-designated -- the worker runs no sender (ADR-0002; DEC-001..006 keep sending
+gated) -- and the database refuses both to the worker on their first statement: the approval
+execution claim (granting it would mean giving the worker reads on orders, quotes, drafts and
+exports) and the automation kill-switch hold (its UPDATE of an envelope's status cannot be limited
+by a grant to PENDING -> HELD/CANCELLED; that needs a transition trigger, i.e. a migration).
+Neither has a caller in the deployed processes; only the eval suites call them.
 
 What stays open in `DEC-020` is who may execute a purge. DELETE is granted to nobody, which is the
 fail-closed state that decision exists to change, and the verifier fails if that ever stops being

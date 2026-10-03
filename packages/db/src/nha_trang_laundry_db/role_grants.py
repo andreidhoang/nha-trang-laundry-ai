@@ -44,13 +44,14 @@ columns that find a run's enqueue event, never its payload.
   (`AutomationExecutionRepository.hold_if_disabled`) UPDATE of the envelope's status, and the
   verifier showed that the same grant lets the worker set a HELD or CANCELLED envelope back to
   PENDING: a column grant cannot say which values, and the table has no transition trigger. The
-  grant is withdrawn (the base's position) until a migration gives the table one; see
-  `OUTBOX_WORKER_PATHS`.
+  grant is withdrawn (the base's position), and the path is un-designated from the worker; see
+  `UNDESIGNATED_WORKER_PATHS`.
 
-**Every repository path designated for `OUTBOX_WORKER`** -- the actor that, in a deployment, *is*
-the `laundry_worker` process -- is listed in `OUTBOX_WORKER_PATHS`, either granted (and executed
-as `laundry_worker` by a test) or withheld with the decision that would grant it. A test scans the
-repository source, so a new designated path cannot appear without an entry here.
+**Every repository path that names `OUTBOX_WORKER`** -- the actor that, in a deployment, *is* the
+`laundry_worker` process -- is listed here exactly once: in `OUTBOX_WORKER_PATHS` when it is a
+worker path, granted and executed as `laundry_worker` by a test; or in `UNDESIGNATED_WORKER_PATHS`
+when it is not a worker path in this release, and the database refuses it to the worker whole. A
+test scans the repository source, so a new path naming the actor cannot appear without an entry.
 
 The worker holds no sequence privilege because the schema has no sequences (every key is a UUID).
 """
@@ -199,10 +200,10 @@ class WorkerPath:
     reason: str
 
 
-#: `PLATFORM-RESIDUAL-009B` L2. Every public repository method that names `OUTBOX_WORKER` (as its
-#: guard, its actor or its audit row). Granted paths run as `laundry_worker` in
-#: `apps/worker/tests/test_worker_least_privilege.py`; a withheld one is refused by the database
-#: as the worker, on its first read, so nothing of it can half-happen.
+#: `PLATFORM-RESIDUAL-009B` L2. The public repository methods that name `OUTBOX_WORKER` (as their
+#: guard, their actor or their audit row) and ARE worker paths: every one granted, and run as
+#: `laundry_worker` in `apps/worker/tests/test_worker_least_privilege.py`. The others are in
+#: `UNDESIGNATED_WORKER_PATHS`.
 OUTBOX_WORKER_PATHS: Final[dict[str, WorkerPath]] = {
     "outbox.OutboxRepository.claim_next_internal": WorkerPath(True, "the internal outbox loop"),
     "outbox.OutboxRepository.complete_internal": WorkerPath(True, "the internal outbox loop"),
@@ -217,30 +218,37 @@ OUTBOX_WORKER_PATHS: Final[dict[str, WorkerPath]] = {
         "the final suppression check before a marketing send: it only ever holds, and reads the "
         "suppression ledger's key, purpose, channel and state",
     ),
-    "automation.AutomationExecutionRepository.hold_if_disabled": WorkerPath(
-        False,
-        "DECISION NEEDED before granting: the kill-switch hold only ever moves an envelope from "
-        "PENDING to HELD or CANCELLED, but the UPDATE it needs cannot be limited to those values "
-        "by a grant -- with UPDATE(status) the worker can also set a HELD or CANCELLED envelope "
-        "back to PENDING, undoing a hold (round-9b verifier). The fix is a forward migration with "
-        "a BEFORE UPDATE trigger on automated_execution_envelopes allowing only PENDING -> HELD "
-        "and PENDING -> CANCELLED (as enforce_outbox_status_transition does for the outbox); this "
-        "slice has no migration number. Until then the database refuses the hold to the worker "
-        "on its first statement (SELECT ... FOR UPDATE), so nothing of it can half-happen. "
-        "Nothing calls it outside the eval suites: no automated executor exists.",
+}
+
+
+#: Round-9b integration, the lead's ruling on the L verifier's residual: the two repository paths
+#: that name `OUTBOX_WORKER` but were neither granted nor un-designated (`WorkerPath(False,
+#: "DECISION NEEDED ...")`) are UN-DESIGNATED from the worker. Fail closed: the worker runs no
+#: sender in this release -- ADR-0002's "sole OUTBOX_WORKER sender" is unbuilt and DEC-001..006
+#: keep every send gated -- so neither is a worker path, `laundry_worker` holds no grant for either,
+#: and the database refuses each to the worker on its first statement, whole (proven by the tests
+#: named in `test_worker_least_privilege.REFUSED_BY`). Nothing in `apps/` calls either; only the
+#: eval suites do, as the schema owner. The actor name stays in their code because migration
+#: 0007's CHECK (`approval_executions.claimed_by = 'OUTBOX_WORKER'`) and the audit trail name the
+#: future sender's identity; designating a process to run them is a decision for when a sender is
+#: built (the approval claim needs reads PLATFORM-SECURITY-009 P1 took away, or a move into the API
+#: process; the kill-switch hold needs a transition trigger on automated_execution_envelopes).
+UNDESIGNATED_WORKER_PATHS: Final[dict[str, str]] = {
+    "automation.AutomationExecutionRepository.hold_if_disabled": (
+        "Un-designated from OUTBOX_WORKER (ADR-0002; DEC-001..006 keep sending gated): no "
+        "automated executor runs in this release. The kill-switch hold only ever moves an envelope "
+        "from PENDING to HELD or CANCELLED, but the UPDATE it needs cannot be limited to those "
+        "values by a grant -- with UPDATE(status) the worker could also set a HELD or CANCELLED "
+        "envelope back to PENDING (round-9b verifier). The database refuses it to the worker on "
+        "its first statement (SELECT ... FOR UPDATE), so nothing of it can half-happen."
     ),
-    "approvals.ApprovalRepository.claim_execution": WorkerPath(
-        False,
-        "DECISION NEEDED before granting: the claim re-reads the approved resource under a row "
-        "lock -- `FOR SHARE` on orders and quotes, which PostgreSQL allows only with UPDATE "
-        "there -- and re-derives digests from the message draft's text and the export's "
-        "content. Nothing calls it outside the eval suites (no sender exists: DEC-001..006, "
-        "ADR-0002 'sole OUTBOX_WORKER sender' is unbuilt), the designation is in migration "
-        "0007's CHECK (approval_executions.claimed_by = 'OUTBOX_WORKER'), and widening the "
-        "worker to orders, quotes, drafts and exports is what PLATFORM-SECURITY-009 P1 took "
-        "away. When a sender is built, decide between granting those reads to the worker and "
-        "running the claim in the API process (laundry_api) with only the claimed envelope "
-        "handed to the worker.",
+    "approvals.ApprovalRepository.claim_execution": (
+        "Un-designated from OUTBOX_WORKER (ADR-0002; DEC-001..006 keep sending gated): no sender "
+        "runs in this release. The claim re-reads the approved resource under a row lock -- FOR "
+        "SHARE on orders and quotes, which PostgreSQL allows only with UPDATE there -- and "
+        "re-derives digests from the message draft's text and the export's content: reads "
+        "PLATFORM-SECURITY-009 P1 took away from the worker. The database refuses it to the worker "
+        "on its first read, so nothing of it can half-happen."
     ),
 }
 
@@ -407,6 +415,7 @@ __all__ = [
     "APPLICATION_ROLES",
     "MIGRATION_ROLE",
     "OUTBOX_WORKER_PATHS",
+    "UNDESIGNATED_WORKER_PATHS",
     "WORKER_GRANTS",
     "WORKER_ROLE",
     "TableGrant",

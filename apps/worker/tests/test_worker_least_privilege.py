@@ -622,8 +622,8 @@ EXECUTED_BY = {
     ),
 }
 
-#: Withheld paths, each refused to the worker whole by the test named, with its decision recorded
-#: in `OUTBOX_WORKER_PATHS`.
+#: Paths un-designated from the worker (`UNDESIGNATED_WORKER_PATHS`), each refused to it whole by
+#: the test named.
 REFUSED_BY = {
     "approvals.ApprovalRepository.claim_execution": (
         "test_the_approval_execution_claim_is_refused_to_the_worker_whole"
@@ -635,39 +635,82 @@ REFUSED_BY = {
 
 
 def test_every_outbox_worker_path_is_granted_or_explicitly_withheld() -> None:
-    from nha_trang_laundry_db.role_grants import OUTBOX_WORKER_PATHS
+    """Every repository path that names `OUTBOX_WORKER` is either a worker path, granted and
+    executed as `laundry_worker`, or un-designated from the worker with its refusal proven.
 
-    assert set(OUTBOX_WORKER_PATHS) == _designated_paths()
+    Round-9b integration (the L verifier's residual and the lead's ruling): the two that were
+    designated but withheld -- `WorkerPath(False, "DECISION NEEDED ...")` -- met neither half of
+    the L2 rule. They are UN-DESIGNATED: the worker runs no sender in this release (ADR-0002;
+    DEC-001..006 keep sending gated), so no designated worker path is left un-granted."""
+
+    from nha_trang_laundry_db.role_grants import OUTBOX_WORKER_PATHS, UNDESIGNATED_WORKER_PATHS
+
+    assert set(OUTBOX_WORKER_PATHS).isdisjoint(UNDESIGNATED_WORKER_PATHS)
+    assert set(OUTBOX_WORKER_PATHS) | set(UNDESIGNATED_WORKER_PATHS) == _designated_paths()
     for name, designation in OUTBOX_WORKER_PATHS.items():
-        if designation.granted:
-            assert name in EXECUTED_BY, f"{name} is granted but nothing executes it as the worker"
-            assert EXECUTED_BY[name] in globals(), EXECUTED_BY[name]
-        else:
-            # Withheld means the database refuses it as the worker, atomically -- proven below.
-            assert designation.reason and "DECISION" in designation.reason.upper()
-            assert name in REFUSED_BY, f"{name} is withheld but nothing proves the refusal"
-            assert REFUSED_BY[name] in globals(), REFUSED_BY[name]
+        assert designation.granted, f"{name} is designated for the worker and not granted"
+        assert name in EXECUTED_BY, f"{name} is granted but nothing executes it as the worker"
+        assert EXECUTED_BY[name] in globals(), EXECUTED_BY[name]
+    for name, reason in UNDESIGNATED_WORKER_PATHS.items():
+        # Un-designated means the database refuses it as the worker, atomically -- proven below.
+        assert "ADR-0002" in reason and "DEC-001" in reason, name
+        assert name in REFUSED_BY, f"{name} is un-designated but nothing proves the refusal"
+        assert REFUSED_BY[name] in globals(), REFUSED_BY[name]
 
 
-#: How the deploy-day runbook names each withheld path. Round-9b verifier, round 3: the runbook said
-#: only the approval claim was withheld after the kill-switch hold had been withheld too.
+def test_the_two_sender_paths_are_undesignated_and_nothing_deployed_calls_them() -> None:
+    """The lead's ruling, pinned: the approval execution claim and the automation kill-switch hold
+    are un-designated from `OUTBOX_WORKER` -- and nothing in the deployed processes (`apps/`)
+    calls either, so un-designating them leaves no deployed path without its grant."""
+
+    import ast
+
+    from nha_trang_laundry_db.role_grants import OUTBOX_WORKER_PATHS, UNDESIGNATED_WORKER_PATHS
+
+    assert (
+        set(UNDESIGNATED_WORKER_PATHS)
+        == set(REFUSED_BY)
+        == {
+            "approvals.ApprovalRepository.claim_execution",
+            "automation.AutomationExecutionRepository.hold_if_disabled",
+        }
+    )
+    assert all(path.granted for path in OUTBOX_WORKER_PATHS.values())
+    methods = {name.rsplit(".", 1)[1] for name in UNDESIGNATED_WORKER_PATHS}
+    callers = []
+    for path in sorted((ROOT / "apps").rglob("*.py")):
+        if "/tests/" in path.as_posix():
+            continue
+        for node in ast.walk(ast.parse(path.read_text("utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in methods
+            ):
+                callers.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+    assert callers == []
+
+
+#: How the deploy-day runbook names each un-designated path. Round-9b verifier, round 3: the runbook
+#: said only the approval claim was withheld after the kill-switch hold had been withheld too.
 RUNBOOK_NAMES = {
     "approvals.ApprovalRepository.claim_execution": "approval execution claim",
     "automation.AutomationExecutionRepository.hold_if_disabled": "automation kill-switch hold",
 }
 
 
-def test_the_deploy_runbook_names_every_withheld_path() -> None:
-    from nha_trang_laundry_db.role_grants import OUTBOX_WORKER_PATHS
+def test_the_deploy_runbook_names_every_undesignated_path() -> None:
+    from nha_trang_laundry_db.role_grants import UNDESIGNATED_WORKER_PATHS
 
     runbook = (ROOT / "docs/runbooks/production-deploy-day.md").read_text(encoding="utf-8")
     prose = " ".join(runbook.split())
-    withheld = sorted(name for name, path in OUTBOX_WORKER_PATHS.items() if not path.granted)
-    assert set(withheld) <= set(RUNBOOK_NAMES), withheld
-    for name in withheld:
+    undesignated = sorted(UNDESIGNATED_WORKER_PATHS)
+    assert set(undesignated) <= set(RUNBOOK_NAMES), undesignated
+    for name in undesignated:
         assert RUNBOOK_NAMES[name] in prose, name
-    counts = {1: "One is withheld", 2: "Two are withheld", 3: "Three are withheld"}
-    assert counts[len(withheld)] in prose
+    counts = {1: "One is un-designated", 2: "Two are un-designated", 3: "Three are un-designated"}
+    assert counts[len(undesignated)] in prose
+    assert "ADR-0002" in prose and "DEC-001" in prose
 
 
 def _claimed_marketing_event(

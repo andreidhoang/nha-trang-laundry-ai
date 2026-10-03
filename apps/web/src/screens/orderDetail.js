@@ -1562,8 +1562,10 @@ export function render_(context) {
       label: "Số tiền khách trả lần này",
       placeholder: "Ví dụ 50.000",
       echo: (text) => {
+        if (!text.trim()) return "";
+        // Pre-production review 9: "50,000" or "50k" was echoed as nothing, as if not typed.
         const parsed = parseDong(text);
-        return text.trim() && parsed !== null ? `= ${money(parsed)}` : "";
+        return parsed === null ? "Chưa đọc được số tiền" : `= ${money(parsed)}`;
       },
       onInput: (text) => {
         typed = text;
@@ -1612,12 +1614,16 @@ export function render_(context) {
 
     /**
      * The amount the QR is for: the whole remaining (null), or while "một phần" is open the typed
-     * amount as the server will read it -- undefined, and no QR, while nothing usable is typed.
+     * amount as the server will read it -- undefined, and no QR, while nothing usable is typed;
+     * typed but unreadable is said as such, not prompted for as if empty (pre-production review 9).
      */
     function askQr() {
       const part = editing ? parseDong(typed) : null;
       unseeIfMoved(editing ? part : shown.remaining_vnd);
-      transferQr.ask(!editing ? null : part === null ? undefined : part);
+      transferQr.ask(
+        !editing ? null : part === null ? undefined : part,
+        editing && part === null && typed.trim() !== "",
+      );
     }
 
     /**

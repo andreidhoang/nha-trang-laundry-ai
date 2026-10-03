@@ -215,34 +215,46 @@ const PART_PAUSE_MS = 350;
  * COUNTER-UI-RACE-009 (C3): the QR is for exactly the amount the payment will record. `ask(null)`
  * is the whole remaining; `ask(amount)` a part the counter typed, read (after a short pause in the
  * typing) with the amount for the server to check; `ask(undefined)` -- nothing usable typed --
- * shows no QR. A new ask clears what is drawn at once and drops any read still in flight for the
+ * shows no QR, with the typing prompt, or (`ask(undefined, true)`) the line that what was typed
+ * cannot be read as an amount (pre-production review 9: "50,000" was prompted for as if empty). A new ask clears what is drawn at once and drops any read still in flight for the
  * old one, so no moment shows a QR for a different amount than the one in the field. `reload()`
  * reads again for the same ask (the order moved); a hidden QR reads when next shown.
  *
  * @param {string} orderId
  * @returns {{node: HTMLElement, show: () => void, hide: () => void,
- *   ask: (part: number|null|undefined) => void, reload: () => void}}
+ *   ask: (part: number|null|undefined, unreadable?: boolean) => void, reload: () => void}}
  */
 export function paymentQr(orderId) {
   const node = h("div", { class: "vietqr-host", id: "payment-qr" });
   let visible = false;
   /** @type {number|null|undefined} */
   let asked = null;
+  /** With `asked` undefined: something was typed that is not an amount. */
+  let askedUnreadable = false;
   /** Whether `node` shows the answer (or the prompt) for `asked`; false means it must be read. */
   let current = false;
   let generation = 0;
   /** @type {number|undefined} */
   let pause;
 
-  /** @param {number|null|undefined} part */
-  const same = (part) => part === asked;
+  /**
+   * @param {number|null|undefined} part
+   * @param {boolean} unreadable
+   */
+  const same = (part, unreadable) => part === asked && unreadable === askedUnreadable;
 
   function prompt() {
-    return h(
-      "p",
-      { class: "vietqr__absent hint", dataVietqr: "typing" },
-      "Gõ số tiền khách chuyển — mã QR ghi đúng số đó.",
-    );
+    return askedUnreadable
+      ? h(
+          "p",
+          { class: "vietqr__absent hint", dataVietqr: "unreadable" },
+          "Chưa đọc được số tiền vừa gõ nên chưa có mã QR. Gõ số như 50.000 hoặc 50000.",
+        )
+      : h(
+          "p",
+          { class: "vietqr__absent hint", dataVietqr: "typing" },
+          "Gõ số tiền khách chuyển — mã QR ghi đúng số đó.",
+        );
   }
 
   async function load() {
@@ -291,9 +303,11 @@ export function paymentQr(orderId) {
     hide() {
       visible = false;
     },
-    ask(part) {
-      if (same(part)) return;
+    ask(part, unreadable = false) {
+      const typedButUnreadable = part === undefined && unreadable;
+      if (same(part, typedButUnreadable)) return;
       asked = part;
+      askedUnreadable = typedButUnreadable;
       current = false;
       generation += 1;
       window.clearTimeout(pause);

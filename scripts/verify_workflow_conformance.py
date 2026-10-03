@@ -11349,6 +11349,20 @@ def scenario_counter_race(console: Console) -> None:
         and "Gõ số tiền khách chuyển" in console.dialog_text(),
         f"{whole_text} withdrawn={withdrawn}",
     )
+    # Pre-production review 9: typed but unreadable ("50,000") was prompted for as if empty.
+    console.type_into("#payment-amount", "50,000", "orderDetail.payment-amount")
+    page.wait_for_timeout(500)
+    echo = page.locator(".money-entry:has(#payment-amount) .money-entry__echo")
+    echo_text = echo.first.inner_text() if echo.count() else ""
+    ok(
+        "C3 (review 9): a part typed as '50,000' is said to be unreadable, at the field and in "
+        "place of the QR -- no QR, no typing prompt",
+        "Chưa đọc được số tiền" in echo_text
+        and page.locator(f"{scope} [data-vietqr=unreadable]").count() == 1
+        and page.locator(f"{scope} svg.vietqr__symbol").count() == 0
+        and "Gõ số tiền khách chuyển" not in console.dialog_text(),
+        f"echo={echo_text!r} qr={page.locator(scope).inner_text()[:120]!r}",
+    )
     console.type_into("#payment-amount", "20.000", "orderDetail.payment-amount")
     with contextlib.suppress(Exception):
         page.wait_for_selector(f"{scope} svg.vietqr__symbol", timeout=8000)

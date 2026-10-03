@@ -6560,6 +6560,31 @@ with sync_playwright() as playwright:
         and page.locator("#payment-qr svg.vietqr__symbol").count() == 0
         and "Gõ số tiền khách chuyển" in open_dialog_text(),
     )
+    # Pre-production review 9: an amount that cannot be read ("50,000", "50k") was answered with
+    # an empty echo and "Gõ số tiền khách chuyển" -- as if nothing had been typed -- while the
+    # customer waited for a QR that never came. The cash-count and expense fields say "Chưa đọc
+    # được số tiền"; so does this one now, and the QR area says why there is no QR.
+    for unreadable in ("50,000", "50k"):
+        page.locator("#payment-amount").fill(unreadable)
+        page.wait_for_timeout(500)
+        echo = page.locator(".money-entry:has(#payment-amount) .money-entry__echo").inner_text()
+        qr_text = page.locator("#payment-qr").inner_text()
+        check(
+            f"R9 a part amount that cannot be read ({unreadable!r}) is said so, not prompted for",
+            "Chưa đọc được số tiền" in echo
+            and "Gõ số tiền khách chuyển" not in qr_text
+            and "Chưa đọc được số tiền" in qr_text
+            and page.locator("#payment-qr svg.vietqr__symbol").count() == 0
+            and page.locator("#payment-qr [data-vietqr=unreadable]").count() == 1,
+            f"echo={echo!r} qr={qr_text!r}",
+        )
+    page.locator("#payment-amount").fill("")
+    page.wait_for_timeout(300)
+    check(
+        "R9 an emptied part amount goes back to the typing prompt, with no echo",
+        "Gõ số tiền khách chuyển" in page.locator("#payment-qr").inner_text()
+        and page.locator(".money-entry:has(#payment-amount) .money-entry__echo").inner_text() == "",
+    )
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
     state["vietqr"] = None
@@ -12297,10 +12322,15 @@ with sync_playwright() as playwright:
     before = len(state["vietqr_reads"])
     typed_part("20,5")
     page.wait_for_timeout(900)
+    # Pre-production review 9: this asserted the typing prompt ("Gõ số tiền khách chuyển") under
+    # an amount already typed -- the defect, an unreadable amount answered as if nothing was typed.
+    # No QR and no read stay asserted; the line now says the amount cannot be read.
     check(
-        "C3: a typed amount the server would not read ('20,5') gets no QR and asks no server",
+        "C3: a typed amount the server would not read ('20,5') gets no QR and asks no server, "
+        "and says it cannot be read",
         qr_symbols() == 0
-        and "Gõ số tiền khách chuyển" in open_dialog_text()
+        and "Gõ số tiền khách chuyển" not in open_dialog_text()
+        and "Chưa đọc được số tiền" in open_dialog_text()
         and len(state["vietqr_reads"]) == before,
         f"{qr_symbols()} QR, reads={state['vietqr_reads'][before:]}",
     )

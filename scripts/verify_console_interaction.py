@@ -3049,6 +3049,13 @@ with sync_playwright() as playwright:
         # may answer with a refusal), and the owner's days on Báo cáo.
         elif url.split("?")[0].endswith("/cash-count") and route.request.method == "GET":
             state.setdefault("cash_reads", []).append(url)
+            # Pre-production review 9: a section may make the re-read fail (401, 503).
+            if state.get("cash_read_reply"):
+                failed = state["cash_read_reply"]
+                route.fulfill(
+                    status=failed[0], content_type="application/json", body=json.dumps(failed[1])
+                )
+                return
             body = state.get("cash_sheet") or cash_sheet()
         elif url.split("?")[0].endswith("/cash-count") and route.request.method == "POST":
             state.setdefault("cash_writes", []).append(
@@ -16457,6 +16464,197 @@ with sync_playwright() as playwright:
             .filter((n) => !n.labels?.length && !n.getAttribute('aria-label')).length"""
     )
     check("every input on Đếm két has an accessible name", unnamed == 0, f"unnamed={unnamed}")
+
+    # Pre-production review 9 (1): the counter tablet stays on Đếm két overnight. Next morning the
+    # opening float went out on yesterday's sheet, came back CASH_COUNT_DAY_NOT_TODAY, and was
+    # answered with the closing count's instruction -- "ghi ra giấy, đưa chủ tiệm" -- so the float
+    # was never recorded. An opening float (or its correction) now says to open today's sheet and
+    # offers it, carrying the amount; the screen also re-reads when the tablet wakes.
+    next_day = "2026-10-01"
+
+    def cash_goto(sheet_now: dict[str, object]) -> None:
+        state["cash_sheet"] = sheet_now
+        state["cash_write_reply"] = None
+        state["cash_read_reply"] = None
+        state["cash_writes"] = []
+        state["cash_reads"] = []
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/cash-count", wait_until="networkidle")
+        page.wait_for_timeout(800)
+
+    def wake() -> None:
+        page.evaluate(
+            """() => {
+                Object.defineProperty(document, 'hidden', {configurable: true, get: () => false});
+                Object.defineProperty(document, 'visibilityState',
+                    {configurable: true, get: () => 'visible'});
+                document.dispatchEvent(new Event('visibilitychange'));
+            }"""
+        )
+        page.wait_for_timeout(800)
+
+    def cash_value(selector: str) -> str | None:
+        found = page.locator(selector)
+        return found.input_value() if found.count() else None
+
+    cash_goto(cash_sheet())
+    state["cash_sheet"] = cash_sheet(business_day=next_day)
+    state["cash_write_reply"] = (422, {"detail": {"reason_code": "CASH_COUNT_DAY_NOT_TODAY"}})
+    page.locator("#cash-float-amount").fill("500.000")
+    page.locator("#cash-float-save").click()
+    page.wait_for_timeout(700)
+    refusal = page.locator("main .alert").filter(has_text="Chưa ghi được")
+    refusal_text = refusal.first.inner_text().replace("\xa0", " ") if refusal.count() else ""
+    check(
+        "R9 an opening float refused for yesterday's sheet says to open today's, not 'ghi ra giấy'",
+        "30/09" in refusal_text
+        and "ghi ra giấy" not in refusal_text
+        and "Mở sổ hôm nay" in refusal_text
+        and page.locator("button[data-cash-open-today]").count() == 1,
+        refusal_text or "no refusal",
+    )
+    if page.locator("button[data-cash-open-today]").count():
+        page.locator("button[data-cash-open-today]").click()
+    page.wait_for_timeout(800)
+    check(
+        "R9 Mở sổ hôm nay re-reads the sheet, shows today's day and keeps the typed float unsent",
+        len(state["cash_reads"]) == 2
+        and "01/10" in page.locator(".cash__day").inner_text()
+        and cash_value("#cash-float-amount") == "500.000"
+        and len(state["cash_writes"]) == 1,
+        f"reads={len(state['cash_reads'])} value={cash_value('#cash-float-amount')!r}",
+    )
+    state["cash_write_reply"] = None
+    state["cash_after_write"] = cash_sheet(
+        business_day=next_day,
+        opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID),
+        entry=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID),
+        replayed=False,
+    )
+    page.locator("#cash-float-save").click()
+    page.wait_for_timeout(800)
+    check(
+        "R9 then Ghi tiền đầu ngày records the float on today's sheet",
+        len(state["cash_writes"]) == 2
+        and state["cash_writes"][-1]["body"]
+        == {"business_day": next_day, "kind": "OPENING_FLOAT", "counted_vnd": 500_000},
+        repr(state["cash_writes"][-1:]),
+    )
+
+    # The only opening control on yesterday's sheet: "Sửa tiền đầu ngày".
+    cash_goto(cash_sheet(opening=cash_entry("OPENING_FLOAT", 450_000, CASH_FLOAT_ID)))
+    state["cash_sheet"] = cash_sheet(business_day=next_day)
+    state["cash_write_reply"] = (422, {"detail": {"reason_code": "CASH_COUNT_DAY_NOT_TODAY"}})
+    page.locator("button[data-cash-correct=OPENING_FLOAT]").click()
+    page.wait_for_timeout(400)
+    page.locator("#cash-correct-amount").fill("520.000")
+    page.locator("#cash-correct-reason").fill("tiền đầu ngày mới")
+    page.locator("#cash-correct-save").click()
+    page.wait_for_timeout(700)
+    dialog_text = open_dialog_text().replace("\xa0", " ")
+    check(
+        "R9 a float correction refused for yesterday says to open today's sheet, not paper",
+        "Mở sổ hôm nay" in dialog_text and "ghi ra giấy" not in dialog_text,
+        dialog_text[:240],
+    )
+    if page.locator("dialog[open] button[data-cash-open-today]").count():
+        page.locator("dialog[open] button[data-cash-open-today]").click()
+    page.wait_for_timeout(800)
+    sheet_left_open = page.locator("dialog[open]").count()
+    if sheet_left_open:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+    check(
+        "R9 from the correction, Mở sổ hôm nay closes the sheet and carries the amount to today's",
+        sheet_left_open == 0
+        and "01/10" in page.locator(".cash__day").inner_text()
+        and cash_value("#cash-float-amount") == "520.000",
+        f"value={cash_value('#cash-float-amount')!r}",
+    )
+
+    # The tablet wakes on a new day: the sheet is re-read, and last night's typed closing count is
+    # not carried onto the new day's sheet (it goes on paper, as the closing refusal says).
+    cash_goto(cash_sheet(opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID)))
+    page.locator("#cash-close-amount").fill("590.000")
+    state["cash_sheet"] = cash_sheet(business_day=next_day)
+    wake()
+    shown = page.locator("main").inner_text().replace("\xa0", " ")
+    check(
+        "R9 waking on a new day re-reads the sheet and says so; last night's count is not carried",
+        len(state["cash_reads"]) == 2
+        and "01/10" in page.locator(".cash__day").inner_text()
+        and "Sổ đã sang" in shown
+        and "ghi ra giấy" in shown
+        and cash_value("#cash-close-amount") == "",
+        f"reads={len(state['cash_reads'])} close={cash_value('#cash-close-amount')!r} "
+        + shown[:200].replace("\n", " | "),
+    )
+
+    # Pre-production review 9 (2): Tải lại, or a re-read that fails, wiped a typed count although
+    # the session banner says typed input stays on screen.
+    cash_goto(cash_sheet(opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID)))
+    page.locator("#cash-close-amount").fill("1.234.000")
+    page.locator(".cash__refresh button").click()
+    page.wait_for_timeout(800)
+    check(
+        "R9 Tải lại keeps a typed closing count (same day), with its echo",
+        len(state["cash_reads"]) == 2
+        and cash_value("#cash-close-amount") == "1.234.000"
+        and "1.234.000"
+        in page.locator(
+            "#cash-close-amount ~ .money-entry__echo, "
+            ".money-entry:has(#cash-close-amount) .money-entry__echo"
+        ).first.inner_text(),
+        f"value={cash_value('#cash-close-amount')!r}",
+    )
+    for status, label in ((503, "server not answering"), (401, "session ended")):
+        state["cash_read_reply"] = (status, {"detail": "unavailable" if status == 503 else "x"})
+        page.locator(".cash__refresh button").click()
+        page.wait_for_timeout(800)
+        check(
+            f"R9 a re-read that fails ({label}) keeps the typed count on screen",
+            cash_value("#cash-close-amount") == "1.234.000",
+            f"value={cash_value('#cash-close-amount')!r}",
+        )
+        state["cash_read_reply"] = None
+    state["authenticated"] = True
+
+    # A correction another phone overtook: the sheet comes back on the newer entry, with the typed
+    # amount and reason still in it.
+    closed_now = cash_sheet(
+        opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID),
+        closing=cash_entry("CLOSING_COUNT", 590_000, CASH_CLOSE_ID),
+    )
+    cash_goto(closed_now)
+    page.locator("button[data-cash-correct=CLOSING_COUNT]").click()
+    page.wait_for_timeout(400)
+    page.locator("#cash-correct-amount").fill("605.000")
+    page.locator("#cash-correct-reason").fill("đếm lại lần hai")
+    newer = cash_entry(
+        "CLOSING_COUNT",
+        600_000,
+        "cccccccc-0000-4000-8000-000000000009",
+        supersedes_id=CASH_CLOSE_ID,
+        correction_reason="người khác sửa",
+    )
+    state["cash_sheet"] = cash_sheet(
+        opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID), closing=newer
+    )
+    state["cash_write_reply"] = (409, {"detail": "CASH_COUNT_STALE: a newer entry exists"})
+    page.locator("#cash-correct-save").click()
+    page.wait_for_timeout(1000)
+    dialog_text = open_dialog_text().replace("\xa0", " ")
+    check(
+        "R9 an overtaken correction reopens on the newer entry with the typed amount and reason",
+        cash_value("#cash-correct-amount") == "605.000"
+        and cash_value("#cash-correct-reason") == "đếm lại lần hai"
+        and "600.000" in dialog_text
+        and "Người khác vừa ghi số này" in page.locator("main").inner_text(),
+        f"amount={cash_value('#cash-correct-amount')!r} reason="
+        f"{cash_value('#cash-correct-reason')!r} {dialog_text[:120]}",
+    )
+    page.keyboard.press("Escape")
+    state["cash_write_reply"] = None
     state["cash_sheet"] = cash_sheet(opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID))
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto("about:blank")

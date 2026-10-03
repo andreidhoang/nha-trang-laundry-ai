@@ -113,20 +113,117 @@ export function render_() {
   let current = null;
   let generation = 0;
 
-  /** @param {string} [notice] one line kept above the sheet after a re-read */
-  async function load(notice = "") {
+  /**
+   * What the worker has typed and not recorded, carried across a re-read (pre-production review
+   * 9): "Tải lại", a re-read when the tablet wakes, a re-read after someone else recorded first.
+   * The session banner promises typed input stays on screen; on this screen it now does.
+   *
+   * @typedef {object} Carry
+   * @property {string} opening the opening float's entry field
+   * @property {string} closing the closing count's entry field
+   * @property {{kind: string, amount: string, reason: string}|null} correction an open "Sửa"
+   * @property {boolean} [toToday] the opening amount goes onto a new day's sheet: the worker
+   *   pressed "Mở sổ hôm nay" after it was refused for yesterday's
+   */
+
+  /** @returns {Carry} */
+  function typedNow() {
+    /**
+     * @param {HTMLElement} host
+     * @param {string} selector
+     */
+    const value = (host, selector) => {
+      const input = host.querySelector(selector);
+      return input instanceof HTMLInputElement ? input.value : "";
+    };
+    return {
+      opening: value(openingHost, "#cash-float-amount"),
+      closing: value(closingHost, "#cash-close-amount"),
+      correction: null,
+    };
+  }
+
+  /**
+   * @param {string} [notice] one line kept above the sheet after a re-read
+   * @param {Carry} [carry] what was typed, put back where it still belongs
+   */
+  async function load(notice = "", carry = typedNow()) {
     const mine = ++generation;
+    const before = current?.business_day;
     try {
       const sheetRead = await request(`/internal/v1/stores/${encodeURIComponent(store)}/cash-count`);
       if (mine !== generation) return;
       markUpdated(stamp);
-      draw(sheetRead, notice);
+      const moved = before !== undefined && before !== sheetRead.business_day;
+      // A new day's sheet: last night's closing count and any correction are not carried onto it
+      // (they belong to the day they were counted for); the opening float only when asked for.
+      const kept = moved
+        ? { opening: carry.toToday ? carry.opening : "", closing: "", correction: null }
+        : carry;
+      const dropped =
+        moved &&
+        Boolean(
+          carry.closing.trim() || carry.correction || (!carry.toToday && carry.opening.trim()),
+        );
+      const words = [
+        moved ? `Sổ đã sang ${calendarDay(sheetRead.business_day)}.` : "",
+        moved && dropped
+          ? `Số đang gõ cho ${calendarDay(before)} chưa được ghi và không chuyển sang sổ mới — số ` +
+            "đếm cuối ngày hôm trước thì ghi ra giấy, đưa chủ tiệm."
+          : "",
+        notice,
+      ];
+      draw(sheetRead, "");
+      const lost = restore(sheetRead, kept);
+      if (lost) words.push(`Số bạn đang gõ (${lost}) chưa được ghi.`);
+      const said = words.filter(Boolean).join(" ");
+      if (said) render(banner, inlineAlert({ state: "info", title: said }), ...bannerRest(sheetRead));
     } catch (error) {
       if (mine !== generation) return;
+      const failed = errorNotice(error, { onRetry: () => void load() });
+      if (current) {
+        // The sheet already on show stays, with whatever was typed in it: only the re-read failed.
+        render(banner, failed);
+        return;
+      }
       render(openingHost);
       render(closingHost);
-      render(expectedHost, errorNotice(error, { onRetry: () => void load() }));
+      render(expectedHost, failed);
     }
+  }
+
+  /**
+   * Put typed values back into the forms the new sheet still has.
+   *
+   * @param {any} day
+   * @param {Carry} carry
+   * @returns {string} what was typed for a form the sheet no longer has (recorded meanwhile), or ""
+   */
+  function restore(day, carry) {
+    const lost = [];
+    /**
+     * @param {HTMLElement} host
+     * @param {string} id
+     * @param {string} text
+     */
+    const refill = (host, id, text) => {
+      if (!text.trim()) return;
+      const input = host.querySelector(id);
+      if (!(input instanceof HTMLInputElement)) {
+        lost.push(text.trim());
+        return;
+      }
+      input.value = text;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    refill(openingHost, "#cash-float-amount", carry.opening);
+    refill(closingHost, "#cash-close-amount", carry.closing);
+    if (carry.correction) {
+      const entry = carry.correction.kind === "OPENING_FLOAT" ? day.opening_float : day.closing_count;
+      if (entry) openCorrection(entry, carry.correction);
+      else if (carry.correction.amount.trim()) lost.push(carry.correction.amount.trim());
+    }
+    return lost.join(", ");
   }
 
   /**
@@ -139,17 +236,7 @@ export function render_() {
     render(
       banner,
       notice ? inlineAlert({ state: "info", title: notice }) : null,
-      day.changed_since_count
-        ? inlineAlert({
-            state: "warn",
-            title: "Sổ đã thay đổi sau lúc đếm",
-            body:
-              day.expected?.expected_vnd === null || day.expected?.expected_vnd === undefined
-                ? "Số đếm đã ghi vẫn giữ nguyên. Đếm lại rồi bấm “Sửa số đếm” nếu cần."
-                : `Bây giờ két phải có ${money(day.expected.expected_vnd)}. Số đếm đã ghi vẫn giữ ` +
-                  "nguyên; đếm lại rồi bấm “Sửa số đếm” nếu cần.",
-          })
-        : null,
+      ...bannerRest(day),
     );
     drawOpening(day);
     drawExpected(day.expected);
@@ -163,6 +250,28 @@ export function render_() {
         day.closing_count?.trace_hash ? ["Vết tính", day.closing_count.trace_hash] : null,
       ].filter(Boolean)),
     );
+  }
+
+  /**
+   * The banner's standing line, under any one-off notice.
+   *
+   * @param {any} day
+   * @returns {Array<HTMLElement|null>}
+   */
+  function bannerRest(day) {
+    return [
+      day.changed_since_count
+        ? inlineAlert({
+            state: "warn",
+            title: "Sổ đã thay đổi sau lúc đếm",
+            body:
+              day.expected?.expected_vnd === null || day.expected?.expected_vnd === undefined
+                ? "Số đếm đã ghi vẫn giữ nguyên. Đếm lại rồi bấm “Sửa số đếm” nếu cần."
+                : `Bây giờ két phải có ${money(day.expected.expected_vnd)}. Số đếm đã ghi vẫn giữ ` +
+                  "nguyên; đếm lại rồi bấm “Sửa số đếm” nếu cần.",
+          })
+        : null,
+    ];
   }
 
   /** @param {any} day */
@@ -414,9 +523,50 @@ export function render_() {
     } catch (error) {
       const code = codeOf(error);
       if (MOVED.includes(code)) {
-        // Someone else recorded first: re-read, keep their figure, say so in one line.
+        // Someone else recorded first: re-read, keep their figure, say so in one line. What this
+        // worker typed is kept: a correction reopens on the newer entry with its amount and reason.
+        const carry = typedNow();
+        if (spec.supersedes) {
+          carry.correction = {
+            kind: spec.kind,
+            amount: spec.amountText,
+            reason: String(spec.reason || ""),
+          };
+        }
         spec.done?.();
-        void load("Người khác vừa ghi số này. Màn hình đã tải lại — kiểm tra rồi sửa nếu cần.");
+        void load(
+          "Người khác vừa ghi số này. Màn hình đã tải lại — kiểm tra rồi sửa nếu cần.",
+          carry,
+        );
+        return;
+      }
+      if (code === "CASH_COUNT_DAY_NOT_TODAY" && spec.kind === "OPENING_FLOAT") {
+        // Pre-production review 9: the tablet kept yesterday's sheet overnight. A float counted
+        // this morning belongs on today's sheet -- never on paper, which is the closing count's
+        // rule -- so the way forward is offered, carrying the amount.
+        render(
+          spec.alertHost,
+          inlineAlert({
+            state: "warn",
+            title: "Chưa ghi được",
+            body:
+              `Màn hình còn mở sổ ${calendarDay(current.business_day)}, đã qua ngày. Tiền đầu ` +
+              "ngày ghi vào sổ hôm nay: bấm “Mở sổ hôm nay”, kiểm tra số rồi bấm “Ghi tiền đầu ngày”.",
+            actions: button({
+              label: "Mở sổ hôm nay",
+              variant: "primary",
+              icon: "refresh",
+              data: { cashOpenToday: "true" },
+              onClick: () => {
+                const carry = typedNow();
+                carry.opening = spec.amountText;
+                carry.toToday = true;
+                spec.done?.();
+                void load("", carry);
+              },
+            }),
+          }),
+        );
         return;
       }
       const known = REFUSAL_VI[/** @type {keyof typeof REFUSAL_VI} */ (code)];
@@ -442,8 +592,9 @@ export function render_() {
    * Sửa: a new entry superseding the current one, with a reason. The old figure stays listed.
    *
    * @param {any} entry
+   * @param {{amount: string, reason: string}} [prefill] what was typed into an earlier sheet
    */
-  function openCorrection(entry) {
+  function openCorrection(entry, prefill) {
     open?.close();
     const opening = entry.kind === "OPENING_FLOAT";
     const alertHost = h("div");
@@ -505,6 +656,11 @@ export function render_() {
     render(sheetsHost, made.node);
     open = made;
     made.open();
+    if (prefill) {
+      amount.input.value = prefill.amount;
+      amount.input.dispatchEvent(new Event("input", { bubbles: true }));
+      reason.value = prefill.reason;
+    }
   }
 
   if (!store) {
@@ -525,7 +681,7 @@ export function render_() {
   });
   historySection.hidden = true;
 
-  return h(
+  const root = h(
     "section",
     { class: "screen cash" },
     page({
@@ -552,6 +708,18 @@ export function render_() {
     techHost,
     sheetsHost,
   );
+
+  // Pre-production review 9: the counter tablet is left on this screen overnight. When it wakes,
+  // the sheet is read again -- the day may have changed -- keeping whatever is typed (`load`).
+  const onWake = () => {
+    if (!root.isConnected) {
+      document.removeEventListener("visibilitychange", onWake);
+      return;
+    }
+    if (document.visibilityState === "visible" && store) void load();
+  };
+  document.addEventListener("visibilitychange", onWake);
+  return root;
 }
 
 /** @type {import("../core/router.js").Route} */

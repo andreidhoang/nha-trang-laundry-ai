@@ -11800,13 +11800,20 @@ def _unknown_ready_first(console: Console) -> None:
 
 
 def _midnight_hold_ranks_by_counted_days(console: Console) -> None:
-    """J1, verification round 3 (P2): a one-hour hold across the shop's midnight takes a whole day
-    out of the count. A, ready ten shop days ago at 08:00 and held 23:30-00:30 four days ago, has
-    waited 9 counted days; B, ready the same day at 10:00 and never held, 10. Wall time ranks A
-    first. Đồ chờ lấy and Nhắc khách lấy đồ both list B first, and every bounded page of either is
-    the top of the whole list -- the page is chosen by the days the counter reads."""
+    """J1, verification round 3 (P2), restated by pre-production review 9. A was ready ten shop
+    days ago at 08:00 and held 23:30-00:30 four days ago; B was ready the same day at 10:00 and
+    never held. The hold used to take a whole day out of A's count because it crossed the shop's
+    midnight (A: 9 days) -- how a nightly hold kept the fee at zero. It takes out its hour: A has
+    waited 10 counted days, as B, and ranks first on the longer wait had the shop never held it
+    (09:00 against 10:00) -- except in the first hour after midnight, when the hour held still
+    holds A's clock on the day before (9 days, 1 held) and B ranks first. Either way both lists
+    agree, and every bounded page of either is the top of the whole list -- the page is chosen by
+    the days the counter reads."""
 
-    head("33g", "GIỮ MỘT GIỜ QUA NỬA ĐÊM — both lists rank by the counted days (J1, round 3)")
+    head("33g", "GIỮ MỘT GIỜ QUA NỬA ĐÊM — the hour held comes out, not a day (J1, review 9)")
+    # Read before the orders are made: in the first hour after the shop's midnight the hour A was
+    # held still keeps its clock on the previous day.
+    early = (_datetime.datetime.now(_datetime.UTC) + _datetime.timedelta(hours=7)).hour < 1
     console.sign_in("demo-owner")
     notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
     if (notice.get("body") or {}).get("published") is not True:
@@ -11858,11 +11865,13 @@ def _midnight_hold_ranks_by_counted_days(console: Console) -> None:
         counted = [
             item.get("days_waiting") for item in orders if item.get("days_waiting") is not None
         ]
+        first, second = (b, a) if early else (a, b)
         ok(
-            f"{label}: B (10 days, none held) is listed above A (9 days, 1 held), and the days "
-            "never rise down the list",
-            (days.get(a), days.get(b)) == ((9, 1), (10, 0))
-            and ids.index(b) < ids.index(a)
+            f"{label}: A's one hour held takes out an hour, not a day -- A "
+            f"{'9 days, 1 held' if early else '10 days, none held'}, B 10 -- "
+            f"{'B' if early else 'A'} is listed first, and the days never rise down the list",
+            (days.get(a), days.get(b)) == (((9, 1) if early else (10, 0)), (10, 0))
+            and ids.index(first) < ids.index(second)
             and counted == sorted(counted, reverse=True),
             json.dumps(
                 {
@@ -11895,9 +11904,11 @@ def _midnight_hold_ranks_by_counted_days(console: Console) -> None:
         console.open(route, settle=2000)
         rows = console.page.locator(rows_selector)
         shown = [rows.nth(i).get_attribute(attribute) for i in range(rows.count())]
+        first, second = (b, a) if early else (a, b)
         ok(
-            f"{route}: B's row is above A's",
-            a in shown and b in shown and shown.index(b) < shown.index(a),
+            f"{route}: {'B' if early else 'A'}'s row is above {'A' if early else 'B'}'s, as the "
+            "server listed them",
+            a in shown and b in shown and shown.index(first) < shown.index(second),
             json.dumps(
                 {
                     "a_at": shown.index(a) if a in shown else None,

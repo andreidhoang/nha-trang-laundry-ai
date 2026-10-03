@@ -552,3 +552,25 @@ def test_0065_holds_the_shape_in_the_database(
     assert _rows(
         connection, "SELECT reminder_step FROM order_contact_attempts WHERE order_id = %s", order_id
     ) == [(None,)]
+
+
+def test_the_due_list_order_is_written_as_the_server_orders_it() -> None:
+    """Round-9b J residual (verifier, P2): since `DEC-050` the due list is ordered by
+    `WAITING_ORDER_SQL` -- the most counted days first, held days not counted -- so an order that
+    became ready earlier but was held is listed below a later-ready one with more counted days. The
+    workflow doc, the screen's header comment and this module's docstring still said "oldest ready
+    first"."""
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    places = {
+        "docs/CORE_BUSINESS_WORKFLOWS_V1.md": "most counted days first",
+        "apps/web/src/screens/reminders.js": "most counted days first",
+        "packages/db/src/nha_trang_laundry_db/pickup_reminders.py": "most counted days first",
+        "docs/REMAINING_GAPS_SPEC_V1.md": "most counted days first",
+    }
+    for relative, phrase in places.items():
+        text = " ".join((root / relative).read_text(encoding="utf-8").split())
+        assert "oldest ready first" not in text, relative
+        assert phrase in text and "DEC-050" in text, relative

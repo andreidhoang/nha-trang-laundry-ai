@@ -250,7 +250,8 @@
   - the `outcome` check gains `MESSAGE_SENT`;
   - existing rows are untouched.
 - **Due list route** *Nhắc khách lấy đồ*: self-collect orders ready for pickup and not collected,
-  bounded, oldest ready first. Each row carries:
+  bounded, most counted days first (since `DEC-050`, round 9b: held days are not counted; when
+  this spec was written it was ordered by the ready time alone). Each row carries:
   - the step;
   - the days waiting;
   - the customer's display name when there is a record;

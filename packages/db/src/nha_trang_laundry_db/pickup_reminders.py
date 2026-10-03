@@ -5,11 +5,13 @@ over facts read here:
 
 * **The due list** (*Nhắc khách lấy đồ*): the store's self-collect orders waiting for pickup (the
   population of `UNCLAIMED-001`'s list, `AWAITING_PICKUP_SQL`) whose newest due reminder nobody has
-  done yet, oldest ready first, bounded. Each row: the step, the days waiting, the customer's name
-  when there is a record, how the shop can reach them (`PHONE` / `CHAT` / `NONE`), the balance, and
-  -- for the roles that call customers only, as `UNCLAIMED-001`'s list returns its number -- the
-  national number for *Gọi* and the `zalo.me` link, both derived here from the sealed column at
-  read time. Unreachable orders are rows too, and counted (`unreachable_count`).
+  done yet, most counted days first (`WAITING_ORDER_SQL`; `DEC-050`: held days are not counted, so a
+  held order can sit below one that became ready later), bounded. Each row: the step, the days
+  waiting, the customer's name when there is a record, how the shop can reach them (`PHONE` / `CHAT`
+  / `NONE`), the balance, and -- for the roles that call customers only, as `UNCLAIMED-001`'s list
+  returns its number -- the national number for *Gọi* and the `zalo.me` link, both derived here from
+  the sealed column at read time. Unreachable orders are rows too, and counted
+  (`unreachable_count`).
 * **The text** (`pickup-reminder-v2`) for (order, step), only after the egress guard
   (`consent_egress.check_egress_allowed`, TRANSACTIONAL) allows it, inside the transaction that
   reads the facts. Refusals: `NO_CONTACT`, then the guard's codes -- `SUPPRESSED`,

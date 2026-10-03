@@ -3,8 +3,10 @@
  *
  * The server decides who, when and what; a person sends it from the shop's own Zalo or phone, in
  * two taps. Each row is one waiting order whose reminder is due — day 0 "đồ đã xong", day 3, 7,
- * 14, and the last day before the published storage fee — oldest ready first, as the server orders
- * it. On a desk it is a table; on a phone each row is a card. Per row:
+ * 14, and the last day before the published storage fee — most counted days first, as the server
+ * orders it (DEC-050: the days the shop held an order are not counted, so a held order can sit
+ * below one that became ready later). On a desk it is a table; on a phone each row is a card. Per
+ * row:
  *
  *   - **Mở Zalo** — the `zalo.me` link the server built from the customer's number (the number
  *     itself is never printed here);

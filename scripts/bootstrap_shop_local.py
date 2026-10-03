@@ -202,8 +202,8 @@ def _write_secret(path: _Path, content: bytes) -> None:
 
 #: `DEC-052`. Said whenever somebody asks this script to keep a CA key, whatever else is on disk.
 CUSTODY_RULE = (
-    "DEC-052: khóa riêng của CA không được giữ lại sau khi ký -- kể cả bản xuất ra ổ USB. "
-    "(The shop CA's private key is never kept after it signs, not even exported.)"
+    "DEC-052: script này không giữ khóa riêng của CA sau khi ký và không xuất nó ra -- kể cả ra "
+    "ổ USB. (Under DEC-052 this script keeps no CA private key after it signs, and exports none.)"
 )
 RENEWAL_STEP = (
     "Gia hạn: chạy lại với --new-ca, rồi cài .shop/ca/ca.crt mới lên từng máy và bật tin cậy "
@@ -214,7 +214,7 @@ RENEWAL_STEP = (
 LEGACY_AUTHORITY = "CA cũ không giới hạn tên miền — hãy tạo lại"
 
 
-def refuse_kept_ca_key(flag: str, *, certificate_exists: bool) -> CertificateRefused:
+def refuse_kept_ca_key(flag: str, host: str) -> CertificateRefused:
     """The refusal for `--export-ca-key` / `--ca-key`: both ask to keep a key `DEC-052` drops.
 
     `PLATFORM-SECURITY-009` P4 offered to export the key so a renewal could re-sign without touching
@@ -222,15 +222,39 @@ def refuse_kept_ca_key(flag: str, *, certificate_exists: bool) -> CertificateRef
     verifier found the flag silently ignored whenever a certificate already existed, so an operator
     who asked for a backup of the key believed they had one. Now it is refused every time, before
     anything is written, and the message says what the operator does instead.
+
+    It also says what is on disk (round-9b integration, the L verifier's residual): it used to run
+    before the CA was classified and answer only that the key "is never kept" -- false on a till an
+    earlier version set up, with an unconstrained CA and its `ca.key` still beside it, and silent
+    about both, while a run without the flag warned about each. The CA is classified as on every
+    other path, and a key an earlier version left is named (it is not exported either; `--new-ca`
+    deletes it).
     """
 
-    situation = (
+    authority_directory = SECRET_DIRECTORY.parent / "ca"
+    certificate_exists = (SECRET_DIRECTORY / "tls_certificate").exists()
+    parts = [f"{flag}: {CUSTODY_RULE}"]
+    status = authority_status(authority_directory / "ca.crt", host)
+    if certificate_exists or status.kind != "absent":
+        problem = _authority_problem(status, host)
+        if problem is not None:
+            parts.append(problem)
+    legacy_key = authority_directory / "ca.key"
+    if legacy_key.exists():
+        parts.append(
+            f"{legacy_key.relative_to(ROOT)} là khóa riêng của CA mà phiên bản cũ của script để "
+            "lại; script không xuất và không ký bằng nó (DEC-052), --new-ca xóa nó. (A CA private "
+            "key an earlier version left on this machine. It is not exported or used to sign -- "
+            "DEC-052 -- and --new-ca deletes it.)"
+        )
+    parts.append(
         "Chứng chỉ console đã có và được giữ nguyên; không có gì được ghi. "
-        "(A console certificate already exists and is left as it is; nothing was written.) "
+        "(A console certificate already exists and is left as it is; nothing was written.)"
         if certificate_exists
-        else "Không có gì được ghi. (Nothing was written.) "
+        else "Không có gì được ghi. (Nothing was written.)"
     )
-    return CertificateRefused(f"{flag}: {CUSTODY_RULE} {situation}{RENEWAL_STEP}")
+    parts.append(RENEWAL_STEP)
+    return CertificateRefused(" ".join(parts))
 
 
 class AuthorityStatus(NamedTuple):
@@ -447,7 +471,7 @@ def certificate(
     # Refused before anything is read or written: the flag asks for a key this design never keeps.
     for flag, value in (("--export-ca-key", export_ca_key), ("--ca-key", ca_key)):
         if value is not None:
-            raise refuse_kept_ca_key(flag, certificate_exists=certificate_path.exists())
+            raise refuse_kept_ca_key(flag, host)
 
     warnings: list[str] = []
     authority_directory = SECRET_DIRECTORY.parent / "ca"
@@ -541,9 +565,8 @@ def main() -> int:
     kept = (("--export-ca-key", arguments.export_ca_key), ("--ca-key", arguments.ca_key))
     for flag, value in kept:
         if value is not None:
-            raise refuse_kept_ca_key(
-                flag, certificate_exists=(SECRET_DIRECTORY / "tls_certificate").exists()
-            )
+            # Read only, to say what the CA on disk is; the host is checked below for a real run.
+            raise refuse_kept_ca_key(flag, arguments.console_host.strip().lower())
 
     host = arguments.console_host.strip().lower()
     if not HOSTNAME.fullmatch(host):

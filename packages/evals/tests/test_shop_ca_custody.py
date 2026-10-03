@@ -555,3 +555,75 @@ def test_the_legacy_refusal_is_the_verifiers_repro_through_the_command_line(
     assert "CA cũ không giới hạn tên miền — hãy tạo lại" in result.stderr, result.stderr
     assert ".shop/ca/ca.key" in result.stderr and "was not kept" not in result.stderr
     assert _snapshot(directory) == before
+
+
+# --- a key flag on a till with a legacy CA (round-9b integration) -------------------------------
+
+
+@pytest.mark.parametrize("entry", ["certificate", "main"])
+@pytest.mark.parametrize("flag", ["--export-ca-key", "--ca-key"])
+@pytest.mark.parametrize("with_legacy_key", [True, False], ids=["ca.key left", "no ca.key"])
+@pytest.mark.parametrize("kind", list(AUTHORITIES))
+def test_a_key_flag_refusal_says_what_the_ca_on_disk_is(
+    bootstrap: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    with_legacy_key: bool,
+    flag: str,
+    entry: str,
+) -> None:
+    """Round-9b L residual (verifier, P2): `refuse_kept_ca_key` ran before the CA was classified.
+    On a till an earlier version set up -- an unconstrained CA, its `ca.key` still beside it, a
+    console certificate it signed -- `--export-ca-key` answered only that the key "is never kept",
+    which is false there, and named neither the legacy CA nor the key; a run without the flag
+    prints both. The refusal now says what is on disk, as `missing_certificate_refusal` does, and
+    still writes nothing."""
+
+    constraints, critical, expected = AUTHORITIES[kind]
+    authority, key = _authority(constraints, critical=critical)
+    _install(bootstrap, authority, key)
+    if with_legacy_key:
+        (bootstrap.SECRET_DIRECTORY.parent / "ca" / "ca.key").write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+    before = _snapshot(bootstrap.ROOT)
+    usb = tmp_path / "usb.key"
+
+    with pytest.raises(SystemExit) as refused:
+        if entry == "certificate":
+            keyword = "export_ca_key" if flag == "--export-ca-key" else "ca_key"
+            bootstrap.certificate(HOST, [], **{keyword: usb})
+        else:
+            monkeypatch.setattr(
+                sys,
+                "argv",
+                [
+                    "bootstrap_shop_local.py",
+                    "--console-host",
+                    HOST,
+                    "--backup-recipient",
+                    RECIPIENT,
+                    flag,
+                    str(usb),
+                ],
+            )
+            bootstrap.main()
+    message = str(refused.value)
+
+    assert _snapshot(bootstrap.ROOT) == before and not usb.exists()
+    assert message.startswith(flag) and "DEC-052" in message and "--new-ca" in message, message
+    assert "never kept" not in message, message
+    assert "giữ nguyên" in message, message
+    if with_legacy_key:
+        assert ".shop/ca/ca.key" in message, message
+    else:
+        assert "ca.key" not in message, message
+    if expected is None:
+        assert "không giới hạn tên miền" not in message and "hãy tạo lại" not in message, message
+    else:
+        assert expected in message, message

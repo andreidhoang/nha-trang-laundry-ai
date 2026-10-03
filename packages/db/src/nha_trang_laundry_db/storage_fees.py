@@ -27,6 +27,7 @@ from nha_trang_laundry_domain.catalog import (
     FulfillmentMode,
     ProductionStatus,
 )
+from nha_trang_laundry_domain.promise import SHOP_TIMEZONE_NAME
 from nha_trang_laundry_domain.unclaimed import (
     STORAGE_POLICY_CONFIG_TYPE,
     OrderStorageFee,
@@ -150,10 +151,9 @@ STORAGE_HOLDS_SQL: Final = """
 """
 
 #: `DEC-050`: the instant an order's laundry would have been ready had the shop never held it --
-#: the ready time moved on by every lifted hold since. The waiting reads order by it so the page
-#: they read is the longest-waiting by wall time, held time skipped; each page is then ordered by
-#: `unclaimed.waiting_clock`'s own day count (shop-local days, which wall time can round apart).
-#: Used only to order, never to count.
+#: the ready time moved on by every lifted hold since. The waiting reads break a tie of counted
+#: days (`WAITING_DAYS_SQL`) with it, the longest wall-time wait first. Used only to order, never
+#: to count.
 WAITING_SINCE_SQL: Final = """
     (
         o.production_ready_at + coalesce(
@@ -167,6 +167,72 @@ WAITING_SINCE_SQL: Final = """
         )
     )
 """
+
+
+def _shop_day_sql(moment: str) -> str:
+    """`unclaimed.shop_date` in SQL: the shop-local calendar day of a `timestamptz`."""
+
+    return f"(({moment}) AT TIME ZONE '{SHOP_TIMEZONE_NAME}')::date"
+
+
+#: The instant `WAITING_DAYS_SQL` counts to, bound once per statement as its first placeholder:
+#: `... FROM orders o ... {WAITING_AS_OF_SQL} WHERE ...` with `as_of` first among the parameters.
+WAITING_AS_OF_SQL: Final = "CROSS JOIN (SELECT %s::timestamptz AS at) AS waiting_as_of"
+
+#: `DEC-050`'s day count in SQL, so a bounded waiting read picks its page by the very days the
+#: counter reads (verification round 3, P2): a page chosen by wall time left off orders that had
+#: waited more counted days than ones it showed, because a one-hour hold across the shop's
+#: midnight takes a whole day out of the count. It is `unclaimed.waiting_clock(ready_at, as_of,
+#: holds=...).days` for an order whose clock runs (every order `AWAITING_PICKUP_SQL` admits):
+#: shop-local days from the ready day to `as_of`, less, for each hold lifted since the laundry was
+#: ready and begun before `as_of`, the shop-local days from its day to the day it was lifted (or
+#: `as_of`'s), never negative. NULL when no ready time is recorded (legacy, `0037`). Each read that
+#: orders by it checks every row against `waiting_clock` and refuses to answer on a difference.
+WAITING_DAYS_SQL: Final = f"""
+    (
+        CASE WHEN o.production_ready_at IS NULL THEN NULL ELSE greatest(
+            0,
+            greatest(
+                0,
+                {_shop_day_sql("waiting_as_of.at")} - {_shop_day_sql("o.production_ready_at")}
+            ) - coalesce(
+                (
+                    SELECT sum(greatest(
+                        0,
+                        {_shop_day_sql("least(h.resumed_at, waiting_as_of.at)")}
+                            - {_shop_day_sql("h.held_at")}
+                    ))
+                    FROM order_storage_holds h
+                    WHERE h.order_id = o.id AND h.held_at >= o.production_ready_at
+                      AND h.resumed_at IS NOT NULL AND h.held_at < waiting_as_of.at
+                ),
+                0
+            )
+        ) END
+    )
+"""
+
+#: The waiting reads' one order: the most counted days first (an unknown wait before all, as it
+#: may be the longest), then the longest wall-time wait, then the order id.
+WAITING_ORDER_SQL: Final = (
+    f"{WAITING_DAYS_SQL} DESC NULLS FIRST, {WAITING_SINCE_SQL} ASC NULLS FIRST, o.id"
+)
+
+
+class WaitingCountDisagrees(RuntimeError):
+    """`WAITING_DAYS_SQL` and `unclaimed.waiting_clock` counted one order differently: a waiting
+    read would page by one count and print the other, so it answers nothing instead."""
+
+
+def require_same_days(order_id: object, sql_days: object, clock: WaitingClock | None) -> None:
+    """Refuse a waiting row whose SQL day count is not the clock's (`WaitingCountDisagrees`)."""
+
+    counted = None if clock is None else clock.days
+    if (None if sql_days is None else int(str(sql_days))) != counted:
+        raise WaitingCountDisagrees(
+            f"order {order_id}: the page counted {sql_days} days, the clock {counted}"
+        )
+
 
 #: The latest published storage policy as one JSON value, for reads that want it beside each row.
 #: Uncorrelated, so PostgreSQL evaluates it once per statement (an InitPlan), not once per order.
@@ -403,15 +469,20 @@ __all__ = [
     "STORAGE_HOLDS_SQL",
     "STORAGE_POLICY_UNPUBLISHED",
     "STORAGE_VIEW_COLUMNS",
+    "WAITING_AS_OF_SQL",
+    "WAITING_DAYS_SQL",
+    "WAITING_ORDER_SQL",
     "WAITING_SINCE_SQL",
     "LockedStorageFee",
     "PublishedStoragePolicy",
     "StoragePolicyAuthorizationError",
+    "WaitingCountDisagrees",
     "holds_from_column",
     "insert_fixed_storage_fee",
     "policy_from_column",
     "publish_storage_policy",
     "published_from_document",
     "read_published_storage_policy",
+    "require_same_days",
     "storage_fee_for_order",
 ]

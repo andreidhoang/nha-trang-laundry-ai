@@ -11728,6 +11728,116 @@ def _unknown_ready_first(console: Console) -> None:
         )
 
 
+def _midnight_hold_ranks_by_counted_days(console: Console) -> None:
+    """J1, verification round 3 (P2): a one-hour hold across the shop's midnight takes a whole day
+    out of the count. A, ready ten shop days ago at 08:00 and held 23:30-00:30 four days ago, has
+    waited 9 counted days; B, ready the same day at 10:00 and never held, 10. Wall time ranks A
+    first. Đồ chờ lấy and Nhắc khách lấy đồ both list B first, and every bounded page of either is
+    the top of the whole list -- the page is chosen by the days the counter reads."""
+
+    head("33g", "GIỮ MỘT GIỜ QUA NỬA ĐÊM — both lists rank by the counted days (J1, round 3)")
+    console.sign_in("demo-owner")
+    notice = console.call("GET", f"/internal/v1/stores/{STORE}/customer-privacy-notice")
+    if (notice.get("body") or {}).get("published") is not True:
+        _publish_script("publish_privacy_notice.py")
+
+    def customer(name: str) -> tuple[str, str]:
+        digits = "09" + str(uuid.uuid4().int)[:8]
+        made = console.call(
+            "POST",
+            f"/internal/v1/stores/{STORE}/customers",
+            {"phone": digits, "display_name": name, "service_consent": True},
+        )
+        return str(((made.get("body") or {}).get("customer") or {}).get("customer_id")), digits
+
+    a = console.build_order(kg="7", stop="ready", customer=customer("chị Nửa Đêm"))["order_id"]
+    console.step(a, "HOLD")
+    console.step(a, "RESUME")
+    b = console.build_order(kg="7", stop="ready", customer=customer("anh Không Giữ"))["order_id"]
+    midnight = (
+        "(date_trunc('day', now() at time zone 'Asia/Ho_Chi_Minh') at time zone 'Asia/Ho_Chi_Minh')"
+    )
+    # HARNESS STEP, as `_age_ready`: the ready times set to the instants above (accepted an hour
+    # earlier), each with its row version advanced; the hold's guard admits only its end, so it is
+    # set aside for the one statement that moves the hour to four nights ago.
+    for order_id, hour in ((a, 8), (b, 10)):
+        sql(
+            f"update orders set production_ready_at = {midnight} - interval '10 days' "
+            f"+ interval '{hour} hours', production_accepted_at = {midnight} - interval '10 days' "
+            f"+ interval '{hour - 1} hours', row_version = row_version + 1 where id = '{order_id}'"
+        )
+    sql(
+        "begin; alter table order_storage_holds disable trigger order_storage_holds_protected; "
+        f"update order_storage_holds set held_at = {midnight} - interval '4 days 30 minutes', "
+        f"resumed_at = {midnight} - interval '4 days' + interval '30 minutes' "
+        f"where order_id = '{a}'; "
+        "alter table order_storage_holds enable trigger order_storage_holds_protected; commit;"
+    )
+    for label, path in (
+        ("Đồ chờ lấy", "orders/awaiting-pickup"),
+        ("Nhắc khách lấy đồ", "pickup-reminders"),
+    ):
+        full = console.call("GET", f"/internal/v1/stores/{STORE}/{path}?limit=200")
+        orders = (full.get("body") or {}).get("orders") or []
+        ids = [item.get("order_id") for item in orders]
+        days = {
+            item.get("order_id"): (item.get("days_waiting"), item.get("held_days"))
+            for item in orders
+        }
+        counted = [
+            item.get("days_waiting") for item in orders if item.get("days_waiting") is not None
+        ]
+        ok(
+            f"{label}: B (10 days, none held) is listed above A (9 days, 1 held), and the days "
+            "never rise down the list",
+            (days.get(a), days.get(b)) == ((9, 1), (10, 0))
+            and ids.index(b) < ids.index(a)
+            and counted == sorted(counted, reverse=True),
+            json.dumps(
+                {
+                    "a": [ids.index(a) if a in ids else None, days.get(a)],
+                    "b": [ids.index(b) if b in ids else None, days.get(b)],
+                    "days": [item.get("days_waiting") for item in orders][:40],
+                }
+            ),
+        )
+        wrong: list[Any] = []
+        for limit in range(1, min(len(ids), 60) + 1):
+            page = console.call("GET", f"/internal/v1/stores/{STORE}/{path}?limit={limit}")
+            shown = [item.get("order_id") for item in (page.get("body") or {}).get("orders") or []]
+            if shown != ids[:limit]:
+                wrong.append(
+                    {
+                        "limit": limit,
+                        "left_off": [days.get(i) for i in ids[:limit] if i not in shown],
+                    }
+                )
+        ok(
+            f"{label}: every page (limit 1..{min(len(ids), 60)}) is the top of the whole list",
+            bool(ids) and not wrong,
+            json.dumps(wrong[:4]) if wrong else f"{len(ids)} rows, every page agrees",
+        )
+    for route, rows_selector, attribute in (
+        ("#/pickup", ".pickup-row", "data-order"),
+        ("#/reminders", "#reminder-list tr[data-reminder]", "data-reminder"),
+    ):
+        console.open(route, settle=2000)
+        rows = console.page.locator(rows_selector)
+        shown = [rows.nth(i).get_attribute(attribute) for i in range(rows.count())]
+        ok(
+            f"{route}: B's row is above A's",
+            a in shown and b in shown and shown.index(b) < shown.index(a),
+            json.dumps(
+                {
+                    "a_at": shown.index(a) if a in shown else None,
+                    "b_at": shown.index(b) if b in shown else None,
+                    "rows": len(shown),
+                }
+            ),
+        )
+        _residual_shot(console, f"j1-midnight-hold-{route[2:]}")
+
+
 def scenario_money_residual(console: Console) -> None:
     """MONEY-RESIDUAL-009B (round 9b), on the real API and the console.
 
@@ -11830,6 +11940,7 @@ def scenario_money_residual(console: Console) -> None:
     )
     _held_on_ready_day(console)
     _unknown_ready_first(console)
+    _midnight_hold_ranks_by_counted_days(console)
 
     head("33b", "KHÁCH CÔNG NỢ GIAO TẬN NƠI — Ghi vào công nợ beside Thu tiền, then the trip (J5)")
     console.sign_in("demo-owner")

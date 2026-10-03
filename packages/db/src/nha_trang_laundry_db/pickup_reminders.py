@@ -88,9 +88,12 @@ from nha_trang_laundry_db.promise_policy import read_published_turnaround_policy
 from nha_trang_laundry_db.service_messaging import read_published_messaging_policy
 from nha_trang_laundry_db.storage_fees import (
     STORAGE_HOLDS_SQL,
-    WAITING_SINCE_SQL,
+    WAITING_AS_OF_SQL,
+    WAITING_DAYS_SQL,
+    WAITING_ORDER_SQL,
     holds_from_column,
     read_published_storage_policy,
+    require_same_days,
 )
 from nha_trang_laundry_db.store_access import is_store_member, require_store_membership
 from nha_trang_laundry_db.unclaimed import (
@@ -465,9 +468,10 @@ def check_reminder_attempt(
 def _scan_due(
     cursor: Any, *, store_id: UUID, as_of: datetime
 ) -> tuple[Any, Any, list[tuple[UUID, ReminderStep, Reachability]], bool]:
-    """Every waiting order's newest due reminder, oldest ready first: the list's population, read
-    once for the list and for `count_due` alike. Returns the storage and messaging policies read,
-    the due rows and whether the scan stopped at `SCAN_LIMIT`."""
+    """Every waiting order's newest due reminder, the most counted days first (`DEC-050`; the
+    order Đồ chờ lấy lists them in): the list's population, read once for the list and for
+    `count_due` alike. Returns the storage and messaging policies read, the due rows and whether
+    the scan stopped at `SCAN_LIMIT`."""
 
     published = read_published_storage_policy(cursor)
     policy = None if published is None else published.policy
@@ -483,21 +487,27 @@ def _scan_due(
                (cu.phone_ciphertext IS NOT NULL AND cu.erased_at IS NULL),
                EXISTS (SELECT 1 FROM contact_channel_bindings b
                        WHERE b.contact_binding_id = o.bound_contact_id),
-               {STORAGE_HOLDS_SQL}
+               {STORAGE_HOLDS_SQL},
+               {WAITING_DAYS_SQL}
         FROM orders o
         LEFT JOIN customers cu ON cu.id = o.customer_id AND cu.store_id = o.store_id
+        {WAITING_AS_OF_SQL}
         WHERE o.store_id = %s AND {AWAITING_PICKUP_SQL} AND o.production_ready_at IS NOT NULL
-        ORDER BY {WAITING_SINCE_SQL} ASC, o.id
+        ORDER BY {WAITING_ORDER_SQL}
         LIMIT %s
         """,
-        (store_id, SCAN_LIMIT + 1),
+        (as_of, store_id, SCAN_LIMIT + 1),
     )
     scanned = cursor.fetchall()
     scan_truncated = len(scanned) > SCAN_LIMIT
     due: list[tuple[UUID, ReminderStep, Reachability]] = []
     for row in scanned[:SCAN_LIMIT]:
         # DEC-050: the steps fall on the clock's days -- a day the shop held the laundry is none.
-        waited = waiting_clock(row[1], as_of, holds=holds_from_column(row[5])).days
+        clock = waiting_clock(row[1], as_of, holds=holds_from_column(row[5]))
+        # The scan is ordered by the SQL's count of the same days -- the list's "oldest first" is
+        # Đồ chờ lấy's order (verification round 3, P2): they agree, or nothing is answered.
+        require_same_days(row[0], row[6], clock)
+        waited = clock.days
         step = current_reminder(waited, policy, _steps(row[2] or []))
         if step is not None:
             reach = reachability(has_phone=bool(row[3]), has_chat=bool(row[4]))

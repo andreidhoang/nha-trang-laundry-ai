@@ -92,11 +92,14 @@ from nha_trang_laundry_db.settlement import collected_by_for_shape
 from nha_trang_laundry_db.storage_fees import (
     STORAGE_HOLDS_SQL,
     STORAGE_POLICY_UNPUBLISHED,
-    WAITING_SINCE_SQL,
+    WAITING_AS_OF_SQL,
+    WAITING_DAYS_SQL,
+    WAITING_ORDER_SQL,
     PublishedStoragePolicy,
     holds_from_column,
     insert_fixed_storage_fee,
     read_published_storage_policy,
+    require_same_days,
     storage_fee_for_order,
 )
 from nha_trang_laundry_db.store_access import is_store_member, require_store_membership
@@ -389,14 +392,6 @@ class UnclaimedOrderResult:
 # --- the repository -------------------------------------------------------------------------------
 
 
-def _longest_waiting_first(item: AwaitingPickupRow) -> tuple[int, int]:
-    """Đồ chờ lấy's order: an unknown wait first, then the most counted days (`DEC-050`)."""
-
-    if item.days_waiting is None:
-        return (0, 0)
-    return (1, -item.days_waiting)
-
-
 class UnclaimedRepository:
     def __init__(self, idempotency: IdempotencyRepository | None = None) -> None:
         self._idempotency = idempotency or IdempotencyRepository()
@@ -460,17 +455,19 @@ class UnclaimedRepository:
                        ORDER BY a.attempted_at DESC, a.id DESC LIMIT 1
                    ),
                    o.commercial_status, o.production_status, o.fulfillment_mode,
-                   o.self_collection_recorded, {STORAGE_HOLDS_SQL}
+                   o.self_collection_recorded, {STORAGE_HOLDS_SQL},
+                   {WAITING_DAYS_SQL}
             FROM orders o
             JOIN quote_revisions r
               ON r.quote_id = o.current_quote_id AND r.revision = o.current_quote_revision
             LEFT JOIN counter_tickets t ON t.id = o.bound_contact_id AND t.store_id = o.store_id
             LEFT JOIN customers cu ON cu.id = o.customer_id AND cu.store_id = o.store_id
+            {WAITING_AS_OF_SQL}
             WHERE o.store_id = %s AND {AWAITING_PICKUP_SQL}
-            ORDER BY {WAITING_SINCE_SQL} ASC NULLS FIRST, o.id
+            ORDER BY {WAITING_ORDER_SQL}
             LIMIT %s
             """,
-            (store_id, limit + 1),
+            (as_of, store_id, limit + 1),
         )
         rows = cursor.fetchall()
         visible = bool(principal.roles & PHONE_VISIBLE_ROLES)
@@ -492,6 +489,9 @@ class UnclaimedRepository:
             holds = holds_from_column(row[23])
             # DEC-050: one clock for the days, disposal and the fee -- held days do not count.
             clock = None if ready_at is None else waiting_clock(ready_at, as_of, holds=holds)
+            # The page was chosen and ordered by the SQL's count of the same days: they agree, or
+            # the list is not answered (verification round 3, P2).
+            require_same_days(order_id, row[24], clock)
             fee = order_storage_fee(
                 policy,
                 # Every row here waits for pickup (`AWAITING_PICKUP_SQL`); the days of the holds
@@ -549,11 +549,10 @@ class UnclaimedRepository:
                     ),
                 )
             )
-        # Longest-waiting first by the clock's own days (`DEC-050`); the SQL chose the page by the
-        # held-time-skipped ready instant, and a stable sort keeps its order between equal days.
-        # An order with no recorded ready time (legacy, 0037) has an unknown wait, possibly the
-        # longest: it stays first, as the SQL's `NULLS FIRST` put it -- never ranked as one day.
-        found.sort(key=_longest_waiting_first)
+        # Longest-waiting first by the clock's own days (`DEC-050`), in the order the SQL chose the
+        # page by (`WAITING_ORDER_SQL`): the most counted days first, so a bounded page is the top
+        # of the whole list. An order with no recorded ready time (legacy, 0037) has an unknown
+        # wait, possibly the longest: it is first (`NULLS FIRST`), never ranked as one day.
         return AwaitingPickupList(
             store_id=store_id,
             evaluated_at=as_of,

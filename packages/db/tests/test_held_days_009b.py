@@ -31,14 +31,27 @@ from uuid import UUID
 import psycopg
 import pytest
 from message_draft_test_data import publish_test_messaging_policy
+from nha_trang_laundry_db import pickup_reminders as pickup_reminders_module
+from nha_trang_laundry_db import unclaimed as unclaimed_module
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.pickup_reminders import PickupReminderRepository
-from nha_trang_laundry_db.storage_fees import publish_storage_policy
+from nha_trang_laundry_db.storage_fees import (
+    WAITING_AS_OF_SQL,
+    WAITING_DAYS_SQL,
+    WaitingCountDisagrees,
+    publish_storage_policy,
+)
 from nha_trang_laundry_db.unclaimed import UnclaimedRefused, UnclaimedRepository
 from nha_trang_laundry_domain.catalog import RewashReason
 from nha_trang_laundry_domain.order_steps import OrderStep
 from nha_trang_laundry_domain.pickup_reminders import ReminderStep
-from nha_trang_laundry_domain.unclaimed import StorageFeeStatus, withdrawal_document
+from nha_trang_laundry_domain.unclaimed import (
+    StorageFeeStatus,
+    StorageHold,
+    WaitingClock,
+    waiting_clock,
+    withdrawal_document,
+)
 from test_order_step_repository import _read, _step
 from test_pickup_reminders_repository import _customer
 from test_unclaimed_laundry import (
@@ -409,3 +422,248 @@ def test_a_hold_then_a_rewash_counts_from_the_new_ready_time_only(
     assert storage.disposal_verdict.eligible_on == _today() + timedelta(days=56)
     assert _due(connection, shop)[order_id].step is ReminderStep.DAY_3
     assert _due(connection, shop)[order_id].held_days == 0
+
+
+# --- the page and the order are one key (verification round 3, P2) -------------------------------
+
+
+def _place(
+    connection: Any,
+    order_id: UUID,
+    shop: Shop,
+    ready_at: datetime,
+    holds: tuple[tuple[datetime, datetime], ...] = (),
+) -> None:
+    """Harness step: the order was ready at exactly `ready_at` and the shop held it over exactly
+    `holds` (each lifted). The holds are made by the counter's own HOLD and RESUME and then set to
+    their instants with the append-only guard set aside for that one statement, as
+    `_backdate_hold` does; the ready time moves with one statement, as `_age` does."""
+
+    for held_at, resumed_at in holds:
+        _do(connection, order_id, shop, OrderStep.HOLD)
+        _do(connection, order_id, shop, OrderStep.RESUME)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE order_storage_holds DISABLE TRIGGER order_storage_holds_protected"
+            )
+            cursor.execute(
+                """
+                UPDATE order_storage_holds SET held_at = %s, resumed_at = %s
+                WHERE id = (
+                    SELECT id FROM order_storage_holds WHERE order_id = %s
+                      AND held_at > %s
+                    ORDER BY held_at DESC LIMIT 1
+                )
+                """,
+                (held_at, resumed_at, order_id, ready_at),
+            )
+            cursor.execute(
+                "ALTER TABLE order_storage_holds ENABLE TRIGGER order_storage_holds_protected"
+            )
+        connection.commit()
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE orders
+            SET production_ready_at = %s,
+                production_accepted_at = least(production_accepted_at, %s - interval '1 hour'),
+                row_version = row_version + 1
+            WHERE id = %s
+            """,
+            (ready_at, ready_at, order_id),
+        )
+    connection.commit()
+
+
+def _at(days_ago: int, hour: int, minute: int = 0) -> datetime:
+    """`hour`:`minute` shop time, `days_ago` shop days before today."""
+
+    return _shop_day(days_ago, hour) + timedelta(minutes=minute)
+
+
+def _page(connection: Any, shop: Shop, limit: int) -> Any:
+    with connection.cursor() as cursor:
+        listed = UnclaimedRepository.list_awaiting_pickup(
+            cursor,
+            store_id=shop.store_id,
+            principal=shop.operator,
+            as_of=datetime.now(UTC),
+            limit=limit,
+        )
+    connection.rollback()
+    return listed
+
+
+def _due_page(connection: Any, shop: Shop, limit: int) -> Any:
+    with connection.cursor() as cursor:
+        found = PickupReminderRepository.list_due(
+            cursor,
+            store_id=shop.store_id,
+            principal=shop.operator,
+            as_of=datetime.now(UTC),
+            limit=limit,
+        )
+    connection.rollback()
+    return found
+
+
+def test_a_short_hold_across_midnight_ranks_by_its_counted_days_on_both_lists(
+    connection: psycopg.Connection[Any], shop: Shop
+) -> None:
+    """The verifier's two orders (verification round 3, P2). A was ready ten shop days ago at
+    08:00 and held one hour, 23:30 to 00:30, four days ago: the hold spans the shop's midnight, so
+    it takes a whole day out of the count -- 9 days. B was ready the same day at 10:00 and never
+    held: 10 days. By wall time A has waited longer (it is ahead by an hour); by the count the
+    counter reads, B has. Both lists, and every page of them, put B first."""
+
+    _publish(connection, shop)
+    connection.commit()
+    a = _ready(connection, shop)
+    b = _ready(connection, shop)
+    _place(connection, a, shop, _at(10, 8), ((_at(5, 23, 30), _at(4, 0, 30)),))
+    _place(connection, b, shop, _at(10, 10))
+    full = _page(connection, shop, 200)
+    days = {item.order_id: (item.days_waiting, item.held_days) for item in full.orders}
+    assert (days[a], days[b]) == ((9, 1), (10, 0))
+    listed = [item.order_id for item in full.orders]
+    assert listed.index(b) < listed.index(a)
+    # The page of one is the longest-waiting order by the count, not by wall time.
+    one = _page(connection, shop, 1)
+    assert [item.order_id for item in one.orders] == [b]
+    assert one.truncated is True
+    # Nhắc khách lấy đồ ("oldest first") orders them the same way, page and all.
+    due = _due_page(connection, shop, 200)
+    reminded = [row.order_id for row in due.orders]
+    assert [(row.days_waiting, row.held_days) for row in due.orders] == [(10, 0), (9, 1)]
+    assert reminded == [b, a]
+    assert [row.order_id for row in _due_page(connection, shop, 1).orders] == [b]
+
+
+def test_every_page_of_both_lists_is_the_top_of_the_counted_order(
+    connection: psycopg.Connection[Any], shop: Shop
+) -> None:
+    """The neighbouring matrix: holds that cross midnight by minutes, one that lasts eleven hours
+    inside one day (no day out), one of thirty hours across two midnights (two days out), plain
+    waits, and a legacy order with no ready time. Whatever the limit, a page is the first rows of
+    the full list, and the counted days never rise down either list."""
+
+    _publish(connection, shop)
+    connection.commit()
+    made = {name: _ready(connection, shop) for name in "ABCDEG"}
+    # A: 9 counted -- one hour across midnight, ahead of B by wall time.
+    _place(connection, made["A"], shop, _at(10, 8), ((_at(5, 23, 30), _at(4, 0, 30)),))
+    # B: 10 counted, never held.
+    _place(connection, made["B"], shop, _at(10, 10))
+    # C: 11 calendar days, 45 minutes held across midnight: 10 counted.
+    _place(connection, made["C"], shop, _at(11, 23), ((_at(11, 23, 30), _at(10, 0, 15)),))
+    # D: eleven hours held inside the ready day: no day out, 10 counted.
+    _place(connection, made["D"], shop, _at(10, 6), ((_at(10, 9), _at(10, 20)),))
+    # E: 12 calendar days, thirty hours held across two midnights: 10 counted.
+    _place(connection, made["E"], shop, _at(12, 20), ((_at(12, 21), _at(10, 3)),))
+    # G: 9 counted, never held, ready after A by wall time.
+    _place(connection, made["G"], shop, _at(9, 1))
+    legacy = _ready(connection, shop)
+    with connection.cursor() as cursor:
+        # Harness step, as above: the legacy shape -- no recorded ready time.
+        cursor.execute(
+            "UPDATE orders SET production_ready_at = NULL, row_version = row_version + 1"
+            " WHERE id = %s",
+            (legacy,),
+        )
+    connection.commit()
+    name = {order_id: label for label, order_id in made.items()} | {legacy: "legacy"}
+
+    full = _page(connection, shop, 200)
+    counted = [(name[item.order_id], item.days_waiting) for item in full.orders]
+    assert counted[0] == ("legacy", None)
+    assert sorted(counted[1:], key=lambda pair: -int(pair[1] or 0)) == counted[1:]
+    assert dict(counted) == {"legacy": None, "A": 9, "B": 10, "C": 10, "D": 10, "E": 10, "G": 9}
+    order = [item.order_id for item in full.orders]
+    for limit in range(1, len(order) + 1):
+        page = _page(connection, shop, limit)
+        assert [item.order_id for item in page.orders] == order[:limit], limit
+        assert page.truncated is (limit < len(order)), limit
+
+    due = _due_page(connection, shop, 200)
+    reminded = [row.order_id for row in due.orders]
+    # The legacy order has no ready day to count reminders from; the rest are all due DAY_7.
+    assert [name[order_id] for order_id in reminded] == [name[o] for o in order[1:]]
+    days = [row.days_waiting for row in due.orders]
+    assert days == sorted(days, reverse=True)
+    for limit in range(1, len(reminded) + 1):
+        page = _due_page(connection, shop, limit)
+        assert [row.order_id for row in page.orders] == reminded[:limit], limit
+
+
+def test_the_sql_count_is_the_clock_at_every_instant(
+    connection: psycopg.Connection[Any], shop: Shop
+) -> None:
+    """`WAITING_DAYS_SQL` pages the lists; `waiting_clock` prints their days. They are one rule:
+    for every hold shape above and a grid of instants every 37 minutes across fourteen shop days
+    (before the ready time, inside a hold, at and around each midnight), the two count the same."""
+
+    shapes: dict[str, tuple[datetime, tuple[tuple[datetime, datetime], ...]]] = {
+        "across midnight by an hour": (_at(10, 8), ((_at(5, 23, 30), _at(4, 0, 30)),)),
+        "never held": (_at(10, 10), ()),
+        "inside one day": (_at(10, 6), ((_at(10, 9), _at(10, 20)),)),
+        "across two midnights": (_at(12, 20), ((_at(12, 21), _at(10, 3)),)),
+        "two holds": (_at(13, 23, 59), ((_at(12, 0), _at(11, 23)), (_at(6, 22), _at(3, 1)))),
+        "held at the ready instant": (_at(7, 12), ((_at(7, 12), _at(6, 12)),)),
+    }
+    made: dict[UUID, tuple[datetime, tuple[tuple[datetime, datetime], ...]]] = {}
+    for ready_at, holds in shapes.values():
+        order_id = _ready(connection, shop)
+        _place(connection, order_id, shop, ready_at, holds)
+        made[order_id] = (ready_at, holds)
+    start = _at(14, 0)
+    instants = [start + timedelta(minutes=37 * step) for step in range(int(16 * 24 * 60 / 37))]
+    with connection.cursor() as cursor:
+        for as_of in instants:
+            cursor.execute(
+                f"""
+                SELECT o.id, {WAITING_DAYS_SQL}
+                FROM orders o {WAITING_AS_OF_SQL}
+                WHERE o.id = ANY(%s)
+                """,
+                (as_of, list(made)),
+            )
+            for order_id, sql_days in cursor.fetchall():
+                ready_at, holds = made[order_id]
+                clock = waiting_clock(
+                    ready_at,
+                    as_of,
+                    holds=tuple(StorageHold(held_at=h, resumed_at=r) for h, r in holds),
+                )
+                assert sql_days == clock.days, (order_id, as_of, sql_days, clock)
+    connection.rollback()
+
+
+def test_a_page_whose_count_differs_from_the_clock_is_not_answered(
+    connection: psycopg.Connection[Any], shop: Shop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Should the SQL count and the clock ever part, neither list pages by one figure and prints
+    another: each refuses to answer (`WaitingCountDisagrees`)."""
+
+    _publish(connection, shop)
+    connection.commit()
+    order_id = _ready(connection, shop)
+    _age(connection, order_id, 4)
+
+    def off_by_one(*args: Any, **kwargs: Any) -> WaitingClock:
+        clock = waiting_clock(*args, **kwargs)
+        return WaitingClock(
+            ready_on=clock.ready_on,
+            days=clock.days + 1,
+            held_days=clock.held_days,
+            paused=clock.paused,
+            lifted=clock.lifted,
+        )
+
+    monkeypatch.setattr(unclaimed_module, "waiting_clock", off_by_one)
+    monkeypatch.setattr(pickup_reminders_module, "waiting_clock", off_by_one)
+    with pytest.raises(WaitingCountDisagrees):
+        _page(connection, shop, 10)
+    connection.rollback()
+    with pytest.raises(WaitingCountDisagrees):
+        _due_page(connection, shop, 10)
+    connection.rollback()

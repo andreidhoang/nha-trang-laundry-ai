@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import datetime as _datetime
 import hashlib
 import io
 import json
@@ -58,6 +59,7 @@ import uuid
 from decimal import Decimal
 from typing import Any
 
+from conformance_coverage import coverage, recorded_before_this_run
 from console_recording import Recorder, add_arguments, viewport, watch_render_defects
 from playwright.sync_api import sync_playwright
 
@@ -365,6 +367,12 @@ PASS: list[str] = []
 FAIL: list[str] = []
 REC = Recorder(arguments.video, arguments.slow_mo, "moi-quy-trinh")
 TOUCHED: set[str] = set()
+#: Declared controls this stack could not offer in this run, each with the server's evidence that
+#: it was closed before the run began (`conformance_coverage.recorded_before_this_run`). The gate
+#: excuses only these, and names them (round-9b integration).
+NOT_OFFERED: dict[str, str] = {}
+#: When this run began: what "before this run" means for that evidence.
+RUN_STARTED = _datetime.datetime.now(_datetime.UTC)
 
 
 def ok(name: str, condition: object, detail: object = "") -> bool:
@@ -13072,6 +13080,14 @@ def _cash_entry(console: Console, kind: str, amount: int, reason: str) -> dict[s
         (answer,) = console.press_capturing(console.page.locator(f"#{prefix}-save"), "/cash-count")
         touched(f"cashCount.{prefix.split('-')[1]}-save")
     else:
+        # Round-9b integration: the form is closed for the day. When the server shows the day's
+        # first entry was recorded before this run began (an earlier run on this stack), the two
+        # first-entry controls are excused from the coverage gate, with that evidence; otherwise
+        # they stay untouched and the gate reports them.
+        evidence = recorded_before_this_run(_cash_sheet(console), kind, RUN_STARTED)
+        if evidence is not None:
+            for control in ("amount", "save"):
+                NOT_OFFERED[f"cashCount.{prefix.split('-')[1]}-{control}"] = evidence
         return _cash_correct(console, kind, amount, reason)
     console.page.wait_for_timeout(1200)
     return answer
@@ -13638,7 +13654,7 @@ def main() -> int:
         )
 
         head("8", "MỌI NÚT — the controls this run actually touched")
-        missed = [control for control in DECLARED_CONTROLS if control not in TOUCHED]
+        gate = coverage(DECLARED_CONTROLS, TOUCHED, NOT_OFFERED)
         if arguments.only:
             # One scenario cannot touch every control, so the line would fail by construction --
             # and a filmed single scenario would end on a "1 hỏng" that is not a defect.
@@ -13647,12 +13663,12 @@ def main() -> int:
                 f"({len(TOUCHED)}/{len(DECLARED_CONTROLS)} touched by this scenario)"
             )
         else:
-            for control in missed:
-                note(f"not exercised: {control}")
+            for line in gate.notes:
+                note(line)
             ok(
-                f"every declared control was exercised ({len(TOUCHED)}/{len(DECLARED_CONTROLS)})",
-                not missed,
-                f"{len(missed)} untouched" if missed else "",
+                gate.line,
+                gate.passed,
+                f"{len(gate.unexcused)} untouched" if gate.unexcused else "",
             )
         extra = sorted(TOUCHED - set(DECLARED_CONTROLS))
         if extra:

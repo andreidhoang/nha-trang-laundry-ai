@@ -840,13 +840,13 @@ def test_a_full_message_leaves_the_rest_waiting_and_drops_are_reported() -> None
         state = pending.after_failure(state, text, ("application_signals",), now=moment)
     assert len(state.alerts) == pending.MAX_PENDING and state.dropped == 5
 
-    message, carried, reported, waiting, _ = pending.compose(None, state, limit=3800, now=moment)
+    message, carried, reported, waiting, *_ = pending.compose(None, state, limit=3800, now=moment)
     assert message is not None and len(message) <= 3800
     assert 0 < len(carried) < pending.MAX_PENDING and not reported and waiting == 0
     rest = pending.after_success(state, carried, reported)
     assert len(rest.alerts) == pending.MAX_PENDING - len(carried) and rest.dropped == 5
     while rest.alerts:
-        message, carried, reported, _, _ = pending.compose(None, rest, limit=3800, now=moment)
+        message, carried, reported, *_ = pending.compose(None, rest, limit=3800, now=moment)
         assert message is not None and len(message) <= 3800
         rest = pending.after_success(rest, carried, reported)
     assert rest.empty and "5 cảnh báo cũ hơn" in str(message)
@@ -1634,44 +1634,200 @@ def test_a_failed_send_with_nowhere_to_keep_it_is_still_not_delivered(
     assert pending.try_save(tmp_path / "unused.json", pending.PendingState()) is None
 
 
-def test_a_deferred_alert_with_nowhere_to_keep_it_is_not_delivered(
-    telegram_stub: _Stub,
-    credentials: dict[str, str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The neighbouring case: the send succeeds, but carried only the oldest kept alert -- this
-    run's alert did not fit beside it -- and the file that would keep this run's alert cannot be
-    written. That alert was neither sent nor kept: exit 3 and the line, not 'delivered'."""
+NOON = datetime(2026, 10, 1, 12, 0, tzinfo=SHOP)
+OLD_WAL_ALERT = f"{HEADING}\n• wal_archive_gap: " + "w" * 3700
+
+
+def _unwritable(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """A pending file that can be read but not written: the host disk is full. Returns the real
+    `Path.write_text`, to put back when the disk is freed."""
 
     import errno
 
-    pending = _pending()
-    directory = tmp_path / "state"
-    environment = {
-        **credentials,
-        "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base,
-        "R1_ALERT_PENDING_DIRECTORY": str(directory),
-    }
-    kept = pending.after_failure(
-        pending.PendingState(), LONG_ALERT, ("capability_flags",), now=RAISED
-    )
-    pending.save(pending.pending_path("checks-data", environment), kept)
-    long_now = dict(_FAILING_DOCUMENT)
-    long_now["alert"] = {
-        "text": f"{HEADING}\n• wal_archive_gap: " + "n" * 3700,
-        "checks": ["wal_archive_gap"],
-    }
+    original = Path.write_text
 
     def _full(self: Path, *_: object, **__: object) -> int:
         raise OSError(errno.ENOSPC, "No space left on device")
 
     monkeypatch.setattr(Path, "write_text", _full)
-    code = _run_relay_in_process(monkeypatch, environment, long_now)
+    return original
+
+
+def test_an_alert_that_cannot_be_kept_goes_now_and_nothing_promises_a_newer_one(
+    telegram_stub: _Stub,
+    credentials: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round-9b verifier, round 4 (P2), through the real relay and the stub. A 3 700-character
+    alert is kept; the disk fills; the check now fails with a 3 000-character alert of its own.
+    Every run used to send only the old kept alert -- it could never be marked delivered -- ending
+    "còn một cảnh báo mới hơn — gửi ở tin sau", while the newer alert, which could not be kept, was
+    never sent: the same message every five minutes and a promise nothing kept. (The test this
+    replaces, `test_a_deferred_alert_with_nowhere_to_keep_it_is_not_delivered`, asserted exactly
+    that message.) Now the newer alert goes first and whole, the kept one goes clipped beside it
+    and stays kept, and the "newer follows" line appears only once the newer alert is kept."""
+
+    pending = _pending()
+    environment = {
+        **credentials,
+        "R1_ALERT_TELEGRAM_API_BASE": telegram_stub.base,
+        "R1_ALERT_PENDING_DIRECTORY": str(tmp_path / "state"),
+    }
+    path = pending.pending_path("checks-data", environment)
+    pending.save(path, _kept(OLD_WAL_ALERT, ("wal_archive_gap",)))
+    before = path.read_bytes()
+    current = f"{HEADING}\n• volume_free: " + "v" * 3000
+    document = {**_FAILING_DOCUMENT, "alert": {"text": current, "checks": ["volume_free"]}}
+
+    original = _unwritable(monkeypatch)
+    codes = [_run_relay_in_process(monkeypatch, environment, document) for _ in range(3)]
     log = Path(credentials["R1_ALERT_LOG_FILE"]).read_text("utf-8")
-    assert len(telegram_stub.requests) == 1 and "xxx" in telegram_stub.requests[0]["form"]["text"]
-    assert code == 3, log
-    assert "ALERT NOT DELIVERED" in log and "NOT kept for a retry" in log, log
+    assert codes == [1, 1, 1], log
+    assert "NOT DELIVERED" not in log and "cannot be kept" in log and "No space left" in log
+    texts = [request["form"]["text"] for request in telegram_stub.requests]
+    assert len(texts) == 3
+    for text in texts:
+        assert text.startswith(current + "\n\n"), "this run's alert, first and whole"
+        assert pending.NEWER_FOLLOWS not in text and pending.KEPT_CLIPPED in text
+        assert "www" in text and len(text) <= pending.MESSAGE_CEILING
+    assert path.read_bytes() == before, "the kept alert is still kept, whole"
+
+    # The disk is freed. The kept alert goes whole; "newer follows" is said now that it is true.
+    monkeypatch.setattr(Path, "write_text", original)
+    assert _run_relay_in_process(monkeypatch, environment, document) == 1
+    fourth = telegram_stub.requests[-1]["form"]["text"]
+    assert OLD_WAL_ALERT.split("\n", 1)[1] in fourth and pending.NEWER_FOLLOWS in fourth
+    assert "vvv" not in fourth
+    kept, _ = pending.load(path, now=NOON)
+    assert [alert.text for alert in kept.alerts] == [current]
+    passing = {**_FAILING_DOCUMENT, "passed": True, "alert": None}
+    assert _run_relay_in_process(monkeypatch, environment, passing) == 0
+    assert current.split("\n", 1)[1] in telegram_stub.requests[-1]["form"]["text"]
+    assert not path.exists() and len(telegram_stub.requests) == 5
+
+
+@pytest.mark.parametrize(
+    ("length", "shape"),
+    [
+        (0, "whole"),  # past the 3 800 packing limit beside it, under the ceiling: whole
+        (160, "whole"),  # the last length at which both fit whole, at exactly the ceiling
+        (161, "clipped"),
+        (1000, "clipped"),
+        (3000, "clipped"),  # the verifier's repro
+        (3728, "clipped"),  # the last length leaving MIN_CLIPPED_ENTRY of room
+        (3729, "named"),  # no room left worth sending: only named
+        (3755, "named"),  # the current alert exactly MAX_MESSAGE_CHARACTERS long
+        (5000, "named"),  # clipped to 3 800 itself, as on any first send
+    ],
+)
+def test_a_current_alert_that_cannot_be_kept_is_never_deferred(length: int, shape: str) -> None:
+    pending = _pending()
+    state = _kept(OLD_WAL_ALERT, ("wal_archive_gap",))
+    current = f"{HEADING}\n• volume_free: " + "v" * length
+    assert pending.compose(current, state, now=NOON).deferred, "would have been deferred"
+
+    composition = pending.compose(current, state, now=NOON, defer=False)
+    text = composition.text
+    first = current if len(current) <= 3800 else current[:3799] + "…"
+    assert text is not None and text.startswith(first + "\n\n")
+    assert not composition.deferred and pending.NEWER_FOLLOWS not in text
+    assert len(text) <= pending.MESSAGE_CEILING
+    if shape == "whole":
+        assert OLD_WAL_ALERT.split("\n", 1)[1] in text and composition.carried == (0,)
+        assert not composition.kept_clipped
+    else:
+        assert composition.carried == () and composition.kept_clipped
+        marker = pending.KEPT_CLIPPED if shape == "clipped" else pending.KEPT_LEFT_OUT
+        assert text.endswith(marker) and ("www" in text) is (shape == "clipped")
+        # Not delivered whole, so not delivered: it stays kept as it was.
+        assert pending.after_success(state, composition.carried, False) == state
+
+
+@pytest.mark.parametrize("current_length", [None, 10, 1000, 2000, 3000, 3500, 3800, 6000])
+@pytest.mark.parametrize("kept_length", [10, 1000, 2000, 3000, 3500, 3700, 3800])
+def test_newer_follows_is_said_only_of_a_deferred_alert(
+    current_length: int | None, kept_length: int
+) -> None:
+    pending = _pending()
+    state = _kept(f"{HEADING}\n• wal_archive_gap: " + "w" * kept_length, ("wal_archive_gap",))
+    current = (
+        None if current_length is None else f"{HEADING}\n• volume_free: " + "v" * current_length
+    )
+    for defer in (True, False):
+        composition = pending.compose(current, state, now=NOON, defer=defer)
+        assert composition.text is not None and len(composition.text) <= pending.MESSAGE_CEILING
+        assert (pending.NEWER_FOLLOWS in composition.text) is composition.deferred
+        assert not (composition.deferred and not defer)
+        if current is not None and not composition.deferred:
+            assert composition.text.startswith(current[:3799])
+
+
+def test_a_deferred_alert_is_kept_before_the_send(tmp_path: Path) -> None:
+    """`prepare` defers only an alert it has already written down: a send that then succeeds or
+    fails, or a process killed in between, cannot lose it."""
+
+    pending = _pending()
+    state = _kept(OLD_WAL_ALERT, ("wal_archive_gap",))
+    path = tmp_path / "alert-pending-checks-data.json"
+    pending.save(path, state)
+    current = f"{HEADING}\n• volume_free: " + "v" * 3000
+    composition, problem = pending.prepare(current, ("volume_free",), state, path, now=NOON)
+    assert problem is None and composition.deferred
+    on_disk, _ = pending.load(path, now=NOON)
+    assert [alert.text for alert in on_disk.alerts] == [OLD_WAL_ALERT, current]
+    assert [alert.attempts for alert in on_disk.alerts] == [1, 0]
+
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory", encoding="utf-8")
+    composition, problem = pending.prepare(
+        current, ("volume_free",), state, blocker / "state" / path.name, now=NOON
+    )
+    assert problem is not None and "Not a directory" in problem
+    assert not composition.deferred and composition.text is not None
+    assert composition.text.startswith(current) and pending.NEWER_FOLLOWS not in composition.text
+
+
+def test_the_direct_path_never_defers_an_alert_it_cannot_keep(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`check_shop_operations.deliver_alert` composes the same way, so it had the same defect."""
+
+    pending = _pending()
+    checks = importlib.import_module("check_shop_operations")
+    token = tmp_path / "token"
+    token.write_text("probe-token", encoding="utf-8")
+    directory = tmp_path / "state"
+    path = pending.pending_path("direct", {"R1_ALERT_PENDING_DIRECTORY": str(directory)})
+    pending.save(path, _kept(OLD_WAL_ALERT, ("wal_archive_gap",)))
+    before = path.read_bytes()
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_TOKEN_FILE", str(token))
+    monkeypatch.setenv("R1_ALERT_TELEGRAM_CHAT_ID", "1234")
+    monkeypatch.setenv("R1_ALERT_PENDING_DIRECTORY", str(directory))
+    sent: list[str] = []
+
+    class _Response:
+        status = 200
+
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    def _accepted(request: Any, timeout: float = 0) -> Any:
+        sent.append(urllib.parse.parse_qs(request.data.decode())["text"][0])
+        return _Response()
+
+    monkeypatch.setattr(checks.urllib.request, "urlopen", _accepted)
+    _unwritable(monkeypatch)
+    failure = checks.CheckResult("volume_free", False, "v" * 3000, {})
+    assert checks.deliver_alert([failure], now=NOON) is True
+    stderr = capsys.readouterr().err
+    assert len(sent) == 1 and sent[0].startswith(f"{HEADING}\n• volume_free: vvv")
+    assert pending.NEWER_FOLLOWS not in sent[0] and pending.KEPT_CLIPPED in sent[0]
+    assert "NOT DELIVERED" not in stderr and "cannot be kept" in stderr, stderr
+    assert path.read_bytes() == before
 
 
 def _document_command(document: dict[str, object]) -> list[str]:

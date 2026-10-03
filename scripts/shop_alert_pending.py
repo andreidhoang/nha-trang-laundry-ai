@@ -45,6 +45,16 @@ longer than `MAX_MESSAGE_CHARACTERS` goes, and is kept, clipped to it.
 `try_save` returns the reason instead of raising, so the caller still logs "ALERT NOT DELIVERED" and
 exits 3 -- with "not kept" and why -- when the disk is full or the directory is not one.
 
+**An alert is deferred only once it is kept** (round-9b verifier, round 4). `compose` used to
+choose deferral before anybody knew whether the deferred alert could be kept. With the pending file
+readable but not writable (a full disk), every run re-sent the same oldest kept alert -- it could
+never be marked delivered -- under "a newer alert follows in the next message", and the newer alert
+was never sent at all. `prepare` now writes the deferred alert into the file *before* the send; when
+that write fails, nothing is deferred: the current alert goes whole and first, and the oldest kept
+alert beside it -- clipped to the room left (with no room, only named), said so, and left kept,
+since a clipped copy is not a delivery. `NEWER_FOLLOWS` is printed only when the newer alert is
+already kept.
+
 Used by `scripts/relay_shop_alert.py` (every scheduled run) and by
 `scripts/check_shop_operations.py`'s direct-delivery path. Imports nothing from the application,
 like the relay itself.
@@ -86,6 +96,14 @@ MESSAGE_CEILING = TELEGRAM_MESSAGE_CHARACTERS - 96
 CLIPPED = "…"
 #: The last line of a message that carried the oldest kept alert instead of the current one.
 NEWER_FOLLOWS = "(còn một cảnh báo mới hơn — gửi ở tin sau, vì tin này đã đầy)"
+#: The last line of a message whose oldest kept alert was clipped to go beside the current alert
+#: because the pending file could not be written: it stays kept, whole, and goes whole once it can.
+KEPT_CLIPPED = "(cảnh báo cũ bị cắt cho vừa tin; bản đầy đủ vẫn được giữ và sẽ gửi lại)"
+#: Less room than this beside the current alert, and a clipped kept alert would say nothing: the
+#: message says only that one is kept (`KEPT_LEFT_OUT`) rather than send its time line and an
+#: ellipsis.
+MIN_CLIPPED_ENTRY = 120
+KEPT_LEFT_OUT = "(còn cảnh báo cũ chưa gửi được; vẫn được giữ và sẽ gửi lại)"
 
 #: `DEC-025`. `console_reachable` is the only check whose failure is a visible outage rather than a
 #: silent loss of a guarantee, and a console down at 03:00 that recovers before opening does not
@@ -128,6 +146,9 @@ class Composition(NamedTuple):
     #: caller keeps it (`after_success(..., deferred=...)` or `after_failure(..., deferred=True)`)
     #: and the next run sends it whole.
     deferred: bool = False
+    #: The oldest kept alert went clipped beside the current alert (`compose(..., defer=False)`), or
+    #: was left out for want of room: it is not in `carried`, and stays kept.
+    kept_clipped: bool = False
 
 
 @dataclass(frozen=True)
@@ -367,6 +388,7 @@ def compose(
     limit: int = MAX_MESSAGE_CHARACTERS,
     ceiling: int = MESSAGE_CEILING,
     now: datetime,
+    defer: bool = True,
 ) -> Composition:
     """The message for this run: the current alert first, whole, as the check wrote it; then the
     kept ones, oldest first, each whole, as many as fit within `limit`. The oldest kept alert goes
@@ -376,6 +398,11 @@ def compose(
     alert that may go is always carried, so a long one can neither be skipped forever nor stop the
     ones behind it. When it does not fit beside the current alert, it goes alone and the current
     alert is `deferred`: kept by the caller and sent whole next run. Nothing is cut to make room.
+
+    `defer=False` is for when the current alert cannot be kept (`prepare`): it goes whole and first
+    whatever is kept, and the oldest kept alert that does not fit beside it within `ceiling` goes
+    clipped to the room left, under `KEPT_CLIPPED` (or only named, `KEPT_LEFT_OUT`, when there is
+    no room), and is not `carried` -- it stays kept.
     """
 
     duplicates = _parts_of(current)
@@ -392,7 +419,8 @@ def compose(
 
     first = _clip(current, limit) if current is not None else None
     deferred = (
-        first is not None
+        defer
+        and first is not None
         and bool(others)
         and len(_message([first], [_entry(state.alerts[others[0]])])) > limit
     )
@@ -419,6 +447,16 @@ def compose(
         if len(_message(parts, [*entries, entry, *tail])) > limit:
             if position:
                 break
+            if parts and len(_message(parts, [entry])) > ceiling:
+                # Only with `defer=False`: the current alert could not be kept, so it goes whole,
+                # and the oldest kept alert beside it goes clipped -- or not at all, when the room
+                # left would hold no more than its time line -- and stays kept, whole.
+                room = ceiling - len(_message(parts, [KEPT_CLIPPED])) - 1
+                section = [_clip(entry, room), KEPT_CLIPPED]
+                if room < MIN_CLIPPED_ENTRY:
+                    section = [KEPT_LEFT_OUT]
+                message = _message(parts, section)
+                return Composition(message, tuple(carried), False, waiting, False, True)
             # The oldest goes whatever its length: whole, in the room between `limit` and
             # `ceiling` the headings need. Only an alert stored longer than `KEPT_CHARACTERS` (by an
             # older version of this file) can still be too long: it goes clipped, so nothing wedges.
@@ -438,6 +476,41 @@ def compose(
         reported = True
     message = _message(parts, [*entries, *tail])
     return Composition(message, tuple(sorted(carried)), reported, waiting, deferred)
+
+
+def prepare(
+    current: str | None,
+    checks: tuple[str, ...],
+    state: PendingState,
+    path: Path | None,
+    *,
+    now: datetime,
+    limit: int = MAX_MESSAGE_CHARACTERS,
+) -> tuple[Composition, str | None]:
+    """`compose`, deferring the current alert only once it is kept (round-9b verifier, round 4).
+
+    When `compose` would defer the current alert, the state with it kept is written first. If that
+    write fails (a full disk, a directory that is a file), a deferral would lose the alert -- and,
+    the oldest kept alert never being marked delivered, repeat that one every run under a "newer
+    follows" promise nobody keeps -- so the message is composed with `defer=False` instead. Returns
+    the composition and, when the deferral was given up, why.
+
+    The early write is the state the caller writes after a successful send minus the carried
+    alerts, and after a failed one minus the failed attempt: whatever happens next, the deferred
+    alert is already on disk.
+    """
+
+    composition = compose(current, state, limit=limit, now=now)
+    if not composition.deferred:
+        return composition, None
+    if path is None:
+        problem: str | None = "nowhere to keep it"
+    else:
+        kept = after_success(state, (), False, deferred=current, checks=checks, now=now)
+        problem = try_save(path, kept)
+    if problem is None:
+        return composition, None
+    return compose(current, state, limit=limit, now=now, defer=False), problem
 
 
 def _message(parts: list[str], section: list[str]) -> str:
@@ -498,6 +571,8 @@ def after_success(
 
 __all__ = [
     "KEPT_CHARACTERS",
+    "KEPT_CLIPPED",
+    "KEPT_LEFT_OUT",
     "MAX_MESSAGE_CHARACTERS",
     "MAX_PENDING",
     "MESSAGE_CEILING",
@@ -517,6 +592,7 @@ __all__ = [
     "in_quiet_hours",
     "load",
     "pending_path",
+    "prepare",
     "save",
     "split_for_hours",
     "try_save",

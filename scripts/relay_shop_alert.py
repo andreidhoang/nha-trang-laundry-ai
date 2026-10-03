@@ -381,9 +381,18 @@ def main(argv: list[str] | None = None) -> int:
             _log(label, f"WARNING alert delivery is not configured: {error}", log_file)
         return EXIT_PASSED
 
-    composition = pending_alerts.compose(
-        outcome.text, state, limit=MAX_MESSAGE_CHARACTERS, now=moment
+    # A current alert is deferred only once it is kept: `prepare` writes it to the pending file
+    # before the send, and when that write fails it goes now instead (round-9b verifier, round 4).
+    composition, not_deferred = pending_alerts.prepare(
+        outcome.text, outcome.checks, state, pending_file, now=moment, limit=MAX_MESSAGE_CHARACTERS
     )
+    if not_deferred is not None:
+        _log(
+            label,
+            "WARNING this run's alert did not fit beside the oldest kept alert and cannot be kept "
+            f"for the next run ({not_deferred}): it goes now, first and whole, beside it",
+            log_file,
+        )
     waiting = (
         f"; {composition.waiting} earlier alert(s) wait for opening hours (DEC-025, from 07:00)"
         if composition.waiting
@@ -401,7 +410,9 @@ def main(argv: list[str] | None = None) -> int:
     carried = len(composition.carried)
     earlier = f"; {carried} earlier alert(s) resent" if carried else ""
     if composition.deferred:
-        earlier += "; this run's alert did not fit beside them and goes whole next run"
+        earlier += "; this run's alert did not fit beside them, is kept, and goes whole next run"
+    if composition.kept_clipped:
+        earlier += "; the oldest kept alert went clipped beside this run's and stays kept"
     try:
         token, chat_id = load_credentials(dict(os.environ))
         send_message(composition.text, token=token, chat_id=chat_id, api_base=api_base)
@@ -438,18 +449,11 @@ def main(argv: list[str] | None = None) -> int:
             checks=outcome.checks,
             now=moment,
         )
-        problem = pending_alerts.try_save(pending_file, remaining)
-        if problem is not None and composition.deferred:
-            # This run's alert was not in the message, and there is nowhere to keep it.
-            _log(
-                label,
-                f"ALERT NOT DELIVERED: this run's alert did not fit beside {carried} earlier "
-                f"alert(s), which were delivered, and is NOT kept for a retry: {problem} -- "
-                f"failing: {checks}",
-                log_file,
-            )
-            return EXIT_NOT_DELIVERED
+        # Nothing delivered and nothing deferred (a clipped kept alert stays kept): the file
+        # already says this, and a full disk would only turn that into a warning.
+        problem = None if remaining == state else pending_alerts.try_save(pending_file, remaining)
         if problem is not None:
+            # A deferred alert is safe whatever this says: `prepare` wrote it before the send.
             earlier += f"; WARNING the kept alerts were not updated ({problem})" + (
                 ": the earlier alert(s) delivered now may be sent again" if carried else ""
             )

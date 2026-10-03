@@ -311,9 +311,15 @@ not a pile. Up to 24 wait (two hours); past that the oldest are dropped and the 
 how many. A kept **console** alert keeps `DEC-025`'s hours: between 21:00 and 07:00 it waits, untried,
 and goes with the first run from 07:00 — a console alert raised at 20:50 whose send failed does not
 page anyone at 02:00. An alert that mixed a console line with an any-hour one is kept as two, so the
-any-hour part still goes at once. The oldest kept alert always goes with the next message that can
-be sent (clipped to fit if it is very long), so one long alert cannot hold up the rest. A run whose
-send fails exits 3; a run that only has console alerts waiting for the morning does not.
+any-hour part still goes at once. The oldest kept alert always goes, whole, with the next message
+that can be sent, so one long alert cannot hold up the rest. When it and this run's alert are too
+long for one message, it goes alone, ending "còn một cảnh báo mới hơn — gửi ở tin sau", and this
+run's alert is written to the file **before** the send and goes whole next run. If the file cannot
+be written (the disk is full), nothing is put off: this run's alert goes first and whole, the old
+one goes beside it cut to fit — ending "cảnh báo cũ bị cắt cho vừa tin; bản đầy đủ vẫn được giữ" —
+and stays in the file, and `alert-delivery.log` says `WARNING … cannot be kept`. Free the disk and
+the next run sends the old one whole. A run whose send fails exits 3; a run that only has console
+alerts waiting for the morning does not.
 
 **`--check outbox`** reports how many rows the outbox holds (`DEC-051`: record-only rows are kept,
 not deleted). Past 1 000 000 rows it **warns** — `WARN outbox_rows` in the schedule's log and a

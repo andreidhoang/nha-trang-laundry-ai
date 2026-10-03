@@ -1371,11 +1371,22 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
         if problem:
             _not_delivered(problem)
     # A kept console alert waits for 07:00 like a new one (`DEC-025`); `compose` leaves it untried.
-    composition = pending_alerts.compose(current, state, now=now)
+    # A current alert is deferred only once `prepare` has kept it (round-9b verifier, round 4).
+    checks = tuple(failure.name for failure in _reportable(failures, now=now)[0])
+    composition, not_deferred = pending_alerts.prepare(
+        current, checks, state, pending_file, now=now
+    )
+    if not_deferred is not None:
+        print(
+            "check_shop_operations: WARNING this run's alert did not fit beside the oldest kept "
+            f"alert and cannot be kept for the next run ({not_deferred}): it goes now, first and "
+            "whole, beside it",
+            file=_sys.stderr,
+            flush=True,
+        )
     text = composition.text
     if text is None:
         return False
-    checks = tuple(failure.name for failure in _reportable(failures, now=now)[0])
 
     def _kept() -> None:
         if pending_file is not None:
@@ -1424,20 +1435,18 @@ def deliver_alert(failures: list[CheckResult], *, now: datetime) -> bool:
         _not_delivered("telegram did not answer 2xx")
         _kept()
     elif pending_file is not None:
-        problem = pending_alerts.try_save(
-            pending_file,
-            pending_alerts.after_success(
-                state,
-                composition.carried,
-                composition.reported_dropped,
-                deferred=current if composition.deferred else None,
-                checks=checks,
-                now=now,
-            ),
+        remaining = pending_alerts.after_success(
+            state,
+            composition.carried,
+            composition.reported_dropped,
+            deferred=current if composition.deferred else None,
+            checks=checks,
+            now=now,
         )
-        if problem is not None and composition.deferred:
-            _not_delivered(f"this run's alert did not fit and is NOT kept for a retry: {problem}")
-        elif problem is not None:
+        # Unchanged (a clipped kept alert stays kept): nothing to write. A deferred alert is
+        # already kept whatever the write says: `prepare` wrote it before the send.
+        problem = None if remaining == state else pending_alerts.try_save(pending_file, remaining)
+        if problem is not None:
             print(
                 f"check_shop_operations: WARNING the kept alerts were not updated ({problem}): "
                 "an earlier alert delivered now may be sent again",

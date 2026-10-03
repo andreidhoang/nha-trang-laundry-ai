@@ -12070,6 +12070,175 @@ def scenario_console_residual(console: Console) -> None:
             repr(trail),
         )
 
+    head("K2f", "BẤM KHI BỊ GIỮ — not made late; a jump of two keeps its size; no copy without API")
+    # Round-9b verification 4. (a) A held press read the session; on a slow network the read came
+    # back after the person had gone on typing on the screen the banner said was kept, and the
+    # press was made then -- the screen left, the typing lost. (b) A held Back of two entries
+    # resumed as one. (c) Without the Navigation API, an address typed while the held screen was
+    # not the last entry left a second copy of it in the history -- a dead Back.
+
+    def expire_now(where: Console) -> bool:
+        sid = str(
+            (where.call("GET", "/internal/v1/session").get("body") or {}).get("session_id") or ""
+        )
+        if not (READS_DATABASE and sid):
+            return False
+        # HARNESS STEP: eight hours idle, as in K2.
+        sql(
+            "update staff_sessions set idle_expires_at = now() - interval '1 second' "
+            f"where id = '{sid}'"
+        )
+        where.page.evaluate(
+            "async () => { const api = await import('/staff/src/core/api.js');"
+            " await api.request('/internal/v1/session').catch(() => null); }"
+        )
+        where.page.wait_for_timeout(1200)
+        return True
+
+    def signed_in_elsewhere(where: Console) -> int:
+        other = where.page.context.new_page()
+        other.goto(CONSOLE, wait_until="domcontentloaded")
+        status = int(
+            other.evaluate(
+                """async (t) => (await fetch('/internal/v1/auth/session', {method: 'POST',
+                    credentials: 'include', headers: {'Authorization': 'Bearer ' + t}})).status""",
+                token("demo-operations"),
+            )
+        )
+        other.close()
+        where.page.bring_to_front()
+        return status
+
+    def hash_of(target: Any) -> str:
+        if target.url.startswith("about:"):
+            return str(target.url)
+        return str(target.evaluate("() => location.hash"))
+
+    console.sign_in("demo-operations")
+    console.walk_in()
+    console.add_line("STANDARD_WASH_DRY", "3.5")
+    page.wait_for_timeout(300)
+    if not expire_now(console):
+        ok("an idle expiry needs --database-url (the session's idle deadline is moved)", False)
+    else:
+        ok("(a) signed in again in another tab", signed_in_elsewhere(console) == 200)
+        # HARNESS STEP: a slow network -- this page's session reads take 4 s to come back.
+        page.evaluate(
+            "() => { const f = window.fetch; window.fetch = (u, i) =>"
+            " String(u).endsWith('/internal/v1/session')"
+            " ? new Promise((r) => setTimeout(r, 4000)).then(() => f(u, i)) : f(u, i); }"
+        )
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(600)
+        held_first = (
+            hash_of(page).startswith("#/new")
+            and qty() == "3.5"
+            and "Chưa mở" in page.locator("#banners").inner_text()
+        )
+        page.locator("#new-line-0-qty").fill("4.5")
+        page.wait_for_timeout(5000)
+        banner = page.locator("#banners").inner_text()
+        ok(
+            "(a) Đơn hàng pressed on a slow network, then 4.5 typed while the banner says the "
+            "screen is kept: the late session read does not make the press -- Nhận đồ stays "
+            "with 4.5, and 'Chưa mở' is gone with the session back",
+            held_first
+            and hash_of(page).startswith("#/new")
+            and qty() == "4.5"
+            and "Chưa mở" not in banner,
+            f"held={held_first} {hash_of(page)} qty={qty()!r} {banner[:120]!r}",
+        )
+        if console.nav("Đơn hàng", "/orders"):
+            touched("shell.nav.orders")
+        page.wait_for_timeout(2000)
+        ok(
+            "(a) and Đơn hàng pressed again opens it",
+            hash_of(page).startswith("#/orders")
+            and page.locator("main h1").first.inner_text() == "Đơn hàng",
+            hash_of(page),
+        )
+
+    console.sign_in("demo-operations")
+    console.open("#/")
+    if console.nav("Đơn hàng", "/orders"):
+        touched("shell.nav.orders")
+    page.wait_for_timeout(1200)
+    page.evaluate("() => { location.hash = '#/customers'; }")
+    page.wait_for_timeout(1500)
+    page.locator("#customers-search").fill("3456")
+    page.wait_for_timeout(300)
+    if expire_now(console):
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(1500)
+        held_back = (
+            hash_of(page) == "#/customers"
+            and page.locator("#customers-search").input_value() == "3456"
+        )
+        ok("(b) signed in again in another tab", signed_in_elsewhere(console) == 200)
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(2500)
+        reached = hash_of(page)
+        forward = []
+        for _ in range(2):
+            page.go_forward()
+            page.wait_for_timeout(1500)
+            forward.append(hash_of(page))
+        ok(
+            "(b) a Back of two entries, held, then asked again after signing in: Hôm nay, two "
+            "entries back -- and Forward still goes Đơn hàng, Khách hàng",
+            held_back and reached == "#/" and forward == ["#/orders", "#/customers"],
+            f"held={held_back} reached={reached} forward={forward}",
+        )
+
+    plain = console.context.new_page()
+    plain.add_init_script(
+        "Object.defineProperty(window, 'navigation', {value: undefined, configurable: true});"
+    )
+    bare = Console(plain, console.context)
+    try:
+        bare.sign_in("demo-operations")
+        no_api = plain.evaluate("() => typeof window.navigation") == "undefined"
+        bare.open("#/orders")
+        # Set-up by address, so a phone's "Thêm" adds no entry of its own to the trail below.
+        for hop in ("#/customers", "#/"):
+            plain.evaluate(f"() => {{ location.hash = '{hop}'; }}")
+            plain.wait_for_timeout(1500)
+        plain.go_back()
+        plain.wait_for_timeout(1500)
+        plain.locator("#customers-search").fill("3456")
+        plain.wait_for_timeout(300)
+        if expire_now(bare):
+            plain.evaluate("() => { location.hash = '#/pickup'; }")
+            plain.wait_for_timeout(1500)
+            typed_held = (
+                hash_of(plain) == "#/customers"
+                and plain.locator("#customers-search").input_value() == "3456"
+            )
+            ok("(c) signed in again in another tab", signed_in_elsewhere(bare) == 200)
+            if bare.nav("Đơn hàng", "/orders"):
+                touched("shell.nav.orders")
+            plain.wait_for_timeout(2500)
+            reached = hash_of(plain)
+            trail = []
+            for _ in range(3):
+                plain.go_back()
+                plain.wait_for_timeout(1500)
+                trail.append(hash_of(plain))
+            ok(
+                "(c) no Navigation API, the held screen reached by Back, an address typed while "
+                "held: after signing in, Đơn hàng opens and three Backs go Khách hàng, Đơn hàng, "
+                "out -- no second copy of the held screen, no dead Back",
+                no_api
+                and typed_held
+                and reached == "#/orders"
+                and trail == ["#/customers", "#/orders", "about:blank"],
+                f"api_hidden={no_api} held={typed_held} reached={reached} trail={trail}",
+            )
+    finally:
+        plain.close()
+        page.bring_to_front()
+
     head("K2b", "MỘT LẦN THOÁT, MỌI THẺ — the other tab clears itself")
     console.sign_in("demo-operations")
     console.open_order(order_id)

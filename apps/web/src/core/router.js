@@ -78,11 +78,29 @@ let lengthSeen = 0;
 /**
  * The move the person asked for while the screen was held (round-9b verification 3, K2): a press
  * or an address (`to`), or a Back or Forward (`go`). Made once the session is found back
- * (`resumeHeld`); forgotten when any screen is drawn.
+ * (`resumeHeld`); forgotten when any screen is drawn -- and when the person carries on with the
+ * held screen (round-9b verification 4, `noteWork`): the banner told them the screen is kept, and
+ * a session read answering seconds later must not take it, and what they typed since, away.
  *
  * @type {{kind: "to", target: string}|{kind: "go", delta: number}|null}
  */
 let heldMove = null;
+/**
+ * A held Back or Forward on its way back (`returning`) is sized as it goes (round-9b verification
+ * 4): one more entry for every step it takes to reach the held screen's own, so a jump of several
+ * entries -- the browser's history list, a long press on Back -- resumes as that jump, not as one
+ * step. `resumeOnReturn`: the session was found back before the way back ended; the move is made
+ * when it has.
+ *
+ * @type {{kind: "go", delta: number}|null}
+ */
+let returnMove = null;
+let resumeOnReturn = false;
+/**
+ * The router's own `replace` is under way: the next address change is the current entry given
+ * another address, not an entry of its own -- if it is held, the held address is put back on it.
+ */
+let replacing = false;
 
 /** @returns {number|null} the current entry's place in the history, when the browser says */
 function entryIndex() {
@@ -120,16 +138,27 @@ function onPopstate() {
   if (!returning) return;
   const here = entryStamp();
   if (here === shownEntry) {
-    returning = false;
+    returned();
     return;
   }
   if (here === null) {
     // An entry this page never stamped, on the way: it becomes the held screen's, address and all.
-    returning = false;
     history.replaceState(stamped(shownEntry), "", keptAddress);
+    returned();
     return;
   }
+  // One entry further from where the Back or Forward went: the move it asked for is one longer.
+  if (returnMove) returnMove.delta += returnMove.delta < 0 ? -1 : 1;
   history.go(here < shownEntry ? 1 : -1);
+}
+
+/** The way back has reached the held screen's entry; a move found resumable meanwhile is made. */
+function returned() {
+  returning = false;
+  returnMove = null;
+  if (!resumeOnReturn) return;
+  resumeOnReturn = false;
+  resumeHeld();
 }
 
 /**
@@ -142,10 +171,26 @@ function noteWork(event) {
   if (!routeShown) return;
   if (event.type !== "click") {
     worked = true;
+    // Typed or chosen on the held screen: the person carried on with it (round-9b verification
+    // 4). Not `change` -- a text field's comes when it loses focus, which a held press can cause.
+    if (event.type === "input") forgetHeld();
     return;
   }
   const target = /** @type {Element|null} */ (event.target);
-  if (target?.closest?.("button, input, select, textarea, label, [role=button]")) worked = true;
+  if (!target?.closest?.("button, input, select, textarea, label, [role=button]")) return;
+  worked = true;
+  // A press on an in-page link is leaving, not carrying on: it is the held move (`holdPress`).
+  if (!target.closest("a[href^='#/']")) forgetHeld();
+}
+
+/**
+ * The person carried on with the held screen after a move was held (round-9b verification 4):
+ * the move is not made when the session is found back. The banner told them the screen is kept;
+ * signed in again, they press again -- the guide's "Đăng nhập lại xong thì bấm lại".
+ */
+function forgetHeld() {
+  heldMove = null;
+  resumeOnReturn = false;
 }
 
 /**
@@ -201,7 +246,10 @@ export function navigate(path, query) {
  * @param {string} path
  */
 export function replace(path) {
-  location.replace(`#${path}`);
+  const target = `#${path}`;
+  if (location.hash === target) return;
+  replacing = true;
+  location.replace(target);
 }
 
 /** @returns {RouteContext} */
@@ -287,9 +335,15 @@ function heldFor(target) {
  * @returns {boolean} whether there was a move to make
  */
 export function resumeHeld() {
+  if (!heldMove) return false;
+  // Still stepping back to the held screen's entry (`onPopstate`): the move is made from there,
+  // and a Back or Forward is not sized until then (round-9b verification 4).
+  if (returning) {
+    resumeOnReturn = true;
+    return true;
+  }
   const move = heldMove;
   heldMove = null;
-  if (!move) return false;
   if (move.kind === "go") history.go(move.delta);
   else if (location.hash !== move.target) location.hash = move.target;
   else void render();
@@ -303,28 +357,41 @@ export function resumeHeld() {
  * one at a time (`onPopstate`), leaving every entry where it was -- the next Back, once signed in
  * again, goes where it went before.
  *
+ * The Back or Forward is remembered at its true size, counted on the way back (`onPopstate`):
+ * a jump of several entries resumes as that jump (round-9b verification 4).
+ *
  * A new address (typed, or written by code that does not ask `navigate`) made an entry of its own,
  * ahead of the held screen's (round-9b verification 3). It used to be given the held screen's
  * address and stamp: two entries of one screen, and one Back later did nothing at all. Now the
- * history steps back over it, to the held screen's own entry, and the next move overwrites it. Only
- * where the browser shows the entry is new -- its place in the history (`navigation`), or a history
- * grown longer; an entry of unknown place is still rewritten, which never leaves the console.
+ * history steps back over it, to the held screen's own entry, and the next move overwrites it.
+ *
+ * Which entry is new: its place in the history, where the browser says (`navigation`). Where it
+ * does not (Safari before 26.2, Firefox before 147), an entry this page never stamped that has an
+ * address (round-9b verification 4): every entry this page drew is stamped, so the only unstamped
+ * one behind the held screen is the bare address the console was opened at, before "#/" -- and
+ * the history's length tells nothing when the new entry replaced exactly one ahead of a screen
+ * reached by Back. That bare entry, and the current one given another address by `replace`, are
+ * still rewritten to the held screen, which never leaves the console.
  *
  * @param {string} left the address before the move
- * @param {boolean} grew the history is longer than at the last address change
+ * @param {boolean} grew the history's length changed since the last address change
+ * @param {boolean} replaced the move was the router's own `replace`, not an entry of its own
  */
-function keepEntry(left, grew) {
+function keepEntry(left, grew, replaced) {
   const here = entryStamp();
   if (here !== null && here !== shownEntry) {
-    heldMove = { kind: "go", delta: here < shownEntry ? -1 : 1 };
+    returnMove = { kind: "go", delta: here < shownEntry ? -1 : 1 };
+    heldMove = returnMove;
     returning = true;
     keptAddress = left;
     history.go(here < shownEntry ? 1 : -1);
     return;
   }
   const index = entryIndex();
-  const known = index !== null && shownIndex >= 0 && index !== shownIndex;
-  if (known || (index === null && grew && here === null)) {
+  const known = !replaced && index !== null && shownIndex >= 0 && index !== shownIndex;
+  const madeSince =
+    !replaced && index === null && here === null && (grew || location.hash !== "");
+  if (known || madeSince) {
     const ahead = known ? index > shownIndex : true;
     heldMove = ahead
       ? { kind: "to", target: location.hash }
@@ -363,19 +430,23 @@ export async function render(event) {
 
   const left = event?.oldURL ? new URL(event.oldURL).hash : "";
   const moved = Boolean(left) && left !== location.hash;
-  const grew = history.length > lengthSeen;
+  const grew = history.length !== lengthSeen;
   lengthSeen = history.length;
+  const replaced = replacing;
+  replacing = false;
   if (moved && routeShown && !building) {
     // A step of a held Back's way back (`onPopstate` takes it), or its arrival: the entry of the
     // screen on show -- which never left -- is on show again. Nothing to render.
     if (returning || entryStamp() === shownEntry) return;
   }
   if (routeShown && worked && !building && hold?.(context, moved)) {
-    if (moved) keepEntry(left, grew);
+    if (moved) keepEntry(left, grew, replaced);
     return;
   }
   returning = false;
   heldMove = null;
+  returnMove = null;
+  resumeOnReturn = false;
 
   pending?.abort();
   const controller = new AbortController();

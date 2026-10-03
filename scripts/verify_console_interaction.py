@@ -15091,6 +15091,180 @@ with sync_playwright() as playwright:
         )
         state["authenticated"] = True
 
+    # --- K2 (round-9b verification 4): a held press is not made late; a held Back keeps its size --
+    # A held press reads the session. On a slow network that read answers seconds later -- while
+    # the banner already says the screen is kept, and the person has gone on with it. The press
+    # was then made anyway: the screen left, and what was typed after the banner was gone.
+    slow_session_read = (
+        "() => { const f = window.fetch; window.fetch = (u, i) =>"
+        " String(u).endsWith('/internal/v1/session')"
+        " ? new Promise((r) => setTimeout(r, 2500)).then(() => f(u, i)) : f(u, i); }"
+    )
+    for viewport, tag, carry_on in (
+        ({"width": 1280, "height": 900}, "desk", True),
+        ({"width": 390, "height": 844}, "phone", True),
+        ({"width": 1280, "height": 900}, "desk", False),
+    ):
+        page.set_viewport_size(viewport)
+        typed_on_new()
+        expire()
+        state["authenticated"] = True
+        page.evaluate(slow_session_read)
+        press_visible("/orders")
+        held_late = (
+            address() == "#/new" and qty_now() == "3.5" and "Chưa mở “Đơn hàng”" in banner_text()
+        )
+        if carry_on:
+            page.locator("#new-line-0-qty").fill("4.5")
+        page.wait_for_timeout(2800)
+        if carry_on:
+            check(
+                f"K2 ({tag}, slow session read, the person went on typing after the banner said "
+                "the screen is kept): the late read does not carry the press out -- Nhận đồ "
+                "stays with 4.5 kg, and the banner no longer says 'Chưa mở'",
+                held_late
+                and address() == "#/new"
+                and qty_now() == "4.5"
+                and "Chưa mở" not in banner_text(),
+                f"held={held_late} {address()} qty={qty_now()!r} {banner_text()[:100]!r}",
+            )
+            press_visible("/orders")
+            check(
+                f"K2 ({tag}): and Đơn hàng pressed again then opens",
+                address() == "#/orders"
+                and page.locator("main h1").first.inner_text() == "Đơn hàng",
+                f"{address()}",
+            )
+        else:
+            check(
+                "K2 (desk, slow session read, nothing done meanwhile): the press is made when the "
+                "read answers -- Đơn hàng opens",
+                held_late
+                and address() == "#/orders"
+                and page.locator("main h1").first.inner_text() == "Đơn hàng",
+                f"held={held_late} {address()}",
+            )
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    # A held Back (or Forward) of more than one entry -- the browser's history list, a long press
+    # on Back -- resumed as one step: it did not go where it was pressed.
+    def held_jump(nonav: bool) -> None:
+        tag = "no Navigation API" if nonav else "Navigation API"
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+        page.wait_for_timeout(500)
+        for hop in ("#/orders", "#/customers"):
+            page.evaluate(f"() => {{ location.hash = '{hop}'; }}")
+            page.wait_for_timeout(900)
+        page.locator("#customers-search").fill("3456")
+        page.wait_for_timeout(200)
+        expire()
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(1500)
+        held_back = address() == "#/customers" and search_value() == "3456"
+        state["authenticated"] = True
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(2000)
+        reached = address()
+        forward = []
+        for _ in range(2):
+            page.go_forward()
+            page.wait_for_timeout(1000)
+            forward.append(address())
+        check(
+            f"K2 ({tag}, Back of two entries held, signed in again, pressed again): it reaches "
+            "Hôm nay, two entries back -- and the history is whole (Forward: Đơn hàng, Khách hàng)",
+            held_back and reached == "#/" and forward == ["#/orders", "#/customers"],
+            f"held={held_back} reached={reached} forward={forward}",
+        )
+        # Forward of two entries, held on a screen worked on two entries back.
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(1200)
+        for hop in ("#/customers", "#/orders", "#/pickup"):
+            page.evaluate(f"() => {{ location.hash = '{hop}'; }}")
+            page.wait_for_timeout(900)
+        page.evaluate("() => history.go(-2)")
+        page.wait_for_timeout(1200)
+        page.locator("#customers-search").fill("3456")
+        page.wait_for_timeout(200)
+        expire()
+        page.evaluate("() => history.go(2)")
+        page.wait_for_timeout(1500)
+        held_forward = address() == "#/customers" and search_value() == "3456"
+        state["authenticated"] = True
+        page.evaluate("() => history.go(2)")
+        page.wait_for_timeout(2000)
+        check(
+            f"K2 ({tag}, Forward of two entries held, signed in again, pressed again): it "
+            "reaches Nhận lại đồ, two entries on",
+            held_forward and address() == "#/pickup",
+            f"held={held_forward} {address()}",
+        )
+
+    held_jump(False)
+
+    # An address written while the held screen is not the last entry (Back pressed earlier),
+    # without the Navigation API (Safari before 26.2, Firefox before 147): it replaced the entry
+    # ahead without growing the history, was rewritten to the held screen -- a second copy of it,
+    # and one Back later did nothing.
+    def typed_mid_history(nonav: bool) -> None:
+        tag = "no Navigation API" if nonav else "Navigation API"
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+        page.wait_for_timeout(500)
+        api_seen = page.evaluate("() => typeof window.navigation?.currentEntry?.index")
+        for hop in ("#/customers", "#/"):
+            page.evaluate(f"() => {{ location.hash = '{hop}'; }}")
+            page.wait_for_timeout(900)
+        page.go_back()
+        page.wait_for_timeout(1000)
+        length_before = page.evaluate("() => history.length")
+        page.locator("#customers-search").fill("3456")
+        page.wait_for_timeout(200)
+        expire()
+        page.evaluate("() => { location.hash = '#/pickup'; }")
+        page.wait_for_timeout(1500)
+        typed_held = address() == "#/customers" and search_value() == "3456"
+        state["authenticated"] = True
+        press_orders()
+        page.wait_for_timeout(600)
+        reached = address()
+        trail = []
+        for _ in range(2):
+            page.go_back()
+            page.wait_for_timeout(1200)
+            trail.append(address())
+        check(
+            f"K2 ({tag}, the held screen not the last entry, an address typed while held, signed "
+            "in again, Đơn hàng pressed): two Backs reach Khách hàng then the first Đơn hàng -- no "
+            "second copy of the held screen, no dead Back",
+            (api_seen == ("undefined" if nonav else "number"))
+            and typed_held
+            and reached == "#/orders"
+            and trail == ["#/customers", "#/orders"],
+            f"api={api_seen} len={length_before} held={typed_held} reached={reached} trail={trail}",
+        )
+
+    typed_mid_history(False)
+
+    # The same two without the Navigation API: a page of its own whose `navigation` is hidden.
+    main_page = page
+    nonav_page = context.new_page()
+    nonav_page.on("pageerror", lambda e: errors.append(str(e)))
+    nonav_page.add_init_script(
+        "Object.defineProperty(window, 'navigation', {value: undefined, configurable: true});"
+    )
+    nonav_page.route("**/internal/**", route_api)
+    page = nonav_page
+    try:
+        held_jump(True)
+        typed_mid_history(True)
+    finally:
+        page = main_page
+        nonav_page.close()
+    page.bring_to_front()
+    state["authenticated"] = True
+
     # --- K2: one Thoát clears every tab --------------------------------------------------------
     customer_on_screen()
     other = context.new_page()

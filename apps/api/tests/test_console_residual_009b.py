@@ -384,3 +384,12 @@ def test_the_hand_off_asks_the_router_and_writes_no_address_itself() -> None:
     )
     assert "location.hash" not in code
     assert code.count("navigate(") == 2
+
+
+def test_the_guide_says_typing_on_after_a_held_press_keeps_the_screen() -> None:
+    # Round-9b verification 4: a held press is forgotten once the person carries on with the held
+    # screen (router.js `forgetHeld`); a session read answering late no longer takes them away.
+    row = _guide_row("**Phiên đăng nhập đã kết thúc**")
+    assert "nhập tiếp ở màn hình đang giữ thì máy ở lại màn hình đó" in row
+    source = (WEB / "src" / "core" / "router.js").read_text()
+    assert "function forgetHeld()" in source

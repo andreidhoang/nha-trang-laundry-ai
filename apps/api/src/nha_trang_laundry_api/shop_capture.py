@@ -149,6 +149,7 @@ class ShopCaptureService:
         principal: StaffPrincipal,
         idempotency_key: str,
         now: datetime | None = None,
+        paid_from_drawer: bool = False,
     ) -> tuple[ExpenseView, bool]:
         moment = now or datetime.now(UTC)
         with self._connection_factory(self._database_url) as connection:
@@ -165,6 +166,7 @@ class ShopCaptureService:
                     correlation_id=uuid4(),
                     today=shop_today(moment),
                     occurred_at=moment,
+                    paid_from_drawer=paid_from_drawer,
                 ),
             )
 

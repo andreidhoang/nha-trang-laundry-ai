@@ -1118,6 +1118,80 @@ paths:
         required: true
         schema:
           type: string
+  /internal/v1/stores/{store_id}/cash-count:
+    get:
+      operationId: read_cash_count
+      summary: 'Today''s cash count: the float and the closing count recorded (and their corrections),
+        what'
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_cash_count_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: record_cash_count
+      summary: Record the opening float or the closing count, or correct the current one with a reason.
+      x-authorization-dependencies:
+      - require_operations_staff
+      - get_cash_count_service
+      x-authorization:
+        access: GATED
+        gate: require_operations_staff
+        roles:
+        - OPERATOR
+        - OPS_APPROVER
+        - OWNER_ADMIN
+        mfa_required: true
+      x-documented-by-fastapi: true
+      responses:
+        '201':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /internal/v1/stores/{store_id}/cash-counts:
+    get:
+      operationId: list_cash_counts
+      summary: 'The owner''s read: every day of `[from, to]` (at most 92, the report''s window) that has
+        a'
+      x-authorization-dependencies:
+      - require_owner
+      - get_cash_count_service
+      x-authorization:
+        access: GATED
+        gate: require_owner
+        roles:
+        - OWNER_ADMIN
+        mfa_required: true
+      x-documented-by-fastapi: true
+      responses:
+        '200':
+          description: Success response.
+      parameters:
+      - name: store_id
+        in: path
+        required: true
+        schema:
+          type: string
   /internal/v1/stores/{store_id}/contacts/recent:
     get:
       operationId: list_recent_contacts

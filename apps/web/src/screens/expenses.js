@@ -242,7 +242,14 @@ export function render_(context) {
     const voided = Boolean(line.voided_at);
     return listRow({
       title: EXPENSE_CATEGORY_VI[line.category] || String(line.category),
-      meta: [calendarDay(line.spent_on, { weekday: false }), line.note].filter(Boolean).join(" · "),
+      meta: [
+        calendarDay(line.spent_on, { weekday: false }),
+        // CASH-COUNT-009 (DEC-049): handed out of the counter's drawer.
+        line.paid_from_drawer ? "Trả từ két" : null,
+        line.note,
+      ]
+        .filter(Boolean)
+        .join(" · "),
       trailing: h(
         "span",
         { class: ["money", voided && "expenses__voided"] },
@@ -303,6 +310,7 @@ export function render_(context) {
           ["Số tiền", money(line.amount_vnd)],
           ["Ngày chi", calendarDay(line.spent_on)],
           ["Ghi chú", line.note || "—"],
+          ["Trả từ két", line.paid_from_drawer ? "Có" : "Không"],
           ["Người ghi", line.recorded_by_name || "—"],
           ["Ghi lúc", dateTime(line.recorded_at)],
           line.voided_at ? ["Đã huỷ lúc", dateTime(line.voided_at)] : null,
@@ -347,6 +355,11 @@ export function render_(context) {
         onInput: () => submission.reset(),
       })
     );
+    // CASH-COUNT-009 (DEC-049): "Trả từ két" -- default no. When ticked, the day's cash count
+    // expects that much less in the drawer.
+    const fromDrawer = /** @type {HTMLInputElement} */ (
+      h("input", { type: "checkbox", id: "expense-drawer", onChange: () => submission.reset() })
+    );
     const save = button({
       label: "Ghi vào sổ",
       variant: "primary",
@@ -380,6 +393,7 @@ export function render_(context) {
             category,
             amount_vnd: parsed,
             ...(note.value.trim() ? { note: note.value.trim() } : {}),
+            paid_from_drawer: fromDrawer.checked,
           },
         });
         submission.reset();
@@ -417,6 +431,12 @@ export function render_(context) {
         dateInput,
         h("label", { class: "field-label", for: "expense-note" }, "Ghi chú"),
         note,
+        h(
+          "label",
+          { class: "check-line", for: "expense-drawer" },
+          fromDrawer,
+          h("span", null, "Trả từ két (lấy tiền mặt trong két ra trả)"),
+        ),
         h("p", { class: "hint" }, "Không ghi số điện thoại của khách vào sổ."),
         alertHost,
       ),

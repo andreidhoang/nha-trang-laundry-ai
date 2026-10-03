@@ -168,6 +168,217 @@ def test_a_note_that_looks_like_a_phone_number_is_refused() -> None:
         with pytest.raises(ShopCaptureError) as refused:
             capture_note(phone)
         assert refused.value.reason_code == "NOTE_LOOKS_LIKE_PHONE"
+
+
+@pytest.mark.parametrize(
+    "phone",
+    [
+        "khach (090) 512 3456",
+        "khach (090)512 3456",
+        "goi 090 (512) 3456",
+        "(+84) 905 123 456",
+        "(+84)905123456",
+        "sdt 0905/123/456",
+        "sdt 0905 / 123 / 456",
+        "0905/123.456",
+    ],
+)
+def test_a_phone_written_with_brackets_or_slashes_is_refused_too(phone: str) -> None:
+    """Verification round 3 of 9b: people write a phone number with brackets round the area code or
+    slashes between the groups as often as with spaces; a note is the shop's books, not a contact
+    list, however the number is punctuated."""
+    with pytest.raises(ShopCaptureError) as refused:
+        capture_note(phone)
+    assert refused.value.reason_code == "NOTE_LOOKS_LIKE_PHONE"
+
+
+@pytest.mark.parametrize(
+    "phone",
+    [
+        # Verification round 4 of 9b: the forms that still reached the books.
+        "khach 0905 - 123 - 456 tra thieu",
+        "khach 0905 . 123 . 456",
+        "khach 0905\u2013123\u2013456",
+        "khach 0905/123 456",
+        "khach (090) 512/3456",
+        "khach [0905] 123 456",
+        # Their neighbours: every other way the same digits are held together as one number.
+        "khach 0905 \u2013 123 \u2013 456",
+        "khach 0905\u2014123\u2014456",
+        "khach 0905 \u2010 123 \u2010 456",
+        "khach 0905\u2212123\u2212456",
+        "khach 0905 / 123 456",
+        "khach 0905 /123/ 456",
+        "khach {0905} 123 456",
+        "khach 0905_123_456",
+        "khach 0905,123,456",
+        "khach 0905\u00a0123\u00a0456",
+        "khach 0905\u200b123\u200b456",
+        "khach 0905\u202f123\u202f456",
+        "khach \uff10\uff19\uff10\uff15\uff11\uff12\uff13\uff14\uff15\uff16",
+        "khach (090) - 512 - 3456",
+        "khach +84 905-123-456",
+        "khach 84.905.123.456",
+        "khach 0 9 0 5 1 2 3 4 5 6",
+        "khach 09/05/12/34/56",
+        "khach 09.05.123.456",
+        "02/10/2026 khach 0905 - 123 - 456",
+    ],
+)
+def test_a_phone_is_refused_however_its_groups_are_punctuated(phone: str) -> None:
+    """Verification round 4 of 9b: the detector listed separators one at a time, so each round
+    found a punctuation it did not list (spaced hyphens, spaced dots, an en-dash, a slash next to a
+    space, square brackets). A phone is nine or more digits held together by nothing but spaces
+    and punctuation; a letter (đ, k, x ...) or a date ends the number."""
+    with pytest.raises(ShopCaptureError) as refused:
+        capture_note(phone)
+    assert refused.value.reason_code == "NOTE_LOOKS_LIKE_PHONE"
+
+
+@pytest.mark.parametrize(
+    "phone",
+    [
+        # Verification round 5 of 9b: a symbol between the groups ended the number.
+        "khach 0905|123|456 tra thieu",
+        "khach 0905 | 123 | 456",
+        "khach 0905~123~456",
+        "khach 0905=123=456",
+        "khach 0905^123^456",
+        "khach 0905`123`456",
+        "khach 0905>123>456",
+        "khach 0905 \u2192 123 456",
+        "khach 0905*123*456",
+        "khach 0905#123#456",
+        "khach 0905\u2022123\u2022456",
+        "khach 0905:123:456",
+        "khach 0905;123;456",
+        "khach 0905%123%456",
+        # ... and so did more than four marks in a row.
+        "khach 0905 ... 123 ... 456",
+        "khach 0905 - - - 123 - - - 456",
+        "khach 0905 ----- 123 ----- 456",
+        # A date mask swallowed the tail of a phone.
+        "khach 0905 12-03-45",
+        "khach (0905) 12-03-45",
+        "khach 0905 12/03/45",
+        "khach 84 905 12-03-45",
+        "khach 0905 12.03.45",
+        "khach 0905 1:23 456",
+        "khach 0905 123.400",
+        "khach 0905 123 456k",
+        "khach 0905123456k",
+        "khach 905.123.456",
+        "khach 84.905 123.456",
+        # A letter from another script is not one of the shop's letters: it holds a number together.
+        "khach 0905\u30fc123\u30fc456",
+        "khach 0905\u4e00123\u4e00456",
+        # ... nor is a Latin sign with no case that looks like a mark.
+        "khach 0905\u01c0123\u01c0456",
+        "khach 0905\ua78f123\ua78f456",
+        # Digits written another way are digits.
+        "khach \u2460\u2468\u2460\u2464 123 456",
+        # An amount may now stand against "/" or "-": the phone's other digits still count.
+        "khach 0905/123.400",
+        "khach 0905-123.400",
+        "khach 8490-5.123.400",
+        "khach 84/905.123.400",
+        "khach 0905123/400.000",
+    ],
+)
+def test_a_phone_is_refused_whatever_stands_between_its_groups(phone: str) -> None:
+    """Verification round 5 of 9b: a symbol (| ~ = ^ ` > →), a run of more than four marks, or a
+    date-shaped tail ("12-03-45") still let a phone into the books. Only a Latin letter ends a
+    number now; whatever else stands between digits holds them together, and a date, time,
+    percentage or amount is set aside only when every digit beside it is one too."""
+    with pytest.raises(ShopCaptureError) as refused:
+        capture_note(phone)
+    assert refused.value.reason_code == "NOTE_LOOKS_LIKE_PHONE"
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        # Verification round 5 of 9b: amounts joined by a spaced sign were refused as a phone.
+        "đếm lại 1.250.000 - 50.000 tiền lẻ",
+        "sót 120.000 + 30.000",
+        "1.250.000 - 50.000",
+        "120.000 + 30.000",
+        "đếm lại 1.250.000 - 50.000 = 1.200.000",
+        "120,000, 150,000",
+        "150.000 200.000",
+        "150.000\u20ab 200.000\u20ab",
+        "150000\u20ab 200000\u20ab",
+        "đếm lại 02/10/2026 150 nghìn",
+        "giảm 10% 150.000 - 15.000",
+        "14:30 thiếu 50.000; 16:45 thừa 20.000",
+        "02/10/2026 - 05/10/2026",
+        "đếm 5,9 kg 147.500 - 2.500",
+        # Slice I, round 9b fix: two amounts joined by "/" or "-" with no space were refused,
+        # although the same two amounts with a space between them are a note.
+        "đếm lại 285.000/4.351.000đ",
+        "sót 1.250.000-50.000",
+        "chia 120.000/30.000",
+    ],
+)
+def test_amounts_dates_and_times_side_by_side_stay_an_ordinary_note(note: str) -> None:
+    """A stretch with nine or more digits is a note when every digit in it belongs to a date, a
+    time, a percentage, an amount written with thousands groups, or a number its unit follows."""
+    assert capture_note(note) == note
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "150000 200000",
+        "đếm lại 1.234.567 - 34.567",
+        "đếm lại (1) 150.000 (2) 200.000",
+        "chi 400, 133.700",
+    ],
+)
+def test_where_the_shop_must_write_an_amount_with_a_unit_it_is_said(note: str) -> None:
+    """The fail-closed side of the rule, stated rather than hidden: amounts with no thousands dots
+    and no unit, an amount that is not whole hundreds of đồng (counted cash always is), and a bare
+    number (no thousands dot, no unit) beside amounts are not set aside; the worker adds đ or k, or
+    words between the numbers."""
+    with pytest.raises(ShopCaptureError) as refused:
+        capture_note(note)
+    assert refused.value.reason_code == "NOTE_LOOKS_LIKE_PHONE"
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "sửa máy 02/10 150.000",
+        "sửa máy 02-10-2026 150.000",
+        "sửa máy 02.10.2026 150.000",
+        "hoá đơn 2/10/26 150.000",
+        "giao 14:30 150.000",
+        "điện 1.250.000đ, nước 350.000đ",
+        "Grab 2 chiều 45k - 50k",
+        "3 x 150.000 (2 bao)",
+        "đếm lại: 1.234.567",
+    ],
+)
+def test_a_date_time_or_amounts_beside_each_other_stay_an_ordinary_note(note: str) -> None:
+    """The wider net still lets the shop's own words through: a date (with or without a year), a
+    time, or amounts each ended by a letter are not one number."""
+    assert capture_note(note) == note
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "hoá đơn 02/10/2026",
+        "sửa máy 02/10/2026 150k",
+        "Grab (2 chiều) 45k",
+        "điện tháng 9 (1.234.000đ)",
+        "mua 2/3 thùng (50k)",
+    ],
+)
+def test_a_date_or_an_amount_in_brackets_is_not_read_as_a_phone(note: str) -> None:
+    """A date written with slashes, followed by an amount, and amounts in brackets stay ordinary
+    notes: only nine or more digits held together as one number are a phone."""
+    assert capture_note(note) == note
     with pytest.raises(ShopCaptureError) as refused:
         capture_note("x" * 121)
     assert refused.value.reason_code == "NOTE_INVALID"

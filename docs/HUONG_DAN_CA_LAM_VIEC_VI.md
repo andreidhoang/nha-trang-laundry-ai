@@ -18,6 +18,9 @@ Bảng vận hành chạy trên chính chiếc máy ở quầy, tại địa ch�
    **Khách tới lấy đồ** (tìm theo số phiếu).
 4. Nếu màn hình báo **“Đang ngoại tuyến”** hoặc **“Chưa đọc được danh sách cửa hàng”** → xem mục
    *Khi có sự cố* bên dưới. Đừng nhận đơn cho tới khi màn hình bình thường trở lại.
+5. **Đếm két** trước khoản thu đầu tiên (`DEC-049`): trên **Hôm nay**, bấm **Đếm két** cạnh ô tiền.
+   Đếm tiền lẻ trong két, gõ số đếm được, bấm **Ghi tiền đầu ngày**. Mỗi ngày ghi một lần; ghi
+   nhầm thì bấm **Sửa tiền đầu ngày**, gõ số đúng và ghi **Vì sao sửa?** — số cũ vẫn được giữ.
 
 ## Một khách vào cửa
 
@@ -262,12 +265,32 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
 
 ## Đóng ca
 
-1. Mở **Hôm nay**, đối chiếu dòng **Tiền mặt** dưới **Đã thu tại quầy** với tiền trong ngăn kéo,
-   và dòng **Chuyển khoản** với app ngân hàng của tiệm. Hôm nào có hoàn tiền, so ngăn kéo với dòng
-   **Tiền mặt trong két hôm nay** (tiền mặt thu trừ tiền mặt hoàn — chuyển khoản không nằm trong
-   két). Dòng **Chưa tính … lần hoàn chưa rõ cách hoàn** là khoản hoàn ghi trước khi máy hỏi cách
-   hoàn: máy không đoán, hỏi chủ tiệm.
-2. Lệch thì **không sửa gì trên máy** — ghi ra sổ và báo chủ tiệm. Lần thu đã ghi không sửa được.
+1. **Đếm két cuối ngày** (`DEC-049`): mở **Hôm nay → Đếm két**. Mục **Két phải có** là số máy
+   chủ tính: tiền đầu ngày, cộng tiền mặt khách trả hôm nay, trừ tiền mặt hoàn lại khách, trừ các
+   khoản Sổ thu chi đánh dấu **Trả từ két**. Chuyển khoản không nằm trong két — đối chiếu dòng
+   **Chuyển khoản** trên **Hôm nay** với app ngân hàng của tiệm. Đếm hết tiền trong két, gõ số đếm
+   được, bấm **Ghi số đếm cuối ngày**. Máy ghi **Thiếu …**, **Thừa …** hoặc **Khớp** bằng chữ.
+   - Chưa ghi tiền đầu ngày thì máy **không** tính được số phải có (không coi là 0): vẫn ghi số
+     đếm, máy báo *chưa so được*.
+   - Dòng **Chưa tính … lần hoàn chưa rõ cách hoàn** là khoản hoàn ghi trước khi máy hỏi cách
+     hoàn: máy không đoán, số phải có ghi là chưa đầy đủ — hỏi chủ tiệm.
+   - Đếm nhầm thì bấm **Sửa số đếm**, gõ số đúng và ghi **Vì sao sửa?**; số cũ vẫn hiện, ghi
+     **Đã thay**. Lý do không ghi số điện thoại khách; số tiền ghi có dấu chấm hoặc chữ k
+     (*1.250.000 - 50.000*, *150k*) để máy không nhầm là số điện thoại. Máy báo
+     **Người khác vừa ghi số này** nghĩa là máy khác đã ghi trước — màn hình tự tải lại, kiểm tra
+     rồi sửa nếu cần.
+   - Máy báo **Sổ đã thay đổi sau lúc đếm** khi có khoản thu, hoàn, chi từ két hay tiền đầu ngày
+     ghi hoặc sửa sau lúc đếm: đếm lại rồi **Sửa số đếm** nếu cần.
+   - Máy chỉ ghi tiền đầu ngày, số đếm cuối ngày và lần sửa cho **hôm nay** theo giờ của tiệm:
+     đếm và ghi xong **trước 0 giờ**. Màn hình mở từ trước 0 giờ mà bấm ghi sau 0 giờ thì máy báo
+     **Đã sang ngày mới** và không ghi số đó; máy nhắc *đừng ghi lại vào sổ ngày mới* — ghi ra
+     giấy, đưa chủ tiệm. Còn mở **Đếm két** sau 0 giờ là sổ của **ngày mới**: máy không biết bạn
+     đang đếm két của hôm qua nên **không chặn**. Khi ngày đó chưa có tiền đầu
+     ngày, ô ghi số đếm nhắc: *đừng ghi số đếm của hôm qua vào đây*. Số của một ngày đã qua, ghi
+     sai hay quên ghi, cũng **không sửa được trên máy**: ghi ra giấy số đúng và lý do, đưa chủ
+     tiệm. Báo cáo và tóm tắt cuối ngày vẫn hiện số đã ghi của ngày đó.
+2. Lệch thì **không tự bù, không sửa gì khác trên máy** — máy chỉ ghi phần thừa thiếu để chủ tiệm
+   xem; không tự điều chỉnh tiền, không trừ lương ai. Lần thu đã ghi không sửa được.
 3. Để máy **bật qua đêm** (chỉ tắt màn hình). Bản sao lưu chạy lúc 2 giờ 30 sáng.
 4. Chủ tiệm (và người duyệt, kế toán, kiểm toán) xem số của ngày, tuần, tháng ở **Báo cáo** — bấm
    **Báo cáo** cạnh ô tiền trên **Hôm nay**, hoặc vào **Thêm → Báo cáo**. Mỗi ô ghi cả hai số
@@ -277,7 +300,9 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
    nằm ở **Thêm → Cần quyền khác**, bị khoá, có ghi ai mở được.
 5. Chủ tiệm (hoặc kế toán) ghi mọi khoản chi vào **Thêm → Sổ thu chi**: bấm **Ghi khoản chi**, chọn
    mục (điện, nước, hoá chất, túi nhãn, lương, mặt bằng, sửa chữa, xăng xe, khác), gõ số tiền, bấm
-   **Ghi vào sổ**. Ghi sai thì mở dòng đó, bấm **Huỷ dòng này** hai lần rồi ghi lại dòng đúng.
+   **Ghi vào sổ**. Khoản lấy **tiền mặt trong két** ra trả (mua hoá chất, gửi xe…) thì đánh dấu
+   **Trả từ két** — đếm két cuối ngày trừ khoản đó; mặc định là không. Ghi sai thì mở dòng đó, bấm
+   **Huỷ dòng này** hai lần rồi ghi lại dòng đúng.
    **Báo cáo** chỉ tính biên của một tháng khi sổ tháng đó đã có đủ điện, nước, hoá chất, lương và
    mặt bằng; thiếu thì ghi *Chưa đủ số liệu* và nêu mục còn thiếu. Biên đó không phải lợi nhuận.
 6. Chủ tiệm đóng ngày bằng thẻ **Tóm tắt cuối ngày** trên **Hôm nay** (sau 18:00 thẻ tự hiện;
@@ -286,7 +311,7 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
    **Chia sẻ** để chọn Zalo. Đây là mẫu câu cố định máy chủ điền số — không phải AI — và không
    có tên hay số điện thoại khách. Dòng nào máy chưa có số thì ghi ở mục *Chưa có trong tóm tắt*
    kèm lý do. Ghi khoản chi (bước 5) **trước** khi chép thì tóm tắt mới có khoản chi của ngày.
-   Đầu tóm tắt là mục **Cần chú ý** (tối đa 5 dòng, tô màu cam). Mỗi dòng chỉ hiện khi thật sự có
+   Đầu tóm tắt là mục **Cần chú ý** (tối đa 6 dòng, tô màu cam). Mỗi dòng chỉ hiện khi thật sự có
    việc:
    - đơn giao trễ chưa xử lý giảm trừ;
    - đơn chưa trả khách đã trễ giờ hẹn;
@@ -294,7 +319,12 @@ Hai mươi trong bốn mươi bốn dịch vụ được niêm yết theo **kho�
    - yêu cầu hóa đơn chờ quá 3 ngày;
    - tiền thu hoặc số đơn khác hẳn các tuần trước cùng thứ (máy ghi cả hai con số; chỉ so sau
      20:00 và khi đã có 3 tuần số liệu), và sau ngày 10, tháng trước còn thiếu khoản chi nào nên
-     chưa tính được lãi.
+     chưa tính được lãi;
+   - đếm két cuối ngày thừa hoặc thiếu (ghi cả số phải có và số đếm được), hoặc chưa so được;
+     và — **kể cả khi lúc đếm két khớp** — khi có khoản thu, hoàn, chi từ két hay tiền đầu ngày
+     ghi hoặc sửa sau lúc đếm: dòng đó ghi số *lúc đếm*, rồi
+     **Sổ đã thay đổi sau lúc đếm** và bây giờ két phải có bao nhiêu, hoặc vì sao chưa tính được
+     (`DEC-049`). Chủ tiệm cũng xem thừa thiếu từng ngày ở **Báo cáo**, mục **Đếm két**.
 
    Không có gì thì máy ghi *Không có việc cần chú ý* — chỉ khi mọi nguồn đều đọc được. Máy đếm
    và so sánh bằng quy tắc cố định, không phải AI.

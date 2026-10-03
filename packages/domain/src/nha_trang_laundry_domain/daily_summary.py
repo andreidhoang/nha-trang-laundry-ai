@@ -29,7 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, time
 from enum import StrEnum
-from typing import Final
+from typing import Final, Literal
 
 #: The template's published identifier. The digest beside it is taken over this module's rules
 #: (`nha_trang_laundry_db.daily_summary.daily_summary_template_version`), and a test pins it: a
@@ -49,6 +49,16 @@ from typing import Final
 #: v4 (round 9, GOODS-AND-DRAWER-009, review M4): the money line says how refunds went back and
 #: what the drawer did -- cash in minus cash handed back -- beside "Thu trừ hoàn" (every method),
 #: and names the refunds of unknown method (written before `0067`) that the drawer figure excludes.
+#:
+#: v5 (round 9b, `CASH-COUNT-009`, `DEC-049`): a sixth *Cần chú ý* line -- the day's closing
+#: cash count when it was not even with what the books say (thừa / thiếu, both figures, and the
+#: refunds of unknown method the expected figure left out), or when it could not be compared, or
+#: when the books moved after it (what they say now, marked incomplete while they still leave
+#: refunds of unknown method out).
+#:
+#: v5 also carries round 9b's `MONEY-RESIDUAL-009B` J1 (`DEC-050`): "chờ quá N ngày" and the
+#: reminder steps count the days the laundry waited, not the days the shop held it. Both
+#: slices bumped v4 to v5 on their own branches; neither v5 was released, so the merge keeps one v5.
 DAILY_SUMMARY_TEMPLATE_IDENTIFIER: Final = "daily-summary-v5"
 
 #: `Asia/Ho_Chi_Minh` weekday names, Monday first, as the counter says them.
@@ -81,6 +91,8 @@ class LineKey(StrEnum):
     ATTN_PICKUP = "ATTN_PICKUP"
     ATTN_INVOICES = "ATTN_INVOICES"
     ATTN_NUMBERS = "ATTN_NUMBERS"
+    #: `DEC-049`: the closing cash count, after the five `DEC-044` lines.
+    ATTN_CASH_COUNT = "ATTN_CASH_COUNT"
     ATTN_NONE = "ATTN_NONE"
     ORDERS = "ORDERS"
     MONEY = "MONEY"
@@ -152,10 +164,12 @@ _LINE_TOPIC_VI: Final = {
     LineKey.ATTN_PICKUP: "Nhắc khách lấy đồ",
     LineKey.ATTN_INVOICES: "Hóa đơn cần xuất",
     LineKey.ATTN_NUMBERS: "So với các tuần trước",
+    LineKey.ATTN_CASH_COUNT: "Đếm két",
 }
 
-#: How many lines the *Cần chú ý* block may hold (`DEC-044`): a list the owner reads at a glance.
-ATTENTION_MAX_LINES: Final = 5
+#: How many lines the *Cần chú ý* block may hold: one per kind of line, each firing at most once --
+#: the five of `DEC-044` and the cash count of `DEC-049`. A list the owner reads at a glance.
+ATTENTION_MAX_LINES: Final = 6
 
 #: Invoice asks older than this many days are named (`DEC-044` line 4).
 INVOICE_STALE_DAYS: Final = 3
@@ -319,6 +333,67 @@ class FeeSoon:
 
 
 @dataclass(frozen=True, slots=True)
+class CashCountFigures:
+    """`CASH-COUNT-009` (`DEC-049`): the day's current closing count, as it was RECORDED.
+
+    `status` is the expected figure's (`COMPLETE`, `INCOMPLETE`, `FLOAT_MISSING`,
+    `BOOKS_BELOW_ZERO`); `expected_vnd`, `difference_vnd` and `direction` (`EVEN`, `OVER`, `SHORT`)
+    exist only when an expected figure was produced. Every amount is a magnitude.
+
+    `changed_since_count` is the count's sheet's own answer (the trace recomputed from the books
+    now differs from the stored one): the books or the float moved after the count. Then the
+    recorded figures are said as what they were *at the count*, and `expected_now_vnd` -- what
+    the books say the drawer should hold now, when a figure is produced -- is said beside them, as
+    Báo cáo and Đếm két say it. `status_now` and `excluded_unknown_now_*` are that figure's own
+    status and the refunds of unknown method it still leaves out: a "now" figure is marked
+    incomplete exactly when the sheet marks it, never said as final because the count's own
+    exclusion was named "lúc đó". When no figure for now can be produced, `status_now` says why
+    (`FLOAT_MISSING`, `BOOKS_BELOW_ZERO`) and `books_over_now_vnd` how far below nothing the books
+    put the drawer now -- the reason Đếm két gives on the same sheet, never a bare "chưa tính
+    được".
+    """
+
+    status: Literal["COMPLETE", "INCOMPLETE", "FLOAT_MISSING", "BOOKS_BELOW_ZERO"]
+    counted_vnd: int
+    expected_vnd: int | None
+    difference_vnd: int | None
+    direction: Literal["EVEN", "OVER", "SHORT"] | None
+    excluded_unknown_entries: int
+    excluded_unknown_vnd: int
+    books_over_vnd: int | None
+    changed_since_count: bool = False
+    expected_now_vnd: int | None = None
+    status_now: Literal["COMPLETE", "INCOMPLETE", "FLOAT_MISSING", "BOOKS_BELOW_ZERO"] | None = None
+    excluded_unknown_now_entries: int = 0
+    excluded_unknown_now_vnd: int = 0
+    books_over_now_vnd: int | None = None
+
+    def __post_init__(self) -> None:
+        # Fail closed: a figure for now is never taken without saying whether it is complete, and
+        # an incomplete one never without the refunds it leaves out; books that moved after the
+        # count never without the status that stands for now, and a figure that could not be
+        # produced never without its reason.
+        if self.expected_now_vnd is not None and self.status_now not in ("COMPLETE", "INCOMPLETE"):
+            raise ValueError("an expected figure for now needs its status (COMPLETE/INCOMPLETE)")
+        if self.changed_since_count and self.status_now is None:
+            raise ValueError("books that moved after the count need the status of the figure now")
+        if not self.changed_since_count and self.status_now is not None:
+            raise ValueError("a status for now only when the books moved after the count")
+        if self.status_now in ("COMPLETE", "INCOMPLETE") and self.expected_now_vnd is None:
+            raise ValueError("a COMPLETE/INCOMPLETE status for now needs its expected figure")
+        if (self.status_now == "BOOKS_BELOW_ZERO") != (
+            self.books_over_now_vnd is not None and self.books_over_now_vnd > 0
+        ):
+            raise ValueError("BOOKS_BELOW_ZERO now, and only it, names how far below nothing")
+        if self.status_now == "INCOMPLETE" and self.excluded_unknown_now_entries <= 0:
+            raise ValueError("an INCOMPLETE figure for now names the refunds it leaves out")
+        if self.status_now == "COMPLETE" and (
+            self.excluded_unknown_now_entries or self.excluded_unknown_now_vnd
+        ):
+            raise ValueError("a COMPLETE figure for now leaves no refunds out")
+
+
+@dataclass(frozen=True, slots=True)
 class AttentionFacts:
     """The *Cần chú ý* sources (`DEC-044`). Counts and money only; each may be `Unavailable`."""
 
@@ -333,6 +408,9 @@ class AttentionFacts:
     comparison: DayComparison | Unavailable
     #: `None` before `MISSING_COSTS_AFTER_DAY`, or when last month has every category.
     missing_costs: MissingCosts | Unavailable | None
+    #: `CASH-COUNT-009`: the day's recorded closing count; `None` when none was recorded (nothing
+    #: happens automatically, so an uncounted day is not a line).
+    cash_count: CashCountFigures | Unavailable | None = None
 
 
 def _unavailable_attention(source: str) -> AttentionFacts:
@@ -779,6 +857,14 @@ def _attention(inputs: SummaryInputs, omitted: list[Omission]) -> list[SummaryLi
         sentences, figures = numbers
         found.append(SummaryLine(LineKey.ATTN_NUMBERS, " ".join(sentences), tuple(figures)))
 
+    counted = facts.cash_count
+    if isinstance(counted, Unavailable):
+        missing(LineKey.ATTN_CASH_COUNT, counted)
+    elif counted is not None:
+        line = _cash_count_line(counted)
+        if line is not None:
+            found.append(line)
+
     if found:
         title = SummaryLine(LineKey.ATTENTION, "Cần chú ý:", (("attention", len(found)),))
         return [title, *(_bulleted(line) for line in found[:ATTENTION_MAX_LINES])]
@@ -863,6 +949,99 @@ def _numbers_sentences(
     return (sentences, figures) if sentences else None
 
 
+def _cash_count_line(counted: CashCountFigures) -> SummaryLine | None:
+    """`DEC-049`: the closing count when it is not even with the books, or could not be compared,
+    or the books moved after it.
+
+    Thừa / thiếu is a word and the gap a magnitude; both figures are printed, never a difference
+    the reader would have to take from them. An even count the books still agree with is not a
+    line. A count the books (or the float) moved after is said as it was *at the count*, followed
+    by what the books say now -- the summary never repeats a recorded sentence that is no longer
+    true when read, and never stays silent about an even count the books no longer agree with.
+    """
+    moved = counted.changed_since_count
+    figures: tuple[tuple[str, Figure], ...] = (
+        ("cash_count_status", counted.status),
+        ("cash_counted_vnd", counted.counted_vnd),
+        ("cash_expected_vnd", counted.expected_vnd),
+        ("cash_difference_vnd", counted.difference_vnd),
+        ("cash_difference_direction", counted.direction),
+        ("cash_changed_since_count", 1 if moved else 0),
+        ("cash_expected_now_vnd", counted.expected_now_vnd if moved else None),
+        ("cash_expected_now_status", counted.status_now if moved else None),
+        ("cash_excluded_unknown_now_entries", counted.excluded_unknown_now_entries if moved else 0),
+        ("cash_excluded_unknown_now_vnd", counted.excluded_unknown_now_vnd if moved else 0),
+        ("cash_books_over_now_vnd", counted.books_over_now_vnd if moved else None),
+    )
+    sentences: list[str]
+    if counted.status in ("FLOAT_MISSING", "BOOKS_BELOW_ZERO"):
+        why = (
+            "chưa ghi tiền đầu ngày"
+            if counted.status == "FLOAT_MISSING"
+            else "sổ ghi tiền ra khỏi két nhiều hơn tiền vào "
+            f"{format_vnd(counted.books_over_vnd or 0)}"
+        )
+        counted_text = format_vnd(counted.counted_vnd)
+        sentences = [
+            f"Đếm két cuối ngày được {counted_text}; lúc đếm {why} nên chưa so được."
+            if moved
+            else f"Đếm két cuối ngày được {counted_text} nhưng chưa so được: {why}."
+        ]
+    elif counted.direction in ("OVER", "SHORT", "EVEN") and counted.expected_vnd is not None:
+        if counted.direction == "EVEN" and not moved:
+            return None
+        both = (
+            f"(phải có {format_vnd(counted.expected_vnd)}, "
+            f"đếm được {format_vnd(counted.counted_vnd)})"
+        )
+        if counted.direction == "EVEN":
+            gap = "khớp"
+        else:
+            word = "thừa" if counted.direction == "OVER" else "thiếu"
+            gap = f"{word} {format_vnd(counted.difference_vnd or 0)}"
+        sentences = [
+            f"Lúc đếm, két cuối ngày {gap} {both}." if moved else f"Đếm két cuối ngày {gap} {both}."
+        ]
+        if counted.excluded_unknown_entries:
+            sentences.append(
+                f"Số phải có{' lúc đó' if moved else ''} chưa tính "
+                f"{format_count(counted.excluded_unknown_entries, 'khoản hoàn')} chưa rõ cách hoàn "
+                f"({format_vnd(counted.excluded_unknown_vnd)})."
+            )
+    else:
+        return None
+    if moved:
+        if counted.status_now == "BOOKS_BELOW_ZERO":
+            # `DEC-049`: no figure for now, and why -- by how much the books put the drawer below
+            # nothing, and where to look -- as Đếm két says it on the same sheet.
+            sentences.append(
+                "Sổ đã thay đổi sau lúc đếm: bây giờ sổ ghi tiền ra khỏi két nhiều hơn tiền vào "
+                f"{format_vnd(counted.books_over_now_vnd or 0)} nên chưa tính được số phải có. "
+                "Kiểm tra Sổ thu chi."
+            )
+        elif counted.status_now == "FLOAT_MISSING" or counted.expected_now_vnd is None:
+            still = "vẫn chưa" if counted.status == "FLOAT_MISSING" else "chưa"
+            sentences.append(
+                f"Sổ đã thay đổi sau lúc đếm: bây giờ {still} ghi tiền đầu ngày nên chưa tính "
+                "được số phải có."
+            )
+        elif counted.status_now == "INCOMPLETE":
+            # `DEC-049`: the figure now still leaves refunds of unknown method out -- how many,
+            # their total, and that it is not complete, as Đếm két marks the same figure.
+            sentences.append(
+                "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có "
+                f"{format_vnd(counted.expected_now_vnd)}, chưa tính "
+                f"{format_count(counted.excluded_unknown_now_entries, 'khoản hoàn')} chưa rõ cách "
+                f"hoàn ({format_vnd(counted.excluded_unknown_now_vnd)}) nên số này chưa đầy đủ."
+            )
+        else:
+            sentences.append(
+                "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có "
+                f"{format_vnd(counted.expected_now_vnd)}."
+            )
+    return SummaryLine(LineKey.ATTN_CASH_COUNT, " ".join(sentences), figures)
+
+
 def _direction_vi(direction: Direction) -> str:
     return "thấp hơn thường lệ" if direction is Direction.LOW else "cao hơn thường lệ"
 
@@ -907,6 +1086,7 @@ __all__ = [
     "AccountsDueFigures",
     "AttentionFacts",
     "BoardFigures",
+    "CashCountFigures",
     "DayComparison",
     "DayFigures",
     "Direction",

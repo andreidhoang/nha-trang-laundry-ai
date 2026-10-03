@@ -90,7 +90,19 @@ from test_reports import AS_OF, DAY, _Order, _person, _seeded_shop, _store
 #: The v5 digest moved once more inside round 9b, before v5 ever left the branch (it was
 #: `d0cbea0c5eb30373`): the reminder rules module now carries `pickup-reminder-v2`, whose text names
 #: the held days (verification round 1, P2). The count the summary prints did not change.
-PINNED_TEMPLATE_VERSION = "daily-summary-v5:1d5f720d3dfa67f2"
+#: v5 (round 9b, CASH-COUNT-009, DEC-049): a sixth *Cần chú ý* line, the recorded closing cash
+#: count when it is not even with the books -- and, when the books or the float moved after the
+#: count, said as it was at the count with what the books say now (verification round 1 of 9b; the
+#: unreleased first v5 digest was `ee89b1db6938c01c`). v4 was `daily-summary-v4:c8b8abadb5e4578f`.
+#: Verification round 2 of 9b: the figure for now is marked incomplete (how many refunds of unknown
+#: method and their total) while the books still leave them out; the unreleased second v5 digest
+#: was `7a9d280c088f4e66`. v5 has not left this slice, so the identifier stays v5.
+#: Verification round 3 of 9b: books that moved after the count with no figure for now say why
+#: (how far below nothing the books put the drawer, or the float still missing); the unreleased
+#: third v5 digest was `b7647201be330134`.
+#: Merged on the integration branch (both slices bumped v4 to v5 unreleased): one v5 with both
+#: changes; the J-only digest was `1d5f720d3dfa67f2`, the I-only one `28793966ffeaa69c`.
+PINNED_TEMPLATE_VERSION = "daily-summary-v5:174ebc3cc89ce9a9"
 
 
 def _database_url() -> str:

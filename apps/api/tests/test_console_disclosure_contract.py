@@ -986,7 +986,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     # MONEY-RESIDUAL-009B (round 9b, J): 597 + 3 = 600 -- REFUSAL.CANCELLATION_MONEY_CHANGED,
     # REFUSAL.CREDIT_CHAIN_NOT_NETTED, REASON_NOTE.INVOICE_TOTAL_UNKNOWN (INVOICE_TOTAL_MISMATCH
     # reworded in place: the printed-figure path).
-    assert sum(counts.values()) == _registry()["total"] == 600
+    # CASH-COUNT-009 (round 9b, slice I): 600 + 3 = 603 once merged after J -- the two Đếm két
+    # gate reasons in rbac.js and the report section's empty line (ui/cashCount.js); nothing
+    # retired. K (round 9b) adds none.
+    assert sum(counts.values()) == _registry()["total"] == 603
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

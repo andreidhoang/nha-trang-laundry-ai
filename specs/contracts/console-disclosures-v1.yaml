@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 559
+  DESCRIPTIVE: 562
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 19
   SERVER_GATE: 15
-total: 600
+total: 603
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -2116,6 +2116,22 @@ disclosures:
   module: core/rbac.js
   key: why
   text: Chỉ chủ tiệm thêm, đổi tên hoặc ngưng dùng một máy (DEC-038).
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/rbac.js#why:23a1b6eb63a2
+  module: core/rbac.js
+  key: why
+  text: Đếm két dành cho người đứng quầy đã xác thực hai bước, như tiền đã thu hôm nay.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/rbac.js#why:865319dbf191
+  module: core/rbac.js
+  key: why
+  text: 'Đếm két các ngày trước, thừa thiếu từng ngày: chỉ chủ tiệm đã xác thực hai bước xem.'
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -5061,6 +5077,14 @@ disclosures:
   module: ui/account.js
   key: hint
   text: Mỗi lần mở chặn đều được ghi lại, kèm lý do.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: ui/cashCount.js#hint:2d0477d53d0a
+  module: ui/cashCount.js
+  key: hint
+  text: Chưa có ngày nào đếm két trong khoảng này.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

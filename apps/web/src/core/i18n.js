@@ -1116,6 +1116,8 @@ export const NAV = {
   unsupported: "Việc chưa hỗ trợ",
   reports: "Báo cáo",
   expenses: "Sổ thu chi",
+  // CASH-COUNT-009 (DEC-049).
+  cashCount: "Đếm két",
   machines: "Máy giặt, sấy",
   customers: "Khách hàng",
   // UNCLAIMED-001 (DEC-036).

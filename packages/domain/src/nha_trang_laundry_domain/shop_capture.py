@@ -29,6 +29,7 @@ What this module decides, and nothing else decides:
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -268,12 +269,24 @@ class Expense:
     category: ExpenseCategory
     amount_vnd: int
     note: str | None
+    #: `CASH-COUNT-009` (`DEC-049`): the money was handed out of the counter's drawer ("Trả từ
+    #: két"), so the day's cash count expects that much less. Default no; every line written before
+    #: `0072` is no.
+    paid_from_drawer: bool = False
 
 
 def expense(
-    *, spent_on: date, category: ExpenseCategory, amount_vnd: int, note: str | None, today: date
+    *,
+    spent_on: date,
+    category: ExpenseCategory,
+    amount_vnd: int,
+    note: str | None,
+    today: date,
+    paid_from_drawer: bool = False,
 ) -> Expense:
     """One line of Sổ thu chi, or the reason it is refused. `today` is the shop's, passed in."""
+    if not isinstance(paid_from_drawer, bool):
+        raise ShopCaptureError("EXPENSE_DRAWER_FLAG_INVALID", "trả từ két is yes or no")
     require_non_negative_vnd(amount_vnd)
     if amount_vnd == 0:
         raise ShopCaptureError("EXPENSE_AMOUNT_REQUIRED", "an expense is more than 0 đồng")
@@ -288,7 +301,11 @@ def expense(
             "EXPENSE_DATE_TOO_OLD", "an expense is dated within the last 366 days"
         )
     return Expense(
-        spent_on=spent_on, category=category, amount_vnd=amount_vnd, note=capture_note(note)
+        spent_on=spent_on,
+        category=category,
+        amount_vnd=amount_vnd,
+        note=capture_note(note),
+        paid_from_drawer=paid_from_drawer,
     )
 
 
@@ -383,8 +400,165 @@ def per_order_vnd(total_vnd: int, orders: int) -> int | None:
 
 # --- notes --------------------------------------------------------------------------------------
 
-#: Nine or more digits, allowing the spaces, dots and hyphens people type inside a phone number.
-_PHONE_LIKE: Final = re.compile(r"\d(?:[\s.\-]?\d){8,}")
+#: A phone is this many digits or more held together as one number.
+PHONE_DIGITS_MIN: Final = 9
+
+#: An amount or a counted quantity set aside as "not a phone" has at most this many digits: below
+#: 100.000.000 ₫. A nine-digit run is a phone's length, so it is never excused as an amount.
+_AMOUNT_DIGITS_MAX: Final = 8
+
+#: A number its unit follows is set aside at any value up to this many digits ("45k", "2 bao",
+#: "25 kg"); a longer one only when it is whole hundreds of đồng ("150000đ").
+_QUANTITY_DIGITS_FREE: Final = 3
+
+#: The digit boundary every set-aside piece must stand on: no digit, and no digit behind one of
+#: the separators a date, time or amount uses, directly before or after it. "09.05.123.456" is
+#: therefore never cut into a date and an amount.
+_BEFORE: Final = r"(?<![0-9])(?<![0-9][/.,:\-])"
+_AFTER: Final = r"(?![0-9])(?![/.,:\-][0-9])"
+
+#: A date written with one separator throughout -- "02/10/2026", "02-10-2026", "2/10/26" -- or a
+#: day and month with a slash ("02/10"). Day and month are checked in `_date_digits`.
+_DATE: Final = re.compile(
+    _BEFORE
+    + r"(?P<day>[0-9]{1,2})(?P<sep>[/.\-])(?P<month>[0-9]{1,2})"
+    + r"(?:(?P=sep)(?P<year>[0-9]{4}|[0-9]{2}))?"
+    + _AFTER
+)
+
+#: A time of day, "14:30" or "9:05". Hour and minute are checked in `_time_digits`.
+_TIME: Final = re.compile(_BEFORE + r"(?P<hour>[0-9]{1,2}):(?P<minute>[0-9]{2})" + _AFTER)
+
+#: A percentage from 0 to 100, "10%" or "2,5 %".
+_PERCENT: Final = re.compile(_BEFORE + r"(?:100|[1-9]?[0-9])(?:[.,][0-9]{1,2})?(?=\s?%)")
+
+#: An amount's boundary is the same except that "/" and "-" may stand between it and the next
+#: number: "285.000/4.351.000" and "1.250.000-50.000" are two amounts, as they are with a space
+#: between them. A phone gains nothing by it -- every digit beside the amount still has to be set
+#: aside on its own terms, exactly as when a space stands there.
+_AMOUNT_BEFORE: Final = r"(?<![0-9])(?<![0-9][.,:])"
+_AMOUNT_AFTER: Final = r"(?![0-9])(?![.,:][0-9])"
+
+#: An amount written with thousands groups and one separator throughout -- "150.000",
+#: "1.250.000", "120,000". Its size and its last two digits are checked in `_amount_digits`.
+_AMOUNT: Final = re.compile(
+    _AMOUNT_BEFORE
+    + r"[1-9][0-9]{0,2}(?P<group>[.,])[0-9]{3}(?:(?P=group)[0-9]{3})*"
+    + _AMOUNT_AFTER
+)
+
+#: A number its unit follows -- "150k", "25kg", "2 bao", "150000₫". The unit (a Latin letter or a
+#: currency sign, after at most one space) and the size are checked in `_quantity_digits`.
+_QUANTITY: Final = re.compile(_BEFORE + r"(?:0|[1-9][0-9]*)(?:[.,][0-9]{1,2})?" + _AFTER)
+
+
+def _ends_a_number(character: str) -> bool:
+    """Only a letter of the Latin alphabet (Vietnamese included) ends a number.
+
+    Every other character -- space, any punctuation or symbol (| ~ = ^ ` > → • :), a format
+    character, a letter of another script, an uncased Latin sign that looks like a mark (U+01C0
+    dental click, U+A78F sinological dot), any run of them -- holds digits together. Decided by the
+    Unicode database, so the answer never depends on a list of marks somebody remembered.
+    """
+    return unicodedata.category(character) in ("Lu", "Ll", "Lt") and unicodedata.name(
+        character, ""
+    ).startswith("LATIN")
+
+
+def _date_digits(match: re.Match[str], _: str) -> bool:
+    day, month, year = int(match["day"]), int(match["month"]), match["year"]
+    if not (1 <= day <= 31 and 1 <= month <= 12):
+        return False
+    if year is None:
+        return match["sep"] == "/"
+    return len(year) == 2 or year[:2] in ("19", "20")
+
+
+def _time_digits(match: re.Match[str], _: str) -> bool:
+    return int(match["hour"]) <= 23 and int(match["minute"]) <= 59
+
+
+def _percent_digits(match: re.Match[str], _: str) -> bool:
+    return True
+
+
+def _whole_hundreds(digits: list[str]) -> bool:
+    """Cash comes in whole hundreds of đồng; a phone's last two digits rarely do."""
+    return len(digits) <= _AMOUNT_DIGITS_MAX and digits[-2:] == ["0", "0"]
+
+
+def _amount_digits(match: re.Match[str], _: str) -> bool:
+    return _whole_hundreds([character for character in match.group(0) if character.isdecimal()])
+
+
+def _quantity_digits(match: re.Match[str], text: str) -> bool:
+    digits = [character for character in match.group(0) if character.isdecimal()]
+    if len(digits) > _QUANTITY_DIGITS_FREE and not _whole_hundreds(digits):
+        return False
+    rest = text[match.end() : match.end() + 2]
+    unit = rest[1:] if rest[:1] == " " else rest[:1]
+    return bool(unit) and (_ends_a_number(unit[0]) or unicodedata.category(unit[0]) == "Sc")
+
+
+#: The pieces a note writes that are not a phone, tried in this order; a later piece never takes a
+#: digit an earlier one already holds.
+_SET_ASIDE: Final = (
+    (_DATE, _date_digits),
+    (_TIME, _time_digits),
+    (_PERCENT, _percent_digits),
+    (_AMOUNT, _amount_digits),
+    (_QUANTITY, _quantity_digits),
+)
+
+
+def _set_aside(text: str) -> list[bool]:
+    """For each character of `text`, whether it is a digit of a date, time, percentage, amount or
+    a quantity its unit follows."""
+    held = [False] * len(text)
+    for pattern, accepts in _SET_ASIDE:
+        for match in pattern.finditer(text):
+            span = range(match.start(), match.end())
+            if any(held[index] for index in span) or not accepts(match, text):
+                continue
+            for index in span:
+                held[index] = True
+    return held
+
+
+def looks_like_phone(text: str) -> bool:
+    """Whether `text` holds a phone number: `PHONE_DIGITS_MIN` or more digits with no Latin letter
+    between them, not all of which are set aside as a date, a time, a percentage, an amount or a
+    quantity.
+
+    The text is read in NFKC form, so fullwidth, circled or superscript digits are digits. Only a
+    Latin letter ends a number ("150.000đ 200.000đ", "khach 0905 so 123"): whatever else stands
+    between digits, and however much of it, holds them together ("0905|123|456",
+    "0905 ... 123 ... 456"). Inside one such stretch, a piece is set aside only when it is a valid
+    date ("02/10/2026", "2/10/26", "02/10"), a time ("14:30"), a percentage ("10%"), an amount in
+    thousands groups that is whole hundreds of đồng and below 100.000.000 ("1.250.000",
+    "120,000") or a number its unit follows -- up to three digits at any value ("150k", "2 bao"),
+    longer only as whole hundreds ("150000₫"). The stretch is a phone when it has nine digits or
+    more and ANY of them is not set aside: "1.250.000 - 50.000" is two amounts (so are
+    "285.000/4.351.000" and "1.250.000-50.000"), "(0905) 12-03-45" is a phone, because "0905" is
+    not a date, time or amount.
+
+    Known limit, by construction: a phone typed so that every group is itself one of those pieces
+    ("09/05 12/03/45") is not recognised -- no text rule can tell it from two dates.
+    Deterministic: the same text always gives the same answer.
+    """
+    normal = unicodedata.normalize("NFKC", text)
+    held = _set_aside(normal)
+    digits = 0
+    loose = 0
+    for index, character in enumerate(normal):
+        if _ends_a_number(character):
+            if digits >= PHONE_DIGITS_MIN and loose:
+                return True
+            digits = loose = 0
+        elif character.isdecimal():
+            digits += 1
+            loose += not held[index]
+    return digits >= PHONE_DIGITS_MIN and loose > 0
 
 
 def capture_note(value: str | None) -> str | None:
@@ -401,7 +575,7 @@ def capture_note(value: str | None) -> str | None:
         return None
     if len(note) > NOTE_MAX or _has_control(note):
         raise ShopCaptureError("NOTE_INVALID", f"a note is at most {NOTE_MAX} characters")
-    if _PHONE_LIKE.search(note):
+    if looks_like_phone(note):
         raise ShopCaptureError("NOTE_LOOKS_LIKE_PHONE", "a note must not carry a phone number")
     return note
 
@@ -417,6 +591,7 @@ __all__ = [
     "EXPENSE_MAX_AGE_DAYS",
     "EXPENSE_MAX_VND",
     "NOTE_MAX",
+    "PHONE_DIGITS_MIN",
     "TRIP_COST_MAX_VND",
     "CycleEffect",
     "Expense",
@@ -433,6 +608,7 @@ __all__ = [
     "capture_note",
     "cycle_effect",
     "expense",
+    "looks_like_phone",
     "machine_code",
     "machine_name",
     "missing_core_categories",

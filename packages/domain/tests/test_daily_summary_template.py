@@ -17,6 +17,7 @@ from nha_trang_laundry_domain.daily_summary import (
     AccountsDueFigures,
     AttentionFacts,
     BoardFigures,
+    CashCountFigures,
     DayComparison,
     DayFigures,
     Direction,
@@ -692,7 +693,14 @@ def test_compare_refuses_what_is_not_a_count() -> None:
 
 
 def test_attention_inputs_carry_no_free_text() -> None:
-    for cls in (AttentionFacts, DayComparison, UsualFigure, MissingCosts, FeeSoon):
+    for cls in (
+        AttentionFacts,
+        DayComparison,
+        UsualFigure,
+        MissingCosts,
+        FeeSoon,
+        CashCountFigures,
+    ):
         hints = typing.get_type_hints(cls)
         for field in dataclasses.fields(cls):
             hint = hints[field.name]
@@ -705,3 +713,396 @@ def test_attention_inputs_carry_no_free_text() -> None:
         _attention_lines(
             missing_costs=MissingCosts(month=date(2026, 8, 1), categories=("Nguyễn Văn A",))
         )
+
+
+# --- v5: the closing cash count (`CASH-COUNT-009`, `DEC-049`) ----------------------------------
+
+
+def _counted(
+    status: str = "COMPLETE",
+    counted: int = 590_000,
+    expected: int | None = 600_000,
+    difference: int | None = 10_000,
+    direction: str | None = "SHORT",
+    excluded: tuple[int, int] = (0, 0),
+    books_over: int | None = None,
+    changed: bool = False,
+    expected_now: int | None = None,
+    status_now: str | None = None,
+    excluded_now: tuple[int, int] = (0, 0),
+    books_over_now: int | None = None,
+) -> CashCountFigures:
+    if status_now is None and expected_now is not None:
+        status_now = "COMPLETE"
+    return CashCountFigures(
+        status=status,  # type: ignore[arg-type]
+        counted_vnd=counted,
+        expected_vnd=expected,
+        difference_vnd=difference,
+        direction=direction,  # type: ignore[arg-type]
+        excluded_unknown_entries=excluded[0],
+        excluded_unknown_vnd=excluded[1],
+        books_over_vnd=books_over,
+        changed_since_count=changed,
+        expected_now_vnd=expected_now,
+        status_now=status_now,  # type: ignore[arg-type]
+        excluded_unknown_now_entries=excluded_now[0],
+        excluded_unknown_now_vnd=excluded_now[1],
+        books_over_now_vnd=books_over_now,
+    )
+
+
+def test_a_short_or_over_closing_count_is_named_with_both_figures() -> None:
+    assert _attention_lines(cash_count=_counted()) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày thiếu 10.000đ (phải có 600.000đ, đếm được 590.000đ).",
+    ]
+    over = _counted(counted=605_000, difference=5_000, direction="OVER")
+    assert _attention_lines(cash_count=over) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày thừa 5.000đ (phải có 600.000đ, đếm được 605.000đ).",
+    ]
+    incomplete = _counted(status="INCOMPLETE", excluded=(2, 45_000))
+    assert _attention_lines(cash_count=incomplete) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày thiếu 10.000đ (phải có 600.000đ, đếm được 590.000đ). "
+        "Số phải có chưa tính 2 khoản hoàn chưa rõ cách hoàn (45.000đ).",
+    ]
+
+
+def test_an_even_count_or_no_count_is_not_a_line_and_the_all_clear_stands() -> None:
+    even = _counted(counted=600_000, difference=0, direction="EVEN")
+    assert _attention_lines(cash_count=even) == ["Không có việc cần chú ý."]
+    assert _attention_lines(cash_count=None) == ["Không có việc cần chú ý."]
+    # Even but incomplete: no gap to report; the refunds left out are said on the count's screen.
+    even_incomplete = _counted(
+        status="INCOMPLETE", counted=600_000, difference=0, direction="EVEN", excluded=(1, 1)
+    )
+    assert _attention_lines(cash_count=even_incomplete) == ["Không có việc cần chú ý."]
+
+
+def test_a_count_that_could_not_be_compared_is_named_never_read_as_even() -> None:
+    no_float = _counted(
+        status="FLOAT_MISSING", counted=300_000, expected=None, difference=None, direction=None
+    )
+    assert _attention_lines(cash_count=no_float) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày được 300.000đ nhưng chưa so được: chưa ghi tiền đầu ngày.",
+    ]
+    below = _counted(
+        status="BOOKS_BELOW_ZERO",
+        counted=0,
+        expected=None,
+        difference=None,
+        direction=None,
+        books_over=100_000,
+    )
+    assert _attention_lines(cash_count=below) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày được 0đ nhưng chưa so được: sổ ghi tiền ra khỏi két nhiều hơn tiền "
+        "vào 100.000đ.",
+    ]
+
+
+def test_a_reader_who_may_not_read_the_counts_gets_no_all_clear() -> None:
+    refused = Unavailable(OmissionReason.ROLE_NOT_PERMITTED, "CASH-COUNT-009")
+    assert _attention_lines(cash_count=refused) == []
+    summary = render_summary(
+        _inputs(board=CALM_BOARD, attention=dataclasses.replace(CALM, cash_count=refused))
+    )
+    notes = [item.note for item in summary.omitted if item.key is LineKey.ATTN_CASH_COUNT]
+    assert notes == ["Đếm két: vai trò của bạn không xem được nguồn số liệu này."]
+
+
+def test_all_six_lines_in_order_the_cash_count_after_the_five_of_dec_044() -> None:
+    low = UsualFigure(today=1, usual=10, direction=Direction.LOW)
+    facts = AttentionFacts(
+        late_deliveries_undecided=1,
+        reminders_due=2,
+        fee_soon=FeeSoon(count=1, free_days=20),
+        invoices_waiting=1,
+        comparison=DayComparison(weeks_with_data=4, collected=low, orders=low),
+        missing_costs=MissingCosts(month=date(2026, 8, 1), categories=("NUOC",)),
+        cash_count=_counted(),
+    )
+    summary = render_summary(_inputs(attention=facts))
+    keys = [line.key for line in summary.lines if line.key.value.startswith("ATT")]
+    assert keys == [
+        LineKey.ATTENTION,
+        LineKey.ATTN_LATE_DELIVERIES,
+        LineKey.ATTN_OVERDUE,
+        LineKey.ATTN_PICKUP,
+        LineKey.ATTN_INVOICES,
+        LineKey.ATTN_NUMBERS,
+        LineKey.ATTN_CASH_COUNT,
+    ]
+    assert len(keys) - 1 == template.ATTENTION_MAX_LINES == 6
+    # No minus sign anywhere: the gap is a word and a magnitude.
+    cash = next(line for line in summary.lines if line.key is LineKey.ATTN_CASH_COUNT)
+    assert "-" not in cash.text[2:] and "\u2212" not in cash.text
+    assert dict(cash.figures)["cash_difference_direction"] == "SHORT"
+
+
+def test_a_count_the_books_moved_after_is_said_as_it_was_at_the_count_and_that_they_moved() -> None:
+    """Báo cáo says "sổ đổi sau lúc đếm" when the books (or the float) moved after the count; the
+    summary says the same, never a recorded sentence that is no longer true when read -- "chưa ghi
+    tiền đầu ngày" after a float was recorded, "thiếu" after a drawer expense was added, or nothing
+    at all after an even count the books no longer agree with."""
+    moved = "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 600.000đ."
+    no_float = _counted(
+        status="FLOAT_MISSING",
+        expected=None,
+        difference=None,
+        direction=None,
+        changed=True,
+        expected_now=600_000,
+    )
+    assert _attention_lines(cash_count=no_float) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày được 590.000đ; lúc đếm chưa ghi tiền đầu ngày nên chưa so được. "
+        + moved,
+    ]
+    short = _counted(changed=True, expected_now=590_000)
+    assert _attention_lines(cash_count=short) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày thiếu 10.000đ (phải có 600.000đ, đếm được 590.000đ). "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 590.000đ.",
+    ]
+    over = _counted(
+        counted=605_000, difference=5_000, direction="OVER", changed=True, expected_now=600_000
+    )
+    assert _attention_lines(cash_count=over) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày thừa 5.000đ (phải có 600.000đ, đếm được 605.000đ). " + moved,
+    ]
+    # Even when counted is no longer known to be even: a line, not the all-clear. The refund of
+    # unknown method is still left out of the figure the books give now, and that is said too.
+    even = _counted(
+        counted=600_000,
+        difference=0,
+        direction="EVEN",
+        changed=True,
+        expected_now=590_000,
+        status="INCOMPLETE",
+        excluded=(1, 20_000),
+        status_now="INCOMPLETE",
+        excluded_now=(1, 20_000),
+    )
+    assert _attention_lines(cash_count=even) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày khớp (phải có 600.000đ, đếm được 600.000đ). "
+        "Số phải có lúc đó chưa tính 1 khoản hoàn chưa rõ cách hoàn (20.000đ). "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 590.000đ, chưa tính 1 khoản hoàn chưa "
+        "rõ cách hoàn (20.000đ) nên số này chưa đầy đủ.",
+    ]
+    below = _counted(
+        status="BOOKS_BELOW_ZERO",
+        counted=0,
+        expected=None,
+        difference=None,
+        direction=None,
+        books_over=100_000,
+        changed=True,
+        expected_now=None,
+        status_now="BOOKS_BELOW_ZERO",
+        books_over_now=60_000,
+    )
+    assert _attention_lines(cash_count=below) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày được 0đ; lúc đếm sổ ghi tiền ra khỏi két nhiều hơn tiền vào "
+        "100.000đ nên chưa so được. Sổ đã thay đổi sau lúc đếm: bây giờ sổ ghi tiền ra khỏi két "
+        "nhiều hơn tiền vào 60.000đ nên chưa tính được số phải có. Kiểm tra Sổ thu chi.",
+    ]
+    # The figures say it too, for the reader that takes numbers rather than words.
+    summary = render_summary(_inputs(attention=dataclasses.replace(CALM, cash_count=short)))
+    cash = next(line for line in summary.lines if line.key is LineKey.ATTN_CASH_COUNT)
+    assert dict(cash.figures)["cash_changed_since_count"] == 1
+    assert dict(cash.figures)["cash_expected_now_vnd"] == 590_000
+    assert "-" not in cash.text[2:] and "\u2212" not in cash.text
+    unchanged = render_summary(_inputs(attention=dataclasses.replace(CALM, cash_count=_counted())))
+    line = next(line for line in unchanged.lines if line.key is LineKey.ATTN_CASH_COUNT)
+    assert dict(line.figures)["cash_changed_since_count"] == 0
+
+
+def test_a_now_figure_that_still_leaves_out_refunds_is_marked_incomplete() -> None:
+    """`DEC-049`: an expected figure that leaves out refunds of unknown method says how many and
+    their total and is marked incomplete -- the figure the books give *now* as much as the one at
+    the count, as Đếm két marks it ("số phải có chưa đầy đủ"). A "bây giờ" figure is never said
+    as if it were final while the books still leave refunds out."""
+    incomplete_now = (
+        "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 600.000đ, chưa tính 1 khoản hoàn chưa "
+        "rõ cách hoàn (40.000đ) nên số này chưa đầy đủ."
+    )
+    # No float at the count, recorded afterwards: the only figure is the one now.
+    no_float = _counted(
+        status="FLOAT_MISSING",
+        counted=300_000,
+        expected=None,
+        difference=None,
+        direction=None,
+        changed=True,
+        expected_now=600_000,
+        status_now="INCOMPLETE",
+        excluded_now=(1, 40_000),
+    )
+    assert _attention_lines(cash_count=no_float) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày được 300.000đ; lúc đếm chưa ghi tiền đầu ngày nên chưa so được. "
+        + incomplete_now,
+    ]
+    # Short at the count, a forgotten drawer expense afterwards: both figures leave it out.
+    short = _counted(
+        status="INCOMPLETE",
+        excluded=(1, 40_000),
+        changed=True,
+        expected_now=590_000,
+        status_now="INCOMPLETE",
+        excluded_now=(1, 40_000),
+    )
+    assert _attention_lines(cash_count=short) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày thiếu 10.000đ (phải có 600.000đ, đếm được 590.000đ). "
+        "Số phải có lúc đó chưa tính 1 khoản hoàn chưa rõ cách hoàn (40.000đ). "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 590.000đ, chưa tính 1 khoản hoàn chưa "
+        "rõ cách hoàn (40.000đ) nên số này chưa đầy đủ.",
+    ]
+    # Complete at the count, a refund of unknown method surfacing afterwards: the now figure is
+    # the incomplete one, and only it is marked.
+    later = _counted(
+        counted=605_000,
+        difference=5_000,
+        direction="OVER",
+        changed=True,
+        expected_now=600_000,
+        status_now="INCOMPLETE",
+        excluded_now=(2, 45_000),
+    )
+    assert _attention_lines(cash_count=later) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày thừa 5.000đ (phải có 600.000đ, đếm được 605.000đ). "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ két phải có 600.000đ, chưa tính 2 khoản hoàn chưa "
+        "rõ cách hoàn (45.000đ) nên số này chưa đầy đủ.",
+    ]
+    # The figures carry it for the reader that takes numbers rather than words.
+    summary = render_summary(_inputs(attention=dataclasses.replace(CALM, cash_count=short)))
+    cash = next(line for line in summary.lines if line.key is LineKey.ATTN_CASH_COUNT)
+    figures = dict(cash.figures)
+    assert figures["cash_expected_now_status"] == "INCOMPLETE"
+    assert figures["cash_excluded_unknown_now_entries"] == 1
+    assert figures["cash_excluded_unknown_now_vnd"] == 40_000
+    assert "-" not in cash.text[2:] and "\u2212" not in cash.text
+
+
+def test_a_now_figure_is_never_taken_without_its_status() -> None:
+    """Fail closed: a "bây giờ" figure handed over without saying whether it is complete, or
+    marked incomplete without the refunds it leaves out, is refused rather than printed as final."""
+    with pytest.raises(ValueError, match="status"):
+        CashCountFigures(
+            status="COMPLETE",
+            counted_vnd=590_000,
+            expected_vnd=600_000,
+            difference_vnd=10_000,
+            direction="SHORT",
+            excluded_unknown_entries=0,
+            excluded_unknown_vnd=0,
+            books_over_vnd=None,
+            changed_since_count=True,
+            expected_now_vnd=590_000,
+        )
+    with pytest.raises(ValueError, match="refunds"):
+        _counted(changed=True, expected_now=590_000, status_now="INCOMPLETE", excluded_now=(0, 0))
+    with pytest.raises(ValueError, match="status"):
+        _counted(changed=True, expected_now=590_000, status_now="FLOAT_MISSING")
+
+
+def test_a_now_with_no_figure_says_why_as_den_ket_does() -> None:
+    """Verification round 3 of 9b: when the books move after the count so that no figure for now
+    can be produced, the summary says why -- the books put the drawer below nothing by how much
+    (and to check Sổ thu chi), or the float is still not recorded -- as Đếm két says it on the same
+    sheet, never a bare "chưa tính được"."""
+    below_now = (
+        "Sổ đã thay đổi sau lúc đếm: bây giờ sổ ghi tiền ra khỏi két nhiều hơn tiền vào 300.000đ "
+        "nên chưa tính được số phải có. Kiểm tra Sổ thu chi."
+    )
+    # Short at the count, a mistyped drawer expense afterwards.
+    short = _counted(
+        counted=3_909_000,
+        expected=3_919_000,
+        changed=True,
+        status_now="BOOKS_BELOW_ZERO",
+        books_over_now=300_000,
+    )
+    assert _attention_lines(cash_count=short) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày thiếu 10.000đ (phải có 3.919.000đ, đếm được 3.909.000đ). "
+        + below_now,
+    ]
+    # Over, even and incomplete at the count: the same "now" sentence, whatever the count said.
+    over = _counted(
+        counted=605_000,
+        difference=5_000,
+        direction="OVER",
+        changed=True,
+        status_now="BOOKS_BELOW_ZERO",
+        books_over_now=300_000,
+    )
+    assert _attention_lines(cash_count=over)[1].endswith(below_now)
+    even = _counted(
+        status="INCOMPLETE",
+        counted=600_000,
+        difference=0,
+        direction="EVEN",
+        excluded=(1, 20_000),
+        changed=True,
+        status_now="BOOKS_BELOW_ZERO",
+        books_over_now=300_000,
+    )
+    assert _attention_lines(cash_count=even) == [
+        "Cần chú ý:",
+        "- Lúc đếm, két cuối ngày khớp (phải có 600.000đ, đếm được 600.000đ). "
+        "Số phải có lúc đó chưa tính 1 khoản hoàn chưa rõ cách hoàn (20.000đ). " + below_now,
+    ]
+    # No float at the count, still none after another drawer movement: said as still missing.
+    no_float = _counted(
+        status="FLOAT_MISSING",
+        counted=300_000,
+        expected=None,
+        difference=None,
+        direction=None,
+        changed=True,
+        status_now="FLOAT_MISSING",
+    )
+    assert _attention_lines(cash_count=no_float) == [
+        "Cần chú ý:",
+        "- Đếm két cuối ngày được 300.000đ; lúc đếm chưa ghi tiền đầu ngày nên chưa so được. "
+        "Sổ đã thay đổi sau lúc đếm: bây giờ vẫn chưa ghi tiền đầu ngày nên chưa tính được số "
+        "phải có.",
+    ]
+    # The figures carry the status and the amount for the reader that takes numbers.
+    summary = render_summary(_inputs(attention=dataclasses.replace(CALM, cash_count=short)))
+    cash = next(line for line in summary.lines if line.key is LineKey.ATTN_CASH_COUNT)
+    figures = dict(cash.figures)
+    assert figures["cash_expected_now_status"] == "BOOKS_BELOW_ZERO"
+    assert figures["cash_books_over_now_vnd"] == 300_000
+    assert figures["cash_expected_now_vnd"] is None
+    assert "-" not in cash.text[2:] and "\u2212" not in cash.text
+    unchanged = render_summary(_inputs(attention=dataclasses.replace(CALM, cash_count=_counted())))
+    line = next(line for line in unchanged.lines if line.key is LineKey.ATTN_CASH_COUNT)
+    assert dict(line.figures)["cash_books_over_now_vnd"] is None
+
+
+def test_a_now_with_no_figure_is_never_taken_without_its_reason() -> None:
+    """Fail closed: books that moved after the count with no figure for now must say which status
+    stands in for it; BOOKS_BELOW_ZERO names how far below nothing, and only it does."""
+    with pytest.raises(ValueError, match="status"):
+        _counted(changed=True)
+    with pytest.raises(ValueError, match="below nothing"):
+        _counted(changed=True, status_now="BOOKS_BELOW_ZERO")
+    with pytest.raises(ValueError, match="below nothing"):
+        _counted(changed=True, status_now="BOOKS_BELOW_ZERO", books_over_now=0)
+    with pytest.raises(ValueError, match="below nothing"):
+        _counted(changed=True, status_now="FLOAT_MISSING", books_over_now=300_000)
+    with pytest.raises(ValueError, match="below nothing"):
+        _counted(changed=True, expected_now=590_000, books_over_now=300_000)
+    with pytest.raises(ValueError, match="status"):
+        _counted(changed=False, status_now="FLOAT_MISSING")

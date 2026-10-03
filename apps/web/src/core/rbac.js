@@ -176,6 +176,18 @@ export const CAPABILITIES = {
     mfa: true,
     why: "Chỉ chủ tiệm thêm, đổi tên hoặc ngưng dùng một máy (DEC-038).",
   },
+  // CASH-COUNT-009 (DEC-049): "any counter role records" -- the drawer figure's own gate
+  // (`require_operations_staff`) -- and "owner reads all" (`require_owner`).
+  CASH_COUNT: {
+    roles: [OWNER, APPROVER, OPERATOR],
+    mfa: true,
+    why: "Đếm két dành cho người đứng quầy đã xác thực hai bước, như tiền đã thu hôm nay.",
+  },
+  CASH_COUNT_HISTORY: {
+    roles: [OWNER],
+    mfa: true,
+    why: "Đếm két các ngày trước, thừa thiếu từng ngày: chỉ chủ tiệm đã xác thực hai bước xem.",
+  },
   EXPENSES_READ: {
     roles: [OWNER, "ACCOUNTANT", AUDITOR],
     mfa: true,

@@ -157,7 +157,19 @@ The same spine with three differences:
    characters — every field optional, one `delivery_leg_costs` row per leg, append-only. The sheet
    shows the owner's rule for this order's weight (under 20 kg a motorbike, from exactly 20 kg a car;
    nothing when a line is priced by the piece) and picks nothing. A note that looks like a phone
-   number is refused (`NOTE_LOOKS_LIKE_PHONE`), and no note enters an event, audit or outbox row.
+   number is refused (`NOTE_LOOKS_LIKE_PHONE`; a cash-count correction reason the same way), and no
+   note enters an event, audit or outbox row. The rule (`looks_like_phone`, deterministic): only a
+   Latin letter ends a number -- every other character, any number of them (spaces, any
+   punctuation or symbol such as `|` `~` `=` `→`, a letter of another script), holds digits
+   together; within such a stretch, a valid date, a time, a percentage, an amount in thousands
+   groups that is whole hundreds of đồng below 100.000.000, or a number its unit follows ("150k",
+   "2 bao") is set aside, and the stretch is a phone when it has nine digits or more and any of them
+   is not set aside. So "1.250.000 - 50.000" and "285.000/4.351.000" are notes and
+   "(0905) 12-03-45" a phone. Fail-closed side: "150000 200000", an amount not in whole hundreds beside another number, and a bare number
+   with no thousands dot and no unit beside amounts ("(1) 150.000", "chi 400, 133.700") are refused
+   when the stretch reaches nine digits (write đ or k, or a word between). Known limit: a phone typed
+   so that every group is itself a date, time, percentage or amount ("09/05 12/03/45") is not
+   recognised.
 
 ---
 
@@ -334,16 +346,27 @@ the sheet is refused `CANCELLATION_MONEY_CHANGED` (409, nothing written) and the
 - **Tóm tắt cuối ngày** (`DAILY-SUMMARY-001`, `DEC-039`) is the owner's evening card on Hôm nay,
   for the report's four readers. After 18:00 shop-local it reads by itself; before, **Xem tóm tắt**
   reads it on demand ("tính đến" the time in its first line). `GET …/reports/daily-summary?date=`
-  returns short Vietnamese sentences a versioned Python template (`daily-summary-v3:<digest>`)
+  returns short Vietnamese sentences a versioned Python template (`daily-summary-v5:<digest>`)
   writes from the report's one-day figures and the live lists. It opens with **Cần chú ý**
-  (`SUMMARY-ATTENTION-001`, `DEC-044`): at most five computed lines, each only when it fires:
+  (`SUMMARY-ATTENTION-001`, `DEC-044`; the sixth line `DEC-049`): at most six computed lines, each
+  only when it fires:
   - deliveries late and undecided;
   - orders late against their promise;
   - pickup reminders due and laundry whose free-storage days end within 3 days;
   - invoice requests waiting over 3 days;
   - the day's money or orders outside 70–130% of the same weekday over the previous four weeks,
     with both figures, from closing time and with at least 3 weeks of trade; after the 10th, last
-    month's missing cost categories.
+    month's missing cost categories;
+  - the day's **recorded** closing cash count when it is thừa or thiếu (both figures; the refunds of
+    unknown method its expected figure left out), or when it could not be compared (no float, or
+    books below nothing), or — even if it was even — when the books or the float moved after the
+    count: then said as it was *lúc đếm* with "Sổ đã thay đổi sau lúc đếm" and what the books say
+    now, the answer Báo cáo gives — the figure for now marked incomplete ("chưa tính N khoản hoàn
+    chưa rõ cách hoàn (X) nên số này chưa đầy đủ") whenever the books still leave refunds of unknown
+    method out, as Đếm két marks it; when no figure for now can be produced, the reason Đếm két
+    gives — the books put the drawer below nothing by X ("Kiểm tra Sổ thu chi"), or the float is
+    still not recorded — never a bare "chưa tính được" — read by the owner only; another reader
+    gets the line omitted by role and no "nothing needs attention" (`daily-summary-v5`).
 
   It says "Không có việc cần chú ý" only when every source answered. Then the day's figures: orders taken in, completed and
   cancelled; money in split cash / transfer (and refunds when any); finished on time against the
@@ -359,6 +382,35 @@ the sheet is refused `CANCELLATION_MONEY_CHANGED` (409, nothing written) and the
   account, "late against promise" while no turnaround policy and no promise exist.
   **Sao chép** copies the server's text; **Chia sẻ** opens the phone's share sheet (Zalo). Nothing
   is sent by itself and no model is involved.
+- **`#/cash-count` Đếm két** (`CASH-COUNT-009`, `DEC-049`; reached from Hôm nay beside the drawer
+  figure, and listed under Thêm → Khác): the counter records the **opening float** before the
+  first sale and the **closing count** at closing, each once per store per shop-local day
+  (`OWNER_ADMIN`, `OPS_APPROVER`, `OPERATOR`, MFA — the drawer route's gate). **Két phải có** is the
+  server's (`cash-count-v1:<digest>`): float + cash taken (`order_payments` `TIEN_MAT`) − cash
+  handed back (`order_refunds` `TIEN_MAT`) − Sổ thu chi lines marked **Trả từ két** and not voided,
+  on that day; the payment and refund predicates are `collected-today-v4`'s, so it cannot disagree
+  with Hôm nay. No float recorded → no figure (`FLOAT_MISSING`, never 0); refunds of unknown method
+  (`DEC-048`) are left out, counted and named, and the figure is `INCOMPLETE`; books that put the
+  drawer below nothing → no figure (`BOOKS_BELOW_ZERO`) with the gap. The closing count stores the
+  expected figure, the difference as a size and a word (`EVEN` khớp, `OVER` thừa, `SHORT` thiếu —
+  never a minus sign) and its RFC 8785 trace + hash, so the recorded difference is reproducible from
+  the row; the screen says **Sổ đã thay đổi sau lúc đếm** when the books move after it. A wrong
+  figure is corrected by **Sửa** (a new superseding entry with **Vì sao sửa?**); the first stays
+  listed as **Đã thay**. A second phone's entry turns the press into a re-read
+  (`CASH_COUNT_ALREADY_RECORDED` / `CASH_COUNT_STALE`, 409). Entries — originals and
+  corrections alike — are for the shop's today only (`CASH_COUNT_DAY_NOT_TODAY`, 422; the screen
+  says **Đã sang ngày mới**, names the sheet's day and says "đừng ghi lại vào sổ ngày mới: ghi ra
+  giấy, đưa chủ tiệm" when a sheet read before midnight is pressed after it -- the same instruction
+  as the no-float hint below, never "reload and count today"): a past day's
+  count, wrong or missing, cannot be recorded or corrected on the machine. A sheet opened after
+  midnight is the new day's, and the server cannot tell last night's drawer from this one, so it
+  takes the count; with no float on that day the closing form names the day and says "đừng ghi số
+  đếm của hôm qua vào đây" (words only, nothing refused). That is the fail-closed reading of `DEC-049`, which does not say whether a past
+  day may be corrected or by whom; it stands until the owner decides (round 9b, decisions needed).
+  Nothing happens automatically: no adjustment, no money moved. The owner (alone) reads every day's count on **Báo cáo → Đếm két**
+  (`GET …/cash-counts?from=&to=`, the report's window rules) and in the evening summary; when
+  the books or the float moved after the count, both say so (**sổ đổi sau lúc đếm**; the summary
+  says the recorded figures as they were *lúc đếm* and what the books say now).
 - **`#/orders`** is the board: four labels per order, read as four answers.
 - **`#/orders/{id}`** is the working surface: the audit timeline, the settlement panel, the delivery
   legs.
@@ -381,8 +433,10 @@ the sheet is refused `CANCELLATION_MONEY_CHANGED` (409, nothing written) and the
   (fuel is also in Sổ thu chi). Labour minutes are not captured, by decision.
 - **`#/expenses` Sổ thu chi** (`OWNER_ADMIN`, `ACCOUNTANT` write; `AUDITOR` reads): one month at a
   time, the total and each category's total summed by PostgreSQL, one tier-1 line naming the core
-  categories margin still waits for, **Ghi khoản chi** (date, category, amount, note ≤ 120), and a
-  wrong line voided with two presses and its row version — never edited.
+  categories margin still waits for, **Ghi khoản chi** (date, category, amount, note ≤ 120, and the
+  tick **Trả từ két** — default no, every line before `0072` no — for money handed out of the
+  drawer, which the day's cash count then expects less of), and a wrong line voided with two
+  presses and its row version — never edited (the tick included).
 - **`#/machines` Máy giặt, sấy** (under Hệ thống): the machine list `scripts/seed_machines.py`
   registers from `templates/machine-master.csv`; the owner adds, renames or retires a machine.
 - **The network drops.** The console says so, disables every control that would write, and queues

@@ -48,6 +48,7 @@ from nha_trang_laundry_domain.daily_summary import (
     AccountsDueFigures,
     AttentionFacts,
     BoardFigures,
+    CashCountFigures,
     DayComparison,
     DayFigures,
     FeeSoon,
@@ -69,6 +70,11 @@ from nha_trang_laundry_db.accounts import (
     ACCOUNT_READ_ROLES,
     ACCOUNTS_DUE_QUERY,
     AccountRepository,
+)
+from nha_trang_laundry_db.cash_counts import (
+    CASH_COUNT_HISTORY_ROLES,
+    CASH_COUNT_QUERY,
+    read_day,
 )
 from nha_trang_laundry_db.identity import StaffPrincipal
 from nha_trang_laundry_db.invoice_requests import (
@@ -182,6 +188,8 @@ def daily_summary_template_version() -> QueryVersion:
         str(INVOICE_STALE_DAYS),
         # The late-delivery list's statement (`LATE-CREDIT-002`).
         LATE_COUNT_SQL,
+        # v5: the recorded closing cash count (`CASH-COUNT-009`) and the rule it was counted under.
+        CASH_COUNT_QUERY.label,
     )
 
 
@@ -300,6 +308,8 @@ class DailySummaryRepository:
                 as_of=as_of,
                 today=report,
             )
+            if isinstance(attention.cash_count, CashCountFigures):
+                sources.append(("cash_count", CASH_COUNT_QUERY.label))
 
         rendered = render_summary(
             SummaryInputs(
@@ -439,6 +449,55 @@ def attention_facts(
             today=today,
         ),
         missing_costs=missing_costs(cursor, store_id=store_id, day=day),
+        cash_count=cash_count_figures(cursor, store_id=store_id, principal=principal, day=day),
+    )
+
+
+def cash_count_figures(
+    cursor: Any, *, store_id: UUID, principal: StaffPrincipal, day: date
+) -> CashCountFigures | Unavailable | None:
+    """`CASH-COUNT-009` (`DEC-049`): the day's closing count as it was recorded, for the owner.
+
+    Recorded history, so a past day answers as well as today. The figures are the ones stored on
+    the count (its trace), never recomputed here: the summary says what the counter saw when they
+    counted. The day's sheet (`read_day`) also says whether the books or the float moved after the
+    count (`changed_since_count`) and what they say now -- the same answer Báo cáo and Đếm két
+    give -- so the summary never repeats a recorded sentence that is no longer true. `None` when
+    no closing count was recorded -- an uncounted day is not a line.
+    """
+    if not principal.roles & CASH_COUNT_HISTORY_ROLES:
+        return Unavailable(OmissionReason.ROLE_NOT_PERMITTED, "CASH-COUNT-009")
+    sheet = read_day(cursor, store_id=store_id, day=day)
+    entry = sheet.closing_count
+    if entry is None or entry.expected_status is None:
+        return None
+    trace = entry.trace or {}
+    excluded_entries = trace.get("excluded_unknown_refunds_entries", 0)
+    excluded_vnd = trace.get("excluded_unknown_refunds_vnd", 0)
+    books_over = trace.get("books_over_vnd")
+    moved, now = sheet.changed_since_count, sheet.expected
+    return CashCountFigures(
+        status=entry.expected_status.value,
+        counted_vnd=entry.counted_vnd,
+        expected_vnd=entry.expected_vnd,
+        difference_vnd=entry.difference_vnd,
+        direction=(
+            None if entry.difference_direction is None else entry.difference_direction.value
+        ),
+        excluded_unknown_entries=excluded_entries if isinstance(excluded_entries, int) else 0,
+        excluded_unknown_vnd=excluded_vnd if isinstance(excluded_vnd, int) else 0,
+        books_over_vnd=books_over if isinstance(books_over, int) else None,
+        changed_since_count=moved,
+        expected_now_vnd=now.expected_vnd if moved else None,
+        # The figure now carries its own status and exclusion: still leaving refunds of unknown
+        # method out is said and marked, as the sheet marks it (`DEC-049`).
+        status_now=now.status.value if moved else None,
+        excluded_unknown_now_entries=(
+            now.movement.unknown_refunds_entries if moved and now.produced else 0
+        ),
+        excluded_unknown_now_vnd=now.movement.unknown_refunds_vnd if moved and now.produced else 0,
+        # No figure for now says why, with the amount Đếm két names on the same sheet.
+        books_over_now_vnd=now.books_over_vnd if moved else None,
     )
 
 
@@ -697,6 +756,7 @@ __all__ = [
     "DailySummaryRepository",
     "accounts_due_figures",
     "attention_facts",
+    "cash_count_figures",
     "daily_summary_template_version",
     "day_comparison",
     "day_figures",

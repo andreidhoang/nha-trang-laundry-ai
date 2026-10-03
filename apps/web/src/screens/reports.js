@@ -62,6 +62,7 @@ import {
   statusPill,
   techDetails,
 } from "../ui/kit.js";
+import { cashCountReport } from "../ui/cashCount.js";
 import { lateReportTile } from "../ui/lateDelivery.js";
 import { captureTiles, machineSection, marginTile, monthSection } from "../ui/shopReport.js";
 import { KIND_LABEL } from "./remedies.js";
@@ -454,6 +455,8 @@ export function render_(context) {
   // "Từng ngày" exists only for a window of more than one day: one day is already the tiles.
   const daysSection = section({ title: "Từng ngày", card: false, children: daysHost });
   daysSection.hidden = true;
+  // CASH-COUNT-009 (DEC-049): each day's recorded thừa / thiếu, for the owner.
+  const cashCounts = cashCountReport();
   const techHost = h("div");
   const stamp = h("span", { class: "updated", role: "status" });
 
@@ -504,6 +507,7 @@ export function render_(context) {
     daysSection.hidden = true;
     render(techHost);
     const query = new URLSearchParams({ from: span.from, to: span.to }).toString();
+    void cashCounts.load(store, span);
     try {
       const [summary, daily] = await Promise.all([
         request(`/internal/v1/stores/${encodeURIComponent(store)}/reports/summary?${query}`),
@@ -638,6 +642,7 @@ export function render_(context) {
     h("div", { class: "stack stack--tight" }, picker, customHost, tier1),
     tilesHost,
     daysSection,
+    cashCounts.node,
     techHost,
   );
 }

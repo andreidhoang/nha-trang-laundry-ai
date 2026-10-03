@@ -101,6 +101,16 @@ let resumeOnReturn = false;
  * another address, not an entry of its own -- if it is held, the held address is put back on it.
  */
 let replacing = false;
+/**
+ * A forward step sent to learn which side of the held screen an unstamped entry is on, where the
+ * browser does not say (`keepEntry`, round-9b integration): the timer that, if no entry is landed
+ * on, takes the entry to be the newest -- made by the address -- and steps back over it.
+ *
+ * @type {ReturnType<typeof setTimeout>|null}
+ */
+let probe = null;
+/** How long a forward step may take to land before it is taken to have gone nowhere. */
+const PROBE_MS = 400;
 
 /** @returns {number|null} the current entry's place in the history, when the browser says */
 function entryIndex() {
@@ -136,6 +146,7 @@ function stampEntry() {
 /** A step of a held Back or Forward's way back (`returning`) has landed on an entry. */
 function onPopstate() {
   if (!returning) return;
+  endProbe();
   const here = entryStamp();
   if (here === shownEntry) {
     returned();
@@ -156,9 +167,17 @@ function onPopstate() {
 function returned() {
   returning = false;
   returnMove = null;
+  endProbe();
   if (!resumeOnReturn) return;
   resumeOnReturn = false;
   resumeHeld();
+}
+
+/** A forward step sent by `keepEntry` landed, or no longer matters: its timer is not needed. */
+function endProbe() {
+  if (probe === null) return;
+  clearTimeout(probe);
+  probe = null;
 }
 
 /**
@@ -366,12 +385,14 @@ export function resumeHeld() {
  * history steps back over it, to the held screen's own entry, and the next move overwrites it.
  *
  * Which entry is new: its place in the history, where the browser says (`navigation`). Where it
- * does not (Safari before 26.2, Firefox before 147), an entry this page never stamped that has an
- * address (round-9b verification 4): every entry this page drew is stamped, so the only unstamped
- * one behind the held screen is the bare address the console was opened at, before "#/" -- and
- * the history's length tells nothing when the new entry replaced exactly one ahead of a screen
- * reached by Back. That bare entry, and the current one given another address by `replace`, are
- * still rewritten to the held screen, which never leaves the console.
+ * does not (Safari before 26.2, Firefox before 147): an unstamped entry with an address is new when
+ * the history grew. When it did not, the entry is new if it replaced exactly one ahead of a screen
+ * reached by Back (round-9b verification 4) -- or old, drawn behind the held screen by the build
+ * before a "Tải lại" (state null, unstamped; round-9b integration): a step back over that one
+ * leaves the console. The two are told apart by stepping forward first and seeing whether that
+ * lands anywhere (`probe`). The bare address the console was opened at, before "#/", and the
+ * current entry given another address by `replace`, are still rewritten to the held screen, which
+ * never leaves the console.
  *
  * @param {string} left the address before the move
  * @param {boolean} grew the history's length changed since the last address change
@@ -389,8 +410,32 @@ function keepEntry(left, grew, replaced) {
   }
   const index = entryIndex();
   const known = !replaced && index !== null && shownIndex >= 0 && index !== shownIndex;
-  const madeSince =
-    !replaced && index === null && here === null && (grew || location.hash !== "");
+  const unknown = !replaced && index === null && here === null;
+  if (unknown && !grew && location.hash !== "") {
+    // Round-9b integration: an unstamped entry with an address, the history no longer. It may be
+    // new -- an address written over the one entry ahead of a screen reached by Back -- or an
+    // entry an earlier build of the console drew (unstamped) behind the held screen, reached by
+    // Back after "Tải lại". Stepping back over the second leaves the console, or does nothing.
+    // So step forward first: an entry ahead means this one was behind -- the step lands on the
+    // held screen's own entry (`onPopstate`) and the held move is that Back. No entry ahead (the
+    // step goes nowhere, no `popstate`) means this one is the newest: step back over it.
+    const target = location.hash;
+    returnMove = { kind: "go", delta: -1 };
+    heldMove = returnMove;
+    returning = true;
+    keptAddress = left;
+    endProbe();
+    probe = setTimeout(() => {
+      probe = null;
+      if (!returning) return;
+      returnMove = null;
+      heldMove = { kind: "to", target };
+      history.go(-1);
+    }, PROBE_MS);
+    history.go(1);
+    return;
+  }
+  const madeSince = unknown && grew;
   if (known || madeSince) {
     const ahead = known ? index > shownIndex : true;
     heldMove = ahead
@@ -447,6 +492,7 @@ export async function render(event) {
   heldMove = null;
   returnMove = null;
   resumeOnReturn = false;
+  endProbe();
 
   pending?.abort();
   const controller = new AbortController();

@@ -15880,6 +15880,48 @@ with sync_playwright() as playwright:
 
     typed_mid_history(False)
 
+    # Round-9b integration (the K verifier's residual): without the Navigation API, an entry the
+    # build before a "Tải lại" drew behind the held screen carries no stamp (its state is null).
+    # A held Back onto it was taken for a new entry ahead and stepped back over: out of the console
+    # when another page came before it in the tab, and everything typed gone.
+    def old_build_behind(nonav: bool) -> None:
+        tag = "no Navigation API" if nonav else "Navigation API"
+        page.goto("about:blank")
+        page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+        page.wait_for_timeout(500)
+        page.evaluate("() => { location.hash = '#/customers'; }")
+        page.wait_for_timeout(900)
+        # HARNESS STEP: the Đơn hàng entry as the previous build left it -- no stamp -- then the
+        # new build's "Tải lại" (a reload keeps the history and each entry's state).
+        page.go_back()
+        page.wait_for_timeout(900)
+        page.evaluate("() => history.replaceState(null, '', location.href)")
+        page.go_forward()
+        page.wait_for_timeout(900)
+        page.reload(wait_until="networkidle")
+        page.wait_for_timeout(900)
+        page.locator("#customers-search").fill("3456")
+        page.wait_for_timeout(200)
+        expire()
+        page.go_back()
+        page.wait_for_timeout(1500)
+        stayed = page.url.startswith(f"http://localhost:{PORT}/")
+        kept = stayed and address() == "#/customers" and search_value() == "3456"
+        state["authenticated"] = True
+        if stayed:
+            press_orders()
+            page.wait_for_timeout(600)
+        reached = address() if stayed else page.url
+        check(
+            f"K2 ({tag}, Back held onto an entry the build before 'Tải lại' drew): the console "
+            "stays on Khách hàng with 3456 -- not stepped out of -- and Đơn hàng, pressed once "
+            "signed in again, opens",
+            kept and reached == "#/orders",
+            f"stayed={stayed} kept={kept} reached={reached}",
+        )
+
+    old_build_behind(False)
+
     # The same two without the Navigation API: a page of its own whose `navigation` is hidden.
     main_page = page
     nonav_page = context.new_page()
@@ -15892,6 +15934,7 @@ with sync_playwright() as playwright:
     try:
         held_jump(True)
         typed_mid_history(True)
+        old_build_behind(True)
     finally:
         page = main_page
         nonav_page.close()

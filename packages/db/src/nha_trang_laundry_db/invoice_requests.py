@@ -89,6 +89,7 @@ from nha_trang_laundry_domain.invoice_requests import (
     issued_flags,
     orders_on_invoice,
     request_code,
+    request_overlap_flags,
     require_open,
 )
 from nha_trang_laundry_domain.payments import owed_charges, owed_total
@@ -176,6 +177,12 @@ FLAG_TEXT_VI: Final = {
         "{count} đơn ghi công nợ tháng này không có trên hóa đơn và chưa có yêu cầu nào — "
         "lập yêu cầu riêng cho từng đơn."
     ),
+    InvoiceFlag.PRINTED_TOTAL_DIFFERS: (
+        "Số trên hóa đơn khác số hiện tại ({shop} lúc ghi số) — báo kế toán."
+    ),
+    InvoiceFlag.ON_ANOTHER_REQUEST: (
+        "Đơn của yêu cầu này cũng nằm trong {others} — báo kế toán để không xuất hóa đơn hai lần."
+    ),
 }
 
 #: The words a line that is not a service reads as.
@@ -241,7 +248,26 @@ _ISSUED_SCAN_SQL: Final = (
     JOIN invoice_request_snapshots s ON s.request_id = r.id
     WHERE r.store_id = %(store)s AND r.status = 'ISSUED'
       AND (
-          EXISTS (
+          -- Round 9b (J6a): recorded at a printed figure that differs; (J6b) an order on it is on
+          -- another live request too.
+          s.printed_total_vnd IS NOT NULL
+          OR EXISTS (
+              SELECT 1
+              FROM invoice_request_snapshot_orders so
+              JOIN invoice_requests other
+                ON other.store_id = r.store_id AND other.id <> r.id
+               AND other.status IN ('REQUESTED', 'ISSUED')
+              WHERE so.request_id = r.id
+                AND (
+                    (other.subject_kind = 'ORDER' AND other.order_id = so.order_id)
+                    OR (other.subject_kind = 'ACCOUNT_MONTH' AND other.status = 'ISSUED'
+                        AND EXISTS (
+                            SELECT 1 FROM invoice_request_snapshot_orders oo
+                            WHERE oo.request_id = other.id AND oo.order_id = so.order_id
+                        ))
+                )
+          )
+          OR EXISTS (
               SELECT 1
               FROM invoice_request_snapshot_orders so
               JOIN orders so_o ON so_o.id = so.order_id
@@ -349,10 +375,35 @@ _ORDER_COVERED_BY_MONTH_SQL: Final = """
       )
 """
 
-#: An issued request's fixed figure (`0068`).
+#: An issued request's fixed figure (`0068`), and the invoice's printed figure when it was recorded
+#: at one that differs (`0071`, J6a).
 _SNAPSHOT_SQL: Final = """
-    SELECT total_vnd, storage_fee_vnd, quote_id, quote_revision, taken_at
+    SELECT total_vnd, storage_fee_vnd, quote_id, quote_revision, taken_at, printed_total_vnd
     FROM invoice_request_snapshots WHERE request_id = %s
+"""
+
+#: J6b: the other live requests (open or issued) of the store covering any of these orders -- an
+#: order request for one of them, or an issued account month whose invoice lists one. Before
+#: `INVOICE-TRUTH-009` nothing stopped both (the `0068` backfill fixed every order charged to a
+#: month on its invoice, own request or not); since, creating either is refused, so only that data
+#: answers here. Bounded by the store's own requests; ordered for a stable sentence.
+_OTHER_LIVE_REQUESTS_SQL: Final = """
+    SELECT DISTINCT other.request_number
+    FROM invoice_requests other
+    WHERE other.store_id = %(store)s AND other.id <> %(request)s
+      AND other.status IN ('REQUESTED', 'ISSUED')
+      AND (
+          (other.subject_kind = 'ORDER' AND other.order_id = ANY(%(orders)s))
+          OR (
+              other.subject_kind = 'ACCOUNT_MONTH' AND other.status = 'ISSUED'
+              AND EXISTS (
+                  SELECT 1 FROM invoice_request_snapshot_orders so
+                  WHERE so.request_id = other.id AND so.order_id = ANY(%(orders)s)
+              )
+          )
+      )
+    ORDER BY other.request_number
+    LIMIT 20
 """
 
 #: The orders an issued request covers: as they stood at issue, and as they stand now.
@@ -381,7 +432,7 @@ _ORDER_STATE_SQL: Final = """
 #: orders it covers at what each cost, and an issued request reads its fixed figure. The shop's time
 #: zone rides along: moving it would change a figure without changing this text.
 INVOICE_LIST_QUERY: Final[QueryVersion] = query_version(
-    "invoice-requests-v2",
+    "invoice-requests-v3",
     _LIST_SQL,
     _ORDER_TOTAL_SQL,
     _MONTH_CHARGES_SQL,
@@ -389,12 +440,13 @@ INVOICE_LIST_QUERY: Final[QueryVersion] = query_version(
     _SNAPSHOT_SQL,
     _SNAPSHOT_ORDERS_SQL,
     _ORDER_STATE_SQL,
+    _OTHER_LIVE_REQUESTS_SQL,
     ACCOUNT_TIMEZONE,
 )
 
 #: The published version of the bookkeeper's file: the list, the lines it prints and its columns.
 INVOICE_EXPORT_QUERY: Final[QueryVersion] = query_version(
-    "invoice-requests-export-v2",
+    "invoice-requests-export-v3",
     INVOICE_LIST_QUERY.label,
     _ISSUED_SCAN_SQL,
     "|".join(EXPORT_COLUMNS),
@@ -519,6 +571,11 @@ class InvoiceRequestView:
     month_lines: tuple[MonthLine, ...] = ()
     #: An issued order request: the quote revision its lines are.
     fixed_quote: tuple[UUID, int] | None = None
+    #: J6a, with `PRINTED_TOTAL_DIFFERS`: what the orders cost when the invoice was recorded --
+    #: `amount.total_vnd` is then the invoice's printed figure.
+    shop_total_vnd: int | None = None
+    #: J6b, with `ON_ANOTHER_REQUEST`: the codes of the other live requests covering its orders.
+    other_request_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -637,6 +694,10 @@ class RecordIssuedCommand:
     idempotency_key: str
     correlation_id: UUID
     at: datetime
+    #: Round 9b (J6a): the owner confirms `invoice_total_vnd` is what the invoice PRINTS although
+    #: it is not what the orders cost now -- the invoice is then recorded at that printed figure,
+    #: flagged `PRINTED_TOTAL_DIFFERS`, instead of refused `INVOICE_TOTAL_MISMATCH`.
+    record_printed_total: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1097,14 +1158,19 @@ class InvoiceRequestRepository:
             # Review round 9: fixed at what the invoice lists, at its exact total -- never at what
             # the month reads at the press, which may hold orders charged after the invoice was
             # made. A month's orders the invoice does not list stay on no invoice, and say so.
-            plan = plan.listing(
-                orders_on_invoice(
-                    kind=plan.kind,
-                    invoice_total_vnd=command.invoice_total_vnd,
-                    invoice_order_ids=command.invoice_order_ids,
-                    request_total_vnd=plan.total_vnd,
-                    lines=[(line.order_id, line.amount_vnd) for line in plan.lines],
-                )
+            # Round 9b (J6): a range quote has no figure to fix (`INVOICE_TOTAL_UNKNOWN`); an
+            # invoice printed for a figure that moved is kept at it when the owner confirms.
+            on_invoice = orders_on_invoice(
+                kind=plan.kind,
+                invoice_total_vnd=command.invoice_total_vnd,
+                invoice_order_ids=command.invoice_order_ids,
+                request_total_vnd=plan.total_vnd,
+                lines=[(line.order_id, line.amount_vnd) for line in plan.lines],
+                record_printed=command.record_printed_total,
+            )
+            plan = replace(
+                plan.listing(on_invoice.order_ids),
+                printed_total_vnd=on_invoice.printed_total_vnd,
             )
 
             def mutation(cursor: Any) -> None:
@@ -1190,6 +1256,8 @@ class InvoiceRequestRepository:
                     "invoice_date": issued.issued_on.isoformat(),
                     "invoice_total_vnd": command.invoice_total_vnd,
                     "invoice_order_ids": sorted(str(item) for item in command.invoice_order_ids),
+                    # Round 9b: present only when confirmed, so an earlier key hashes as it did.
+                    **({"record_printed_total": True} if command.record_printed_total else {}),
                 },
                 occurred_at=command.at,
             ),
@@ -1718,6 +1786,8 @@ class _SnapshotPlan:
     at: datetime
     #: An account month's orders the invoice does not list (`listing`): on no invoice yet.
     left_off: int = 0
+    #: J6a: the invoice's printed total, when the owner confirmed one that differs from `total_vnd`.
+    printed_total_vnd: int | None = None
 
     def listing(self, order_ids: tuple[UUID, ...]) -> _SnapshotPlan:
         """The plan for the orders the invoice lists (`orders_on_invoice` chose them)."""
@@ -1739,6 +1809,12 @@ class _SnapshotPlan:
             "fixed_total_vnd": self.total_vnd,
             "fixed_order_count": len(self.lines),
             "month_orders_left_off": self.left_off,
+            # Round 9b (J6a): only when the invoice was recorded at a printed figure that differs.
+            **(
+                {}
+                if self.printed_total_vnd is None
+                else {"printed_total_vnd": self.printed_total_vnd}
+            ),
         }
 
 
@@ -1810,8 +1886,8 @@ def _write_snapshot(cursor: Any, plan: _SnapshotPlan) -> None:
         """
         INSERT INTO invoice_request_snapshots (
             request_id, store_id, subject_kind, origin, total_vnd, storage_fee_vnd, quote_id,
-            quote_revision, order_count, taken_at
-        ) VALUES (%s, %s, %s, 'AT_ISSUE', %s, %s, %s, %s, %s, %s)
+            quote_revision, order_count, taken_at, printed_total_vnd
+        ) VALUES (%s, %s, %s, 'AT_ISSUE', %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             plan.request_id,
@@ -1823,6 +1899,7 @@ def _write_snapshot(cursor: Any, plan: _SnapshotPlan) -> None:
             None if plan.quote is None else plan.quote[1],
             len(plan.lines),
             plan.at,
+            plan.printed_total_vnd,
         ),
     )
     cursor.executemany(
@@ -1910,6 +1987,7 @@ class _Figures:
     uninvoiced_charge_count: int | None = None
     month_lines: tuple[MonthLine, ...] = ()
     fixed_quote: tuple[UUID, int] | None = None
+    shop_total_vnd: int | None = None
 
 
 def _figures(
@@ -1965,6 +2043,17 @@ def _view(cursor: Any, row: tuple[Any, ...], now: datetime) -> InvoiceRequestVie
         now=now,
     )
     number = int(row[2])
+    # J6b: another live request covering one of these orders (data from before INVOICE-TRUTH-009).
+    others: tuple[str, ...] = ()
+    if figures.covered:
+        cursor.execute(
+            _OTHER_LIVE_REQUESTS_SQL,
+            {"store": _uuid(row[1]), "request": _uuid(row[0]), "orders": list(figures.covered)},
+        )
+        others = tuple(request_code(int(found[0])) for found in cursor.fetchall())
+    flags = figures.flags
+    if others and InvoiceFlag.ON_ANOTHER_REQUEST not in flags:
+        flags = (*flags, *request_overlap_flags(len(others)))
     return InvoiceRequestView(
         request_id=_uuid(row[0]),
         store_id=_uuid(row[1]),
@@ -2001,11 +2090,13 @@ def _view(cursor: Any, row: tuple[Any, ...], now: datetime) -> InvoiceRequestVie
         row_version=int(row[26]),
         amount=figures.amount,
         covered_order_ids=figures.covered,
-        flags=figures.flags,
+        flags=flags,
         live_total_vnd=figures.live_total_vnd,
         uninvoiced_charge_count=figures.uninvoiced_charge_count,
         month_lines=figures.month_lines,
         fixed_quote=figures.fixed_quote,
+        shop_total_vnd=figures.shop_total_vnd,
+        other_request_codes=others,
     )
 
 
@@ -2070,6 +2161,9 @@ def _issued_figures(
         # `0068` makes this unstorable (a deferred check at every commit, and the backfill).
         raise InvoiceStateError("INVOICE_SNAPSHOT_MISSING: an issued request has no fixed figure")
     total = None if fixed[0] is None else int(fixed[0])
+    # J6a: an invoice recorded at a printed figure that differs reads at that figure; what its
+    # orders cost at the press (`total`) stays beside it, and every comparison is against it.
+    printed = None if fixed[5] is None else int(fixed[5])
     cursor.execute(_SNAPSHOT_ORDERS_SQL, (request_id,))
     rows = cursor.fetchall()
     at_issue = {_uuid(row[0]): CoveredOrderState(bool(row[3]), bool(row[4])) for row in rows}
@@ -2082,7 +2176,7 @@ def _issued_figures(
         live_total = _order_amount(cursor, order_id, now).total_vnd
         amount = InvoiceAmount(
             source="ORDER_CHARGES",
-            total_vnd=total,
+            total_vnd=total if printed is None else printed,
             storage_fee_vnd=None if fixed[1] is None else int(fixed[1]),
             charge_count=None,
             month_ended=None,
@@ -2115,7 +2209,7 @@ def _issued_figures(
         )
         amount = InvoiceAmount(
             source="ACCOUNT_MONTH_ORDERS",
-            total_vnd=total,
+            total_vnd=total if printed is None else printed,
             storage_fee_vnd=None,
             charge_count=len(rows),
             month_ended=month_has_ended(period_month, now),
@@ -2128,6 +2222,7 @@ def _issued_figures(
         at_issue=at_issue,
         now=now_state,
         uninvoiced_month_orders=uninvoiced,
+        printed_total_vnd=printed,
     )
     return _Figures(
         amount=amount,
@@ -2137,6 +2232,7 @@ def _issued_figures(
         uninvoiced_charge_count=uninvoiced if uninvoiced else None,
         month_lines=lines,
         fixed_quote=(None if fixed[2] is None else (_uuid(fixed[2]), int(fixed[3]))),
+        shop_total_vnd=None if printed is None else total,
     )
 
 
@@ -2167,6 +2263,14 @@ def _flag_text(view: InvoiceRequestView) -> str:
             )
         elif flag is InvoiceFlag.MONTH_ORDERS_NOT_ON_INVOICE:
             text = text.format(count=view.uninvoiced_charge_count or 0)
+        elif flag is InvoiceFlag.PRINTED_TOTAL_DIFFERS:
+            text = text.format(
+                shop="chưa có tổng"
+                if view.shop_total_vnd is None
+                else format_vnd(view.shop_total_vnd)
+            )
+        elif flag is InvoiceFlag.ON_ANOTHER_REQUEST:
+            text = text.format(others=", ".join(view.other_request_codes) or "yêu cầu khác")
         parts.append(text)
     return " ".join(parts)
 

@@ -185,6 +185,7 @@ class InvoiceRequestService:
         invoice_date: date | None,
         invoice_total_vnd: int | None,
         invoice_order_ids: tuple[UUID, ...],
+        record_printed_total: bool = False,
     ) -> tuple[StoredInvoiceRequest, InvoiceRequestView]:
         with self._connection_factory(self._database_url) as connection:
             stored = self._repository.record_issued(
@@ -198,6 +199,7 @@ class InvoiceRequestService:
                     invoice_date=invoice_date,
                     invoice_total_vnd=invoice_total_vnd,
                     invoice_order_ids=invoice_order_ids,
+                    record_printed_total=record_printed_total,
                     principal=principal,
                     idempotency_key=idempotency_key,
                     correlation_id=uuid4(),

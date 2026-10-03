@@ -10,7 +10,7 @@ over facts read here:
   -- for the roles that call customers only, as `UNCLAIMED-001`'s list returns its number -- the
   national number for *Gọi* and the `zalo.me` link, both derived here from the sealed column at
   read time. Unreachable orders are rows too, and counted (`unreachable_count`).
-* **The text** (`pickup-reminder-v1`) for (order, step), only after the egress guard
+* **The text** (`pickup-reminder-v2`) for (order, step), only after the egress guard
   (`consent_egress.check_egress_allowed`, TRANSACTIONAL) allows it, inside the transaction that
   reads the facts. Refusals: `NO_CONTACT`, then the guard's codes -- `SUPPRESSED`,
   `PENDING_REVIEW`, `SUPPRESSION_UNKNOWN`, `MESSAGING_POLICY_UNPUBLISHED`, `NO_SERVICE_BASIS`.
@@ -67,10 +67,11 @@ from nha_trang_laundry_domain.unclaimed import (
     StorageClock,
     StorageHold,
     StoragePolicy,
-    days_waiting,
+    WaitingClock,
     order_storage_fee,
     shop_date,
     storage_clock,
+    waiting_clock,
 )
 
 from nha_trang_laundry_db.consent_egress import (
@@ -87,8 +88,12 @@ from nha_trang_laundry_db.promise_policy import read_published_turnaround_policy
 from nha_trang_laundry_db.service_messaging import read_published_messaging_policy
 from nha_trang_laundry_db.storage_fees import (
     STORAGE_HOLDS_SQL,
+    WAITING_AS_OF_SQL,
+    WAITING_DAYS_SQL,
+    WAITING_ORDER_SQL,
     holds_from_column,
     read_published_storage_policy,
+    require_same_days,
 )
 from nha_trang_laundry_db.store_access import is_store_member, require_store_membership
 from nha_trang_laundry_db.unclaimed import (
@@ -140,6 +145,9 @@ class ReminderRow:
     remaining_vnd: int | None
     #: What the text route would answer now, as advice (no lock): None when it would give the text.
     message_refusal: str | None
+    #: `DEC-050`: the shop days the shop held the order since it was ready, left out of
+    #: `days_waiting`; the list says so beside the ready day (verification round 1, P2).
+    held_days: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +251,18 @@ class _OrderFacts:
     #: `DEC-047`: whether the fee's day count runs, and the hold bookkeeping it is counted with.
     clock: StorageClock = StorageClock.STOPPED
     holds: tuple[StorageHold, ...] = ()
+
+    def waiting(self, as_of: datetime) -> WaitingClock | None:
+        """`DEC-050`'s clock for this order: the days the reminders count, held days not counted."""
+
+        if self.ready_at is None:
+            return None
+        return waiting_clock(
+            self.ready_at,
+            as_of,
+            holds=self.holds,
+            paused=self.clock is StorageClock.PAUSED,
+        )
 
 
 def _order_facts(cursor: Any, order_id: UUID) -> _OrderFacts | None:
@@ -388,9 +408,10 @@ def newest_due_step(
 ) -> ReminderStep | None:
     """The newest step whose day has come, done or not; None when none is due."""
 
-    if not facts.awaiting or facts.ready_at is None:
+    clock = facts.waiting(as_of)
+    if not facts.awaiting or clock is None:
         return None
-    due = reminder_steps(shop_date(facts.ready_at), shop_date(as_of), policy)
+    due = reminder_steps(clock.days, policy)
     return due[-1] if due else None
 
 
@@ -447,9 +468,10 @@ def check_reminder_attempt(
 def _scan_due(
     cursor: Any, *, store_id: UUID, as_of: datetime
 ) -> tuple[Any, Any, list[tuple[UUID, ReminderStep, Reachability]], bool]:
-    """Every waiting order's newest due reminder, oldest ready first: the list's population, read
-    once for the list and for `count_due` alike. Returns the storage and messaging policies read,
-    the due rows and whether the scan stopped at `SCAN_LIMIT`."""
+    """Every waiting order's newest due reminder, the most counted days first (`DEC-050`; the
+    order Đồ chờ lấy lists them in): the list's population, read once for the list and for
+    `count_due` alike. Returns the storage and messaging policies read, the due rows and whether
+    the scan stopped at `SCAN_LIMIT`."""
 
     published = read_published_storage_policy(cursor)
     policy = None if published is None else published.policy
@@ -464,21 +486,29 @@ def _scan_due(
                    '{{}}'::text[]),
                (cu.phone_ciphertext IS NOT NULL AND cu.erased_at IS NULL),
                EXISTS (SELECT 1 FROM contact_channel_bindings b
-                       WHERE b.contact_binding_id = o.bound_contact_id)
+                       WHERE b.contact_binding_id = o.bound_contact_id),
+               {STORAGE_HOLDS_SQL},
+               {WAITING_DAYS_SQL}
         FROM orders o
         LEFT JOIN customers cu ON cu.id = o.customer_id AND cu.store_id = o.store_id
+        {WAITING_AS_OF_SQL}
         WHERE o.store_id = %s AND {AWAITING_PICKUP_SQL} AND o.production_ready_at IS NOT NULL
-        ORDER BY o.production_ready_at ASC, o.id
+        ORDER BY {WAITING_ORDER_SQL}
         LIMIT %s
         """,
-        (store_id, SCAN_LIMIT + 1),
+        (as_of, store_id, SCAN_LIMIT + 1),
     )
     scanned = cursor.fetchall()
     scan_truncated = len(scanned) > SCAN_LIMIT
-    today = shop_date(as_of)
     due: list[tuple[UUID, ReminderStep, Reachability]] = []
     for row in scanned[:SCAN_LIMIT]:
-        step = current_reminder(shop_date(row[1]), today, policy, _steps(row[2] or []))
+        # DEC-050: the steps fall on the clock's days -- a day the shop held the laundry is none.
+        clock = waiting_clock(row[1], as_of, holds=holds_from_column(row[5]))
+        # The scan is ordered by the SQL's count of the same days -- the list's "oldest first" is
+        # Đồ chờ lấy's order (verification round 3, P2): they agree, or nothing is answered.
+        require_same_days(row[0], row[6], clock)
+        waited = clock.days
+        step = current_reminder(waited, policy, _steps(row[2] or []))
         if step is not None:
             reach = reachability(has_phone=bool(row[3]), has_chat=bool(row[4]))
             due.append((_uuid(row[0]), step, reach))
@@ -545,6 +575,7 @@ class PickupReminderRepository:
                 else None
             )
             ready_at: datetime = detail["ready_at"]
+            clock = waiting_clock(ready_at, as_of, holds=detail["holds"])
             rows.append(
                 ReminderRow(
                     order_id=order_id,
@@ -556,7 +587,8 @@ class PickupReminderRepository:
                     customer_name=None if erased else detail["customer_name"],
                     step=step,
                     ready_at=ready_at,
-                    days_waiting=days_waiting(ready_at, as_of),
+                    days_waiting=clock.days,
+                    held_days=clock.held_days,
                     reachable=reach,
                     phone=national,
                     zalo_url=zalo_url(national),
@@ -605,7 +637,7 @@ class PickupReminderRepository:
         principal: StaffPrincipal,
         as_of: datetime,
     ) -> ReminderMessage:
-        """The `pickup-reminder-v1` text for (order, step), after the egress guard allows it.
+        """The `pickup-reminder-v2` text for (order, step), after the egress guard allows it.
 
         404-shaped for a stranger's order, as the order read is. Writes nothing: the guard's lock is
         held for the read's own transaction, and the attempt that records the send runs it again.
@@ -622,7 +654,8 @@ class PickupReminderRepository:
             policy = None if published is None else published.policy
             _require_step(facts, step, policy=policy, as_of=as_of)
             egress = _require_message_allowed(cursor, facts, at=as_of)
-            assert facts.ready_at is not None
+            clock = facts.waiting(as_of)
+            assert facts.ready_at is not None and clock is not None
             turnaround = read_published_turnaround_policy(cursor)
             ready_on = shop_date(facts.ready_at)
             text = reminder_text(
@@ -633,7 +666,8 @@ class PickupReminderRepository:
                     ticket_issued_on=facts.ticket_issued_on,
                     received_on=shop_date(facts.created_at),
                     ready_on=ready_on,
-                    days_waiting=days_waiting(facts.ready_at, as_of),
+                    days_waiting=clock.days,
+                    held_days=clock.held_days,
                     remaining_vnd=_remaining(
                         policy,
                         clock=facts.clock,
@@ -655,7 +689,7 @@ class PickupReminderRepository:
                         ReminderFee(
                             fee_per_started_day_vnd=policy.fee_per_started_day_vnd,
                             fee_cap_percent=policy.fee_cap_percent,
-                            starts_on=fee_starts_on(ready_on, policy),
+                            starts_on=fee_starts_on(clock, policy),
                         )
                         if step is ReminderStep.BEFORE_FEE and policy is not None
                         else None

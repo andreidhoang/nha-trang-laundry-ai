@@ -457,7 +457,7 @@ paths:
   /internal/v1/orders/{order_id}/pickup-reminder:
     get:
       operationId: read_pickup_reminder
-      summary: 'Chép tin nhắn: the fixed `pickup-reminder-v1` text for (order, step), behind the guard.'
+      summary: 'Chép tin nhắn: the fixed `pickup-reminder-v2` text for (order, step), behind the guard.'
       x-authorization-dependencies:
       - require_operations_staff
       - get_pickup_reminder_service

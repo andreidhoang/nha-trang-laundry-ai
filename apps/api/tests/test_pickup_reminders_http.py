@@ -190,7 +190,7 @@ def test_the_text_waits_for_the_owner_and_da_nhac_records_the_message(
     message = _text(client, order_id, "READY")
     assert message.status_code == 200, message.text
     body = message.json()
-    assert body["template"] == "pickup-reminder-v1" and body["basis"] == "OPEN_ORDER"
+    assert body["template"] == "pickup-reminder-v2" and body["basis"] == "OPEN_ORDER"
     assert body["text"].startswith("Cửa hàng xin báo: đồ giặt phiếu số ")
     assert "Số tiền còn lại: 110.000 ₫." in body["text"]
 

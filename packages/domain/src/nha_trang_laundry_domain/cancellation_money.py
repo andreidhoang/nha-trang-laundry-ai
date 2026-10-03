@@ -28,6 +28,24 @@ A credit reissued under `DEC-046` stands in for the one it replaces: the caller 
 credits issued from the order by its latest link, so a credit spent, reissued and then unspent is
 voided once, and never netted as well.
 
+**Credit chains** (round 9b, `MONEY-RESIDUAL-009B` J3). Order X issues credit c1, c1 is spent on Y,
+Y issues c2, c2 is spent on Z... Each customer must end at the same total whichever of those orders
+is cancelled first -- the total being what they paid less what came back, less the face value of
+the credits they still hold. `DEC-045` then `DEC-046` already give that for every order of
+cancellation but one: X is cancelled while c1 is spent, and X's refund does *not* take c1's whole
+face value off (it was capped at what X's ledger held -- "never below 0" -- or X refunded nothing).
+c1's value then stayed with the customer at X's cancellation, and cancelling Y afterwards would
+give it back a second time as a reissued credit. Making that order equal would need a rule nobody
+has decided (reissue part of a credit, or take it back from Y's refund), so the later cancellation
+is refused instead, by name (`CREDIT_CHAIN_NOT_NETTED`); the owner decides
+(`RemedyCreditFact.issuer_uncovered`, read by the repository from X's refund row).
+
+**The preview is the press** (round 9b, J4). What the refund sheet showed before the press is
+carried by the press (`CancellationMoneyFigures`): the refund, what is netted, voided and reissued.
+A credit can move under the sheet without the order changing -- spent on another order, say -- so
+the cancellation is refused (`CANCELLATION_MONEY_CHANGED`) when the figures it would execute are not
+the ones the person saw, or when it moves remedy money and the press carried no figures at all.
+
 Pure: no clock, no database, no environment. Integer đồng only; the one comparison that bounds the
 netting (`min`) is the "never below 0" of the decision, and nothing divides.
 """
@@ -56,6 +74,38 @@ class CreditState(StrEnum):
     VOIDED = "VOIDED"
 
 
+class CancellationMoneyRefusal(StrEnum):
+    """Why a cancellation is refused over remedy money, by name."""
+
+    #: J3: the bill spent a credit from an order already cancelled whose refund did not take that
+    #: credit's whole face value off; reissuing it would compensate the customer twice.
+    CREDIT_CHAIN_NOT_NETTED = "CREDIT_CHAIN_NOT_NETTED"
+    #: J4: what the cancellation would do to the money is not what the press was shown.
+    CANCELLATION_MONEY_CHANGED = "CANCELLATION_MONEY_CHANGED"
+
+
+#: What the counter reads for each refusal, ≤ 25 words, beside the press.
+CANCELLATION_REFUSAL_VI: Final = {
+    CancellationMoneyRefusal.CREDIT_CHAIN_NOT_NETTED: (
+        "Đơn này dùng khoản giảm trừ của một đơn đã huỷ mà lúc huỷ chưa trừ lại đủ. Huỷ không "
+        "tính tiền sẽ trả khách hai lần — báo chủ tiệm."
+    ),
+    CancellationMoneyRefusal.CANCELLATION_MONEY_CHANGED: (
+        "Số tiền hoàn hoặc khoản giảm trừ của đơn vừa thay đổi. Xem lại số mới rồi bấm Huỷ đơn "
+        "lần nữa."
+    ),
+}
+
+
+class CancellationMoneyRefused(ValueError):
+    """A cancellation refused over remedy money. `str()` is the code."""
+
+    def __init__(self, code: CancellationMoneyRefusal) -> None:
+        super().__init__(code.value)
+        self.code = code
+        self.message_vi = CANCELLATION_REFUSAL_VI[code]
+
+
 @dataclass(frozen=True, slots=True)
 class RemedyCreditFact:
     """One remedy credit as the cancellation sees it: which, what for, how much, and its state."""
@@ -64,6 +114,10 @@ class RemedyCreditFact:
     kind: RemedyKind
     amount_vnd: int
     state: CreditState
+    #: J3, for a credit the bill spent: the order it was issued from is already cancelled, and that
+    #: cancellation's refund did not take this credit's whole face value off (capped, or nothing
+    #: refunded). Not a disposal: `DEC-036` keeps every credit.
+    issuer_uncovered: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +137,8 @@ class CancellationMoneyPlan:
     reissued: tuple[RemedyCreditFact, ...]
     #: The lines the refund sheet, the order page and the receipt print, in order.
     lines_vi: tuple[str, ...]
+    #: J3: the cancellation may not go through over remedy money (and why), or `None`.
+    refusal: CancellationMoneyRefusal | None = None
 
     @property
     def refund_vnd(self) -> int:
@@ -93,6 +149,53 @@ class CancellationMoneyPlan:
     @property
     def moves_remedy_money(self) -> bool:
         return bool(self.voided or self.netted or self.reissued)
+
+    def figures(self) -> CancellationMoneyFigures:
+        """What the refund sheet shows and the press carries back (J4)."""
+
+        return CancellationMoneyFigures(
+            refund_vnd=self.refund_vnd,
+            netted_vnd=self.netted_vnd,
+            voided_vnd=sum(credit.amount_vnd for credit in self.voided),
+            reissued_vnd=sum(credit.amount_vnd for credit in self.reissued),
+        )
+
+    def require_allowed(self, expected: CancellationMoneyFigures | None) -> None:
+        """Refuse the cancellation this plan is for, before anything is written, when it may not
+        go through (`refusal`), or when what it would execute is not what the press was shown:
+        the figures differ, or remedy money moves and the press carried no figures."""
+
+        if self.refusal is not None:
+            raise CancellationMoneyRefused(self.refusal)
+        if expected is None:
+            if self.moves_remedy_money:
+                raise CancellationMoneyRefused(CancellationMoneyRefusal.CANCELLATION_MONEY_CHANGED)
+            return
+        if expected != self.figures():
+            raise CancellationMoneyRefused(CancellationMoneyRefusal.CANCELLATION_MONEY_CHANGED)
+
+
+@dataclass(frozen=True, slots=True)
+class CancellationMoneyFigures:
+    """The four figures of a cancellation without charge, as the sheet showed them (J4).
+
+    `refund_vnd` is what goes back to the customer (0 when nothing does); the other three are the
+    face values netted from it, voided with it and reissued by it. Whole đồng, each validated.
+    """
+
+    refund_vnd: int
+    netted_vnd: int
+    voided_vnd: int
+    reissued_vnd: int
+
+    def __post_init__(self) -> None:
+        for value in (self.refund_vnd, self.netted_vnd, self.voided_vnd, self.reissued_vnd):
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or not 0 <= value <= MAX_SETTLEMENT_VND
+            ):
+                raise ValueError("a cancellation figure is a non-negative whole number of đồng")
 
 
 #: `RemedyKind` in the counter's words -- the same words the order page's credit rows use.
@@ -139,6 +242,13 @@ def cancellation_money_plan(
     netted_vnd = min(refundable_vnd, face)
     # A credit the bill spent comes back once; one voided since is not the customer's to get back.
     reissued = tuple(c for c in spent_on_order if c.state is CreditState.SPENT)
+    # J3: a credit whose issuing order was cancelled without taking its whole value back would be
+    # given back twice; no rule decides how much of it to reissue, so the cancellation is refused.
+    refusal = (
+        CancellationMoneyRefusal.CREDIT_CHAIN_NOT_NETTED
+        if any(c.issuer_uncovered for c in reissued)
+        else None
+    )
     lines: list[str] = []
     for credit in voided:
         lines.append(f"Khoản {_credit_vi(credit)} khách chưa dùng được huỷ cùng đơn.")
@@ -157,6 +267,8 @@ def cancellation_money_plan(
             )
     for credit in reissued:
         lines.append(f"Cấp lại cho khách khoản {_credit_vi(credit)} đã dùng cho đơn này.")
+    if refusal is not None:
+        lines = [CANCELLATION_REFUSAL_VI[refusal]]
     return CancellationMoneyPlan(
         voided=voided,
         netted=netted,
@@ -164,6 +276,7 @@ def cancellation_money_plan(
         netted_vnd=netted_vnd,
         reissued=reissued,
         lines_vi=tuple(lines),
+        refusal=refusal,
     )
 
 
@@ -180,10 +293,14 @@ def _vnd_text(amount: int) -> str:
 
 
 __all__ = [
+    "CANCELLATION_REFUSAL_VI",
     "DEC_NO_DOUBLE_COMPENSATION",
     "DEC_SPENT_CREDIT_REISSUED",
     "REMEDY_KIND_VI",
+    "CancellationMoneyFigures",
     "CancellationMoneyPlan",
+    "CancellationMoneyRefusal",
+    "CancellationMoneyRefused",
     "CreditState",
     "RemedyCreditFact",
     "cancellation_money_plan",

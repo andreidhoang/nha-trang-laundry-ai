@@ -359,6 +359,86 @@ def hold_move(
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class WaitingClock:
+    """How long one order's finished laundry has waited for its customer (`DEC-050`).
+
+    The one clock every measure of the customer's lateness reads -- the storage fee's days
+    (`DEC-047`), *days waiting* on the list and the order, disposal eligibility and the pickup
+    reminders' day steps. While the shop holds the laundry the days count for none of them: the
+    count is the shop-local days from the ready day, less the days of each hold lifted since, and
+    it is frozen at the start of a hold still open (`paused`).
+    """
+
+    #: The shop day the laundry was (last) ready: day 0.
+    ready_on: date
+    #: The days that count.
+    days: int
+    #: The shop days the lifted holds took out of the count.
+    held_days: int
+    #: A hold since the laundry was ready is still open: `days` is frozen where it began.
+    paused: bool
+    #: Each lifted hold since the ready time as `(held_on, resumed_on)` shop days, oldest first.
+    lifted: tuple[tuple[date, date], ...] = ()
+
+    def falls_on(self, day: int) -> date | None:
+        """The shop day on which the count reads `day`, the holds already lifted skipped over.
+
+        `None` while paused: when the open hold will be lifted is not known, so no later day is
+        either. A hold not yet begun is not foreseen -- the day moves if one comes.
+        """
+
+        if self.paused:
+            return None
+        if day < 0:
+            raise ValueError("a day count is never negative")
+        candidate = date.fromordinal(self.ready_on.toordinal() + day)
+        for held_on, resumed_on in self.lifted:
+            if held_on < candidate:
+                candidate = date.fromordinal(candidate.toordinal() + (resumed_on - held_on).days)
+        return candidate
+
+
+def waiting_clock(
+    ready_at: datetime,
+    as_of: datetime,
+    *,
+    holds: Sequence[StorageHold],
+    paused: bool = False,
+) -> WaitingClock:
+    """`DEC-050`'s one clock: the days the laundry has waited at `as_of`, held days not counted.
+
+    Shop-local days from the ready day to `as_of`, less, for each hold since the laundry was last
+    ready, the shop-local days from the hold's day to the day it was lifted. While `paused` (a hold
+    is open), the count is frozen at the start of the latest open hold. Holds before `ready_at` (a
+    rewash since) do not count. Never negative. Pure.
+    """
+
+    since = sorted(
+        (hold for hold in holds if hold.held_at >= ready_at), key=lambda hold: hold.held_at
+    )
+    end = as_of
+    open_holds = [hold.held_at for hold in since if hold.resumed_at is None]
+    frozen = paused and bool(open_holds)
+    if frozen:
+        end = min(as_of, open_holds[-1])
+    counted = [
+        (hold.held_at, min(hold.resumed_at, end))
+        for hold in since
+        if hold.resumed_at is not None and hold.held_at < end
+    ]
+    held = sum(days_waiting(held_at, resumed_at) for held_at, resumed_at in counted)
+    return WaitingClock(
+        ready_on=shop_date(ready_at),
+        days=max(0, days_waiting(ready_at, end) - held),
+        held_days=held,
+        paused=frozen,
+        lifted=tuple(
+            (shop_date(held_at), shop_date(resumed_at)) for held_at, resumed_at in counted
+        ),
+    )
+
+
 def counted_days(
     ready_at: datetime,
     as_of: datetime,
@@ -366,28 +446,9 @@ def counted_days(
     holds: Sequence[StorageHold] = (),
     paused: bool = False,
 ) -> int:
-    """The days the storage fee counts (`DEC-047`). Never negative.
+    """The days the storage fee counts (`DEC-047`): `waiting_clock`'s days. Never negative."""
 
-    Shop-local days from the ready day to `as_of`, less, for each hold since the laundry was last
-    ready, the shop-local days from the hold's day to the day it was lifted. While `paused`, the
-    count is frozen at the start of the hold still open. Holds before `ready_at` (a rewash since)
-    do not count.
-    """
-
-    since = sorted(
-        (hold for hold in holds if hold.held_at >= ready_at), key=lambda hold: hold.held_at
-    )
-    end = as_of
-    if paused:
-        open_holds = [hold.held_at for hold in since if hold.resumed_at is None]
-        if open_holds:
-            end = min(as_of, open_holds[-1])
-    lifted = sum(
-        days_waiting(hold.held_at, min(hold.resumed_at, end))
-        for hold in since
-        if hold.resumed_at is not None and hold.held_at < end
-    )
-    return max(0, days_waiting(ready_at, end) - lifted)
+    return waiting_clock(ready_at, as_of, holds=holds, paused=paused).days
 
 
 # --- the fee --------------------------------------------------------------------------------------
@@ -698,27 +759,31 @@ def disposal_verdict(
     ready_at: datetime | None,
     as_of: datetime,
     attempt_times: Iterable[datetime],
+    holds: Sequence[StorageHold],
+    paused: bool = False,
 ) -> DisposalVerdict:
     """`DEC-036`: may the owner dispose of this order's laundry now?
 
     Who may press it (the owner, with MFA) is the repository's check; this is the rule about the
     order. An attempt recorded before the laundry was last ready (before a rewash) does not count.
+    `DEC-050`: the days are `waiting_clock`'s -- the days the shop held the laundry do not bring
+    disposal closer, and `eligible_on` moves past every hold already lifted (`None` while one is
+    open, `paused`).
     """
 
     counted = [moment for moment in attempt_times if ready_at is not None and moment >= ready_at]
     distinct_days = len({shop_date(moment) for moment in counted})
     refusals: list[DisposalRefusal] = []
-    waited = None if ready_at is None else days_waiting(ready_at, as_of)
+    clock = None if ready_at is None else waiting_clock(ready_at, as_of, holds=holds, paused=paused)
+    waited = None if clock is None else clock.days
     eligible_on = None
     if policy is None:
         refusals.append(DisposalRefusal.STORAGE_POLICY_UNPUBLISHED)
     if not awaiting or ready_at is None:
         refusals.append(DisposalRefusal.NOT_AWAITING_PICKUP)
     if policy is not None:
-        if ready_at is not None:
-            eligible_on = date.fromordinal(
-                shop_date(ready_at).toordinal() + policy.disposal_from_day
-            )
+        if clock is not None:
+            eligible_on = clock.falls_on(policy.disposal_from_day)
         if waited is None or waited < policy.disposal_from_day:
             refusals.append(DisposalRefusal.DISPOSAL_TOO_EARLY)
         if len(counted) < policy.disposal_min_attempts:
@@ -773,6 +838,7 @@ __all__ = [
     "StorageHold",
     "StoragePolicy",
     "StoragePolicyError",
+    "WaitingClock",
     "WaiverEffect",
     "awaiting_pickup",
     "clean_note",
@@ -790,6 +856,7 @@ __all__ = [
     "storage_clock",
     "storage_fee",
     "validate_storage_document",
+    "waiting_clock",
     "waiver_effect",
     "withdrawal_document",
 ]

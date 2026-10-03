@@ -16,9 +16,11 @@ record. The server decides who, when and what; a person sends it from the shop's
   day `free_days + 1`: `DEC-043` hands the order to *Đồ chờ lấy* from there. A fixed step that
   would fall on or after that day is not in the schedule. Without a policy there is no fee day, and
   the last step (`DAY_14`) stays due until it is done.
-* **The text is fixed** (`pickup-reminder-v1`), built from the facts passed in: the shop's name,
+* **The text is fixed** (`pickup-reminder-v2`), built from the facts passed in: the shop's name,
   the ticket and its day, the ready day, the balance, the opening hours and -- for `BEFORE_FEE` --
   the owner's published fee per day, cap and the day it starts, quoted as the receipt quotes them.
+  The day count is `DEC-050`'s (held days left out); when the shop held the order, the text says
+  how many days it left out, so the ready day and the count never disagree.
   It carries no name and no phone number. No model writes it and nothing here sends it.
 
 Pure: no clock, no database, no environment. Every fact and the instant judged are parameters.
@@ -29,14 +31,17 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date, time, timedelta
+from datetime import date, time
 from enum import StrEnum
 from typing import Final
 
-from nha_trang_laundry_domain.unclaimed import StoragePolicy
+from nha_trang_laundry_domain.unclaimed import StoragePolicy, WaitingClock
 
 #: The template's version. A change to any sentence below is a new version, never an edit.
-PICKUP_REMINDER_TEMPLATE: Final = "pickup-reminder-v1"
+#: v2 (`DEC-050`, MONEY-RESIDUAL-009B): the day count excludes the days the shop held the order, so
+#: the DAY_3/7/14 sentence and the BEFORE_FEE text say how many held days were left out -- v1 put a
+#: count without them beside the calendar ready day, and the two disagreed after a hold.
+PICKUP_REMINDER_TEMPLATE: Final = "pickup-reminder-v2"
 PICKUP_REMINDER_DECISION: Final = "DEC-043"
 
 
@@ -99,37 +104,33 @@ def schedule(policy: StoragePolicy | None) -> tuple[tuple[ReminderStep, int], ..
     return (*kept, (ReminderStep.BEFORE_FEE, last_day))
 
 
-def _waited(ready_on: date, today: date) -> int:
-    return max(0, (today - ready_on).days)
-
-
-def reminder_steps(
-    ready_on: date, today: date, storage_policy: StoragePolicy | None
-) -> tuple[ReminderStep, ...]:
+def reminder_steps(waited: int, storage_policy: StoragePolicy | None) -> tuple[ReminderStep, ...]:
     """The steps whose day has come, in schedule order -- none once the storage fee has started.
 
-    `ready_on` and `today` are shop-local calendar days (`unclaimed.shop_date`). A clock that
-    reads earlier than the ready day counts as the ready day, as `unclaimed.days_waiting` does.
+    `waited` is `unclaimed.waiting_clock`'s day count (`DEC-050`): shop-local days since the
+    laundry was ready, the days the shop held it not counted -- the same days the fee and the list
+    count, so a step never falls on a day the shop was holding the laundry.
     """
 
-    waited = _waited(ready_on, today)
+    if waited < 0:
+        raise ValueError("a day count is never negative")
     if storage_policy is not None and waited > storage_policy.free_days:
         return ()
     return tuple(step for step, day in schedule(storage_policy) if day <= waited)
 
 
 def current_reminder(
-    ready_on: date,
-    today: date,
+    waited: int,
     storage_policy: StoragePolicy | None,
     done: Iterable[ReminderStep],
 ) -> ReminderStep | None:
     """The one reminder to show now: the newest due step, unless an attempt already did it.
 
-    An earlier step nobody did is superseded by a later one, so it never comes back.
+    An earlier step nobody did is superseded by a later one, so it never comes back. `waited` is
+    `unclaimed.waiting_clock`'s day count.
     """
 
-    due = reminder_steps(ready_on, today, storage_policy)
+    due = reminder_steps(waited, storage_policy)
     if not due:
         return None
     newest = due[-1]
@@ -142,10 +143,15 @@ def step_day(step: ReminderStep, storage_policy: StoragePolicy | None) -> int | 
     return next((day for named, day in schedule(storage_policy) if named is step), None)
 
 
-def fee_starts_on(ready_on: date, policy: StoragePolicy) -> date:
-    """The first shop day a fee is charged for: the day after the free days end (`DEC-036`)."""
+def fee_starts_on(clock: WaitingClock, policy: StoragePolicy) -> date:
+    """The first shop day a fee is charged for: the day the count reaches the day after the free
+    days end (`DEC-036`), past every hold already lifted (`DEC-050`). A waiting order is never
+    paused; a paused clock has no such day yet and is refused."""
 
-    return ready_on + timedelta(days=policy.free_days + 1)
+    starts = clock.falls_on(policy.free_days + 1)
+    if starts is None:
+        raise ValueError("laundry on hold has no fee day yet")
+    return starts
 
 
 def reachability(*, has_phone: bool, has_chat: bool) -> Reachability:
@@ -237,6 +243,9 @@ class ReminderFacts:
     opening_hours: tuple[time, time] | None
     #: `BEFORE_FEE` only.
     fee: ReminderFee | None = None
+    #: `DEC-050`: the shop days the order was held since it was ready -- left out of `days_waiting`
+    #: (and pushing the fee day later). 0 for nearly every order; the text names it when not.
+    held_days: int = 0
 
 
 def _day(value: date) -> str:
@@ -260,12 +269,16 @@ def _reference(facts: ReminderFacts) -> str:
 
 
 def reminder_text(step: ReminderStep, facts: ReminderFacts) -> str:
-    """The `pickup-reminder-v1` text for one step: the lines a person copies into Zalo or SMS.
+    """The `pickup-reminder-v2` text for one step: the lines a person copies into Zalo or SMS.
 
     Raises `ValueError` for `BEFORE_FEE` without the published fee, or for a negative figure.
     """
 
-    if facts.days_waiting < 0 or (facts.remaining_vnd is not None and facts.remaining_vnd < 0):
+    if (
+        facts.days_waiting < 0
+        or facts.held_days < 0
+        or (facts.remaining_vnd is not None and facts.remaining_vnd < 0)
+    ):
         raise ValueError("a reminder's figures are non-negative")
     who = facts.shop_name.strip() if facts.shop_name and facts.shop_name.strip() else "Tiệm giặt"
     reference = _reference(facts)
@@ -282,6 +295,11 @@ def reminder_text(step: ReminderStep, facts: ReminderFacts) -> str:
         lines = [
             f"{who} xin nhắc: đồ giặt {reference} đã xong từ ngày {ready} và đang chờ anh/chị "
             "qua lấy.",
+            *(
+                [f"Không tính {facts.held_days} ngày tiệm giữ đơn vào thời gian chờ."]
+                if facts.held_days
+                else []
+            ),
             f"Từ ngày {_day(fee.starts_on)} tiệm tính phí lưu kho "
             f"{_vnd(fee.fee_per_started_day_vnd)}/ngày (tối đa {fee.fee_cap_percent}% tiền giặt).",
             "Mời anh/chị qua lấy trước ngày đó.",
@@ -289,7 +307,9 @@ def reminder_text(step: ReminderStep, facts: ReminderFacts) -> str:
     else:
         lines = [
             f"{who} xin nhắc: đồ giặt {reference} đã xong từ ngày {ready}, đến nay đã "
-            f"{facts.days_waiting} ngày.",
+            f"{facts.days_waiting} ngày"
+            + (f" (không tính {facts.held_days} ngày tiệm giữ đơn)" if facts.held_days else "")
+            + ".",
             "Mời anh/chị sắp xếp qua tiệm lấy đồ.",
         ]
     if facts.remaining_vnd is None:

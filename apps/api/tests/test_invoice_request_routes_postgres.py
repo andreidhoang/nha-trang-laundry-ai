@@ -197,7 +197,7 @@ def test_invoice_requests_from_the_counter_to_the_bookkeeper_over_http(
     assert body["counts"] == {"REQUESTED": 3, "ISSUED": 0, "CANCELLED": 0}
     assert body["total_count"] == 3 and body["truncated"] is True
     assert body["requests"][0]["invoice_request_id"] == request["invoice_request_id"]
-    assert body["query_version"].startswith("invoice-requests-v2:")
+    assert body["query_version"].startswith("invoice-requests-v3:")
 
     # Only the owner or the approver downloads, and records what the bookkeeper issued.
     assert _send(client, "POST", f"{base}/invoice-requests/export").json() == DENIED
@@ -206,7 +206,7 @@ def test_invoice_requests_from_the_counter_to_the_bookkeeper_over_http(
     assert produced.status_code == 200, produced.text
     export = produced.json()
     assert export["content_csv"].startswith("﻿")
-    assert export["query_version"].startswith("invoice-requests-export-v2:")
+    assert export["query_version"].startswith("invoice-requests-export-v3:")
     assert export["flagged_issued_count"] == 0
     assert export["request_count"] == 3 and export["filename"].endswith(".csv")
     rows = list(csv.reader(io.StringIO(export["content_csv"].lstrip("﻿"))))

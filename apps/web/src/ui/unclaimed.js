@@ -79,15 +79,33 @@ export function storageChargeLine(order) {
 
 /**
  * How long the laundry has waited, in the counter's words. `days` is the server's count of shop
- * days since the laundry was ready.
+ * days since the laundry was ready; `held` the shop days it held the order, which that count
+ * leaves out (DEC-050).
+ *
+ * "Xong hôm nay" only for laundry never held: held on its ready day and resumed later, the count is
+ * 0 but the laundry was not finished today, and the ready day beside it says so (MONEY-RESIDUAL-009B
+ * J1, verification round 2). Ready day + "Chờ 0 ngày" + the held days is today.
  *
  * @param {number|null|undefined} days
+ * @param {number|null|undefined} [held]
  * @returns {string}
  */
-export function waitingText(days) {
+export function waitingText(days, held) {
   if (!Number.isInteger(days)) return "Chưa rõ ngày xong";
-  if (days === 0) return "Xong hôm nay";
+  if (days === 0 && !heldDaysText(held)) return "Xong hôm nay";
   return `Chờ ${days} ngày`;
+}
+
+/**
+ * DEC-050 (MONEY-RESIDUAL-009B J1): the days the shop held the laundry, which the server leaves
+ * out of `days_waiting` — said wherever the count stands beside the ready day, so a count shorter
+ * than the calendar is not read as a slip. Empty for an order never held.
+ *
+ * @param {number|null|undefined} held
+ * @returns {string}
+ */
+export function heldDaysText(held) {
+  return Number.isInteger(held) && held > 0 ? `không tính ${held} ngày tiệm giữ đơn` : "";
 }
 
 /**
@@ -418,7 +436,14 @@ export function storageSection(spec) {
     storage.awaiting_pickup
       ? [
           "Chờ lấy",
-          `${waitingText(storage.days_waiting)}${storage.ready_at ? ` (xong ${dateOnly(storage.ready_at)})` : ""}`,
+          h(
+            "span",
+            { dataField: "storage-waiting", dataHeldDays: String(storage.held_days || 0) },
+            `${waitingText(storage.days_waiting, storage.held_days)}${storage.ready_at ? ` (xong ${dateOnly(storage.ready_at)})` : ""}`,
+            // DEC-050 (MONEY-RESIDUAL-009B J1): the server counts the days the shop held the
+            // laundry for nothing; said so, so the count shorter than the calendar is not a slip.
+            storage.held_days ? ` · ${heldDaysText(storage.held_days)}` : "",
+          ),
         ]
       : null,
     ["Phí lưu kho", h("span", { dataStorageFee: String(fee.status || "") }, feeText(fee, policy, order?.balance))],
@@ -688,7 +713,12 @@ function openDisposal(spec) {
       factsHost,
       keyValues([
         ["Đơn", spec.title],
-        ["Chờ lấy", waitingText(storage.days_waiting)],
+        [
+          "Chờ lấy",
+          `${waitingText(storage.days_waiting, storage.held_days)}${
+            storage.held_days ? ` (${heldDaysText(storage.held_days)})` : ""
+          }`,
+        ],
         ["Đã liên hệ", `${verdict.attempts_counted ?? 0} lần · ${verdict.attempt_days ?? 0} ngày`],
         ["Khách đã trả (giữ nguyên)", money(order.paid_vnd)],
         ["Còn nợ (xoá)", money(order.remaining_vnd)],

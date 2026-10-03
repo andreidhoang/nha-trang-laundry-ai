@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 556
+  DESCRIPTIVE: 559
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 19
   SERVER_GATE: 15
-total: 597
+total: 600
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -352,6 +352,24 @@ disclosures:
   module: core/errors.js
   key: REFUSAL.REFUND_METHOD_REQUIRED
   text: 'Chưa huỷ được: chọn tiền trả lại khách bằng tiền mặt hay chuyển khoản. Không có gì được ghi.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.CANCELLATION_MONEY_CHANGED:55d155b7e7a1
+  module: core/errors.js
+  key: REFUSAL.CANCELLATION_MONEY_CHANGED
+  text: Số tiền hoàn hoặc khoản giảm trừ của đơn vừa thay đổi. Xem lại số mới rồi bấm Huỷ đơn lần nữa.
+    Không có gì được ghi.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#REFUSAL.CREDIT_CHAIN_NOT_NETTED:fd3175792f27
+  module: core/errors.js
+  key: REFUSAL.CREDIT_CHAIN_NOT_NETTED
+  text: Đơn này dùng khoản giảm trừ của một đơn đã huỷ mà lúc huỷ chưa trừ lại đủ. Huỷ không tính tiền
+    sẽ trả khách hai lần — báo chủ tiệm.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
@@ -1825,11 +1843,20 @@ disclosures:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
       rewording it fails the check and forces a fresh reading.
-- slot_id: core/i18n.js#REASON_NOTE.INVOICE_TOTAL_MISMATCH:16b4f6468193
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_TOTAL_MISMATCH:13467f6f0814
   module: core/i18n.js
   key: REASON_NOTE.INVOICE_TOTAL_MISMATCH
   text: 'Chưa lưu: tổng tiền gõ vào khác tổng của các đơn đã chọn. Chép đúng tổng trên hóa đơn và chỉ
-    chọn các đơn hóa đơn ghi. Nếu hóa đơn ghi số khác số của tiệm, báo chủ tiệm và kế toán.'
+    chọn các đơn hóa đơn ghi. Nếu hóa đơn đã xuất in đúng số này, bấm “Ghi theo số trên hóa đơn”.'
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/i18n.js#REASON_NOTE.INVOICE_TOTAL_UNKNOWN:3ba05eb5882b
+  module: core/i18n.js
+  key: REASON_NOTE.INVOICE_TOTAL_UNKNOWN
+  text: Báo giá của đơn chưa có một tổng nên chưa ghi số hóa đơn được. Huỷ yêu cầu, hoặc chờ chốt giá
+    rồi ghi.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

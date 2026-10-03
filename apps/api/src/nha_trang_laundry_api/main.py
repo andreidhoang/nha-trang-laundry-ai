@@ -89,6 +89,7 @@ from nha_trang_laundry_db.manual_sends import (
 from nha_trang_laundry_db.message_drafts import SEND_MESSAGE_POLICY_VERSION
 from nha_trang_laundry_db.orders import (
     OrderAuthorizationError,
+    OrderCancellationMoneyRefused,
     OrderGoodsMayNotLeaveError,
     OrderNotVisibleError,
     OrderPromiseRefused,
@@ -158,6 +159,7 @@ from nha_trang_laundry_domain.accounts import (
 )
 from nha_trang_laundry_domain.accounts import month_label as account_month_label
 from nha_trang_laundry_domain.approvals import ApprovalEnvelopeError
+from nha_trang_laundry_domain.cancellation_money import CancellationMoneyFigures
 from nha_trang_laundry_domain.canonical import MAX_CANONICAL_INT
 from nha_trang_laundry_domain.catalog import (
     AcquisitionSource,
@@ -498,6 +500,32 @@ class OrderCreateRequest(StrictRequest):
     acquisition_source: AcquisitionSource
 
 
+class CancellationMoneyFiguresRequest(StrictRequest):
+    """MONEY-RESIDUAL-009B (J4): the figures the refund sheet showed before the press -- the
+    order's `cancellation_money` preview (`refund_vnd`, `netted_vnd`, `voided_vnd`,
+    `reissued_vnd`), sent back unchanged. The cancellation is refused with 409
+    `CANCELLATION_MONEY_CHANGED` when it would execute other figures."""
+
+    refund_vnd: StrictInt = Field(ge=0, le=MAX_SETTLEMENT_VND)
+    netted_vnd: StrictInt = Field(ge=0, le=MAX_SETTLEMENT_VND)
+    voided_vnd: StrictInt = Field(ge=0, le=MAX_SETTLEMENT_VND)
+    reissued_vnd: StrictInt = Field(ge=0, le=MAX_SETTLEMENT_VND)
+
+    def figures(self) -> CancellationMoneyFigures:
+        return CancellationMoneyFigures(
+            refund_vnd=self.refund_vnd,
+            netted_vnd=self.netted_vnd,
+            voided_vnd=self.voided_vnd,
+            reissued_vnd=self.reissued_vnd,
+        )
+
+
+def _expected_figures(
+    request: CancellationMoneyFiguresRequest | None,
+) -> CancellationMoneyFigures | None:
+    return None if request is None else request.figures()
+
+
 class CommercialTransitionRequest(StrictRequest):
     target: CommercialOrderStatus
     #: `DEC-024`. Required only to cancel an order whose work has begun, and the refusal says so.
@@ -509,6 +537,9 @@ class CommercialTransitionRequest(StrictRequest):
     #: money back -- `TIEN_MAT` from the drawer or `CHUYEN_KHOAN` by bank transfer. Required then
     #: (422 `REQUIRE_HUMAN` / `REFUND_METHOD_REQUIRED`), refused otherwise.
     refund_method: Literal["TIEN_MAT", "CHUYEN_KHOAN"] | None = None
+    #: MONEY-RESIDUAL-009B (J4): `CANCELLED` only -- the preview's figures, required when the
+    #: cancellation moves remedy money (`cancellation_money` on the order read).
+    expected_cancellation_money: CancellationMoneyFiguresRequest | None = None
 
 
 class IntakeTransitionRequest(StrictRequest):
@@ -557,6 +588,10 @@ class OrderStepRequest(StrictRequest):
     #: `CANCEL` only (GOODS-AND-DRAWER-009, review M4): how the money went back when the
     #: cancellation hands money back -- the `CANCEL` entry's `requires` lists `refund_method` then.
     refund_method: Literal["TIEN_MAT", "CHUYEN_KHOAN"] | None = None
+    #: MONEY-RESIDUAL-009B (J4): `CANCEL` / `REJECT_INTAKE` only -- the order's
+    #: `cancellation_money` preview, sent back as shown. Required when the step moves remedy money;
+    #: 409 `CANCELLATION_MONEY_CHANGED` when the step would execute other figures.
+    expected_cancellation_money: CancellationMoneyFiguresRequest | None = None
 
     @field_validator("step")
     @classmethod
@@ -600,6 +635,13 @@ class OrderStepRequest(StrictRequest):
             raise ValueError("machine_id is taken only by START_WASH and REWASH")
         if self.refund_method is not None and self.step is not OrderStep.CANCEL:
             raise ValueError("refund_method is taken only by CANCEL")
+        if self.expected_cancellation_money is not None and self.step not in {
+            OrderStep.CANCEL,
+            OrderStep.REJECT_INTAKE,
+        }:
+            raise ValueError(
+                "expected_cancellation_money is taken only by CANCEL and REJECT_INTAKE"
+            )
         return self
 
 
@@ -942,6 +984,9 @@ class CancellationMoneyResponse(BaseModel):
     reissued_vnd: int = Field(ge=0)
     #: One sentence per credit movement, in the order they apply.
     lines_vi: list[str]
+    #: MONEY-RESIDUAL-009B (J3), `PREVIEW` only: the cancellation would be refused over remedy
+    #: money -- `CREDIT_CHAIN_NOT_NETTED` (`lines_vi` then holds the reason alone) -- or null.
+    refusal: str | None = None
 
 
 class OrderViewResponse(OrderResponse):
@@ -2481,6 +2526,7 @@ def transition_order(
             refund_method=None
             if request.refund_method is None
             else PaymentMethod(request.refund_method),
+            expected_cancellation_money=_expected_figures(request.expected_cancellation_money),
         )
     except OrderStepRequiresHuman as error:
         # GOODS-AND-DRAWER-009: a refunding cancellation without its refund method.
@@ -2611,6 +2657,7 @@ def execute_order_step(
             refund_method=None
             if request.refund_method is None
             else PaymentMethod(request.refund_method),
+            expected_cancellation_money=_expected_figures(request.expected_cancellation_money),
         )
     except MachineUnavailableError as error:
         # SHOP-CAPTURE-001: another store's machine, a retired one, or one a load does not go into.
@@ -6500,6 +6547,27 @@ def _transactional_release_response(
 
 
 def _raise_operations_error(error: Exception) -> NoReturn:
+    if isinstance(error, OrderCancellationMoneyRefused):
+        # MONEY-RESIDUAL-009B (J3, J4): a structured 409 the console words and acts on -- the
+        # code, the counter's sentence, and (for a changed figure) what the sheet should now show.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "reason_code": error.code,
+                "message_vi": error.message_vi,
+                "decision": "DEC-045",
+                "cancellation_money": (
+                    None
+                    if error.preview is None
+                    else {
+                        "refund_vnd": error.preview.refund_vnd,
+                        "netted_vnd": error.preview.netted_vnd,
+                        "voided_vnd": error.preview.voided_vnd,
+                        "reissued_vnd": error.preview.reissued_vnd,
+                    }
+                ),
+            },
+        ) from error
     if isinstance(error, EgressRefusedError):
         # Before the generic 409 below, which would have flattened it to its English message.
         raise HTTPException(
@@ -6689,6 +6757,7 @@ def _order_view_response(view: OrderView, *, replayed: bool = False) -> OrderVie
                 voided_vnd=view.cancellation_money.voided_vnd,
                 reissued_vnd=view.cancellation_money.reissued_vnd,
                 lines_vi=list(view.cancellation_money.lines_vi),
+                refusal=view.cancellation_money.refusal,
             )
         ),
     )
@@ -8824,6 +8893,8 @@ class AwaitingPickupItemResponse(BaseModel):
     has_phone: bool
     ready_at: datetime | None
     days_waiting: int | None
+    #: `DEC-050`: the shop days the shop held the order, left out of `days_waiting` (0 for most).
+    held_days: int = 0
     attempts_count: int
     last_attempt_at: datetime | None
     last_attempt_outcome: str | None
@@ -8903,7 +8974,11 @@ class OrderStorageResponse(BaseModel):
     policy: StoragePolicyResponse | None
     awaiting_pickup: bool
     ready_at: datetime | None
+    #: `DEC-050`: the days the laundry has waited -- the days the shop held it not counted, frozen
+    #: while it is on hold. The fee, disposal and the reminders count the same days.
     days_waiting: int | None
+    #: `DEC-050`: the shop days the lifted holds took out of `days_waiting` (0 for most orders).
+    held_days: int = 0
     storage_fee: StorageFeeResponse
     waiver: StorageWaiverResponse | None
     #: Oldest first, the latest `ATTEMPT_READ_LIMIT`; `attempts_total` counts all of them.
@@ -9063,6 +9138,7 @@ def list_awaiting_pickup(
                 has_phone=item.has_phone,
                 ready_at=item.ready_at,
                 days_waiting=item.days_waiting,
+                held_days=item.held_days,
                 attempts_count=item.attempts_count,
                 last_attempt_at=item.last_attempt_at,
                 last_attempt_outcome=item.last_attempt_outcome,
@@ -9101,6 +9177,7 @@ def read_order_storage(
         awaiting_pickup=found.awaiting,
         ready_at=found.ready_at,
         days_waiting=found.days_waiting,
+        held_days=found.held_days,
         storage_fee=_storage_fee_response(found.fee),
         waiver=None
         if waiver is None
@@ -9268,7 +9345,7 @@ def dispose_unclaimed_order(
 # --- PICKUP-REMIND-001: pickup reminders (DEC-043) -------------------------------------------
 #
 # *Nhắc khách lấy đồ*: which reminder is due for which waiting order, and the fixed
-# `pickup-reminder-v1` text behind the egress guard. Recording *Đã nhắc* is the contact-attempt
+# `pickup-reminder-v2` text behind the egress guard. Recording *Đã nhắc* is the contact-attempt
 # route above, with `reminder_step`. Every decision is the domain's (`pickup_reminders`).
 
 
@@ -9294,8 +9371,11 @@ class PickupReminderItemResponse(BaseModel):
     #: The newest reminder due and not yet done: `READY`, `DAY_3`, `DAY_7`, `DAY_14`, `BEFORE_FEE`.
     step: ReminderStep
     ready_at: datetime
-    #: Shop days since the laundry was ready, as *Đồ chờ lấy* counts them.
+    #: Shop days since the laundry was ready, as *Đồ chờ lấy* counts them (`DEC-050`: held days
+    #: left out).
     days_waiting: int
+    #: `DEC-050`: the shop days the shop held the order, left out of `days_waiting` (0 for most).
+    held_days: int = 0
     #: `PHONE` (a number on the customer's record), `CHAT` (the order came in on a chat channel) or
     #: `NONE` (a ticket alone: counted, nobody to message).
     reachable: Reachability
@@ -9338,7 +9418,7 @@ class PickupReminderMessageResponse(BaseModel):
 
     order_id: UUID
     step: ReminderStep
-    #: `pickup-reminder-v1`.
+    #: `pickup-reminder-v2`.
     template: str
     text: str
     evaluated_at: datetime
@@ -9392,6 +9472,7 @@ def list_pickup_reminders(
                 step=item.step,
                 ready_at=item.ready_at,
                 days_waiting=item.days_waiting,
+                held_days=item.held_days,
                 reachable=item.reachable,
                 phone=item.phone,
                 zalo_url=item.zalo_url,
@@ -9414,7 +9495,7 @@ def read_pickup_reminder(
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[PickupReminderService | None, Depends(get_pickup_reminder_service)] = None,
 ) -> PickupReminderMessageResponse:
-    """Chép tin nhắn: the fixed `pickup-reminder-v1` text for (order, step), behind the guard.
+    """Chép tin nhắn: the fixed `pickup-reminder-v2` text for (order, step), behind the guard.
 
     `step` must be the reminder due now (422 `REMINDER_STEP_NOT_DUE` / `NO_REMINDER_DUE`). Then
     `NO_CONTACT` for a ticket with nobody to message, and the TRANSACTIONAL egress guard's refusals
@@ -9566,6 +9647,11 @@ class InvoiceRequestResponse(BaseModel):
     flags: list[InvoiceFlag] = []
     live_total_vnd: int | None = None
     uninvoiced_charge_count: int | None = None
+    #: Round 9b (J6a), with `PRINTED_TOTAL_DIFFERS`: what the orders cost when the invoice was
+    #: recorded; `amount.total_vnd` is then the invoice's printed figure.
+    shop_total_vnd: int | None = None
+    #: Round 9b (J6b), with `ON_ANOTHER_REQUEST`: the other live requests covering its orders.
+    other_request_codes: list[str] = []
     #: The orders the request covers: an order's own; an open month's charged orders without a
     #: request of their own; an issued request's fixed list.
     covered_order_ids: list[UUID] = []
@@ -9649,6 +9735,11 @@ class InvoiceIssuedRequest(StrictRequest):
     #: what those orders cost; 422 `INVOICE_AMOUNT_MOVED` when an order is not the request's now.
     invoice_total_vnd: StrictInt | None = Field(ge=0)
     invoice_order_ids: list[UUID] = Field(max_length=10000)
+    #: Round 9b (J6a): the owner confirms `invoice_total_vnd` is what the invoice prints although
+    #: it is not what those orders cost now (the press was refused `INVOICE_TOTAL_MISMATCH` first).
+    #: The request is then recorded at that printed figure and flagged `PRINTED_TOTAL_DIFFERS`.
+    #: An order whose quote has no single total is refused `INVOICE_TOTAL_UNKNOWN` either way.
+    record_printed_total: StrictBool = False
 
 
 class InvoiceCancelRequest(StrictRequest):
@@ -9734,6 +9825,8 @@ def _invoice_request_response(
         flags=list(view.flags),
         live_total_vnd=view.live_total_vnd,
         uninvoiced_charge_count=view.uninvoiced_charge_count,
+        shop_total_vnd=view.shop_total_vnd,
+        other_request_codes=list(view.other_request_codes),
         covered_order_ids=list(view.covered_order_ids),
         lines=[
             InvoiceLineResponse(
@@ -9984,7 +10077,7 @@ def export_invoice_requests(
 ) -> InvoiceExportResponse:
     """*Tải danh sách cho kế toán*: open requests and flagged issued ones as CSV (export v2).
 
-    `invoice-requests-export-v2`: every open request, then every issued request something moved on
+    `invoice-requests-export-v3`: every open request, then every issued request something moved on
     after it was issued, from its fixed figure, with what to tell the bookkeeper.
 
     Owner or approver, MFA. Audited: who, when, how many rows and the digest of the exact bytes.
@@ -10064,6 +10157,7 @@ def record_invoice_issued(
             invoice_date=request.invoice_date,
             invoice_total_vnd=request.invoice_total_vnd,
             invoice_order_ids=tuple(request.invoice_order_ids),
+            record_printed_total=request.record_printed_total,
         )
     except _INVOICE_ERRORS as error:
         _raise_invoice_error(error)

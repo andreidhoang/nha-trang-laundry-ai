@@ -120,6 +120,10 @@ class InvoiceRefusal(StrEnum):
     INVOICE_TOTAL_MISMATCH = "INVOICE_TOTAL_MISMATCH"
     #: A cancellation for ``OTHER`` says what, in 1-200 characters.
     INVOICE_CANCEL_NOTE_REQUIRED = "INVOICE_CANCEL_NOTE_REQUIRED"
+    #: Round 9b (J6d): an order request whose quote presents no single total (a range) cannot be
+    #: recorded as issued -- there is no figure the shop charges to fix it at. It can be cancelled,
+    #: or wait until the price is closed.
+    INVOICE_TOTAL_UNKNOWN = "INVOICE_TOTAL_UNKNOWN"
 
 
 class InvoiceRuleError(ValueError):
@@ -295,6 +299,15 @@ class InvoiceFlag(StrEnum):
     #: its own then, cancelled since. The flag says only that (review round 9: it once said "charged
     #: after", untrue of the second). Each can be requested on its own.
     MONTH_ORDERS_NOT_ON_INVOICE = "MONTH_ORDERS_NOT_ON_INVOICE"
+    #: Round 9b (J6a): the invoice was already issued at the provider for a figure the shop's
+    #: orders no longer cost when it was recorded; it was recorded at the invoice's printed figure,
+    #: as the owner confirmed, and the bookkeeper is told.
+    PRINTED_TOTAL_DIFFERS = "PRINTED_TOTAL_DIFFERS"
+    #: Round 9b (J6b): an order this request covers is also covered by another live request --
+    #: data from before `INVOICE-TRUTH-009` (the `0068` backfill fixed an account month with every
+    #: order charged to it, including ones with an invoice request of their own). Said on both, so
+    #: the bookkeeper never invoices the order twice; nothing is changed.
+    ON_ANOTHER_REQUEST = "ON_ANOTHER_REQUEST"
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,12 +325,17 @@ def issued_flags(
     at_issue: Mapping[UUID, CoveredOrderState],
     now: Mapping[UUID, CoveredOrderState],
     uninvoiced_month_orders: int,
+    printed_total_vnd: int | None = None,
+    other_live_requests: int = 0,
 ) -> tuple[InvoiceFlag, ...]:
     """What happened to an issued request's orders since it was issued, in a fixed order.
 
     `at_issue` is each covered order's state recorded with the snapshot; `now` the same orders read
     now (an order missing from `now` is read as unchanged). A refund implies the cancellation it
     came with, so an order refunded after the issue is flagged once, as refunded.
+    `printed_total_vnd` is the invoice's printed figure when it was recorded at one that differs
+    from what its orders cost (J6a); `other_live_requests` how many other live requests cover one
+    of its orders (J6b, `request_overlap_flags` for an open request).
     """
 
     if uninvoiced_month_orders < 0:
@@ -334,11 +352,32 @@ def issued_flags(
         flags.append(InvoiceFlag.REFUNDED_AFTER_ISSUE)
     if cancelled:
         flags.append(InvoiceFlag.CANCELLED_AFTER_ISSUE)
+    if printed_total_vnd is not None:
+        flags.append(InvoiceFlag.PRINTED_TOTAL_DIFFERS)
     if fixed_total_vnd != live_total_vnd:
         flags.append(InvoiceFlag.AMOUNT_CHANGED_AFTER_ISSUE)
     if uninvoiced_month_orders:
         flags.append(InvoiceFlag.MONTH_ORDERS_NOT_ON_INVOICE)
+    flags.extend(request_overlap_flags(other_live_requests))
     return tuple(flags)
+
+
+def request_overlap_flags(other_live_requests: int) -> tuple[InvoiceFlag, ...]:
+    """J6b: `ON_ANOTHER_REQUEST` when another live request covers one of this request's orders."""
+
+    if other_live_requests < 0:
+        raise ValueError("a count of requests is never negative")
+    return (InvoiceFlag.ON_ANOTHER_REQUEST,) if other_live_requests else ()
+
+
+@dataclass(frozen=True, slots=True)
+class OnInvoice:
+    """What *Ghi số hóa đơn* fixes: the orders the invoice lists, and -- only when the owner
+    confirmed an invoice printed for a figure the orders no longer cost -- that printed figure."""
+
+    order_ids: tuple[UUID, ...]
+    #: The invoice's printed total when it differs from what the orders cost (`J6a`), else None.
+    printed_total_vnd: int | None = None
 
 
 def orders_on_invoice(
@@ -348,7 +387,8 @@ def orders_on_invoice(
     invoice_order_ids: Sequence[UUID],
     request_total_vnd: int | None,
     lines: Sequence[tuple[UUID, int | None]],
-) -> tuple[UUID, ...]:
+    record_printed: bool = False,
+) -> OnInvoice:
     """Which of an open request's orders the issued invoice lists, from what *Ghi số hóa đơn* sent.
 
     Review round 9 (M5, M6): an issued request is fixed at what the INVOICE says -- the total the
@@ -361,12 +401,17 @@ def orders_on_invoice(
     * An account month may be fixed at some of its orders -- the invoice was made before others
       went on the month. The rest stay on no invoice: the issued month says so
       (`MONTH_ORDERS_NOT_ON_INVOICE`) and each can be requested on its own.
+    * An order whose quote presents no single total has no figure to fix: `INVOICE_TOTAL_UNKNOWN`
+      (round 9b, J6d), whatever was typed.
     * The total is exactly what the orders sent cost: the order's figure for an order, the sum of
       the lines sent for a month. Anything else is `INVOICE_TOTAL_MISMATCH` on
-      ``invoice_total_vnd``. No figure is adjusted to match: an invoice made for a figure the shop
-      does not charge now is not recorded here (fail-closed; see the round-9 report).
+      ``invoice_total_vnd`` -- a typing slip is the common cause, so the press is refused first.
+    * Round 9b (J6a): the invoice is a document the provider already issued, so when the owner
+      confirms the typed total is what it prints (`record_printed`), it is recorded at that
+      printed figure (`OnInvoice.printed_total_vnd`) beside what the orders cost, and flagged --
+      never refused into a dead end. No figure of the shop's is adjusted.
 
-    Returns the orders sent, in the request's order.
+    Returns the orders sent, in the request's order, and the printed figure when it differs.
     """
 
     sent = list(invoice_order_ids)
@@ -376,14 +421,24 @@ def orders_on_invoice(
     chosen = tuple(order_id for order_id in covered if order_id in set(sent))
     if kind is InvoiceSubjectKind.ORDER:
         total = request_total_vnd
+        if total is None:
+            raise InvoiceRuleError(InvoiceRefusal.INVOICE_TOTAL_UNKNOWN)
     else:
         amounts = [amount for order_id, amount in lines if order_id in set(chosen)]
         if any(amount is None for amount in amounts):
             raise ValueError("an account month's line always has an amount")
         total = sum(amount for amount in amounts if amount is not None)
-    if invoice_total_vnd != total:
+    if invoice_total_vnd == total:
+        return OnInvoice(chosen)
+    if not record_printed or invoice_total_vnd is None:
         raise InvoiceRuleError(InvoiceRefusal.INVOICE_TOTAL_MISMATCH, field="invoice_total_vnd")
-    return chosen
+    if (
+        not isinstance(invoice_total_vnd, int)
+        or isinstance(invoice_total_vnd, bool)
+        or invoice_total_vnd < 0
+    ):
+        raise InvoiceRuleError(InvoiceRefusal.INVOICE_TOTAL_MISMATCH, field="invoice_total_vnd")
+    return OnInvoice(chosen, printed_total_vnd=invoice_total_vnd)
 
 
 #: The unit words the bookkeeper's list prints beside a quantity.
@@ -415,6 +470,7 @@ __all__ = [
     "InvoiceRuleError",
     "InvoiceSubjectKind",
     "IssuedDetails",
+    "OnInvoice",
     "clean_buyer",
     "clean_cancel_note",
     "clean_issued",
@@ -422,5 +478,6 @@ __all__ = [
     "issued_flags",
     "orders_on_invoice",
     "request_code",
+    "request_overlap_flags",
     "require_open",
 ]

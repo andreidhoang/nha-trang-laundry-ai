@@ -50,6 +50,7 @@
 
 import { Submission, isTruncated, request } from "../core/api.js";
 import { h, render } from "../core/dom.js";
+import { visibleMessage } from "../core/errors.js";
 import {
   UNKNOWN,
   UUID,
@@ -69,7 +70,11 @@ import {
   stepVi,
 } from "../core/i18n.js";
 import { modeBadge, orderProgress, orderStatus } from "../core/orderStatus.js";
-import { cancellationMoneyBlock } from "../ui/remedyMoney.js";
+import {
+  cancellationMoneyBlock,
+  cancellationRefused,
+  expectedCancellationMoney,
+} from "../ui/remedyMoney.js";
 import { can } from "../core/rbac.js";
 import { navigate } from "../core/router.js";
 import { principal, storeId } from "../core/session.js";
@@ -522,12 +527,8 @@ export function render_(context) {
       }),
     );
     const steps = orderProgress(order);
-    render(
-      summaryHost,
-      steps ? progress(steps, { label: "Tiến trình đơn" }) : null,
-      moneyCard(order),
-      accountOffer.node,
-    );
+    // MONEY-RESIDUAL-009B (J5): the account path sits in the money card, beside "Thu tiền".
+    render(summaryHost, steps ? progress(steps, { label: "Tiến trình đơn" }) : null, moneyCard(order));
     accountOffer.refresh(order);
     render(infoHost, infoSection(order));
     render(legsHost, legsSection(order));
@@ -660,6 +661,9 @@ export function render_(context) {
       // MONEY-LIFECYCLE-009 (DEC-045/046): what the cancellation did to the remedy credits.
       cancellationMoneyBlock(order, "DONE"),
       take ? stepControl(take) : null,
+      // PAYMENT-002 (`DEC-035`) x MONEY-RESIDUAL-009B (J5): an account customer's order may leave
+      // on the account instead -- offered here, beside the payment, whenever the server offers it.
+      accountOffer.node,
     );
   }
 
@@ -1202,6 +1206,16 @@ export function render_(context) {
         toast(`${ORDER_STEP_DONE_VI[step] || stepVi(step)} · ${orderName(order)}`);
         result = await reread();
       } catch (error) {
+        // MONEY-RESIDUAL-009B (J4): the money the sheet showed moved under it (a credit spent on
+        // another order). Nothing was written; the sheet reads the order again and shows the new
+        // figures with the reason -- a read, never a second press.
+        if (made && error?.reasonCodes?.includes("CANCELLATION_MONEY_CHANGED")) {
+          const fresh = await reread();
+          const again = fresh ? stepEntry(fresh, step) : null;
+          if (again && made.node.isConnected) refit?.(again, fresh);
+          show(alertHost, inlineAlert({ state: "warn", title: visibleMessage(error) }));
+          return;
+        }
         show(
           alertHost,
           made
@@ -2277,8 +2291,9 @@ export function render_(context) {
     const refunds = () => asks("refund_method");
     /** Every answer the server asks for is given (and nothing it no longer asks is counted). */
     const ready = () => (!needs() || custody !== "") && (!refunds() || refundMethod !== "");
+    // MONEY-RESIDUAL-009B (J3): the server's preview says the cancellation would be refused.
     const sync = () => {
-      confirm.disabled = !writeVerdict.allowed || !ready();
+      confirm.disabled = !writeVerdict.allowed || !ready() || cancellationRefused(current);
     };
     const confirm = confirmButton({
       label: "Huỷ đơn",
@@ -2291,6 +2306,9 @@ export function render_(context) {
           {
             ...(needs() ? { custody_resolution: custody } : {}),
             ...(refunds() ? { refund_method: refundMethod } : {}),
+            // J4: the figures this sheet shows, from the order as last read -- the server
+            // executes exactly them or refuses.
+            ...expectedCancellationMoney(current),
           },
           alertHost,
           confirm,
@@ -2367,6 +2385,7 @@ export function render_(context) {
      */
     function drawMoney(order) {
       render(moneyHost, cancellationMoneyBlock(order, "PREVIEW"));
+      sync();
     }
 
     /**
@@ -2420,8 +2439,11 @@ export function render_(context) {
     // Không nhận đồ ends the order without charge: the same statement as Huỷ đơn, redrawn from
     // the fresh order after "tải lại" (MONEY-LIFECYCLE-009 x COUNTER-UI-RACE-009).
     const moneyHost = h("div", { dataField: "reason-money" });
-    const drawMoney = (/** @type {any} */ order) =>
+    const drawMoney = (/** @type {any} */ order) => {
       render(moneyHost, DESTRUCTIVE.has(step) ? cancellationMoneyBlock(order, "PREVIEW") : null);
+      // J3: a refusal the server already states keeps the press shut.
+      if (DESTRUCTIVE.has(step) && cancellationRefused(order)) confirm.disabled = true;
+    };
     let reason = "";
     // SHOP-CAPTURE-001: a rewash opens a new wash cycle; the machine is asked, never required.
     let machine = "";
@@ -2443,7 +2465,12 @@ export function render_(context) {
     const send = async () => {
       const done = await runComposite(
         shown,
-        { [spec.field]: reason, ...(machine ? { machine_id: machine } : {}) },
+        {
+          [spec.field]: reason,
+          ...(machine ? { machine_id: machine } : {}),
+          // J4: Không nhận đồ ends the order without charge -- it carries the figures shown.
+          ...(step === "REJECT_INTAKE" ? expectedCancellationMoney(current) : {}),
+        },
         alertHost,
         confirm,
         made,
@@ -2485,7 +2512,9 @@ export function render_(context) {
           options: choices.map((value) => ({ value, label: enumVi(value) })),
           onChange: (value) => {
             reason = value;
-            if (writeVerdict.allowed) confirm.disabled = false;
+            if (writeVerdict.allowed && !(DESTRUCTIVE.has(step) && cancellationRefused(current))) {
+              confirm.disabled = false;
+            }
           },
         }),
       );

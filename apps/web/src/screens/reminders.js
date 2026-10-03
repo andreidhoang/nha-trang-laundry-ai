@@ -8,7 +8,7 @@
  *
  *   - **Mở Zalo** — the `zalo.me` link the server built from the customer's number (the number
  *     itself is never printed here);
- *   - **Chép tin nhắn** — asks the server for the fixed `pickup-reminder-v1` text for that step,
+ *   - **Chép tin nhắn** — asks the server for the fixed `pickup-reminder-v2` text for that step,
  *     which it gives only after the egress guard allows it, and puts it on the clipboard;
  *   - **Gọi** — a `tel:` link, then what came of the call;
  *   - **Đã nhắc** — records a contact attempt for that step, one tap on the outcome; the first is
@@ -45,7 +45,7 @@ import {
   statusPill,
   toast,
 } from "../ui/kit.js";
-import { shelfSwitch, waitingText } from "../ui/unclaimed.js";
+import { heldDaysText, shelfSwitch, waitingText } from "../ui/unclaimed.js";
 import { orderName } from "./orders.js";
 
 /** One page of the due list; the server says when there are more (`truncated`). */
@@ -240,7 +240,8 @@ export function render_() {
             h(
               "span",
               { class: "hint" },
-              ` · ${REMINDER_STEP_VI[item.step] || item.step} · ${waitingText(item.days_waiting)}`,
+              ` · ${REMINDER_STEP_VI[item.step] || item.step} · ${waitingText(item.days_waiting, item.held_days)}` +
+                (item.held_days ? ` (${heldDaysText(item.held_days)})` : ""),
             ),
           ),
         ),
@@ -388,8 +389,13 @@ export function render_() {
         h(
           "span",
           { class: "hint" },
-          h("span", { dataField: "waiting" }, waitingText(item.days_waiting)),
-          item.days_waiting === 0 ? null : ` · xong ${dateOnly(item.ready_at)}`,
+          h("span", { dataField: "waiting" }, waitingText(item.days_waiting, item.held_days)),
+          // "Xong hôm nay" already names the day; a held order keeps its ready day (J1, round 2).
+          item.days_waiting === 0 && !item.held_days ? null : ` · xong ${dateOnly(item.ready_at)}`,
+          // DEC-050: the count leaves the held days out; said beside the ready day (P2).
+          item.held_days
+            ? h("span", { dataField: "held-days" }, ` · ${heldDaysText(item.held_days)}`)
+            : null,
           item.reachable === "CHAT" ? " · khách nhắn qua kênh chat" : null,
         ),
       ),

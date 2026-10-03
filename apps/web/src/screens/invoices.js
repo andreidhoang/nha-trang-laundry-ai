@@ -45,6 +45,7 @@ import {
   amountText,
   cancelSheet,
   flagTexts,
+  issuableVerdict,
   issuedSheet,
   issuedText,
   roleVerdict,
@@ -310,6 +311,10 @@ export function render_() {
     return h(
       "div",
       { class: "invoices__actions" },
+      // MONEY-RESIDUAL-009B (J6b): an open request can be flagged too -- its order is on another.
+      flagTexts(item).map((text) =>
+        h("span", { class: "invoices__flag", dataField: "invoice-flag" }, text),
+      ),
       gated(
         button({
           label: "Ghi số hóa đơn",
@@ -318,7 +323,7 @@ export function render_() {
           data: { recordIssued: String(item.invoice_request_id) },
           onClick: () => mount(issuedSheet({ store, item, onDone: () => void load() })),
         }),
-        roleVerdict(closeVerdict, CLOSE_SHORT),
+        issuableVerdict(item, roleVerdict(closeVerdict, CLOSE_SHORT)),
       ),
       gated(
         button({

@@ -326,7 +326,13 @@ measures the customer's lateness: one clock (`unclaimed.waiting_clock`) counts t
 *days waiting* on the list and the order (`held_days` says how many were skipped), the evening
 summary's "chờ quá N ngày" (`awaiting-pickup-count-v2`), disposal eligibility (`eligible_on` moves
 past every lifted hold) and the reminder day steps (the BEFORE_FEE text names the fee day past the
-held days). A hold before the last ready time (a rewash since) counts for nothing.
+held days). A hold before the last ready time (a rewash since) counts for nothing. What a hold
+takes out is the *time* it lasted: the clock stops at **Tạm dừng** and **Tiếp tục** continues it
+from where it stopped, so the count is the shop days from the ready day to `as_of` less the time
+held (pre-production review 9: each hold used to take out one shop date per midnight it crossed,
+so holding the bag from closing to opening every night kept the count, the fee, disposal and the
+reminders at zero without the approver's waiver, and a hold inside one date took out nothing). A
+count can therefore turn during a day; `falls_on` names the day it turns.
 
 Round 9b (J2–J4). The cancellation's own event and audit row name every credit it reissued
 (`remedy_credits.reissued_credits`). A **credit chain** (X issues c1, spent on Y; Y issues c2, spent

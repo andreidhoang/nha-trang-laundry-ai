@@ -36,7 +36,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Final
 
@@ -365,38 +365,54 @@ class WaitingClock:
 
     The one clock every measure of the customer's lateness reads -- the storage fee's days
     (`DEC-047`), *days waiting* on the list and the order, disposal eligibility and the pickup
-    reminders' day steps. While the shop holds the laundry the days count for none of them: the
-    count is the shop-local days from the ready day, less the days of each hold lifted since, and
-    it is frozen at the start of a hold still open (`paused`).
+    reminders' day steps. A hold stops the clock and lifting it continues the count from where it
+    stopped (`DEC-047`): the count is the shop-local days from the ready day to the instant the
+    clock reads -- `as_of` less the time every hold lifted since lasted -- and it is frozen at the
+    start of a hold still open (`paused`). It is the time held that is taken out, never a day per
+    shop midnight a hold crossed (pre-production review 9: holding the bag from closing to opening
+    every night took a whole day out per night, so the count, the fee, disposal and the reminders
+    never moved; a hold within one shop date took nothing out, so held hours were charged).
     """
 
     #: The shop day the laundry was (last) ready: day 0.
     ready_on: date
     #: The days that count.
     days: int
-    #: The shop days the lifted holds took out of the count.
+    #: The shop days the lifted holds took out of the count: the calendar days to the clock's end
+    #: less `days`, so `days + held_days` is always the calendar days since the ready day.
     held_days: int
     #: A hold since the laundry was ready is still open: `days` is frozen where it began.
     paused: bool
-    #: Each lifted hold since the ready time as `(held_on, resumed_on)` shop days, oldest first.
-    lifted: tuple[tuple[date, date], ...] = ()
+    #: Each lifted hold since the ready time as `(held_at, resumed_at)` instants, oldest first.
+    lifted: tuple[tuple[datetime, datetime], ...] = ()
 
-    def falls_on(self, day: int) -> date | None:
-        """The shop day on which the count reads `day`, the holds already lifted skipped over.
+    def reaches(self, day: int) -> datetime | None:
+        """The instant the count reaches `day`, the holds already lifted skipped over.
 
-        `None` while paused: when the open hold will be lifted is not known, so no later day is
-        either. A hold not yet begun is not foreseen -- the day moves if one comes.
+        `None` while paused: when the open hold will be lifted is not known, so no later instant
+        is either. A hold not yet begun is not foreseen -- the instant moves if one comes.
         """
 
         if self.paused:
             return None
         if day < 0:
             raise ValueError("a day count is never negative")
-        candidate = date.fromordinal(self.ready_on.toordinal() + day)
-        for held_on, resumed_on in self.lifted:
-            if held_on < candidate:
-                candidate = date.fromordinal(candidate.toordinal() + (resumed_on - held_on).days)
+        on = date.fromordinal(self.ready_on.toordinal() + day)
+        candidate = datetime(on.year, on.month, on.day, tzinfo=SHOP_TIMEZONE)
+        for held_at, resumed_at in self.lifted:
+            if held_at < candidate:
+                candidate += resumed_at - held_at
         return candidate
+
+    def falls_on(self, day: int) -> date | None:
+        """The shop day on which the count first reads `day` (from `reaches(day)` on that day).
+
+        A hold that did not last whole days moves that instant off the shop's midnight, so the
+        count can turn during a day; this is the day it turns. `None` while paused.
+        """
+
+        reached = self.reaches(day)
+        return None if reached is None else shop_date(reached)
 
 
 def waiting_clock(
@@ -406,12 +422,12 @@ def waiting_clock(
     holds: Sequence[StorageHold],
     paused: bool = False,
 ) -> WaitingClock:
-    """`DEC-050`'s one clock: the days the laundry has waited at `as_of`, held days not counted.
+    """`DEC-050`'s one clock: the days the laundry has waited at `as_of`, time on hold not counted.
 
-    Shop-local days from the ready day to `as_of`, less, for each hold since the laundry was last
-    ready, the shop-local days from the hold's day to the day it was lifted. While `paused` (a hold
-    is open), the count is frozen at the start of the latest open hold. Holds before `ready_at` (a
-    rewash since) do not count. Never negative. Pure.
+    Shop-local days from the ready day to the instant the clock reads: `as_of` less the time each
+    hold since the laundry was last ready lasted (up to `as_of`). While `paused` (a hold is open),
+    the count is frozen at the start of the latest open hold. Holds before `ready_at` (a rewash
+    since) do not count. Never negative. Pure.
     """
 
     since = sorted(
@@ -423,19 +439,19 @@ def waiting_clock(
     if frozen:
         end = min(as_of, open_holds[-1])
     counted = [
-        (hold.held_at, min(hold.resumed_at, end))
+        (hold.held_at, max(hold.held_at, min(hold.resumed_at, end)))
         for hold in since
         if hold.resumed_at is not None and hold.held_at < end
     ]
-    held = sum(days_waiting(held_at, resumed_at) for held_at, resumed_at in counted)
+    held_time = sum((resumed_at - held_at for held_at, resumed_at in counted), timedelta())
+    calendar = days_waiting(ready_at, end)
+    days = days_waiting(ready_at, end - held_time)
     return WaitingClock(
         ready_on=shop_date(ready_at),
-        days=max(0, days_waiting(ready_at, end) - held),
-        held_days=held,
+        days=days,
+        held_days=calendar - days,
         paused=frozen,
-        lifted=tuple(
-            (shop_date(held_at), shop_date(resumed_at)) for held_at, resumed_at in counted
-        ),
+        lifted=tuple(counted),
     )
 
 
@@ -783,6 +799,8 @@ def disposal_verdict(
         refusals.append(DisposalRefusal.NOT_AWAITING_PICKUP)
     if policy is not None:
         if clock is not None:
+            # The day the count turns to the disposal day. Disposal itself is decided by the count
+            # at `as_of` above, so on that day it is allowed from the instant the count turns.
             eligible_on = clock.falls_on(policy.disposal_from_day)
         if waited is None or waited < policy.disposal_from_day:
             refusals.append(DisposalRefusal.DISPOSAL_TOO_EARLY)

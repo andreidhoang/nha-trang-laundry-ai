@@ -481,40 +481,50 @@ def _at(days_ago: int, hour: int, minute: int = 0) -> datetime:
     return _shop_day(days_ago, hour) + timedelta(minutes=minute)
 
 
-def _page(connection: Any, shop: Shop, limit: int) -> Any:
+def _page(connection: Any, shop: Shop, limit: int, as_of: datetime | None = None) -> Any:
     with connection.cursor() as cursor:
         listed = UnclaimedRepository.list_awaiting_pickup(
             cursor,
             store_id=shop.store_id,
             principal=shop.operator,
-            as_of=datetime.now(UTC),
+            as_of=as_of or datetime.now(UTC),
             limit=limit,
         )
     connection.rollback()
     return listed
 
 
-def _due_page(connection: Any, shop: Shop, limit: int) -> Any:
+def _due_page(connection: Any, shop: Shop, limit: int, as_of: datetime | None = None) -> Any:
     with connection.cursor() as cursor:
         found = PickupReminderRepository.list_due(
             cursor,
             store_id=shop.store_id,
             principal=shop.operator,
-            as_of=datetime.now(UTC),
+            as_of=as_of or datetime.now(UTC),
             limit=limit,
         )
     connection.rollback()
     return found
 
 
-def test_a_short_hold_across_midnight_ranks_by_its_counted_days_on_both_lists(
+def _noon() -> datetime:
+    """Noon today, shop time: the instant the ranking tests read the lists at. Since pre-production
+    review 9 a hold takes out the time it lasted, so a count turns at the time of day the holds
+    moved it to; reading at a fixed time keeps these tests independent of when they run."""
+
+    return _at(0, 12)
+
+
+def test_a_short_hold_across_midnight_takes_out_its_hour_on_both_lists(
     connection: psycopg.Connection[Any], shop: Shop
 ) -> None:
-    """The verifier's two orders (verification round 3, P2). A was ready ten shop days ago at
-    08:00 and held one hour, 23:30 to 00:30, four days ago: the hold spans the shop's midnight, so
-    it takes a whole day out of the count -- 9 days. B was ready the same day at 10:00 and never
-    held: 10 days. By wall time A has waited longer (it is ahead by an hour); by the count the
-    counter reads, B has. Both lists, and every page of them, put B first."""
+    """The verifier's two orders (verification round 3, P2), read again after pre-production
+    review 9. A was ready ten shop days ago at 08:00 and held one hour, 23:30 to 00:30, four days
+    ago; B was ready the same day at 10:00 and never held. The hold used to take a whole day out
+    because it crossed the shop's midnight (A: 9 days) -- how a nightly hold kept the fee at zero.
+    It takes out its hour: at noon A's clock reads 11:00, 10 days with nothing held, as B. The tie
+    goes to the longer wait had the shop never held it (A: 09:00 against B's 10:00), on every page
+    of both lists."""
 
     _publish(connection, shop)
     connection.commit()
@@ -522,45 +532,48 @@ def test_a_short_hold_across_midnight_ranks_by_its_counted_days_on_both_lists(
     b = _ready(connection, shop)
     _place(connection, a, shop, _at(10, 8), ((_at(5, 23, 30), _at(4, 0, 30)),))
     _place(connection, b, shop, _at(10, 10))
-    full = _page(connection, shop, 200)
+    full = _page(connection, shop, 200, _noon())
     days = {item.order_id: (item.days_waiting, item.held_days) for item in full.orders}
-    assert (days[a], days[b]) == ((9, 1), (10, 0))
+    assert (days[a], days[b]) == ((10, 0), (10, 0))
     listed = [item.order_id for item in full.orders]
-    assert listed.index(b) < listed.index(a)
-    # The page of one is the longest-waiting order by the count, not by wall time.
-    one = _page(connection, shop, 1)
-    assert [item.order_id for item in one.orders] == [b]
+    assert listed.index(a) < listed.index(b)
+    one = _page(connection, shop, 1, _noon())
+    assert [item.order_id for item in one.orders] == [a]
     assert one.truncated is True
-    # Nhắc khách lấy đồ ("oldest first") orders them the same way, page and all.
-    due = _due_page(connection, shop, 200)
-    reminded = [row.order_id for row in due.orders]
-    assert [(row.days_waiting, row.held_days) for row in due.orders] == [(10, 0), (9, 1)]
-    assert reminded == [b, a]
-    assert [row.order_id for row in _due_page(connection, shop, 1).orders] == [b]
+    due = _due_page(connection, shop, 200, _noon())
+    assert [(row.days_waiting, row.held_days) for row in due.orders] == [(10, 0), (10, 0)]
+    assert [row.order_id for row in due.orders] == [a, b]
+    assert [row.order_id for row in _due_page(connection, shop, 1, _noon()).orders] == [a]
+    # Thirty minutes past midnight the hour held still holds A's clock back: 9 days, 1 held.
+    early = _page(connection, shop, 200, _at(0, 0, 30))
+    early_days = {item.order_id: (item.days_waiting, item.held_days) for item in early.orders}
+    assert (early_days[a], early_days[b]) == ((9, 1), (10, 0))
 
 
 def test_every_page_of_both_lists_is_the_top_of_the_counted_order(
     connection: psycopg.Connection[Any], shop: Shop
 ) -> None:
     """The neighbouring matrix: holds that cross midnight by minutes, one that lasts eleven hours
-    inside one day (no day out), one of thirty hours across two midnights (two days out), plain
-    waits, and a legacy order with no ready time. Whatever the limit, a page is the first rows of
+    inside one day, one of thirty hours across two midnights, plain waits, and a legacy order with
+    no ready time -- each taking out the time it lasted (pre-production review 9; each took out a
+    day per midnight it crossed before). Whatever the limit, a page is the first rows of
     the full list, and the counted days never rise down either list."""
 
     _publish(connection, shop)
     connection.commit()
     made = {name: _ready(connection, shop) for name in "ABCDEG"}
-    # A: 9 counted -- one hour across midnight, ahead of B by wall time.
+    # Read at noon (`_noon`); each hold takes out the time it lasted.
+    # A: one hour held across midnight, ready ten days ago at 08:00: reads 11:00 -- 10 counted.
     _place(connection, made["A"], shop, _at(10, 8), ((_at(5, 23, 30), _at(4, 0, 30)),))
     # B: 10 counted, never held.
     _place(connection, made["B"], shop, _at(10, 10))
-    # C: 11 calendar days, 45 minutes held across midnight: 10 counted.
+    # C: 11 calendar days, 45 minutes held across midnight: reads 11:15 -- 11 counted.
     _place(connection, made["C"], shop, _at(11, 23), ((_at(11, 23, 30), _at(10, 0, 15)),))
-    # D: eleven hours held inside the ready day: no day out, 10 counted.
+    # D: eleven hours held inside the ready day: reads 01:00 -- 10 counted.
     _place(connection, made["D"], shop, _at(10, 6), ((_at(10, 9), _at(10, 20)),))
-    # E: 12 calendar days, thirty hours held across two midnights: 10 counted.
+    # E: 12 calendar days, thirty hours held: reads 06:00 yesterday -- 11 counted.
     _place(connection, made["E"], shop, _at(12, 20), ((_at(12, 21), _at(10, 3)),))
-    # G: 9 counted, never held, ready after A by wall time.
+    # G: 9 counted, never held.
     _place(connection, made["G"], shop, _at(9, 1))
     legacy = _ready(connection, shop)
     with connection.cursor() as cursor:
@@ -573,25 +586,27 @@ def test_every_page_of_both_lists_is_the_top_of_the_counted_order(
     connection.commit()
     name = {order_id: label for label, order_id in made.items()} | {legacy: "legacy"}
 
-    full = _page(connection, shop, 200)
+    full = _page(connection, shop, 200, _noon())
     counted = [(name[item.order_id], item.days_waiting) for item in full.orders]
     assert counted[0] == ("legacy", None)
     assert sorted(counted[1:], key=lambda pair: -int(pair[1] or 0)) == counted[1:]
-    assert dict(counted) == {"legacy": None, "A": 9, "B": 10, "C": 10, "D": 10, "E": 10, "G": 9}
+    assert dict(counted) == {"legacy": None, "A": 10, "B": 10, "C": 11, "D": 10, "E": 11, "G": 9}
+    # Equal counts: the longer wait had the shop never held it first (C, E; then A, B, D).
+    assert [label for label, _ in counted[1:]] == ["C", "E", "A", "B", "D", "G"]
     order = [item.order_id for item in full.orders]
     for limit in range(1, len(order) + 1):
-        page = _page(connection, shop, limit)
+        page = _page(connection, shop, limit, _noon())
         assert [item.order_id for item in page.orders] == order[:limit], limit
         assert page.truncated is (limit < len(order)), limit
 
-    due = _due_page(connection, shop, 200)
+    due = _due_page(connection, shop, 200, _noon())
     reminded = [row.order_id for row in due.orders]
     # The legacy order has no ready day to count reminders from; the rest are all due DAY_7.
     assert [name[order_id] for order_id in reminded] == [name[o] for o in order[1:]]
     days = [row.days_waiting for row in due.orders]
     assert days == sorted(days, reverse=True)
     for limit in range(1, len(reminded) + 1):
-        page = _due_page(connection, shop, limit)
+        page = _due_page(connection, shop, limit, _noon())
         assert [row.order_id for row in page.orders] == reminded[:limit], limit
 
 
@@ -667,3 +682,55 @@ def test_a_page_whose_count_differs_from_the_clock_is_not_answered(
     with pytest.raises(WaitingCountDisagrees):
         _due_page(connection, shop, 10)
     connection.rollback()
+
+
+@pytest.mark.parametrize(
+    ("label", "nightly_from", "nights", "waited", "held", "fee"),
+    [
+        # The review's case: 39 nights held from closing (21:00) to opening (07:00) since the
+        # laundry was ready forty days ago at 10:00. 390 hours (16 days 6 hours) held: at noon the
+        # clock reads 06:00 sixteen days ago -- 24 counted, 4 past the free days. It read 1 day (no
+        # fee) when each hold took out the shop date it crossed.
+        ("held every night", 40, 39, 24, 16, 20_000),
+        # One night held: ten hours out, not a day.
+        ("held one night", 25, 1, 25, 0, 25_000),
+        # Never held: the calendar.
+        ("never held", 30, 0, 30, 0, 50_000),
+    ],
+)
+def test_a_hold_takes_out_the_hours_held_on_the_list_the_order_and_the_fee(
+    connection: psycopg.Connection[Any],
+    shop: Shop,
+    label: str,
+    nightly_from: int,
+    nights: int,
+    waited: int,
+    held: int,
+    fee: int,
+) -> None:
+    """Pre-production review 9: an operator's HOLD at closing and RESUME at opening, every night,
+    used to keep the counted days -- and with them the storage fee, disposal and the reminders --
+    at zero without the approver's waiver. A hold takes out the time it lasted (`DEC-047`: the
+    clock stops and continues from where it stopped)."""
+
+    _publish(connection, shop)
+    connection.commit()
+    order_id = _ready(connection, shop)
+    holds = tuple(
+        (_at(nightly_from - night, 21), _at(nightly_from - night - 1, 7)) for night in range(nights)
+    )
+    _place(connection, order_id, shop, _at(nightly_from, 10), holds)
+    row = next(
+        item for item in _page(connection, shop, 200, _noon()).orders if item.order_id == order_id
+    )
+    assert (row.days_waiting, row.held_days) == (waited, held), label
+    due = {item.order_id: item for item in _due_page(connection, shop, 200, _noon()).orders}
+    if order_id in due:
+        assert (due[order_id].days_waiting, due[order_id].held_days) == (waited, held), label
+    with connection.cursor() as cursor:
+        storage = UnclaimedRepository.read_order_storage(
+            cursor, order_id=order_id, principal=shop.operator, as_of=_noon()
+        )
+    connection.rollback()
+    assert (storage.days_waiting, storage.held_days) == (waited, held), label
+    assert storage.fee.amount_vnd == fee, label

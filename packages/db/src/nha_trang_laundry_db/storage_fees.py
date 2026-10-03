@@ -179,35 +179,35 @@ def _shop_day_sql(moment: str) -> str:
 #: `... FROM orders o ... {WAITING_AS_OF_SQL} WHERE ...` with `as_of` first among the parameters.
 WAITING_AS_OF_SQL: Final = "CROSS JOIN (SELECT %s::timestamptz AS at) AS waiting_as_of"
 
+#: The time the holds lifted since the laundry was ready, and begun before `as_of`, lasted (each
+#: up to `as_of`): `waiting_clock`'s held time, as an interval.
+_HELD_TIME_SQL: Final = """
+    coalesce(
+        (
+            SELECT sum(greatest(interval '0', least(h.resumed_at, waiting_as_of.at) - h.held_at))
+            FROM order_storage_holds h
+            WHERE h.order_id = o.id AND h.held_at >= o.production_ready_at
+              AND h.resumed_at IS NOT NULL AND h.held_at < waiting_as_of.at
+        ),
+        interval '0'
+    )
+"""
+
 #: `DEC-050`'s day count in SQL, so a bounded waiting read picks its page by the very days the
-#: counter reads (verification round 3, P2): a page chosen by wall time left off orders that had
-#: waited more counted days than ones it showed, because a one-hour hold across the shop's
-#: midnight takes a whole day out of the count. It is `unclaimed.waiting_clock(ready_at, as_of,
+#: counter reads (verification round 3, P2). It is `unclaimed.waiting_clock(ready_at, as_of,
 #: holds=...).days` for an order whose clock runs (every order `AWAITING_PICKUP_SQL` admits):
-#: shop-local days from the ready day to `as_of`, less, for each hold lifted since the laundry was
-#: ready and begun before `as_of`, the shop-local days from its day to the day it was lifted (or
-#: `as_of`'s), never negative. NULL when no ready time is recorded (legacy, `0037`). Each read that
-#: orders by it checks every row against `waiting_clock` and refuses to answer on a difference.
+#: shop-local days from the ready day to the instant the clock reads -- `as_of` less the time each
+#: hold lifted since the laundry was ready, and begun before `as_of`, lasted (up to `as_of`) --
+#: never negative. It is the time held that comes out, never a day per shop midnight a hold
+#: crossed (pre-production review 9: nightly closing-to-opening holds took a whole day out per
+#: night). NULL when no ready time is recorded (legacy, `0037`). Each read that orders by it checks
+#: every row against `waiting_clock` and refuses to answer on a difference.
 WAITING_DAYS_SQL: Final = f"""
     (
         CASE WHEN o.production_ready_at IS NULL THEN NULL ELSE greatest(
             0,
-            greatest(
-                0,
-                {_shop_day_sql("waiting_as_of.at")} - {_shop_day_sql("o.production_ready_at")}
-            ) - coalesce(
-                (
-                    SELECT sum(greatest(
-                        0,
-                        {_shop_day_sql("least(h.resumed_at, waiting_as_of.at)")}
-                            - {_shop_day_sql("h.held_at")}
-                    ))
-                    FROM order_storage_holds h
-                    WHERE h.order_id = o.id AND h.held_at >= o.production_ready_at
-                      AND h.resumed_at IS NOT NULL AND h.held_at < waiting_as_of.at
-                ),
-                0
-            )
+            {_shop_day_sql("waiting_as_of.at - " + _HELD_TIME_SQL)}
+                - {_shop_day_sql("o.production_ready_at")}
         ) END
     )
 """

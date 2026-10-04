@@ -920,3 +920,87 @@ def test_a_large_burst_is_counted_well_inside_the_relays_timeout() -> None:
     elapsed = time.monotonic() - started
     assert counts.browser_boundary_rejections == count
     assert elapsed < 30, f"{count} lines took {elapsed:.1f} s"
+
+
+# --- round 9 review, round 2, P2: one incident alerts once -----------------------------------
+#
+# The windows reach back before the saved position so a burst split by a run boundary is one burst.
+# That is right while the earlier lines were below the figure. Lines that were already part of a
+# burst that crossed it -- and alerted -- were counted again with every single new line that fell
+# within five minutes of them: five refusals alerted, one more three minutes later read "6 (alert
+# at 5)" and paged the owner a second time for the same incident.
+
+
+def _burst(builder: Any, *, start: datetime, count: int, gap: int = 10) -> list[str]:
+    return [builder(at=start + timedelta(seconds=gap * index)) for index in range(count)]
+
+
+_BUILDERS = [
+    pytest.param(_refused, "database_refusals", 5, id="database_refusals"),
+    pytest.param(_boundary, "browser_boundary_rejections", 10, id="browser_boundary"),
+]
+
+
+@pytest.mark.parametrize(("builder", "name", "threshold"), _BUILDERS)
+def test_one_new_line_beside_an_alerted_burst_does_not_alert_again(
+    builder: Any, name: str, threshold: int
+) -> None:
+    start = T - timedelta(seconds=250)
+    burst = _burst(builder, start=start, count=threshold)
+    beside = builder(at=T - timedelta(seconds=30))
+    first, second, third = _runs(
+        (T - timedelta(seconds=100), [*_heartbeat(), *burst]),
+        (T, [*_heartbeat(), *burst, beside]),
+        (T + timedelta(seconds=300), [*_heartbeat(), *burst, beside]),
+    )
+    assert getattr(first, name) >= threshold
+    assert getattr(second, name) < threshold
+    assert getattr(third, name) == 0
+
+
+@pytest.mark.parametrize(("builder", "name", "threshold"), _BUILDERS)
+def test_a_new_line_beside_the_tail_of_an_alerted_burst_does_not_alert_again(
+    builder: Any, name: str, threshold: int
+) -> None:
+    """The window ending at the new line holds only the burst's tail, but the tail alerted."""
+
+    burst = _burst(builder, start=T - timedelta(seconds=600), count=threshold, gap=20)
+    late = builder(at=burst_end(burst) + timedelta(seconds=300 - (threshold - 2) * 20))
+    _first, second = _runs(
+        (T - timedelta(seconds=300), [*_heartbeat(), *burst]),
+        (T, [*_heartbeat(), *burst, late]),
+    )
+    assert getattr(second, name) < threshold
+
+
+@pytest.mark.parametrize(("builder", "name", "threshold"), _BUILDERS)
+def test_the_neighbours_a_burst_below_the_figure_still_adds_up_across_runs(
+    builder: Any, name: str, threshold: int
+) -> None:
+    """Below the figure nothing alerted, so the earlier lines still count with the new ones."""
+
+    old = _burst(builder, start=T - timedelta(seconds=250), count=threshold - 1)
+    new = builder(at=T - timedelta(seconds=30))
+    first, second = _runs(
+        (T - timedelta(seconds=200), [*_heartbeat(), *old]),
+        (T, [*_heartbeat(), *old, new]),
+    )
+    assert getattr(first, name) < threshold
+    assert getattr(second, name) == threshold
+
+
+@pytest.mark.parametrize(("builder", "name", "threshold"), _BUILDERS)
+def test_a_second_burst_after_an_alerted_one_alerts_on_its_own(
+    builder: Any, name: str, threshold: int
+) -> None:
+    first_burst = _burst(builder, start=T - timedelta(seconds=900), count=threshold)
+    second_burst = _burst(builder, start=T - timedelta(seconds=100), count=threshold)
+    _first, second = _runs(
+        (T - timedelta(seconds=600), [*_heartbeat(), *first_burst]),
+        (T, [*_heartbeat(), *first_burst, *second_burst]),
+    )
+    assert getattr(second, name) >= threshold
+
+
+def burst_end(lines: list[str]) -> datetime:
+    return datetime.fromisoformat(json.loads(lines[-1])["occurred_at"])

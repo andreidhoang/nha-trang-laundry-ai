@@ -688,20 +688,54 @@ def _is_server_error(event: _ApiEvent, refused: frozenset[str]) -> bool:
     return event.fields.get("route") != _READINESS_ROUTE
 
 
+def _unspent(old: list[datetime], threshold: int, window: timedelta) -> list[datetime]:
+    """The earlier instants no alert has yet been sent for.
+
+    An earlier line that sat in a window of `threshold` or more earlier lines was part of a burst
+    that crossed the figure on its own, and the run that read it alerted (round 9 review, round 2,
+    P2). Counting it again beside one new line would page the owner a second time for the same
+    incident -- "one incident alerts once". Lines of a burst that stayed below the figure are kept:
+    the new line is what completes it, and that one is an alert.
+    """
+
+    if threshold <= 0 or len(old) < threshold:
+        return old
+    spent = [False] * len(old)
+    marked = 0  # old[:marked] is settled; windows end at later and later instants
+    for end in old:
+        start = bisect.bisect_left(old, end - window)
+        last = bisect.bisect_right(old, end)
+        if last - start >= threshold:
+            for index in range(max(start, marked), last):
+                spent[index] = True
+            marked = max(marked, last)
+    return [instant for instant, gone in zip(old, spent, strict=True) if not gone]
+
+
 def _most_in_any_window(
-    new: list[_ApiEvent], every: list[_ApiEvent], name: str, window: timedelta
+    new: list[_ApiEvent],
+    every: list[_ApiEvent],
+    name: str,
+    window: timedelta,
+    threshold: int = 0,
 ) -> int:
     """The most `name` events in any `window` that holds one of the `new` ones.
 
     Windows ending at a new line reach back before the saved position, so a burst split by a run
     boundary is one burst. Windows ending *after* a new line matter for a line that arrived late:
-    it belongs to the burst that followed it, which was counted a run ago (L4).
+    it belongs to the burst that followed it, which was counted a run ago (L4). Earlier lines that
+    already crossed `threshold` among themselves alerted a run ago and are not counted again
+    (`_unspent`).
     """
 
-    instants = sorted(event.occurred_at for event in every if event.event == name)
     fresh = sorted(event.occurred_at for event in new if event.event == name)
     if not fresh:
         return 0
+    taken = {id(event) for event in new}
+    old = sorted(
+        event.occurred_at for event in every if event.event == name and id(event) not in taken
+    )
+    instants = sorted([*_unspent(old, threshold, window), *fresh])
     # Each instant is tried once as a window's end -- when a new line lies inside the window ending
     # there -- rather than once per new line that reaches it. Trying it per new line visited every
     # instant of a burst once for each line of the burst: 16 000 lines took 85 s, and a burst big
@@ -785,9 +819,19 @@ def count_application_signals(
     )
     return ApplicationSignalCounts(
         server_errors=server_errors,
-        database_refusals=_most_in_any_window(new, events, "database.request_refused", window),
+        database_refusals=_most_in_any_window(
+            new,
+            events,
+            "database.request_refused",
+            window,
+            APP_SIGNAL_THRESHOLDS["database_refusals"],
+        ),
         browser_boundary_rejections=_most_in_any_window(
-            new, events, "auth.browser_boundary", window
+            new,
+            events,
+            "auth.browser_boundary",
+            window,
+            APP_SIGNAL_THRESHOLDS["browser_boundary_rejections"],
         ),
         api_lines_in_liveness_window=alive,
         unreadable_lines=unreadable,

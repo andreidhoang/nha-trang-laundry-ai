@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 563
+  DESCRIPTIVE: 564
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 19
   SERVER_GATE: 15
-total: 604
+total: 605
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -45,6 +45,14 @@ disclosures:
   module: core/errors.js
   key: MESSAGES.SESSION_ENDED
   text: Phiên đăng nhập đã kết thúc. Hãy đăng nhập lại.
+  binding:
+    kind: DESCRIPTIVE
+    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
+      rewording it fails the check and forces a fresh reading.
+- slot_id: core/errors.js#MESSAGES.SIGNED_OUT:97bd3f78caa9
+  module: core/errors.js
+  key: MESSAGES.SIGNED_OUT
+  text: Đã đăng xuất. Kết quả của thao tác gửi trước lúc đó không hiện ở trang này.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that

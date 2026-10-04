@@ -65,6 +65,28 @@ export function whenServerAnswers(handler) {
 }
 
 /**
+ * How many times a person has signed out of this page (pre-production review 9, round 2).
+ *
+ * A request is answered in the session it was sent in, or not at all. A write sent by the person
+ * who then pressed "Thoát" -- here, or in another tab -- still finishes on the server, and its
+ * success path used to run on the cleared page: "Ghi khiếu nại" moved the address to the complaint
+ * it created and "Tạo đơn" re-armed the receipt hand-off, so the next person to sign in on that
+ * tab landed on the previous person's customer record. Sealing toasts and sheets covered two of
+ * the things a late answer does; navigation, hand-offs and stashes are every screen's own, so the
+ * answer itself is withheld instead: a request sent before a sign-out that is answered after it
+ * rejects with `SIGNED_OUT`, and no screen's success path runs for it. An idle expiry is not a
+ * sign-out and changes nothing here -- its promise is that what was typed is kept.
+ */
+let departures = 0;
+
+/**
+ * Called by the session the moment a person has signed out, before anything is told of it.
+ */
+export function markDeparture() {
+  departures += 1;
+}
+
+/**
  * Read a cookie by name. Only `staff_csrf` is readable — the session cookie is `HttpOnly`, which
  * is why this file never sees a token and never puts one anywhere.
  *
@@ -146,6 +168,7 @@ export async function request(path, options = {}) {
     ? AbortSignal.any([options.signal, timeout.signal])
     : timeout.signal;
 
+  const era = departures;
   let response;
   try {
     response = await fetch(path, {
@@ -158,6 +181,7 @@ export async function request(path, options = {}) {
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
   } catch (cause) {
+    if (era !== departures) throw apiError("SIGNED_OUT", { correlationId });
     if (options.signal?.aborted) throw cause;
     throw apiError(timeout.signal.aborted ? "TIMEOUT" : "NETWORK", { correlationId });
   } finally {
@@ -165,6 +189,8 @@ export async function request(path, options = {}) {
   }
 
   const body = await readBody(response);
+  // Sent by somebody who has since signed out: whatever the server said is not for this page.
+  if (era !== departures) throw apiError("SIGNED_OUT", { correlationId });
 
   if (!response.ok) {
     const retryAfter = Number.parseInt(response.headers.get("Retry-After") || "", 10);

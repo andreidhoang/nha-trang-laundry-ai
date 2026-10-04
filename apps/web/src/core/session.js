@@ -14,7 +14,7 @@
  * @module core/session
  */
 
-import { request, whenServerAnswers, whenSessionEnds } from "./api.js";
+import { markDeparture, request, whenServerAnswers, whenSessionEnds } from "./api.js";
 import { visibleMessage } from "./errors.js";
 
 const STORE_KEY = "staff_store_id";
@@ -126,8 +126,10 @@ export async function refresh() {
     state.memberStoreIds = [];
     state.storeNames = {};
     state.storeScopeKnown = false;
-    if (error && error.kind === "SESSION_ENDED") {
+    if (error && (error.kind === "SESSION_ENDED" || error.kind === "SIGNED_OUT")) {
       // A 401 is an answer: there is no session, which is the application's normal first state.
+      // A read sent before a "Thoát" and answered after it says nothing about who is signed in
+      // now -- it must never sign the departed person back in -- and the page is signed out.
       state.status = "ended";
       state.lastError = "";
     } else {
@@ -261,6 +263,8 @@ export function onSignOut(listener) {
  * are told, and the shell renders the signed-out screen in the place of whatever was open.
  */
 function forget(elsewhere = false) {
+  // First: an answer to anything sent before this moment is not for the page any more.
+  markDeparture();
   outSince = performance.now();
   state.answered = false;
   state.principal = null;
@@ -303,6 +307,9 @@ export async function signOut() {
     });
     endSessionUrl = result?.end_session_url ?? null;
   } catch (error) {
+    // Another tab's "Thoát" got there first and this page is already cleared (`forget(true)`):
+    // the goal state, with nothing more to clear or announce.
+    if (/** @type {any} */ (error)?.kind === "SIGNED_OUT") return { signedOut: true, error: null };
     // `SESSION_ENDED` is the server saying this browser has no session -- the goal state -- or
     // the CSRF cookie that is set and expires with the session cookie being gone with it.
     if (/** @type {any} */ (error)?.kind !== "SESSION_ENDED") return { signedOut: false, error };

@@ -121,7 +121,8 @@ export function render_() {
    * @typedef {object} Carry
    * @property {string} opening the opening float's entry field
    * @property {string} closing the closing count's entry field
-   * @property {{kind: string, amount: string, reason: string}|null} correction an open "Sửa"
+   * @property {{kind: string, amount: string, reason: string, entryId?: string}|null} correction
+   *   an open "Sửa" (`entryId`: the entry it corrects, when the sheet is still open)
    * @property {boolean} [toToday] the opening amount goes onto a new day's sheet: the worker
    *   pressed "Mở sổ hôm nay" after it was refused for yesterday's
    */
@@ -139,7 +140,24 @@ export function render_() {
     return {
       opening: value(openingHost, "#cash-float-amount"),
       closing: value(closingHost, "#cash-close-amount"),
-      correction: null,
+      correction: correcting(),
+    };
+  }
+
+  /**
+   * What is typed into the open "Sửa" sheet, and the entry it corrects; null when none is open.
+   *
+   * @returns {{kind: string, amount: string, reason: string, entryId: string}|null}
+   */
+  function correcting() {
+    if (!open || !openFor || !open.node.isConnected || !open.node.open) return null;
+    const amount = open.node.querySelector("#cash-correct-amount");
+    const reason = open.node.querySelector("#cash-correct-reason");
+    return {
+      kind: String(openFor.kind),
+      amount: amount instanceof HTMLInputElement ? amount.value : "",
+      reason: reason instanceof HTMLInputElement ? reason.value : "",
+      entryId: String(openFor.entry_id),
     };
   }
 
@@ -155,21 +173,47 @@ export function render_() {
       if (mine !== generation) return;
       markUpdated(stamp);
       const moved = before !== undefined && before !== sheetRead.business_day;
+      // Pre-production review 9, round 2: a "Sửa" sheet left open across midnight corrects an
+      // entry of the day it was opened on. It used to stay open over the new day's sheet and send
+      // that day with the old entry -- the refusal then reopened it on today's figure, prefilled
+      // with yesterday's. A new day closes it (what was typed is named below); on the same day it
+      // stays exactly as it is while the entry it corrects is still the current one.
+      if (moved && open) open.close();
+      const still =
+        !moved &&
+        carry.correction?.entryId !== undefined &&
+        carry.correction.entryId ===
+          String(
+            (carry.correction.kind === "OPENING_FLOAT"
+              ? sheetRead.opening_float
+              : sheetRead.closing_count
+            )?.entry_id ?? "",
+          );
       // A new day's sheet: last night's closing count and any correction are not carried onto it
       // (they belong to the day they were counted for); the opening float only when asked for.
       const kept = moved
         ? { opening: carry.toToday ? carry.opening : "", closing: "", correction: null }
-        : carry;
+        : still
+          ? { ...carry, correction: null }
+          : carry;
       const dropped =
         moved &&
         Boolean(
-          carry.closing.trim() || carry.correction || (!carry.toToday && carry.opening.trim()),
+          carry.closing.trim() ||
+            carry.correction?.amount.trim() ||
+            carry.correction?.reason.trim() ||
+            (!carry.toToday && carry.opening.trim()),
         );
       const words = [
         moved ? `Sổ đã sang ${calendarDay(sheetRead.business_day)}.` : "",
         moved && dropped
           ? `Số đang gõ cho ${calendarDay(before)} chưa được ghi và không chuyển sang sổ mới — số ` +
             "đếm cuối ngày hôm trước thì ghi ra giấy, đưa chủ tiệm."
+          : "",
+        // The entry the open "Sửa" corrected was itself corrected meanwhile: the sheet reopens on
+        // the newer figure with what was typed, and says why.
+        !moved && carry.correction?.entryId !== undefined && !still
+          ? "Người khác vừa sửa số này. Kiểm tra số đang ghi rồi sửa nếu cần."
           : "",
         notice,
       ];
@@ -503,7 +547,10 @@ export function render_() {
         method: "POST",
         idempotencyKey: spec.submission.key(),
         body: {
-          business_day: current.business_day,
+          // A correction is for the day of the entry it corrects, which a re-read may have moved
+          // the sheet past (pre-production review 9, round 2): the server then refuses it as not
+          // today's, rather than taking it against today's figure.
+          business_day: spec.supersedes ? spec.supersedes.business_day : current.business_day,
           kind: spec.kind,
           counted_vnd: parsed,
           ...(spec.supersedes
@@ -511,6 +558,10 @@ export function render_() {
             : {}),
         },
       });
+      // Pre-production review 9, round 2: a re-read sent while this was in flight read the sheet
+      // from before it -- its answer must not paint the empty form, with the amount just recorded
+      // typed back into it, over the entry. This answer is the newest sheet there is.
+      generation += 1;
       spec.submission.reset();
       spec.done?.();
       toast(
@@ -522,6 +573,8 @@ export function render_() {
       draw(answer, "");
     } catch (error) {
       const code = codeOf(error);
+      // The day this entry was sent for: a correction's is its entry's.
+      const day = spec.supersedes ? spec.supersedes.business_day : current.business_day;
       if (MOVED.includes(code)) {
         // Someone else recorded first: re-read, keep their figure, say so in one line. What this
         // worker typed is kept: a correction reopens on the newer entry with its amount and reason.
@@ -550,7 +603,7 @@ export function render_() {
             state: "warn",
             title: "Chưa ghi được",
             body:
-              `Màn hình còn mở sổ ${calendarDay(current.business_day)}, đã qua ngày. Tiền đầu ` +
+              `Màn hình còn mở sổ ${calendarDay(day)}, đã qua ngày. Tiền đầu ` +
               "ngày ghi vào sổ hôm nay: bấm “Mở sổ hôm nay”, kiểm tra số rồi bấm “Ghi tiền đầu ngày”.",
             actions: button({
               label: "Mở sổ hôm nay",
@@ -572,7 +625,7 @@ export function render_() {
       const known = REFUSAL_VI[/** @type {keyof typeof REFUSAL_VI} */ (code)];
       const words =
         code === "CASH_COUNT_DAY_NOT_TODAY"
-          ? `Đã sang ngày mới nên số của ${calendarDay(current.business_day)} chưa được ghi — ${known}`
+          ? `Đã sang ngày mới nên số của ${calendarDay(day)} chưa được ghi — ${known}`
           : known;
       render(
         spec.alertHost,
@@ -587,6 +640,8 @@ export function render_() {
 
   /** @type {ReturnType<typeof sheet>|null} */
   let open = null;
+  /** @type {any} the entry the open "Sửa" sheet corrects */
+  let openFor = null;
 
   /**
    * Sửa: a new entry superseding the current one, with a reason. The old figure stays listed.
@@ -655,6 +710,7 @@ export function render_() {
     });
     render(sheetsHost, made.node);
     open = made;
+    openFor = entry;
     made.open();
     if (prefill) {
       amount.input.value = prefill.amount;

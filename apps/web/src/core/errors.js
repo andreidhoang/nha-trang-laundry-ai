@@ -17,7 +17,7 @@
 
 import { money } from "./format.js";
 
-/** @typedef {"OFFLINE"|"NETWORK"|"TIMEOUT"|"SESSION_ENDED"|"DENIED"|"MISSING"|"DISPOSED"|"CONFLICT"|"STALE"|"IDEMPOTENCY_CONFLICT"|"REQUIRE_HUMAN"|"NOT_SUPPORTED"|"INVALID"|"PRECONDITION_REQUIRED"|"TOO_LARGE"|"RATE_LIMITED"|"BUSY"|"UNAVAILABLE"|"PRICEBOOK_UNAVAILABLE"|"FAULT"} ErrorKind */
+/** @typedef {"OFFLINE"|"NETWORK"|"TIMEOUT"|"SESSION_ENDED"|"SIGNED_OUT"|"DENIED"|"MISSING"|"DISPOSED"|"CONFLICT"|"STALE"|"IDEMPOTENCY_CONFLICT"|"REQUIRE_HUMAN"|"NOT_SUPPORTED"|"INVALID"|"PRECONDITION_REQUIRED"|"TOO_LARGE"|"RATE_LIMITED"|"BUSY"|"UNAVAILABLE"|"PRICEBOOK_UNAVAILABLE"|"FAULT"} ErrorKind */
 
 /**
  * The contact a service send was refused for, as the egress refusal names it (`DEC-033`). The
@@ -84,7 +84,7 @@ export class ApiError extends Error {
 
   /** Whether the operator's typed input is still valid and can simply be re-submitted. */
   get inputSurvives() {
-    return this.kind !== "SESSION_ENDED";
+    return this.kind !== "SESSION_ENDED" && this.kind !== "SIGNED_OUT";
   }
 }
 
@@ -94,6 +94,9 @@ const MESSAGES = {
   NETWORK: "Không gọi được máy chủ. Không rõ lệnh đã tới nơi hay chưa.",
   TIMEOUT: "Máy chủ không trả lời kịp. Không rõ lệnh đã tới nơi hay chưa.",
   SESSION_ENDED: "Phiên đăng nhập đã kết thúc. Hãy đăng nhập lại.",
+  // Pre-production review 9: the answer to a request sent before a "Thoát", withheld from the page
+  // (`api.markDeparture`). The page has been cleared; this is said only where something is shown.
+  SIGNED_OUT: "Đã đăng xuất. Kết quả của thao tác gửi trước lúc đó không hiện ở trang này.",
   DENIED: "Bạn không có quyền cho thao tác này.",
   MISSING: "Không tìm thấy đối tượng.",
   // Not the same thing as MISSING, and rendering it as one would be a small lie in the direction

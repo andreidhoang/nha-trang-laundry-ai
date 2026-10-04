@@ -957,6 +957,29 @@ def order_view(
     }
 
 
+def with_refund_figure(view: dict[str, object]) -> dict[str, object]:
+    """The read by id's `cancellation_refund_vnd` (round 9 review, P2), as the server sets it:
+    what a cancellation without charge hands back now -- the preview's refund when remedy money
+    moves, else what the order has taken -- null when nothing would go back. A view that names its
+    own figure keeps it."""
+
+    if "cancellation_refund_vnd" in view:
+        return view
+    money = view.get("cancellation_money")
+    refunds = view.get("commercial") not in {"CANCELLED", "COMPLETED"} and view.get("balance") in {
+        "PAID",
+        "PARTIALLY_PAID",
+    }
+    figure = (
+        None
+        if not refunds
+        else money["refund_vnd"]
+        if isinstance(money, dict) and money.get("stage") == "PREVIEW"
+        else view.get("paid_vnd")
+    )
+    return {**view, "cancellation_refund_vnd": figure}
+
+
 # --- EINVOICE-REQUEST-001 (DEC-040): invoice requests, as the server answers -------------------
 
 INVOICE_ID = "abababab-1111-4000-8000-000000000031"
@@ -2398,7 +2421,7 @@ EXPORT_REQUEST_CONTENT = {
         "orders.customer_id",
         "order_payments.bank_ref_last",
     ],
-    "query_version": "store-day-orders-export-v5:453c251c1ba109d2",
+    "query_version": "store-day-orders-export-v5:5645871b921b4bc3",
     "statement_vi": (
         "Xuất bản sao hồ sơ của chính cửa hàng cho ngày 2026-09-16 (theo giờ Việt Nam): mã đơn, "
         "trạng thái, mốc thời gian và tiền của những đơn MỞ trong ngày đó. Tiền đã trả lấy từ sổ "
@@ -2419,7 +2442,7 @@ EXPORT_REQUEST_CONTENT = {
         "Tiền trong tệp: đã trả (tiền mặt, chuyển khoản) theo sổ thu từng lần, còn lại, đã hoàn — "
         "tính tới lúc xuất."
     ),
-    "bound_query_version": "store-day-orders-export-v5:453c251c1ba109d2",
+    "bound_query_version": "store-day-orders-export-v5:5645871b921b4bc3",
     "bound_shape_retired": False,
 }
 
@@ -2748,6 +2771,10 @@ state = {
 held_ticket_routes: list[Route] = []
 #: Pre-production review 9: order-page writes held open while a section signs out another tab.
 held_order_write_routes: list[Route] = []
+#: Pre-production review 9, round 2: a complaint's POST held open across another tab's Thoát.
+held_incident_routes: list[Route] = []
+#: Pre-production review 9, round 2: Đếm két's write and re-read, each held open by a section.
+held_cash_routes: dict[str, list[Route]] = {"GET": [], "POST": []}
 #: Section 27 (COUNTER-UI-RACE-009): a quote press, and a part-amount QR read, held open.
 held_quote_routes: list[Route] = []
 held_qr_routes: list[tuple[Route, dict[str, object]]] = []
@@ -3051,6 +3078,10 @@ with sync_playwright() as playwright:
         # may answer with a refusal), and the owner's days on Báo cáo.
         elif url.split("?")[0].endswith("/cash-count") and route.request.method == "GET":
             state.setdefault("cash_reads", []).append(url)
+            # Pre-production review 9, round 2: a re-read held, answered later with `cash_late`.
+            if state.get("hold_cash_get"):
+                held_cash_routes["GET"].append(route)
+                return
             # Pre-production review 9: a section may make the re-read fail (401, 503).
             if state.get("cash_read_reply"):
                 failed = state["cash_read_reply"]
@@ -3066,6 +3097,9 @@ with sync_playwright() as playwright:
                     "key": route.request.headers.get("idempotency-key"),
                 }
             )
+            if state.get("hold_cash_post"):
+                held_cash_routes["POST"].append(route)
+                return
             reply = state.get("cash_write_reply") or (201, state.get("cash_after_write") or {})
             route.fulfill(
                 status=reply[0], content_type="application/json", body=json.dumps(reply[1])
@@ -3777,6 +3811,10 @@ with sync_playwright() as playwright:
                 # now the server's to derive. A stub that only returned 201 would certify a console
                 # that sends anything at all.
                 state.setdefault("incident_posts", []).append(route.request.post_data)
+                # Pre-production review 9, round 2: the answer held until the section releases it.
+                if state.get("hold_incident_post"):
+                    held_incident_routes.append(route)
+                    return
                 route.fulfill(
                     status=201,
                     content_type="application/json",
@@ -4095,7 +4133,7 @@ with sync_playwright() as playwright:
             and route.request.method == "GET"
             and url.split("?")[0].endswith(f"/internal/v1/orders/{PICKUP_ORDER_ID}")
         ):
-            body = state["order_view"]
+            body = with_refund_figure(state["order_view"])
         elif (
             state.get("order_view") is not None
             and route.request.method == "GET"
@@ -7346,6 +7384,14 @@ with sync_playwright() as playwright:
         and confirm.is_disabled(),
         open_dialog_text()[:200],
     )
+    # Round 9 review, P2: and says how much -- the server's figure, above the question.
+    stated = page.locator("dialog[open] [data-field=cancel-refund-amount]")
+    check(
+        "R9 Huỷ đơn of a paid order says how much goes back: 'Trả lại khách 110.000 ₫'",
+        stated.count() == 1
+        and stated.inner_text().replace("\xa0", " ") == "Trả lại khách 110.000 ₫",
+        stated.inner_text() if stated.count() else open_dialog_text()[:200],
+    )
     page.locator("dialog[open] label.choice-chip", has_text="đã trả đồ chưa giặt").first.click()
     page.wait_for_timeout(200)
     shut_without_method = confirm.is_disabled()
@@ -7375,6 +7421,25 @@ with sync_playwright() as playwright:
     )
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
+    # Round 9 review, P2, fail closed: money goes back but the read names no figure -- the sheet
+    # says so and the press stays shut whatever is picked.
+    open_order({**paid_cancel, "cancellation_refund_vnd": None})
+    page.locator("button[data-more-steps]").click()
+    page.wait_for_timeout(300)
+    page.locator("dialog[open] button[data-step=CANCEL]").click()
+    page.wait_for_timeout(400)
+    page.locator("dialog[open] label.choice-chip", has_text="đã trả đồ chưa giặt").first.click()
+    page.locator("dialog[open] label.choice-chip", has_text="Tiền mặt").first.click()
+    page.wait_for_timeout(200)
+    check(
+        "R9 with no refund figure from the server the cancel sheet says so; the press stays shut",
+        "Chưa đọc được số tiền trả lại khách" in open_dialog_text()
+        and page.locator("dialog[open] [data-field=cancel-refund-amount]").count() == 0
+        and page.locator("dialog[open] .sheet__actions button").first.is_disabled(),
+        open_dialog_text()[:200],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
     # An unpaid cancellation hands nothing back, so it is not asked.
     open_order(unpaid_delivery)
     page.locator("button[data-more-steps]").click()
@@ -7383,7 +7448,8 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(400)
     check(
         "an unpaid order's cancellation does not ask how money went back",
-        page.locator("dialog[open] input[name=refund_method]").count() == 0,
+        page.locator("dialog[open] input[name=refund_method]").count() == 0
+        and page.locator("dialog[open] [data-field=cancel-refund-amount]").count() == 0,
     )
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
@@ -13317,6 +13383,13 @@ with sync_playwright() as playwright:
         and "30.000 ₫ (đã trừ 80.000 ₫)" not in after,
         after[:300],
     )
+    check(
+        "R9 and the amount stated beside the refund method is the fresh one too (30.000 -> 20.000)",
+        "Trả lại khách 30.000 ₫" in before
+        and "Trả lại khách 20.000 ₫" in after
+        and "Trả lại khách 30.000 ₫" not in after,
+        after[:300],
+    )
     writes = press_cancel_twice()
     check(
         "and the refund method picked stays picked, so the next two presses send the custody "
@@ -16195,6 +16268,77 @@ with sync_playwright() as playwright:
     page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
     page.wait_for_timeout(700)
 
+    # Pre-production review 9, round 2: "Ghi khiếu nại" in flight in the other tab when this one
+    # presses Thoát. The seal above covers toasts and sheets; the late 201's success path still
+    # moved the cleared tab's address to the complaint it created, and the next person to sign in
+    # there landed on the departed person's customer record -- the customer's own words on show.
+    # Every answer to a request sent before a sign-out is now withheld from the page.
+    complaining = context.new_page()
+    complaining.on("pageerror", lambda e: errors.append(str(e)))
+    complaining.route("**/internal/**", route_api)
+    complaining.goto(f"http://localhost:{PORT}/#/incidents", wait_until="networkidle")
+    complaining.wait_for_timeout(700)
+    complaining.locator("#incident-create-open").click()
+    complaining.wait_for_timeout(300)
+    complaining.locator("#incident-ticket").click()
+    complaining.keyboard.type("17", delay=12)
+    complaining.keyboard.press("Enter")
+    complaining.wait_for_timeout(600)
+    complaining.locator("#incident-summary").click()
+    complaining.keyboard.type("Khách Nguyễn Văn A: áo bị rách", delay=8)
+    state["hold_incident_post"] = True
+    complaining.locator("#incident-submit").click()
+    complaining.wait_for_timeout(500)
+    complaint_in_flight = len(held_incident_routes) == 1
+    page.bring_to_front()
+    state["logout_answer"] = (200, {"end_session_url": None})
+    press_sign_out()
+    page.wait_for_timeout(900)
+    cleared_hash = str(complaining.evaluate("location.hash"))
+    # The server recorded the complaint before the session ended: the held answer is its 201.
+    state["hold_incident_post"] = False
+    state["authenticated"] = True
+    for held_route in list(held_incident_routes):
+        route_api(held_route)
+    held_incident_routes.clear()
+    state["authenticated"] = False
+    complaining.wait_for_timeout(900)
+    late_hash = str(complaining.evaluate("location.hash"))
+    late_text = str(complaining.evaluate("() => document.body.textContent || ''"))
+    check(
+        "R9 a complaint answered after the other tab's Thoát does not move the cleared tab to it",
+        complaint_in_flight
+        and cleared_hash == "#/"
+        and late_hash == "#/"
+        and "Chưa đăng nhập" in late_text
+        and "áo bị rách" not in late_text
+        and complaining.locator(".toast").count() == 0
+        and complaining.locator("dialog[open]").count() == 0,
+        f"in_flight={complaint_in_flight} hash {cleared_hash} -> {late_hash} " + late_text[:200],
+    )
+    # The next person signs in elsewhere and presses "Kiểm tra lại phiên" on this tab.
+    state["logout_answer"] = None
+    state["authenticated"] = True
+    recheck = complaining.get_by_role("button", name="Kiểm tra lại phiên")
+    offered = recheck.count()
+    if offered:
+        recheck.first.click()
+    complaining.wait_for_timeout(1200)
+    next_hash = str(complaining.evaluate("location.hash"))
+    next_text = complaining.inner_text("#main")
+    check(
+        "R9 and the next person signed in on that tab starts at the start, not on that complaint",
+        offered > 0
+        and next_hash == "#/"
+        and "áo bị rách" not in next_text
+        and INCIDENTS[0]["incident_id"] not in next_hash,
+        f"hash={next_hash} " + next_text[:200].replace("\n", " | "),
+    )
+    complaining.close()
+    page.goto("about:blank")
+    page.goto(f"http://localhost:{PORT}/#/", wait_until="networkidle")
+    page.wait_for_timeout(700)
+
     # --- K2: "Nhận đồ" for an operator without two-step verification ---------------------------
     def new_entry() -> dict:
         return dict(
@@ -16744,6 +16888,147 @@ with sync_playwright() as playwright:
     )
     page.keyboard.press("Escape")
     state["cash_write_reply"] = None
+
+    # Pre-production review 9, round 2 (1): a re-read sent while "Ghi tiền đầu ngày" is in flight
+    # (the tablet woken, or Tải lại) read the sheet from before the write. When it answered after
+    # the write, it painted the empty form back -- with the amount just recorded typed into it --
+    # over the recorded float, and a second press was told "Người khác vừa ghi số này". The matrix:
+    # the older read answered after the write, and before it.
+    def release(kind: str, status: int, body: dict[str, object]) -> None:
+        for held_route in list(held_cash_routes[kind]):
+            held_route.fulfill(
+                status=status, content_type="application/json", body=json.dumps(body)
+            )
+        held_cash_routes[kind].clear()
+        page.wait_for_timeout(700)
+
+    recorded_float = cash_sheet(
+        opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID),
+        entry=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID),
+        replayed=False,
+    )
+    for order in ("write first", "read first"):
+        cash_goto(cash_sheet())
+        page.locator("#cash-float-amount").fill("500000")
+        state["hold_cash_post"] = True
+        page.locator("#cash-float-save").click()
+        page.wait_for_timeout(300)
+        state["hold_cash_get"] = True
+        wake()
+        held = (len(held_cash_routes["POST"]), len(held_cash_routes["GET"]))
+        state["hold_cash_post"] = False
+        state["hold_cash_get"] = False
+        if order == "write first":
+            release("POST", 201, recorded_float)
+            release("GET", 200, cash_sheet())
+        else:
+            release("GET", 200, cash_sheet())
+            release("POST", 201, recorded_float)
+        float_shown = page.locator("[data-cash-float]")
+        check(
+            f"R9 a re-read from before the write ({order}) never paints the empty float form "
+            "back over the recorded float",
+            held == (1, 1)
+            and page.locator("#cash-float-amount").count() == 0
+            and float_shown.count() == 1
+            and "500.000" in float_shown.inner_text(),
+            f"held={held} form={page.locator('#cash-float-amount').count()} "
+            f"recorded={float_shown.count()}",
+        )
+    # The neighbour: a read sent after the write still draws what it finds.
+    state["cash_sheet"] = cash_sheet(opening=cash_entry("OPENING_FLOAT", 480_000, CASH_FLOAT_ID))
+    page.locator(".cash__refresh button").click()
+    page.wait_for_timeout(800)
+    check(
+        "R9 and a re-read sent after the write is drawn as usual",
+        "480.000" in page.locator("[data-cash-float]").inner_text(),
+        page.locator("main").inner_text()[:160].replace("\n", " | "),
+    )
+
+    # Pre-production review 9, round 2 (2): "Sửa tiền đầu ngày" opened on 30/09's float (500.000)
+    # and left open overnight. The wake re-read moved the page to 01/10, where a colleague had
+    # recorded 300.000; the sheet stayed open on yesterday's entry and its press sent today's day
+    # with yesterday's entry -- refused as stale, then reopened on today's float, prefilled with
+    # yesterday's figure and reason, one press from recording it there.
+    colleague = cash_entry(
+        "OPENING_FLOAT", 300_000, "cccccccc-0000-4000-8000-00000000000b", business_day=next_day
+    )
+    cash_goto(cash_sheet(opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID)))
+    page.locator("button[data-cash-correct=OPENING_FLOAT]").click()
+    page.wait_for_timeout(400)
+    page.locator("#cash-correct-amount").fill("450.000")
+    page.locator("#cash-correct-reason").fill("đếm sót tờ 50.000")
+    state["cash_sheet"] = cash_sheet(business_day=next_day, opening=colleague)
+    wake()
+    overnight = page.locator("main").inner_text().replace("\xa0", " ")
+    check(
+        "R9 a new day closes a correction left open on yesterday's entry, and says it was not sent",
+        page.locator("dialog[open]").count() == 0
+        and "01/10" in page.locator(".cash__day").inner_text()
+        and "Sổ đã sang" in overnight
+        and "chưa được ghi" in overnight
+        and "300.000" in page.locator("[data-cash-float]").inner_text()
+        and state["cash_writes"] == [],
+        f"dialogs={page.locator('dialog[open]').count()} writes={state['cash_writes']} "
+        + overnight[:200].replace("\n", " | "),
+    )
+    # The neighbours, on the same day: a re-read with the entry unchanged leaves the open sheet as
+    # it is; a re-read after someone else corrected that entry reopens on the newer figure with
+    # what was typed, and says why; a correction always names its own entry's day.
+    cash_goto(cash_sheet(opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID)))
+    page.locator("button[data-cash-correct=OPENING_FLOAT]").click()
+    page.wait_for_timeout(400)
+    page.locator("#cash-correct-amount").fill("450.000")
+    page.locator("#cash-correct-reason").fill("đếm sót tờ 50.000")
+    wake()
+    check(
+        "R9 a same-day re-read leaves an open correction exactly as typed",
+        page.locator("dialog[open]").count() == 1
+        and cash_value("#cash-correct-amount") == "450.000"
+        and cash_value("#cash-correct-reason") == "đếm sót tờ 50.000"
+        and "Người khác" not in page.locator("main").inner_text(),
+        f"amount={cash_value('#cash-correct-amount')!r}",
+    )
+    overtaken = cash_entry(
+        "OPENING_FLOAT",
+        520_000,
+        "cccccccc-0000-4000-8000-00000000000c",
+        supersedes_id=CASH_FLOAT_ID,
+        correction_reason="người khác sửa",
+    )
+    state["cash_sheet"] = cash_sheet(opening=overtaken)
+    wake()
+    reopened = open_dialog_text().replace("\xa0", " ")
+    check(
+        "R9 a same-day re-read after someone else corrected it reopens on the newer figure, typed "
+        "values kept, and says so",
+        "520.000" in reopened
+        and cash_value("#cash-correct-amount") == "450.000"
+        and cash_value("#cash-correct-reason") == "đếm sót tờ 50.000"
+        and "Người khác vừa sửa số này" in page.locator("main").inner_text(),
+        reopened[:160],
+    )
+    state["cash_after_write"] = cash_sheet(
+        opening=cash_entry("OPENING_FLOAT", 450_000, "cccccccc-0000-4000-8000-00000000000d"),
+        entry=cash_entry("OPENING_FLOAT", 450_000, "cccccccc-0000-4000-8000-00000000000d"),
+        replayed=False,
+    )
+    page.locator("#cash-correct-save").click()
+    page.wait_for_timeout(800)
+    check(
+        "R9 the correction is sent for its entry's own day, superseding that entry",
+        bool(state["cash_writes"])
+        and state["cash_writes"][-1]["body"]
+        == {
+            "business_day": CASH_DAY,
+            "kind": "OPENING_FLOAT",
+            "counted_vnd": 450_000,
+            "supersedes_entry_id": "cccccccc-0000-4000-8000-00000000000c",
+            "reason": "đếm sót tờ 50.000",
+        },
+        repr(state["cash_writes"][-1:]),
+    )
+    state["cash_after_write"] = None
     state["cash_sheet"] = cash_sheet(opening=cash_entry("OPENING_FLOAT", 500_000, CASH_FLOAT_ID))
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto("about:blank")

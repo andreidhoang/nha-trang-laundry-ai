@@ -102,7 +102,10 @@ from test_reports import AS_OF, DAY, _Order, _person, _seeded_shop, _store
 #: third v5 digest was `b7647201be330134`.
 #: Merged on the integration branch (both slices bumped v4 to v5 unreleased): one v5 with both
 #: changes; the J-only digest was `1d5f720d3dfa67f2`, the I-only one `28793966ffeaa69c`.
-PINNED_TEMPLATE_VERSION = "daily-summary-v5:174ebc3cc89ce9a9"
+#: Round 9 review, round 2: the unclaimed module's waiting-clock rule is hashed in too (the clock
+#: that counts "chờ quá N ngày" lives there, not in the reminder rules); the digest before it was
+#: `174ebc3cc89ce9a9`, under the same identifier because v5 has not left this branch.
+PINNED_TEMPLATE_VERSION = "daily-summary-v5:9038b9a0bb130f0c"
 
 
 def _database_url() -> str:

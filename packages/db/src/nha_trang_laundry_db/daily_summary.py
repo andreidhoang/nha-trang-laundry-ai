@@ -38,6 +38,7 @@ from zoneinfo import ZoneInfo
 
 from nha_trang_laundry_domain import daily_summary as template
 from nha_trang_laundry_domain import pickup_reminders as reminder_rules
+from nha_trang_laundry_domain import unclaimed as waiting_rules
 from nha_trang_laundry_domain.daily_summary import (
     COMPARE_MIN_WEEKS,
     COMPARE_WEEKS,
@@ -183,6 +184,9 @@ def daily_summary_template_version() -> QueryVersion:
         str(MISSING_COSTS_AFTER_DAY),
         # The reminder schedule the count applies (`PICKUP-REMIND-001`).
         rule_source(reminder_rules),
+        # The waiting clock those rules and the waiting count call (`waiting_clock`), which lives
+        # in the domain's unclaimed module, not in the reminder rules' own source.
+        rule_source(waiting_rules),
         # The invoice requests' waiting count (`EINVOICE-REQUEST-001`).
         INVOICE_WAITING_OVER_SQL,
         str(INVOICE_STALE_DAYS),

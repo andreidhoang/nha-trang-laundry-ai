@@ -34,6 +34,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
 from uuid import UUID, uuid4
 
+import nha_trang_laundry_domain.unclaimed as waiting_rules
 from nha_trang_laundry_domain.catalog import (
     CommercialOrderStatus,
     CustodyResolution,
@@ -87,7 +88,7 @@ from nha_trang_laundry_db.orders import (
     _read_view_row,
 )
 from nha_trang_laundry_db.personal_data import open_phone
-from nha_trang_laundry_db.query_version import QueryVersion, query_version
+from nha_trang_laundry_db.query_version import QueryVersion, query_version, rule_source
 from nha_trang_laundry_db.settlement import collected_by_for_shape
 from nha_trang_laundry_db.storage_fees import (
     STORAGE_HOLDS_SQL,
@@ -165,6 +166,9 @@ WAITING_COUNT_QUERY: Final[QueryVersion] = query_version(
     _WAITING_COUNT_SQL,
     ",".join(str(days) for days in WAITING_SUMMARY_THRESHOLDS),
     str(WAITING_COUNT_READ_LIMIT),
+    # The days are counted in Python, not by the statement (`waiting_clock`): a changed clock
+    # rule moves the count's version as a changed statement does (round 9 review, P2).
+    rule_source(waiting_rules),
 )
 
 

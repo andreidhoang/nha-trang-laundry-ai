@@ -107,6 +107,7 @@ from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
 
+import nha_trang_laundry_domain.unclaimed as storage_rules
 from nha_trang_laundry_domain.approvals import APPROVAL_RESOURCE_TYPES
 from nha_trang_laundry_domain.canonical import canonical_document
 from nha_trang_laundry_domain.catalog import (
@@ -123,7 +124,7 @@ from psycopg.errors import UniqueViolation
 from .approvals import ApprovalBinding, read_approval_binding
 from .idempotency import IdempotencyRepository, IdempotentCommand
 from .identity import StaffPrincipal, StaffRole
-from .query_version import query_version
+from .query_version import query_version, rule_source
 from .storage_fees import holds_from_column, read_published_storage_policy
 from .store_access import require_store_membership
 from .transactions import MaterialChange, OutboxEvent, commit_material_change
@@ -408,6 +409,9 @@ EXPORT_QUERY = query_version(
     ",".join(EXPORT_COLUMNS),
     ",".join(EXPORT_EXCLUSIONS),
     _money_sources_text(EXPORT_MONEY_SOURCES),
+    # `owed_vnd` carries the storage fee, computed in Python from the waiting clock
+    # (`order_storage_fee`, `waiting_clock`): a changed clock rule is a changed figure.
+    rule_source(storage_rules),
 )
 
 #: `EXPORT-RANGE-001`. The same rows as `_EXPORT_SQL`, for every shop-local day from the window's
@@ -470,6 +474,9 @@ EXPORT_WINDOW_QUERY = query_version(
     ",".join(EXPORT_COLUMNS),
     ",".join(EXPORT_EXCLUSIONS),
     _money_sources_text(EXPORT_MONEY_SOURCES),
+    # `owed_vnd` carries the storage fee, computed in Python from the waiting clock
+    # (`order_storage_fee`, `waiting_clock`): a changed clock rule is a changed figure.
+    rule_source(storage_rules),
 )
 
 #: The longest window, in shop-local days counted inclusively (spec `EXPORT-RANGE-001`: "at most 92

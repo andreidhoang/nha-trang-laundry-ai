@@ -807,7 +807,7 @@ def test_a_one_day_export_request_answers_exactly_as_before(
         # v4 since the round 7 wave 2 integration: `owed_vnd` includes the storage fee. v5 since
         # round 9 (MONEY-LIFECYCLE-009): the fee held on hold and kept once paid, and the refund's
         # remedy netting and `refund_method` in their own columns.
-        assert body["query_version"] == "store-day-orders-export-v5:453c251c1ba109d2"
+        assert body["query_version"] == "store-day-orders-export-v5:5645871b921b4bc3"
         assert body["shape_retired"] is False
         assert [item["column"] for item in body["money_sources"]] == [
             "expected_total_vnd",

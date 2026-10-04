@@ -723,3 +723,60 @@ def test_a_replayed_cancellation_returns_its_answer_and_moves_no_credit_again(
     assert changed.status_code == 409, changed.text
     assert changed.json()["detail"] == "IDEMPOTENCY_CONFLICT"
     assert _remedy_money_rows(connection) == after
+
+
+# --- round 9 review, P2: the refund sheet is told how much goes back ------------------------------
+
+
+@pytest.mark.parametrize("shape", ["settled", "deposit", "netted", "unpaid"])
+def test_the_order_read_says_how_much_a_cancellation_without_charge_hands_back(
+    connection: Any, service: OperationsService, client: TestClient, shape: str
+) -> None:
+    """The cancel sheet asked how the money went back -- Tiền mặt or Chuyển khoản, "tiền trong két
+    hôm nay trừ đúng khoản này" -- and never said how much: the server decides the refund from the
+    ledger and sent the figure only when remedy money moved. The worker took cash out of the drawer
+    without one. The order read now carries `cancellation_refund_vnd`: what a cancellation without
+    charge hands back now, the very figure the refund row then records -- the settlement, the
+    deposit, or what is left after a spent credit is netted (`DEC-045`); null when nothing would go
+    back, and null once the order is cancelled.
+    """
+
+    if shape == "netted":
+        store_id, staff, order_id, credit_id = _remedied(connection, RemedyKind.DAMAGE_COMPENSATION)
+        assert credit_id is not None
+        _spend_on_new_order(service, connection, store_id, staff, credit_id)
+        expected: int | None = SETTLED - DAMAGE_CREDIT
+    elif shape == "settled":
+        _store_id, staff, order_id, _none = _remedied(connection, None)
+        expected = SETTLED
+    else:
+        store_id, staff, _source, _none = _remedied(connection, None)
+        _publish_pricebook(connection, staff)
+        contact_id, request_id = _customer(connection, store_id, staff)
+        quote = _price(service, store_id=store_id, staff=staff, request_id=request_id, kg="4")
+        accepted = _accept(service, store_id=store_id, staff=staff, quote=quote)
+        order_id = _order(
+            service, store_id=store_id, staff=staff, contact_id=contact_id, accepted=accepted
+        ).order_id
+        _as(staff)
+        received = _step(client, order_id, {"step": "RECEIVE", "slot_approved": True})
+        assert received.status_code == 200
+        assert _step(client, order_id, {"step": "START_WASH"}).status_code == 200
+        if shape == "deposit":
+            _pay(client, order_id, 50_000)
+            expected = 50_000
+        else:
+            expected = None
+    _as(staff)
+    before = _read(client, order_id)
+    assert before["cancellation_refund_vnd"] == expected
+    if shape == "netted":
+        # The same server figure the remedy block states.
+        assert before["cancellation_money"]["refund_vnd"] == expected
+    answer = _step(client, order_id, {"step": "CANCEL", **SHOP_FAULT})
+    assert answer.status_code == 200, answer.text
+    if expected is None:
+        assert _order_row(connection, order_id)[3] == 0
+    else:
+        assert _refund(connection, order_id)[0] == expected
+    assert _read(client, order_id)["cancellation_refund_vnd"] is None

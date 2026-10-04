@@ -1077,6 +1077,11 @@ class OrderViewResponse(OrderResponse):
     #: the order -- what a cancellation without charge will do to it (`PREVIEW`, which the refund
     #: sheet states before the press) or did (`DONE`, which the order page and the receipt print).
     cancellation_money: CancellationMoneyResponse | None = None
+    #: Round 9 review, P2: on the read by id, what a cancellation without charge would hand back
+    #: now -- the settlement, the deposit, or what is left after a spent credit is netted -- the
+    #: figure the cancel sheet states beside "Trả lại tiền cho khách bằng". Null when nothing would
+    #: go back.
+    cancellation_refund_vnd: int | None = None
 
 
 class ApprovalResponse(BaseModel):
@@ -6788,6 +6793,7 @@ def _order_view_response(view: OrderView, *, replayed: bool = False) -> OrderVie
                 refusal=view.cancellation_money.refusal,
             )
         ),
+        cancellation_refund_vnd=view.cancellation_refund_vnd,
     )
 
 

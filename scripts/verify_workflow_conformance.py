@@ -10861,8 +10861,10 @@ def scenario_goods_and_drawer(console: Console) -> None:
         console.page.keyboard.press("Escape")
         console.page.wait_for_timeout(300)
     ok(
-        "Huỷ đơn of an order that took money asks how the money goes back",
-        "Trả lại tiền cho khách bằng" in asked,
+        "Huỷ đơn of an order that took money asks how the money goes back -- and says how much "
+        "(round 9 review, P2: 'Trả lại khách 20.000 ₫', the server's figure)",
+        "Trả lại tiền cho khách bằng" in asked
+        and "Trả lại khách 20.000 ₫" in asked.replace("\xa0", " "),
         asked[:200],
     )
     said = console.step(

@@ -2285,6 +2285,8 @@ export function render_(context) {
     const alertHost = h("div");
     const questionHost = h("div");
     const refundHost = h("div");
+    // Round 9 review, P2: how much goes back, stated where the sheet asks how it goes back.
+    const refundAmountHost = h("div");
     const moneyHost = h("div", { dataField: "cancel-money" });
     /** The entry the sheet shows: the one it opened with, or the one a reload brought (C4). */
     let shown = entry;
@@ -2295,8 +2297,15 @@ export function render_(context) {
     const asks = (field) => Array.isArray(shown.requires) && shown.requires.includes(field);
     const needs = () => asks("custody_resolution");
     const refunds = () => asks("refund_method");
-    /** Every answer the server asks for is given (and nothing it no longer asks is counted). */
-    const ready = () => (!needs() || custody !== "") && (!refunds() || refundMethod !== "");
+    /** The figure the server says goes back, from the order as last read; null when unread. */
+    let refundFigure = /** @type {number|null} */ (null);
+    /**
+     * Every answer the server asks for is given (and nothing it no longer asks is counted) -- and
+     * money goes back only once the sheet says how much: no figure, no press.
+     */
+    const ready = () =>
+      (!needs() || custody !== "") &&
+      (!refunds() || (refundMethod !== "" && refundFigure !== null));
     // MONEY-RESIDUAL-009B (J3): the server's preview says the cancellation would be refused.
     const sync = () => {
       confirm.disabled = !writeVerdict.allowed || !ready() || cancellationRefused(current);
@@ -2391,7 +2400,39 @@ export function render_(context) {
      */
     function drawMoney(order) {
       render(moneyHost, cancellationMoneyBlock(order, "PREVIEW"));
+      drawRefundAmount(order);
       sync();
+    }
+
+    /**
+     * Round 9 review, P2: "Trả lại khách 50.000 ₫", the server's figure (`cancellation_refund_vnd`
+     * -- the settlement, the deposit, or what is left after a spent credit is netted), above the
+     * question of how it goes back. The sheet used to ask Tiền mặt / Chuyển khoản and name no
+     * amount, and the only figure behind it was "Còn lại". Printed, never computed; without it the
+     * press stays shut.
+     *
+     * @param {any} order
+     */
+    function drawRefundAmount(order) {
+      const figure = order?.cancellation_refund_vnd;
+      refundFigure = Number.isInteger(figure) ? Number(figure) : null;
+      render(
+        refundAmountHost,
+        !refunds()
+          ? null
+          : refundFigure !== null
+            ? h(
+                "p",
+                { class: "cancel-refund", dataField: "cancel-refund-amount" },
+                "Trả lại khách ",
+                h("strong", { class: "money" }, money(refundFigure)),
+              )
+            : inlineAlert({
+                state: "warn",
+                title: "Chưa đọc được số tiền trả lại khách",
+                body: "Đóng bảng này, bấm Tải lại trang đơn rồi mở lại Huỷ đơn. Chưa thấy số thì chưa đưa tiền.",
+              }),
+      );
     }
 
     /**
@@ -2423,7 +2464,15 @@ export function render_(context) {
     const made = openFresh({
       id: "order-cancel",
       title: "Huỷ đơn",
-      body: h("div", { class: "stack" }, questionHost, moneyHost, refundHost, alertHost),
+      body: h(
+        "div",
+        { class: "stack" },
+        questionHost,
+        moneyHost,
+        refundAmountHost,
+        refundHost,
+        alertHost,
+      ),
       actions: gated(confirm, writeVerdict),
     });
   }

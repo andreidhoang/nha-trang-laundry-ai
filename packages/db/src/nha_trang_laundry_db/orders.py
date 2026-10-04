@@ -38,6 +38,7 @@ from nha_trang_laundry_domain.order_steps import (
     plan_step,
 )
 from nha_trang_laundry_domain.orders import (
+    TERMINAL_COMMERCIAL_STATUSES,
     IntakeReadiness,
     OrderState,
     OrderTransitionError,
@@ -411,6 +412,10 @@ class OrderView:
     #: did, to the remedy credits on this order -- on the read by id only, `None` when no credit
     #: touches the order (the board never carries it).
     cancellation_money: CancellationMoneyView | None = None
+    #: Round 9 review, P2: what a cancellation without charge would hand back now -- the figure
+    #: the refund sheet states beside "Trả lại tiền cho khách bằng". On the read by id only;
+    #: `None` when nothing would go back.
+    cancellation_refund_vnd: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1809,7 +1814,11 @@ class OrderRepository:
             balance=view.balance.value,
             paid_vnd=view.paid_vnd or 0,
         )
-        return view if money is None else replace(view, cancellation_money=money)
+        return replace(
+            view,
+            cancellation_money=money,
+            cancellation_refund_vnd=_cancellation_refund_preview(cursor, view, money),
+        )
 
 
 @dataclass(frozen=True)
@@ -1864,49 +1873,86 @@ def _refund_for_cancellation(
         raise OrderStateError("HUMAN_APPROVAL_REQUIRED: a refund needs a custody resolution")
     if method is None:  # pragma: no cover - `_apply_locked_transition` refused it by name first
         raise OrderStateError("HUMAN_APPROVAL_REQUIRED: a refund needs its refund_method")
-    if partly_paid:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT o.store_id, coalesce(sum(p.amount_vnd), 0)
-                FROM orders o
-                LEFT JOIN order_payments p ON p.order_id = o.id
-                WHERE o.id = %s
-                GROUP BY o.store_id
-                """,
-                (order_id,),
-            )
-            ledger = cursor.fetchone()
-        if ledger is None or int(ledger[1]) <= 0:
-            raise OrderStateError(
-                "the order reads partly paid but no payment is recorded; nothing can be refunded"
-            )
-        return _CancellationRefund(
-            refund_id=uuid4(),
-            settlement_id=None,
-            store_id=_uuid(ledger[0]),
-            amount_vnd=int(ledger[1]),
-            resolution=resolution,
-            method=method,
-        )
     with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT id, store_id, paid_amount_vnd FROM order_settlements WHERE order_id = %s",
-            (order_id,),
-        )
-        row = cursor.fetchone()
-    if row is None:
+        source = _refund_source(cursor, order_id=order_id, partly_paid=partly_paid)
+    if source is None:
         raise OrderStateError(
-            "the order reads paid but no settlement records the payment; nothing can be refunded"
+            "the order reads partly paid but no payment is recorded; nothing can be refunded"
+            if partly_paid
+            else "the order reads paid but no settlement records the payment; nothing can be "
+            "refunded"
         )
+    settlement_id, store_id, amount = source
     return _CancellationRefund(
         refund_id=uuid4(),
-        settlement_id=_uuid(row[0]),
-        store_id=_uuid(row[1]),
-        amount_vnd=int(row[2]),
+        settlement_id=settlement_id,
+        store_id=store_id,
+        amount_vnd=amount,
         resolution=resolution,
         method=method,
     )
+
+
+def _refund_source(
+    cursor: Any, *, order_id: UUID, partly_paid: bool
+) -> tuple[UUID | None, UUID, int] | None:
+    """What a refunding cancellation hands back before any netting: `(settlement, store, amount)`.
+
+    The settlement's paid amount for an order paid in full; the payment ledger's sum for a deposit
+    (`DEC-035`, no settlement to name). `None` when there is nothing to hand back from -- the
+    refunding cancellation then refuses, and the order read says nothing. One read for both, so the
+    figure the refund sheet states is the figure the refund row records.
+    """
+
+    if partly_paid:
+        cursor.execute(
+            """
+            SELECT o.store_id, coalesce(sum(p.amount_vnd), 0)
+            FROM orders o
+            LEFT JOIN order_payments p ON p.order_id = o.id
+            WHERE o.id = %s
+            GROUP BY o.store_id
+            """,
+            (order_id,),
+        )
+        ledger = cursor.fetchone()
+        if ledger is None or int(ledger[1]) <= 0:
+            return None
+        return None, _uuid(ledger[0]), int(ledger[1])
+    cursor.execute(
+        "SELECT id, store_id, paid_amount_vnd FROM order_settlements WHERE order_id = %s",
+        (order_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return _uuid(row[0]), _uuid(row[1]), int(row[2])
+
+
+def _cancellation_refund_preview(
+    cursor: Any, view: OrderView, money: CancellationMoneyView | None
+) -> int | None:
+    """Round 9 review, P2: what a cancellation without charge would hand back now, for the sheet.
+
+    The cancel sheet asks how the money goes back (Tiền mặt / Chuyển khoản) and used to give no
+    figure: the server decided it from the ledger at the press. This is that decision, read-only --
+    the same source (`_refund_source`), less the credit netted from it when remedy money moves
+    (`DEC-045`, the preview's own `refund_vnd`). `None` when nothing would go back (unpaid, or an
+    order already closed).
+    """
+
+    if view.commercial in TERMINAL_COMMERCIAL_STATUSES:
+        return None
+    if view.balance not in {OrderBalanceStatus.PAID, OrderBalanceStatus.PARTIALLY_PAID}:
+        return None
+    if money is not None and money.stage == "PREVIEW":
+        return money.refund_vnd
+    source = _refund_source(
+        cursor,
+        order_id=view.order_id,
+        partly_paid=view.balance is OrderBalanceStatus.PARTIALLY_PAID,
+    )
+    return None if source is None else source[2]
 
 
 def _order_state(row: tuple[object, ...]) -> OrderState:

@@ -32,10 +32,28 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 RESTORE = ROOT / "deploy/production/backup/restore.sh"
 
-pytestmark = pytest.mark.skipif(
-    not (shutil.which("age") and shutil.which("age-keygen") and shutil.which("gzip")),
-    reason="age and gzip are required to run restore.sh for real",
-)
+_TOOLS = ("age", "age-keygen", "gzip")
+
+
+def _missing_tools() -> list[str]:
+    return [tool for tool in _TOOLS if not shutil.which(tool)]
+
+
+@pytest.fixture(autouse=True)
+def _restore_tools_present() -> None:
+    """Locally a host without `age` skips; CI installs it and must fail, not skip, without it.
+
+    A drill that silently skips in the one place that runs on every change is a drill that never
+    runs (same rule as `test_openclaw_retirement`).
+    """
+
+    missing = _missing_tools()
+    if not missing:
+        return
+    message = f"{', '.join(missing)} required to run restore.sh for real"
+    if os.environ.get("CI"):
+        pytest.fail(f"{message}; the python-quality job installs age and must not skip this drill")
+    pytest.skip(message)
 
 
 def _archive(tmp_path: Path, labels: tuple[str, ...] = ("20260930T010000Z",)) -> tuple[Path, Path]:

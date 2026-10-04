@@ -76,8 +76,40 @@ from nha_trang_laundry_domain.shop_capture import (
 from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA
 from quote_test_data import FixtureLine, accepted_quote, ensure_store
 
+# The test clock. Read when each test STARTS (`_pin_clock`), never at collection: a suite that took
+# minutes to reach this file used to compare a collection-time shop day with a report read at the
+# test's own time, and a run crossing shop midnight (17:00 UTC) failed. The values below only
+# exist so the names are defined; the autouse fixture replaces them before every test.
 NOW = datetime.now(UTC).replace(microsecond=0)
 TODAY = shop_today(NOW)
+
+
+def _pin_clock() -> None:
+    """Re-read the wall clock into `NOW` / `TODAY` (module globals the helpers use)."""
+
+    global NOW, TODAY
+    NOW = datetime.now(UTC).replace(microsecond=0)
+    TODAY = shop_today(NOW)
+
+
+@pytest.fixture(autouse=True)
+def _clock_at_execution() -> None:
+    _pin_clock()
+
+
+def test_the_clock_is_read_when_a_test_runs_not_when_it_is_collected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    module = sys.modules[__name__]
+    stale = datetime(2020, 1, 1, 16, 59, tzinfo=UTC)
+    monkeypatch.setattr(module, "NOW", stale)
+    monkeypatch.setattr(module, "TODAY", shop_today(stale))
+    _pin_clock()
+    assert abs((module.NOW - datetime.now(UTC)).total_seconds()) < 5
+    assert shop_today(module.NOW) == module.TODAY
+
 
 SEEDS = (
     MachineSeed("WASH-01", "Máy giặt SPINZ 32 kg", MachineCategory.WASHER),
@@ -850,7 +882,7 @@ def test_the_report_counts_capture_and_withholds_margin_until_the_month_is_compl
                 policy=STANDARD_WASH_SLA,
                 from_date=TODAY - timedelta(days=1),
                 to_date=TODAY,
-                as_of=datetime.now(UTC),
+                as_of=NOW + timedelta(seconds=1),
             )
 
     report = read()

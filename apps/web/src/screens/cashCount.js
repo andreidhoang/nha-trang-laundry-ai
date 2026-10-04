@@ -144,6 +144,36 @@ export function render_() {
     };
   }
 
+  /** The fields a worker types into, by id. */
+  const FIELDS = ["#cash-float-amount", "#cash-close-amount", "#cash-correct-amount", "#cash-correct-reason"];
+
+  /**
+   * The focused entry field and its caret, so a re-read that redraws the forms can put them back.
+   *
+   * @returns {{id: string, start: number|null, end: number|null}|null}
+   */
+  function caretNow() {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLInputElement) || !active.id) return null;
+    if (!FIELDS.includes(`#${active.id}`) || !active.isConnected) return null;
+    return { id: active.id, start: active.selectionStart, end: active.selectionEnd };
+  }
+
+  /** @param {{id: string, start: number|null, end: number|null}|null} caret */
+  function restoreCaret(caret) {
+    if (!caret) return;
+    const input = document.getElementById(caret.id);
+    if (!(input instanceof HTMLInputElement) || input === document.activeElement) return;
+    input.focus({ preventScroll: true });
+    if (caret.start !== null && caret.end !== null) {
+      try {
+        input.setSelectionRange(caret.start, caret.end);
+      } catch {
+        // an input type without a caret: the focus is enough
+      }
+    }
+  }
+
   /**
    * What is typed into the open "Sửa" sheet, and the entry it corrects; null when none is open.
    *
@@ -163,15 +193,21 @@ export function render_() {
 
   /**
    * @param {string} [notice] one line kept above the sheet after a re-read
-   * @param {Carry} [carry] what was typed, put back where it still belongs
+   * @param {Partial<Carry>} [override] what the caller knows better than the screen (the amount
+   *   a refused press sent); everything else typed is read from the screen when the answer arrives
    */
-  async function load(notice = "", carry = typedNow()) {
+  async function load(notice = "", override = {}) {
     const mine = ++generation;
     const before = current?.business_day;
     try {
       const sheetRead = await request(`/internal/v1/stores/${encodeURIComponent(store)}/cash-count`);
       if (mine !== generation) return;
       markUpdated(stamp);
+      // Digits typed while this re-read was in flight are on screen now, not in a snapshot taken
+      // before the await: read what is typed, and where the caret is, only now, just before the
+      // sheet is drawn and the values are put back.
+      const carry = { ...typedNow(), ...override };
+      const caret = caretNow();
       const moved = before !== undefined && before !== sheetRead.business_day;
       // Pre-production review 9, round 2: a "Sửa" sheet left open across midnight corrects an
       // entry of the day it was opened on. It used to stay open over the new day's sheet and send
@@ -219,6 +255,7 @@ export function render_() {
       ];
       draw(sheetRead, "");
       const lost = restore(sheetRead, kept);
+      restoreCaret(caret);
       if (lost) words.push(`Số bạn đang gõ (${lost}) chưa được ghi.`);
       const said = words.filter(Boolean).join(" ");
       if (said) render(banner, inlineAlert({ state: "info", title: said }), ...bannerRest(sheetRead));
@@ -578,18 +615,20 @@ export function render_() {
       if (MOVED.includes(code)) {
         // Someone else recorded first: re-read, keep their figure, say so in one line. What this
         // worker typed is kept: a correction reopens on the newer entry with its amount and reason.
-        const carry = typedNow();
-        if (spec.supersedes) {
-          carry.correction = {
-            kind: spec.kind,
-            amount: spec.amountText,
-            reason: String(spec.reason || ""),
-          };
-        }
+        /** @type {Partial<Carry>} */
+        const override = spec.supersedes
+          ? {
+              correction: {
+                kind: spec.kind,
+                amount: spec.amountText,
+                reason: String(spec.reason || ""),
+              },
+            }
+          : {};
         spec.done?.();
         void load(
           "Người khác vừa ghi số này. Màn hình đã tải lại — kiểm tra rồi sửa nếu cần.",
-          carry,
+          override,
         );
         return;
       }
@@ -611,11 +650,8 @@ export function render_() {
               icon: "refresh",
               data: { cashOpenToday: "true" },
               onClick: () => {
-                const carry = typedNow();
-                carry.opening = spec.amountText;
-                carry.toToday = true;
                 spec.done?.();
-                void load("", carry);
+                void load("", { opening: spec.amountText, toToday: true });
               },
             }),
           }),

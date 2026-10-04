@@ -16945,6 +16945,62 @@ with sync_playwright() as playwright:
         page.locator("main").inner_text()[:160].replace("\n", " | "),
     )
 
+    # Round 9 fix (cash count typed during a re-read): `load` used to snapshot the typed values
+    # BEFORE its await, so digits typed while the re-read was in flight were overwritten by the
+    # stale snapshot and the focus dropped when the form was redrawn. Typed values and the caret
+    # are now read when the answer arrives. The matrix: nothing typed during the hold (kept as
+    # before), digits typed at the end, digits typed in the middle (caret kept), and the other
+    # field (the closing count) typed during the hold.
+    def wake_now() -> None:
+        page.evaluate(
+            """() => {
+                Object.defineProperty(document, 'hidden', {configurable: true, get: () => false});
+                Object.defineProperty(document, 'visibilityState',
+                    {configurable: true, get: () => 'visible'});
+                document.dispatchEvent(new Event('visibilitychange'));
+            }"""
+        )
+
+    def digits(selector: str) -> str:
+        return "".join(ch for ch in (cash_value(selector) or "") if ch.isdigit())
+
+    def focus_state() -> tuple[str, int | None]:
+        got = page.evaluate(
+            "() => [document.activeElement && document.activeElement.id,"
+            " document.activeElement && document.activeElement.selectionStart]"
+        )
+        return str(got[0]), got[1]
+
+    for label, field, before_hold, typing, caret_at, want_digits in (
+        ("nothing typed during the hold", "#cash-float-amount", "5000", "", None, "5000"),
+        ("typed at the end", "#cash-float-amount", "5000", "00", None, "500000"),
+        ("typed in the middle", "#cash-float-amount", "500", "7", 1, "5700"),
+        ("the closing field", "#cash-close-amount", "590000", "0", None, "5900000"),
+    ):
+        cash_goto(cash_sheet())
+        page.locator(field).fill(before_hold)
+        page.locator(field).focus()
+        if caret_at is not None:
+            page.evaluate(
+                "([sel, at]) => document.querySelector(sel).setSelectionRange(at, at)",
+                [field, caret_at],
+            )
+        state["hold_cash_get"] = True
+        wake_now()
+        page.wait_for_timeout(300)
+        if typing:
+            page.keyboard.type(typing)
+        state["hold_cash_get"] = False
+        release("GET", 200, cash_sheet())
+        focused, caret_now = focus_state()
+        check(
+            f"R9 digits typed while a re-read is in flight survive it ({label})",
+            digits(field) == want_digits
+            and focused == field.lstrip("#")
+            and (caret_at is None or caret_now is not None),
+            f"value={cash_value(field)!r} focused={focused!r} caret={caret_now}",
+        )
+
     # Pre-production review 9, round 2 (2): "Sửa tiền đầu ngày" opened on 30/09's float (500.000)
     # and left open overnight. The wake re-read moved the page to 01/10, where a colleague had
     # recorded 300.000; the sheet stayed open on yesterday's entry and its press sent today's day

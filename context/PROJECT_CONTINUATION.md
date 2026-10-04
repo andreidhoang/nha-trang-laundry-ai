@@ -1,8 +1,55 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-09-28 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **191 queue items.** Migrations run `0001`–`0065`.
+**Last reconciled:** 2026-10-05 (Asia/Ho_Chi_Minh)
+**Active work item:** none. **203 queue items.** Migrations run `0001`–`0072` (`0069` was reserved and never used).
 Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
+
+## The whole-app review: round 9, 2026-10-04
+
+`context/tasks/TASK-round9-001.md` covers twelve items, all COMPLETE. The review is
+`docs/audit/10-APP-REVIEW-2026-09-29.md` (M1–M7, C1–C11, P1–P9; its Resolution section maps every
+finding to its fix). The rulings are `DEC-045`–`DEC-052` in `docs/DECISION_RECORD_ROUND9_2026-09-30.md`
+(delegated, not signed). Evidence: `evidence/delivery-loop/<ID>.yaml`, read from the final logs.
+
+**Built:**
+- `MONEY-LIFECYCLE-009` (migration 0066): a part-paid storage fee stays owed-for, a no-charge
+  cancellation voids, nets and reissues credits once, a hold pauses the fee.
+- `GOODS-AND-DRAWER-009` (migration 0067): goods leave only when paid in every mode, refunds record
+  their method, the drawer figure is cash only.
+- `INVOICE-TRUTH-009` (migrations 0068, 0071): month lines list what each order cost; an issued
+  invoice is fixed at its printed figure.
+- `COUNTER-UI-RACE-009`, `CONSOLE-SHELL-009`, `CONSOLE-COPY-ACCESS-009`: console races, shell, copy.
+- `PLATFORM-SECURITY-009`: worker grant and no hash key, name-constrained shop CA, bounded lists,
+  per-staff export idempotency.
+- `OPS-OBSERVABILITY-009` (migration 0070): application signal from the API log, claimable outbox
+  count, order-history index, a restore drill whose three defects are fixed.
+- `CASH-COUNT-009` (migration 0072, `DEC-049`): Đếm két.
+- `ROUNDNINE-RESIDUALS-009` (`DEC-050`, `DEC-052`; slices J, K, L) and `ROUNDNINE-REVIEW-LOOP-009`
+  (the verifier rounds and their fixes).
+- `ROUNDNINE-FILMED-009`: one film of the final tree (daily walk plus every conformance chapter on a
+  fresh stack): 43 chapters, 1220 checks, 0 chapters with failures, joined into one mp4 (scratchpad,
+  not in the repository); each chapter's RESULT line is in the evidence record.
+
+**Final gates (scratchpad logs, tree committed as `683871e`):** pytest 4962 passed, 5 skipped, 0
+failed; stubbed browser suite 942 / 0; daily walk 81 / 0 at desk and at phone size; conformance 870 / 0
+at desk and 869 / 0 at phone size, 212 / 212 controls at both. All 13 capabilities remain
+`NOT_AUTHORIZED`.
+
+**Open for the owner:** sign or reverse `DEC-040`–`DEC-052`; run the publish switches
+(`publish_privacy_notice.py`, `publish_turnaround_policy.py`, `publish_storage_policy.py`,
+`publish_account_terms.py`, `publish_bank_account.py`, the messaging policy); review the new
+navigation list (C6); decide correcting a past day's cash count and attesting legacy refund methods.
+Not done: a real provider, channel, bank, e-invoice, Zalo or `DEC-006`; the restore drill was run in
+one container only and has not been run on the shop's host.
+
+**Lessons:**
+- The work-item ID pattern is letters and hyphens only plus a three-digit suffix, so the round-9b
+  items are `ROUNDNINE-…` and the accessibility item is `CONSOLE-COPY-ACCESS-009`.
+- `select_next_item` takes the lowest priority first; a pending main-branch item
+  (`REALM-POLICY-001`, priority 340) outranks 347+, so these items were recorded with their
+  priorities lowered to 339 for the controller run and restored to 347–358 afterwards.
+- A re-run of a conformance scenario on a database that already held the first run's data cannot
+  prove the "refused before published" steps; evidence comes from runs on empty databases.
 
 ## The remaining gaps: round 8, 2026-09-28
 

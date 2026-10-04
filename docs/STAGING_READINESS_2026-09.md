@@ -1,4 +1,4 @@
-# Staging readiness — measured 2026-09-24, updated 2026-09-25 (three times), 2026-09-26, 2026-09-27 and 2026-09-28
+# Staging readiness — measured 2026-09-24, updated 2026-09-25 (three times), 2026-09-26, 2026-09-27, 2026-09-28 and 2026-10-04
 
 **Question:** can real counter staff use this application for staging and feature testing in daily
 operation?
@@ -39,15 +39,26 @@ the reads the screens lacked), the consent checks (`DEC-033`) and the last two A
 workflow was then filmed **at phone size** against the real API and reviewed as a user and as an
 engineer; every finding was fixed and filmed again.
 
-| Gate | `9287596` (before) | 2026-09-24 | 2026-09-25 | 2026-09-25 evening | 2026-09-25 night | 2026-09-26 (round 6) | 2026-09-27 (round 7) | 2026-09-28 (round 8) |
-|---|---|---|---|---|---|---|---|---|
-| `pytest --require-postgres-integration` | 1574 passed | 1749 passed, 0 failed | 2105 passed, 0 failed | 2274 passed, 0 failed | 2472 passed, 0 failed | 2679 passed, 0 failed | 3337 passed, 0 failed | **3620 passed, 0 failed** (after merging main's `AUTHZ-LIFECYCLE-001` and `OPENCLAW-RETIRE-001`) |
-| `mypy apps packages` | 249 files | 257 files | 290 files, clean | 304 files, clean | 316 files, clean | 325 files, clean | 381 files, clean | 407 files, clean |
-| `verify_contracts.py` | 57 ops, 348 disclosures | 58 ops, 381 | 61 ops, 396 | 66 ops, 419 | 71 ops, 457 | 77 ops, 475 | 108 ops, 554 | 124 ops, 589 |
-| Real API, shop day (`verify_daily_operations.py`) | 70 / 0 | 71 / 0 | 71 / 0 | 72 / 0, filmed | 78 / 0 at desk and at phone size, filmed | 78 / 0 at desk and at phone size | 80 / 0 at desk and at phone size, filmed at desk | **80 / 0 at desk and at phone size** |
-| Real API, every other workflow | 86 / 1 | 86 / 1 | 86 / 1 (coverage line only) | 159 / 0, all 49 controls | 187 / 0 at desk and at phone size, all 66 controls | 317 / 0 at desk and at phone size, all 96 controls; new flows filmed | 534 / 0 at desk and at phone size, all 162 controls; new flows filmed at desk | **632 / 0 at desk and at phone size, all 194 controls; new flows filmed at desk** |
-| Real API, consent walk (`verify_consent_walk.py`) | — | — | — | — | 38 / 0, filmed | — (unchanged code) | — (unchanged code) | — (unchanged code) |
-| Stubbed API, console interaction | 170 / 0 | 170 / 0 | 171 / 0 | 251 / 0 | 358 / 0 | 433 / 0 | 521 / 0 | **566 / 0** |
+**2026-09-29 to 2026-10-04 — round 9.** Three read-only reviews of the whole app after round 8
+(money and order lifecycle; the staff console; the platform) found 27 edge-of-lifecycle defects
+(`docs/audit/10-APP-REVIEW-2026-09-29.md`, M1–M7, C1–C11, P1–P9). The owner wrote "make the best
+decision and finish"; `DEC-045`–`DEC-052` were ruled on that delegation
+(`docs/DECISION_RECORD_ROUND9_2026-09-30.md`). Every finding was fixed in an isolated slice with a
+test that fails before the fix, the end-of-day cash count (`DEC-049`) was added, and independent
+verifier rounds then re-read the result; what they found was fixed too. The table's last column is
+the final tree. Mapping of each finding to its fix: the Resolution section of the review. The final
+tree was then filmed once, the daily walk and every conformance chapter on a fresh stack: 43 chapters,
+1220 checks, every chapter 0 failed (`evidence/delivery-loop/ROUNDNINE-FILMED-009.yaml`).
+
+| Gate | `9287596` (before) | 2026-09-24 | 2026-09-25 | 2026-09-25 evening | 2026-09-25 night | 2026-09-26 (round 6) | 2026-09-27 (round 7) | 2026-09-28 (round 8) | 2026-10-04 (round 9) |
+|---|---|---|---|---|---|---|---|---|---|
+| `pytest --require-postgres-integration` | 1574 passed | 1749 passed, 0 failed | 2105 passed, 0 failed | 2274 passed, 0 failed | 2472 passed, 0 failed | 2679 passed, 0 failed | 3337 passed, 0 failed | **3620 passed, 0 failed** (after merging main's `AUTHZ-LIFECYCLE-001` and `OPENCLAW-RETIRE-001`) | **4962 passed, 5 skipped, 0 failed** |
+| `mypy apps packages` | 249 files | 257 files | 290 files, clean | 304 files, clean | 316 files, clean | 325 files, clean | 381 files, clean | 407 files, clean | 456 files, clean |
+| `verify_contracts.py` | 57 ops, 348 disclosures | 58 ops, 381 | 61 ops, 396 | 66 ops, 419 | 71 ops, 457 | 77 ops, 475 | 108 ops, 554 | 124 ops, 589 | 127 ops, 605 disclosures |
+| Real API, shop day (`verify_daily_operations.py`) | 70 / 0 | 71 / 0 | 71 / 0 | 72 / 0, filmed | 78 / 0 at desk and at phone size, filmed | 78 / 0 at desk and at phone size | 80 / 0 at desk and at phone size, filmed at desk | **80 / 0 at desk and at phone size** | **81 / 0 at desk and at phone size** |
+| Real API, every other workflow | 86 / 1 | 86 / 1 | 86 / 1 (coverage line only) | 159 / 0, all 49 controls | 187 / 0 at desk and at phone size, all 66 controls | 317 / 0 at desk and at phone size, all 96 controls; new flows filmed | 534 / 0 at desk and at phone size, all 162 controls; new flows filmed at desk | **632 / 0 at desk and at phone size, all 194 controls; new flows filmed at desk** | **870 / 0 at desk, 869 / 0 at phone size, all 212 controls at both** |
+| Real API, consent walk (`verify_consent_walk.py`) | — | — | — | — | 38 / 0, filmed | — (unchanged code) | — (unchanged code) | — (unchanged code) | — (not re-run) |
+| Stubbed API, console interaction | 170 / 0 | 170 / 0 | 171 / 0 | 251 / 0 | 358 / 0 | 433 / 0 | 521 / 0 | **566 / 0** | **942 / 0** |
 
 Every real-API run starts from a database created empty and migrated to the latest migration
 (`0052` in the evening), with the remedy and promotion policies published. The "every other
@@ -73,6 +84,34 @@ green. On both days the real-API browser run on the merged tree caught problems 
 passing tests and the stubbed browser suite did not.
 
 ## What changed for the person at the counter
+
+### Round 9, 2026-10-04: the whole-app review (`DEC-045`–`DEC-052`)
+
+Contract: `docs/DECISION_RECORD_ROUND9_2026-09-30.md`; work items in `context/tasks/TASK-round9-001.md`.
+
+- **Money at the edges of an order's life** (`MONEY-LIFECYCLE-009`, `ROUNDNINE-RESIDUALS-009`):
+  - A storage fee already part-paid stays owed-for; the waiver and a 0 ₫ payment settle, so a
+    part-paid order is no longer stranded (*Tất toán*).
+  - A no-charge cancellation voids an unspent credit from the order, nets what was already paid
+    out, and gives back a credit the customer had spent on it; the *Huỷ đơn* sheet says all of this
+    before the press and refuses in words when it would pay twice.
+  - A hold pauses the storage fee and the waiting days; it erases neither.
+- **Goods and the drawer** (`GOODS-AND-DRAWER-009`): goods leave only when paid, in every mode
+  (*Thu tiền trước khi giao*); refunds record how the money went back; *Tiền trong két* is cash
+  only and says how many refunds of unknown method it leaves out.
+- **Đếm két** (`CASH-COUNT-009`): opening float, closing count, expected cash and the difference,
+  with *Trả từ két* on a *Sổ thu chi* line. Nothing is adjusted and no money moves.
+- **Hóa đơn** (`INVOICE-TRUTH-009`): a month invoice lists what each order cost, and an issued
+  invoice stays at the figure it was issued at, with later movement shown beside it.
+- **The counter's screen** (`COUNTER-UI-RACE-009`, `CONSOLE-SHELL-009`, `CONSOLE-COPY-ACCESS-009`):
+  the price, the QR and the version the counter sends are always those on screen; *Thoát* ends the
+  session only when the server answers and clears the page; skip, navigation by role, a new-build
+  prompt, the approvals badge, Vietnamese text, one way to write a time, every input named.
+- **Platform and operations** (`PLATFORM-SECURITY-009`, `OPS-OBSERVABILITY-009`): the worker has its
+  own least-privilege grant and no phone key; the shop CA is name-constrained and its key is not
+  kept; list limits are bounded; the ops check reads 5xx and refusal rates from the API's own log;
+  the outbox count means claimable work; the order history is indexed; one restore drill was run
+  and the three defects it found were fixed.
 
 ### Round 8, 2026-09-28: the five remaining gaps (`DEC-040`–`DEC-044`)
 
@@ -236,7 +275,8 @@ owner's approval rather than out by rule.
 |---|---|
 | `DEC-006` — the model provider and its legal check | Names an organisation and asserts a legal basis. |
 | `DEC-016` — who staffs the inbound channel | Names a person. |
-| Signing (or reversing) `DEC-029`–`DEC-032` | They stand as delegated until signed. |
+| Signing (or reversing) `DEC-029`–`DEC-032`, `DEC-040`–`DEC-052` | They stand as delegated until signed. |
+| Publishing the switches the owner turns once | `publish_privacy_notice.py`, `publish_turnaround_policy.py`, `publish_storage_policy.py`, `publish_account_terms.py`, `publish_bank_account.py`, the messaging policy; each refuses by name until then. |
 
 ## Not done, and why
 
@@ -247,6 +287,10 @@ owner's approval rather than out by rule.
 | A real customer channel | No channel adapter or inbound webhook route exists; the consent walk's customer messages are recorded through the same ingress code, by the harness, and the film says so. |
 | Switching on customers, promised times, storage fees, tabs and the transfer QR | Built; each refuses by name until the owner runs its script once: `publish_privacy_notice.py`, `publish_turnaround_policy.py` (with this year's Tết dates), `publish_storage_policy.py`, `publish_account_terms.py`, `publish_bank_account.py` (after the 1.000 ₫ test transfer). The late-delivery credit uses the published remedy policy; reminder texts use the messaging policy. |
 | Issuing e-invoices through a provider, confirming transfers automatically, sending reminders automatically on Zalo, a model-written summary | Round 8 built the requests, the exact QR, the schedule and the computed *Cần chú ý*; what remains needs the owner's provider and accountant, a bank or notification feed, a Zalo Official Account with approved templates, and `DEC-006`. Each on `#/gaps`. |
+| A real provider, channel, bank feed, e-invoice provider, Zalo Official Account, or `DEC-006` | Round 9 touched none of them. No provider call was made, no credential is in the repository, and all 13 capabilities remain `NOT_AUTHORIZED`. |
+| The restore drill on the shop's own host | The drill was run in one container only (`docs/runbooks/restore-drill.md`); it found three defects, now fixed and held in CI. It has not been run on the shop's machine or on real data. |
+| `DEC-045`–`DEC-052` signed | Delegated on 2026-09-30, not signed; each has its reversal in the decision record. |
+| Correcting a past day's cash count; per-refund attestation of legacy refund methods; a pager for the application signal | Not built; the owner's decisions (see `DEC-048`, `DEC-049`). The signal is a check someone runs, not an alert to a person. |
 | A credit for a self-collect order not ready on time | Not in the ratified rule (`DEC-004` covers deliveries); reported by the on-time figure. |
 | apk `-rN` pins | Assessed, left, with a recovery step in §8. |
 | Remote branch cleanup | Deleting remote refs is refused in this environment; `archive/…` and `codex/…` hold the only copy of the original lineage (ADR-0004). |

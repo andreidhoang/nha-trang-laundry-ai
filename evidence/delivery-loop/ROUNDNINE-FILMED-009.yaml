@@ -1,0 +1,75 @@
+schema_version: 1
+work_item: ROUNDNINE-FILMED-009
+recorded_at: '2026-10-05T04:59:50+07:00'
+requirement_contract: 'One continuous real-browser film of the daily walk and every conformance chapter
+  on a fresh stack at the final tree (film_all.sh: --video, --slow-mo 200, one chapter per log), each
+  chapter''s RESULT line reported as it came out.'
+rollback_impact: A recording only; no change to the product. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: Every chapter reported 0 failed. The stack was started from the working checkout
+  of branch claude/focused-mayer-on6a2j, which a concurrent session shared; the chapter logs are the record.
+evidence:
+  single_video_recorded: 'One mp4 joined from the 50 per-chapter webm captures (combine_all.py, a title
+    card per chapter): film9/ntl-round9-film.mp4 (81 MB); the join reported exit=0 for all 43 chapters
+    in scratchpad/rec9/combine.log. The video was not watched by the recording engineer; the chapter logs
+    are the record.'
+  every_chapter_result_reported_as_it_is: '43 chapters, 1220 checks, 0 chapters with failures. 00_daily:
+    RESULT: 81 ok, 0 failed; 01_money: RESULT: 16 ok, 0 failed; 02_exit: RESULT: 22 ok, 0 failed; 03_pricing:
+    RESULT: 23 ok, 0 failed; 04_roles: RESULT: 43 ok, 0 failed; 05_hiring: RESULT: 23 ok, 0 failed; 06_resilience:
+    RESULT: 27 ok, 0 failed; 07_shell: RESULT: 28 ok, 0 failed; 08_ai: RESULT: 21 ok, 0 failed; 09_band:
+    RESULT: 16 ok, 0 failed; 10_prepaid: RESULT: 19 ok, 0 failed; 11_pickup_only: RESULT: 19 ok, 0 failed;
+    12_busy: RESULT: 10 ok, 0 failed; 13_late_delivery: RESULT: 31 ok, 0 failed; 14_remedy: RESULT: 29
+    ok, 0 failed; 15_receipt: RESULT: 23 ok, 0 failed; 16_rework: RESULT: 26 ok, 0 failed; 17_export_range:
+    RESULT: 21 ok, 0 failed; 18_sessions: RESULT: 24 ok, 0 failed; 19_order_envelope: RESULT: 15 ok, 0
+    failed; 20_credit_pick: RESULT: 18 ok, 0 failed; 21_contact_pick: RESULT: 24 ok, 0 failed; 22_report:
+    RESULT: 33 ok, 0 failed; 23_shop_capture: RESULT: 44 ok, 0 failed; 24_deposit: RESULT: 21 ok, 0 failed;
+    25_export_payments: RESULT: 24 ok, 0 failed; 26_goods_and_drawer: RESULT: 23 ok, 0 failed; 27_customers:
+    RESULT: 35 ok, 0 failed; 28_accounts: RESULT: 45 ok, 0 failed; 29_vietqr: RESULT: 29 ok, 0 failed;
+    30_unclaimed: RESULT: 44 ok, 0 failed; 31_pickup_reminders: RESULT: 40 ok, 0 failed; 32_money_lifecycle:
+    RESULT: 30 ok, 0 failed; 33_promise: RESULT: 32 ok, 0 failed; 34_daily_summary: RESULT: 32 ok, 0 failed;
+    35_invoice_requests: RESULT: 22 ok, 0 failed; 36_invoice_truth: RESULT: 24 ok, 0 failed; 37_counter_race:
+    RESULT: 23 ok, 0 failed; 38_money_residual: RESULT: 42 ok, 0 failed; 39_cash_count: RESULT: 36 ok,
+    0 failed; 40_console_residual: RESULT: 51 ok, 0 failed; 41_platform_bounds: RESULT: 20 ok, 0 failed;
+    42_queue_pending: RESULT: 11 ok, 0 failed'
+  no_capability_authorisation_changed: 'report_delivery_status.py: 13 capabilities, all NOT_AUTHORIZED.'
+  rollback_assessment: A recording only; no change to the product. Rolling data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 798 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 456 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 4962 passed, 5 skipped, 2 warnings in 1292.91s (0:21:32)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 21 JSON and 3 YAML contracts. Validated 669 synthetic combinatorial cases against
+    the domain engines. Validated 127 served internal API operations against their contract. Validated
+    605 staff-console disclosures against their registry. Validated 4 pinned public-runtime artifacts;
+    release blockers=8.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 191 source references, 52 decisions, 4 gates, 9 phases, 203 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 942 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 870 ok, 0 failed, 212/212 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 869 ok, 0 failed, 212/212 declared controls

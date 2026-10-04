@@ -1,0 +1,67 @@
+schema_version: 1
+work_item: INVOICE-TRUTH-009
+recorded_at: '2026-10-05T03:36:11+07:00'
+requirement_contract: Review M5, M6. A monthly account invoice lists what each order cost (owed, so a
+  deposit taken before the order went on account is not lost); an issued invoice request is fixed at the
+  figure it was issued at (migrations 0068, 0071), later movement (storage fee, refunds) is shown beside
+  it and never rewrites it; legacy double cover is flagged and a range quote cannot be issued.
+rollback_impact: Migrations 0068 and 0071 are additive and forward-only; the 0068 backfill reads cancelled/refunded
+  as of the issue (842c9e8). Hide the screen; requests stay on record. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: Invoice type, rate and date remain the owner's and the accountant's; the software
+  issues nothing and names no tax.
+evidence:
+  month_lines_carry_the_deposit: Commit 3d269d5. apps/api/tests/test_invoice_truth_http.py, packages/db/tests/test_invoice_truth.py,
+    packages/domain/tests/test_invoice_request_rules.py.
+  issued_figure_is_fixed_and_later_movement_is_shown: Commits 27a9510, 6a3c4a3, 9038898 (kept at its printed
+    figure; MONEY-RESIDUAL-009B J6). apps/api/tests/test_invoice_request_routes_postgres.py, packages/db/tests/test_invoice_requests.py,
+    packages/db/tests/test_invoice_residual_009b.py.
+  migrations_backfill_without_rewriting_history: packages/db/tests/test_migration_0068_populated.py and
+    commit 842c9e8.
+  walked_on_the_real_api_at_desk_and_phone_size: 'the invoice_truth conformance scenario (31d pictures
+    the issued sheet, 3891aa5) in the whole runs on the real API from a database created empty, final
+    tree: daily desk 81 ok, 0 failed / phone 81 ok, 0 failed; conformance desk 870 ok, 0 failed / phone
+    869 ok, 0 failed (212/212 declared controls at desk size); stubbed browser suite 942 ok, 0 failed.'
+  rollback_assessment: Migrations 0068 and 0071 are additive and forward-only; the 0068 backfill reads
+    cancelled/refunded as of the issue (842c9e8). Hide the screen; requests stay on record. Rolling data
+    back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before
+    every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 798 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 456 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 4962 passed, 5 skipped, 2 warnings in 1292.91s (0:21:32)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 21 JSON and 3 YAML contracts. Validated 669 synthetic combinatorial cases against
+    the domain engines. Validated 127 served internal API operations against their contract. Validated
+    605 staff-console disclosures against their registry. Validated 4 pinned public-runtime artifacts;
+    release blockers=8.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 191 source references, 52 decisions, 4 gates, 9 phases, 203 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 942 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 870 ok, 0 failed, 212/212 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 869 ok, 0 failed, 212/212 declared controls

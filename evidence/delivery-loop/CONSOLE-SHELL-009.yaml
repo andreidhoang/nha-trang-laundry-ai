@@ -1,0 +1,65 @@
+schema_version: 1
+work_item: CONSOLE-SHELL-009
+recorded_at: '2026-10-05T03:36:11+07:00'
+requirement_contract: Review C1, C5, C6, C7, C11. Thoat ends the session only when the server answers,
+  then clears the page; the skip control focuses the screen instead of opening a route; navigation lists
+  what the role can open, with one shelf destination and system screens folded; /staff/* is revalidated
+  and a new build is offered, so old and new code never mix; the approvals badge asks for one envelope
+  and never from a hidden tab.
+rollback_impact: Console and static-serving changes only; no migration. Revert the commits. Rolling data
+  back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before
+  every upgrade.
+unresolved_assumptions: The IA merge (C6) was done by the lead under the delegation; the owner has not
+  reviewed the 24-to-fewer destination list.
+evidence:
+  sign_out_ends_only_when_the_server_answers_and_clears_the_page: Commit 86112cb; e9dcb59 walks Thoat
+    offline and online against the real API. apps/api/tests/test_staff_console_behaviour.py, apps/api/tests/test_staff_console_shell.py.
+  skip_focuses_the_screen: Commit f1dec6d (C5), scripts/verify_console_interaction.py.
+  no_mixed_old_and_new_code_after_a_deploy: Commit 3748cdf (C7); navigation by role c2076d3 (C6); badge
+    c20eac8 (C11). apps/api/tests/test_staff_console_shell.py.
+  walked_on_the_real_api_at_desk_and_phone_size: 'the shell conformance scenario in the whole runs on
+    the real API from a database created empty, final tree: daily desk 81 ok, 0 failed / phone 81 ok,
+    0 failed; conformance desk 870 ok, 0 failed / phone 869 ok, 0 failed (212/212 declared controls at
+    desk size); stubbed browser suite 942 ok, 0 failed.'
+  rollback_assessment: Console and static-serving changes only; no migration. Revert the commits. Rolling
+    data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes
+    before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 798 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 456 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 4962 passed, 5 skipped, 2 warnings in 1292.91s (0:21:32)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 21 JSON and 3 YAML contracts. Validated 669 synthetic combinatorial cases against
+    the domain engines. Validated 127 served internal API operations against their contract. Validated
+    605 staff-console disclosures against their registry. Validated 4 pinned public-runtime artifacts;
+    release blockers=8.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 191 source references, 52 decisions, 4 gates, 9 phases, 203 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 942 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 870 ok, 0 failed, 212/212 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 869 ok, 0 failed, 212/212 declared controls

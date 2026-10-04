@@ -1,0 +1,75 @@
+schema_version: 1
+work_item: ROUNDNINE-RESIDUALS-009
+recorded_at: '2026-10-05T03:36:11+07:00'
+requirement_contract: Round 9b, DEC-050 and DEC-052 (delegated, not signed); slices J money, K console,
+  L platform. One shared clock so held days count for nothing that measures the customer's lateness (fee,
+  days waiting, disposal, reminder steps); a cancellation decides its credit chain after its locks are
+  held; the refund sheet executes only the preview it showed; the console holds and resumes presses and
+  addresses truthfully across expiry, Back and sign-out; shop CA custody keeps no key and renews near
+  expiry; undelivered alerts are resent and counted exactly once.
+rollback_impact: Review fixes over merged slices; no new migration. Revert the commits. Rolling data back
+  is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes before every
+  upgrade.
+unresolved_assumptions: 'DEC-050 and DEC-052 are delegated. The integration log set in scratchpad/int9b
+  shows one second run of the conformance scenarios against a database that already held the first run''s
+  data (desk_conf_second.log: 836 ok, 13 failed); those failures are the refusal-before-publish preconditions
+  that a re-run on a used database cannot prove, and that run is not offered as evidence. The first desk
+  and phone runs and the final runs are on empty databases.'
+evidence:
+  one_clock_for_every_lateness_measure: Commits a1e5758, 5e8e2f2, fa58ab8, 1df21e4, 74b59af, ae1fc69,
+    0fdbea7, 91fe2ea. packages/db/tests/test_held_days_009b.py, packages/domain/tests/test_waiting_clock_009b.py,
+    apps/api/tests/test_money_residual_009b_http.py.
+  cancellation_decides_the_credit_chain_under_its_locks: Commits dc516ac, 0100b80, a8b75aa, e00b5d4. packages/domain/tests/test_credit_chain_009b.py.
+  console_holds_and_resumes_truthfully: Commits 40afda6, 273c8a9, 514fc17, 32ed5b8, 45fb12d, 6d60411,
+    d6f6c17, 21ecf40, 49d2df9, f28b7d2, cfdab49. apps/api/tests/test_console_residual_009b.py; the console_residual
+    conformance scenario.
+  ca_custody_and_alert_delivery: Commits 0f54a90, 51ff595, 18d7517, 03e4e83, 18b5b43, 031c744, cc63274,
+    955d7f9, c3ce002, 2d8d53d, c43f21c.
+  walked_on_the_real_api_at_desk_and_phone_size: 'Integration run before the final fixes (scratchpad/int9b):
+    pytest 4923 passed, 5 skipped; daily desk 81 ok, 0 failed, phone 81 ok, 0 failed; conformance desk
+    867 ok, 0 failed (212/212 declared controls), phone 867 ok, 0 failed (212/212 declared controls).
+    Final tree: whole runs on the real API from a database created empty, final tree: daily desk 81 ok,
+    0 failed / phone 81 ok, 0 failed; conformance desk 870 ok, 0 failed / phone 869 ok, 0 failed (212/212
+    declared controls at desk size); stubbed browser suite 942 ok, 0 failed.'
+  rollback_assessment: Review fixes over merged slices; no new migration. Revert the commits. Rolling
+    data back is docs/runbooks/restore-drill.md from the base backup shop-till-mac.md section 8 takes
+    before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 798 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 456 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 4962 passed, 5 skipped, 2 warnings in 1292.91s (0:21:32)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 21 JSON and 3 YAML contracts. Validated 669 synthetic combinatorial cases against
+    the domain engines. Validated 127 served internal API operations against their contract. Validated
+    605 staff-console disclosures against their registry. Validated 4 pinned public-runtime artifacts;
+    release blockers=8.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 191 source references, 52 decisions, 4 gates, 9 phases, 203 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 942 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 870 ok, 0 failed, 212/212 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 869 ok, 0 failed, 212/212 declared controls

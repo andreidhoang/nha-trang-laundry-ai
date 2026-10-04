@@ -1,0 +1,61 @@
+schema_version: 1
+work_item: OPS-OBSERVABILITY-009
+recorded_at: '2026-10-05T03:36:11+07:00'
+requirement_contract: Review P2, P3, P6, P7; DEC-051. The ops check derives 5xx and refusal rates from
+  the API's own log; the outbox pending count means claimable internal work only and the row count is
+  reported (warn past 1 000 000, no deletion); the order history is indexed on aggregate_id (migration
+  0070); one real restore drill was run and the three defects it found were fixed.
+rollback_impact: Migration 0070 adds indexes only. Revert the commits. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: 'The restore drill was run in one container only; a drill on the shop''s own host
+  remains to be done and then monthly. No pager exists: the signal is a check an operator runs, not an
+  alert to a person.'
+evidence:
+  application_signal_from_the_apis_own_log: Commits 4d5a5ce, e03517b, 08ad0a4. apps/api/tests/test_application_signal_logging.py,
+    packages/evals/tests/test_application_signal_check.py, packages/evals/tests/test_ops_hardening_contract.py.
+  outbox_pending_counts_claimable_work_only: Commit 27deeef (P6). apps/api/tests/test_queue_recovery_postgres.py.
+  order_history_index: Commit c78c083 (P7, migration 0070). packages/db/tests/test_event_aggregate_indexes.py.
+  restore_drill_recorded_with_its_defects_fixed: Commit c1cd7ea. packages/db/tests/test_restore_validation_real_ledger.py,
+    packages/evals/tests/test_backup_restore_contract.py, packages/evals/tests/test_restore_data_directory.py;
+    the drill is held in CI by 683871e.
+  rollback_assessment: Migration 0070 adds indexes only. Revert the commits. Rolling data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 798 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 456 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 4962 passed, 5 skipped, 2 warnings in 1292.91s (0:21:32)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 21 JSON and 3 YAML contracts. Validated 669 synthetic combinatorial cases against
+    the domain engines. Validated 127 served internal API operations against their contract. Validated
+    605 staff-console disclosures against their registry. Validated 4 pinned public-runtime artifacts;
+    release blockers=8.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 191 source references, 52 decisions, 4 gates, 9 phases, 203 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 942 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 870 ok, 0 failed, 212/212 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 869 ok, 0 failed, 212/212 declared controls

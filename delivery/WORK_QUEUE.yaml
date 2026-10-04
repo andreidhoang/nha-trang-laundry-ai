@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-28'
+last_updated: '2026-10-04'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -5927,6 +5927,391 @@ items:
   - every_new_flow_filmed_at_desk_size
   - each_review_finding_is_fixed_with_a_guard
   - gaps_register_lists_exactly_what_is_missing
+  - no_capability_authorisation_changed
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: MONEY-LIFECYCLE-009
+  phase: PRODUCTION_HARDENING
+  title: A cancellation never pays a customer twice, a part-paid storage fee never
+    strands an order, and a hold pauses the fee instead of erasing it
+  status: COMPLETE
+  priority: 347
+  depends_on:
+  - GAPS-FILMED-REVIEW-004
+  context_domains:
+  - platform
+  - pricing
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - storage_fee_part_paid_stays_owed_for
+  - no_charge_cancel_voids_nets_and_reissues_once
+  - hold_pauses_the_fee
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: GOODS-AND-DRAWER-009
+  phase: PRODUCTION_HARDENING
+  title: Goods leave only when paid in every mode, refunds say how the money went
+    back, and the drawer figure is the drawer
+  status: COMPLETE
+  priority: 348
+  depends_on:
+  - MONEY-LIFECYCLE-009
+  context_domains:
+  - platform
+  - orders_audit
+  - business_truth
+  - promotion_delivery_sla
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - release_refused_unless_paid_in_every_mode
+  - refunds_record_their_method
+  - drawer_is_cash_only_and_says_what_it_leaves_out
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: INVOICE-TRUTH-009
+  phase: PRODUCTION_HARDENING
+  title: A month invoice lists what each order cost, and an issued invoice stays at
+    the figure it was issued at
+  status: COMPLETE
+  priority: 349
+  depends_on:
+  - MONEY-LIFECYCLE-009
+  context_domains:
+  - platform
+  - business_truth
+  - orders_audit
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - month_lines_carry_the_deposit
+  - issued_figure_is_fixed_and_later_movement_is_shown
+  - migrations_backfill_without_rewriting_history
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: COUNTER-UI-RACE-009
+  phase: PRODUCTION_HARDENING
+  title: The price, the QR and the If-Match the counter sends are always those of
+    what is on screen
+  status: COMPLETE
+  priority: 350
+  depends_on:
+  - GOODS-AND-DRAWER-009
+  context_domains:
+  - platform
+  - pricing
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - a_price_in_flight_never_lands_on_another_customer
+  - the_qr_asks_for_exactly_the_typed_part
+  - a_stale_retry_reads_the_current_order
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-SHELL-009
+  phase: PRODUCTION_HARDENING
+  title: Sign-out, skip link, navigation, deploys and the approvals badge behave truthfully
+    on a shared counter PC
+  status: COMPLETE
+  priority: 351
+  depends_on:
+  - COUNTER-UI-RACE-009
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - sign_out_ends_only_when_the_server_answers_and_clears_the_page
+  - skip_focuses_the_screen
+  - no_mixed_old_and_new_code_after_a_deploy
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CONSOLE-COPY-ACCESS-009
+  phase: PRODUCTION_HARDENING
+  title: Vietnamese at the counter, one way to write a time, every input named
+  status: COMPLETE
+  priority: 352
+  depends_on:
+  - CONSOLE-SHELL-009
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - no_english_leaks_outside_technical_detail
+  - one_time_format
+  - every_input_has_an_accessible_name
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: PLATFORM-SECURITY-009
+  phase: PRODUCTION_HARDENING
+  title: The worker has its own least-privilege grant and no phone key, the shop CA
+    is name-constrained, list routes are bounded and export idempotency is per staff
+    member
+  status: COMPLETE
+  priority: 353
+  depends_on:
+  - GAPS-FILMED-REVIEW-004
+  context_domains:
+  - platform
+  - privacy_consent
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - worker_grant_set_is_separate_and_column_level
+  - shop_ca_is_name_constrained_and_keeps_no_key
+  - list_limits_are_422_at_the_route
+  - export_idempotency_is_per_staff_member
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: OPS-OBSERVABILITY-009
+  phase: PRODUCTION_HARDENING
+  title: An application signal reaches the ops check, the outbox count means claimable
+    work, the order history is indexed and a restore has been drilled
+  status: COMPLETE
+  priority: 354
+  depends_on:
+  - PLATFORM-SECURITY-009
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - application_signal_from_the_apis_own_log
+  - outbox_pending_counts_claimable_work_only
+  - order_history_index
+  - restore_drill_recorded_with_its_defects_fixed
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: CASH-COUNT-009
+  phase: PRODUCTION_HARDENING
+  title: 'An end-of-day cash count: opening float, closing count, expected cash and
+    the difference, recorded and shown to the owner'
+  status: COMPLETE
+  priority: 355
+  depends_on:
+  - GOODS-AND-DRAWER-009
+  - CONSOLE-SHELL-009
+  context_domains:
+  - platform
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - expected_is_float_plus_cash_in_minus_cash_out
+  - difference_is_recorded_and_moves_no_money
+  - notes_are_never_stored_with_phone_numbers
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: ROUNDNINE-RESIDUALS-009
+  phase: PRODUCTION_HARDENING
+  title: 'Round 9b: held days are not waiting days, cancellation credit chains decided
+    under locks, console hold and resume, CA custody and alert delivery'
+  status: COMPLETE
+  priority: 356
+  depends_on:
+  - MONEY-LIFECYCLE-009
+  - GOODS-AND-DRAWER-009
+  - INVOICE-TRUTH-009
+  - COUNTER-UI-RACE-009
+  - CONSOLE-SHELL-009
+  - CONSOLE-COPY-ACCESS-009
+  - PLATFORM-SECURITY-009
+  - OPS-OBSERVABILITY-009
+  - CASH-COUNT-009
+  context_domains:
+  - platform
+  - orders_audit
+  - business_truth
+  - pricing
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - one_clock_for_every_lateness_measure
+  - cancellation_decides_the_credit_chain_under_its_locks
+  - console_holds_and_resumes_truthfully
+  - ca_custody_and_alert_delivery
+  - walked_on_the_real_api_at_desk_and_phone_size
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: ROUNDNINE-REVIEW-LOOP-009
+  phase: PRODUCTION_HARDENING
+  title: Three verifier rounds over the round-9 fixes and the findings they raised,
+    each fixed with a guard
+  status: COMPLETE
+  priority: 357
+  depends_on:
+  - ROUNDNINE-RESIDUALS-009
+  context_domains:
+  - platform
+  - orders_audit
+  - business_truth
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - each_verifier_finding_is_fixed_with_a_guard
+  - gates_green_on_the_final_commit
+  - no_capability_authorisation_changed
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: ROUNDNINE-FILMED-009
+  phase: PRODUCTION_HARDENING
+  title: One continuous real-browser film of the daily walk and the conformance chapters
+    on the final tree, every chapter result reported as it is
+  status: COMPLETE
+  priority: 358
+  depends_on:
+  - ROUNDNINE-REVIEW-LOOP-009
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/audit/10-APP-REVIEW-2026-09-29.md
+  - docs/DECISION_RECORD_ROUND9_2026-09-30.md
+  contracts:
+  - specs/contracts/internal-api-v1.openapi.yaml
+  task_packet: context/tasks/TASK-round9-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - single_video_recorded
+  - every_chapter_result_reported_as_it_is
   - no_capability_authorisation_changed
   - rollback_assessment
   blocked_by_decisions: []

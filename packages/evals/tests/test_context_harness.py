@@ -292,7 +292,11 @@ def test_context_drift_check_passes() -> None:
     # 166 after the console redesign round (context/tasks/TASK-console-redesign-v2.md): +12 —
     # API-INTEGRITY-004, CONSENT-TRANSACTIONAL-001, ORDER-STEPS-001, READ-ENRICH-001, the seven
     # CONSOLE-REDESIGN slices 000-006, and CONSOLE-FILMED-REVIEW-002.
-    assert "191 work items" in result.stdout
+    # 203 after round 9 (context/tasks/TASK-round9-001.md): +12 -- MONEY-LIFECYCLE-009,
+    # GOODS-AND-DRAWER-009, INVOICE-TRUTH-009, COUNTER-UI-RACE-009, CONSOLE-SHELL-009,
+    # CONSOLE-COPY-ACCESS-009, PLATFORM-SECURITY-009, OPS-OBSERVABILITY-009, CASH-COUNT-009,
+    # ROUNDNINE-RESIDUALS-009, ROUNDNINE-REVIEW-LOOP-009 and ROUNDNINE-FILMED-009.
+    assert "203 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

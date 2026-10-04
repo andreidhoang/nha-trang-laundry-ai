@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-09-28T12:03:14.101102+00:00'
+last_updated: '2026-10-04T22:00:02.575297+00:00'
 current_work_item: null
 last_result: COMPLETE
 blocker: null
@@ -469,6 +469,42 @@ evidence_records:
 - work_item: GAPS-FILMED-REVIEW-004
   path: evidence/delivery-loop/GAPS-FILMED-REVIEW-004.yaml
   recorded_at: '2026-09-28T12:03:14.101102+00:00'
+- work_item: MONEY-LIFECYCLE-009
+  path: evidence/delivery-loop/MONEY-LIFECYCLE-009.yaml
+  recorded_at: '2026-10-04T20:36:54.798292+00:00'
+- work_item: GOODS-AND-DRAWER-009
+  path: evidence/delivery-loop/GOODS-AND-DRAWER-009.yaml
+  recorded_at: '2026-10-04T20:37:02.259016+00:00'
+- work_item: COUNTER-UI-RACE-009
+  path: evidence/delivery-loop/COUNTER-UI-RACE-009.yaml
+  recorded_at: '2026-10-04T20:37:10.130488+00:00'
+- work_item: CONSOLE-SHELL-009
+  path: evidence/delivery-loop/CONSOLE-SHELL-009.yaml
+  recorded_at: '2026-10-04T20:37:17.510698+00:00'
+- work_item: CASH-COUNT-009
+  path: evidence/delivery-loop/CASH-COUNT-009.yaml
+  recorded_at: '2026-10-04T20:37:25.176197+00:00'
+- work_item: CONSOLE-COPY-ACCESS-009
+  path: evidence/delivery-loop/CONSOLE-COPY-ACCESS-009.yaml
+  recorded_at: '2026-10-04T20:37:32.663066+00:00'
+- work_item: INVOICE-TRUTH-009
+  path: evidence/delivery-loop/INVOICE-TRUTH-009.yaml
+  recorded_at: '2026-10-04T20:37:40.444048+00:00'
+- work_item: PLATFORM-SECURITY-009
+  path: evidence/delivery-loop/PLATFORM-SECURITY-009.yaml
+  recorded_at: '2026-10-04T20:37:47.945658+00:00'
+- work_item: OPS-OBSERVABILITY-009
+  path: evidence/delivery-loop/OPS-OBSERVABILITY-009.yaml
+  recorded_at: '2026-10-04T20:37:55.589654+00:00'
+- work_item: ROUNDNINE-RESIDUALS-009
+  path: evidence/delivery-loop/ROUNDNINE-RESIDUALS-009.yaml
+  recorded_at: '2026-10-04T20:38:03.578275+00:00'
+- work_item: ROUNDNINE-REVIEW-LOOP-009
+  path: evidence/delivery-loop/ROUNDNINE-REVIEW-LOOP-009.yaml
+  recorded_at: '2026-10-04T20:38:11.358069+00:00'
+- work_item: ROUNDNINE-FILMED-009
+  path: evidence/delivery-loop/ROUNDNINE-FILMED-009.yaml
+  recorded_at: '2026-10-04T22:00:02.575297+00:00'
 blocked_records:
 - work_item: AGENT-001
   reason: Local fixture/assertion registry is complete and 289 tests pass, but PRIMARY/fallback

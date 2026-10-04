@@ -1,0 +1,64 @@
+schema_version: 1
+work_item: ROUNDNINE-REVIEW-LOOP-009
+recorded_at: '2026-10-05T03:36:11+07:00'
+requirement_contract: Independent verifier rounds over the round-9 and round-9b fixes; each finding fixed
+  with a guard that fails without the fix, then the full gate set re-run on one commit.
+rollback_impact: Review fixes only. Revert the commits. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: The lead reports three review rounds and about 25 findings fixed; that count is
+  the lead's and is not re-derived from a log. The commits that name a verifier round are listed below
+  as they appear in git.
+evidence:
+  each_verifier_finding_is_fixed_with_a_guard: 'Fix commits that name a verifier or verification round:
+    d79c4c5 and 2728122 (COUNTER-UI-RACE-009 C2), a8b75aa, 91fe2ea, 0fdbea7, ae1fc69, 74b59af (MONEY-RESIDUAL-009B
+    J1/J3), 96a67b1 (cash count), plus the CASH-COUNT-009 hardening commits (b90856b, f457ef2, 660901d,
+    a62d388, d23e093, 53f2b27, dd421a5, b5b67b4, 6a2d644), the console hold/expiry commits (32ed5b8, 514fc17,
+    45fb12d, d6f6c17, f28b7d2, cfdab49, 21ecf40), the ops/platform commits (031c744, cc63274, 955d7f9,
+    c3ce002, c43f21c) and 5936d91, 683871e.'
+  gates_green_on_the_final_commit: 'Final logs (scratchpad/fin) on the tree committed as 683871e: pytest
+    4962 passed, 5 skipped, 2 warnings in 1292.91s (0:21:32); whole runs on the real API from a database
+    created empty, final tree: daily desk 81 ok, 0 failed / phone 81 ok, 0 failed; conformance desk 870
+    ok, 0 failed / phone 869 ok, 0 failed (212/212 declared controls at desk size); stubbed browser suite
+    942 ok, 0 failed.'
+  no_capability_authorisation_changed: 'report_delivery_status.py: 13 capabilities, all NOT_AUTHORIZED.'
+  rollback_assessment: Review fixes only. Revert the commits. Rolling data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 798 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 456 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 4962 passed, 5 skipped, 2 warnings in 1292.91s (0:21:32)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 21 JSON and 3 YAML contracts. Validated 669 synthetic combinatorial cases against
+    the domain engines. Validated 127 served internal API operations against their contract. Validated
+    605 staff-console disclosures against their registry. Validated 4 pinned public-runtime artifacts;
+    release blockers=8.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 191 source references, 52 decisions, 4 gates, 9 phases, 203 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 942 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 870 ok, 0 failed, 212/212 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 869 ok, 0 failed, 212/212 declared controls

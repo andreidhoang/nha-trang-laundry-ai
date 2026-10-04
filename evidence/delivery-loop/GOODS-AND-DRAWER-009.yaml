@@ -1,0 +1,66 @@
+schema_version: 1
+work_item: GOODS-AND-DRAWER-009
+recorded_at: '2026-10-05T03:36:11+07:00'
+requirement_contract: Review M2, M4; DEC-048. RELEASE is refused unless the order is paid, for every delivery
+  mode; refunds record how the money went back (migration 0067); the drawer figure is cash taken minus
+  cash refunded, refunds of unknown method are left out, counted and shown, and the figure is marked incomplete
+  while any are left out.
+rollback_impact: Migration 0067 is additive (a nullable refund method) and forward-only. Revert the commits;
+  the drawer line then returns to the all-methods net. Rolling data back is docs/runbooks/restore-drill.md
+  from the base backup shop-till-mac.md section 8 takes before every upgrade.
+unresolved_assumptions: Legacy refunds of unknown method are never guessed (an owner-only attestation
+  per refund is the recorded reversal). A failed return trip of unpaid goods stays refused.
+evidence:
+  release_refused_unless_paid_in_every_mode: Commit 590f2e0. apps/api/tests/test_goods_leave_only_when_paid_http.py,
+    packages/db/tests/test_delivery_legs.py, apps/api/tests/test_counter_picks_postgres.py; console wording
+    'Thu tien truoc khi giao' in bf7ed25.
+  refunds_record_their_method: Commit 590f2e0 and migration 0067. packages/db/tests/test_cancellation_refund.py;
+    the export's refund row names its method (3114739).
+  drawer_is_cash_only_and_says_what_it_leaves_out: Commits 590f2e0, bf7ed25. apps/api/tests/test_drawer_http.py,
+    packages/db/tests/test_drawer_postgres.py, packages/db/tests/test_daily_summary_repository.py.
+  walked_on_the_real_api_at_desk_and_phone_size: 'the goods_and_drawer conformance scenario (commit 4d91a1f)
+    in the whole runs on the real API from a database created empty, final tree: daily desk 81 ok, 0 failed
+    / phone 81 ok, 0 failed; conformance desk 870 ok, 0 failed / phone 869 ok, 0 failed (212/212 declared
+    controls at desk size); stubbed browser suite 942 ok, 0 failed.'
+  rollback_assessment: Migration 0067 is additive (a nullable refund method) and forward-only. Revert
+    the commits; the drawer line then returns to the all-methods net. Rolling data back is docs/runbooks/restore-drill.md
+    from the base backup shop-till-mac.md section 8 takes before every upgrade.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  result: All checks passed!
+- command: uv run ruff format --check .
+  status: PASSED
+  result: 798 files already formatted
+- command: uv run mypy apps packages
+  status: PASSED
+  result: 'Success: no issues found in 456 source files'
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  result: 4962 passed, 5 skipped, 2 warnings in 1292.91s (0:21:32)
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  result: Validated 21 JSON and 3 YAML contracts. Validated 669 synthetic combinatorial cases against
+    the domain engines. Validated 127 served internal API operations against their contract. Validated
+    605 staff-console disclosures against their registry. Validated 4 pinned public-runtime artifacts;
+    release blockers=8.
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  result: 'Context drift check passed: 191 source references, 52 decisions, 4 gates, 9 phases, 203 work
+    items, 13 capabilities, 5 decision-gated items.'
+supplementary_checks:
+- command: verify_console_interaction.py (stubbed API)
+  status: PASSED
+  result: 942 ok, 0 failed
+- command: verify_daily_operations.py, real API, desk size, database created empty
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, desk size
+  status: PASSED
+  result: 870 ok, 0 failed, 212/212 declared controls
+- command: verify_daily_operations.py, real API, phone size (CONSOLE_VIEWPORT=phone)
+  status: PASSED
+  result: 81 ok, 0 failed
+- command: verify_workflow_conformance.py, whole run, real API, phone size
+  status: PASSED
+  result: 869 ok, 0 failed, 212/212 declared controls

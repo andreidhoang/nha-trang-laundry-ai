@@ -1,5 +1,7 @@
 # Runbook — where a model-provider credential lives
 
+Which model to evaluate and in what order: `docs/AI_MODEL_AND_PROVIDER_SETUP.md`.
+
 **Status:** normative for credential *handling*. It authorizes no model call.
 **Audience:** every human and every agent working in this repository.
 **Anchors:** `docs/adr/0003-provider-neutral-agent-runtime-and-channel-operations.md`,

@@ -42,6 +42,9 @@ git status --short
 git rev-parse HEAD
 ```
 
+**AI models and providers:** read `docs/AI_MODEL_AND_PROVIDER_SETUP.md` before touching anything
+model-related. No provider key is read by any code today and no model call is authorized (`DEC-006`).
+
 ## 2. Two modes that must not be confused
 
 | Mode | May run on any engineer machine? | Data | Entry point |

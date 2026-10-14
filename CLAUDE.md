@@ -78,7 +78,7 @@ move to an independent ready item; if none exists, stop and ask.
 apps/api            FastAPI internal API + staff console routes
 apps/worker         supervisor, durable agent worker, bounded Responses runtime
 apps/public-agent-tools  the 10-operation Tool Facade
-apps/web            staff PWA (no Shadow surface yet — SHADOW-CONSOLE-001)
+apps/web            staff PWA (/shadow draft-review screen exists; no draft producer wired — docs/AI_ROLE_MAP.md)
 packages/domain     deterministic money/pricing/promotion/delivery/SLA — the authority
 packages/db         migrations + repositories, atomic mutation+event+audit+outbox
 packages/policy     typed fail-closed decision point

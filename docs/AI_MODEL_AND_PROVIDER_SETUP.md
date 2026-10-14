@@ -2,8 +2,11 @@
 
 **Status:** engineering guidance and a *recommendation*. It decides nothing and authorizes no model
 call. `DEC-006` (provider data use, retention, region, deletion) is **OPEN**, owner
-`SECURITY_PRIVACY_OWNER`. All 13 capabilities are `NOT_AUTHORIZED`
-(`delivery/CAPABILITY_STATUS.yaml`). Credential handling: `docs/runbooks/provider-credentials.md`.
+`SECURITY_PRIVACY_OWNER`. All 13 capabilities are `NOT_AUTHORIZED`: `delivery/CAPABILITY_STATUS.yaml`
+has rows for only 3 (`INTERNAL_SHADOW`, `PUBLIC_FAQ`, `LIST_PRICE_INFO`) and sets
+`default_authorization: NOT_AUTHORIZED` for the rest, with `delivery/GATE_REGISTRY.yaml`
+`capability_requirements` listing all 13. Credential handling: `docs/runbooks/provider-credentials.md`.
+Which model runs where, and what is built vs not wired: **`docs/AI_ROLE_MAP.md`**.
 
 **Tiếng Việt, ngắn:** hiện chưa có đoạn code nào đọc API key; chưa được gọi model thật cho tới khi
 `DEC-006` được chủ sở hữu ký. Bản này chỉ nói *nên chọn model nào* và *kỹ sư làm gì, theo thứ tự nào*.

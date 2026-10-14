@@ -44,6 +44,7 @@ git rev-parse HEAD
 
 **AI models and providers:** read `docs/AI_MODEL_AND_PROVIDER_SETUP.md` before touching anything
 model-related. No provider key is read by any code today and no model call is authorized (`DEC-006`).
+For which model operates in which workflow, and what is built vs not wired, read `docs/AI_ROLE_MAP.md`.
 
 ## 2. Two modes that must not be confused
 

@@ -43,8 +43,8 @@ roots, so a warning there is diagnostic rather than blocking; see
 
 When the user's instruction is `continue`, `continue execute`, or an equivalent request to resume:
 
-**Scheduled-controller precedence:** an OpenClaw cron run or any process holding
-the `.openclaw/state.json` automation lease must follow
+**Scheduled-controller precedence:** a scheduled controller run (the OpenClaw scheduler is retired, ADR-0009) or any process holding
+an automation lease must follow
 `context/AUTOMATION_PROTOCOL.md` instead of the generic manual sequence below.
 It must persist `begin-attempt` before branch/queue/child mutations, obey
 `scripts/run_automation_tick.py`, execute at most one returned action per tick,

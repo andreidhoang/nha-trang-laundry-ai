@@ -432,7 +432,6 @@ def test_the_counter_sees_the_channel_customers_this_store_served_and_no_one_els
     record_customer_message(connection, silent, received_at=NOW)
 
     waiting_request = _intake(store_id, staff, waiting)
-    _stamp(connection, waiting_request, NOW + timedelta(minutes=5))
     _intake(other_store, other_staff, elsewhere)
 
     # A real order for `ordered`, through the same repositories as every other order fixture.
@@ -444,6 +443,12 @@ def test_the_counter_sees_the_channel_customers_this_store_served_and_no_one_els
             "UPDATE order_requests SET created_at = %s WHERE contact_binding_id = %s",
             (NOW - timedelta(days=1), ordered),
         )
+        # `orders.created_at` is immutable and is the real clock, so the order's activity cannot be
+        # pinned. Pin the waiting intake relative to it instead: against a fixed NOW the order
+        # overtakes it once the module has been loaded for 5 minutes (any full run).
+        cursor.execute("SELECT created_at FROM orders WHERE id = %s", (order_id,))
+        order_created = cursor.fetchone()[0]
+    _stamp(connection, waiting_request, order_created + timedelta(minutes=5))
 
     _as(staff)
     response = client.get(f"/internal/v1/stores/{store_id}/contacts/recent")
@@ -466,7 +471,7 @@ def test_the_counter_sees_the_channel_customers_this_store_served_and_no_one_els
         "open_order_count": 0,
         "waiting_order_request_id": str(waiting_request),
     }
-    assert datetime.fromisoformat(first["last_activity_at"]) == NOW + timedelta(minutes=5)
+    assert datetime.fromisoformat(first["last_activity_at"]) == order_created + timedelta(minutes=5)
 
     board = client.get(f"/internal/v1/orders/{order_id}").json()
     assert second["latest_order"] == {

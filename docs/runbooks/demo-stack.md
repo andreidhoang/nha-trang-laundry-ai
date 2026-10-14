@@ -40,16 +40,18 @@ to see it alone.
 
 ## Prerequisites
 
-Docker Desktop (or another Compose runtime) and `uv`. One host-level line is required, because the
-TLS proxy refuses any request that does not name `staging.internal` and the demo does not relax
-that check:
+Docker Desktop (or another Compose runtime) and `uv`. The primary sign-in path,
+**<http://localhost:8081/demo-idp/>** (what `start_demo.py` prints), needs no host edit. The optional
+TLS path (`https://staging.internal:8443`, used by `staging_smoke.py`) needs one host-level line,
+because its proxy refuses any request that does not name `staging.internal` and the demo does not
+relax that check:
 
 ```text
 echo "127.0.0.1 staging.internal" | sudo tee -a /etc/hosts
 ```
 
-Use Chrome or Firefox. The session and CSRF cookies are `Secure`, and Safari will not store them
-for this certificate.
+On the TLS path use Chrome or Firefox: the session and CSRF cookies are `Secure`, and Safari will
+not store them for this certificate.
 
 ## Bring it up
 
@@ -72,15 +74,16 @@ that the database zone is provisioned deliberately rather than by a compose file
 `generate_demo_material.py` writes keys, certificates and passwords into `.demo/`, which is
 gitignored — the generator is committed, its output never is.
 
-Three one-shot jobs run in order and must all exit 0: `migrate` applies the 27 forward-only
-migrations as the migration identity, `demo-grants` gives the API and worker roles read/write on
+Three one-shot jobs run in order and must all exit 0: `migrate` applies every forward-only
+migration (`0001`–`0072`; `0045` and `0069` were never used) as the migration identity, `demo-grants` gives the API and worker roles read/write on
 the migrated tables and nothing else, and `demo-seed` creates four synthetic staff and one store.
 Re-running `up --wait` re-runs all three; they are idempotent.
 
 ## Sign in
 
-Open **<https://staging.internal:8443/demo-idp/>** and accept the private certificate authority
-(it is `.demo/ca.crt`).
+Open **<http://localhost:8081/demo-idp/>**. On the optional TLS path, open
+**<https://staging.internal:8443/demo-idp/>** (needs the hosts line above) and accept the private
+certificate authority (it is `.demo/ca.crt`).
 
 Pick one of four synthetic accounts. The page fetches a real RS256 token for that subject and
 exchanges it at `POST /internal/v1/auth/session`, which is why the sign-in must happen in the
@@ -139,6 +142,7 @@ payment plus a self-collection attestation, and every other settlement shape sti
 ## Verify
 
 ```text
+# needs the staging.internal hosts line from Prerequisites; verify_demo_stack.py below does not
 uv run python scripts/staging_smoke.py --base-url https://staging.internal:8443 --ca-file .demo/ca.crt
 uv run python scripts/verify_demo_stack.py
 uv run pytest packages/evals/tests/test_demo_stack.py

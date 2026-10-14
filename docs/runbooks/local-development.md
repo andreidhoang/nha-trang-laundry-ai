@@ -7,13 +7,31 @@
 
 ## Bootstrap
 
-```text
+```bash
 uv sync --all-packages --all-groups
-Copy-Item .env.example .env
+cp .env.example .env            # PowerShell: Copy-Item .env.example .env
 docker compose up -d postgres
+export DATABASE_URL=postgresql://app:app@localhost:5432/nha_trang_laundry   # see compose.yaml
 uv run python scripts/verify_contracts.py
 uv run pytest
 ```
+
+Nothing loads `.env` for you: the API and every script read the process environment only
+(`env_file=None`), and only `docker compose` reads `.env`. Export `DATABASE_URL` in each shell.
+
+No Docker? Any PostgreSQL 16 works: create an empty database and a role that may create objects in
+it, export its URL as `DATABASE_URL`, and run `uv run python scripts/apply_migrations.py`. The
+guarded test run needs a role allowed to create roles and schemas (a local superuser is simplest).
+Migrations are numbered `0001`–`0072` but `0045` and `0069` were never used, so 70 files apply.
+
+Run the API on its own (the staff console is served at `/staff/`; `/healthz` and `/readyz` answer):
+
+```bash
+uv run uvicorn nha_trang_laundry_api.main:app --port 8000
+```
+
+Real sign-in needs the OIDC settings the demo stack supplies (`docs/runbooks/demo-stack.md`); the
+quickest way to a signed-in console is `uv run python scripts/start_demo.py`.
 
 Use only synthetic data locally. Public channels and automated sends are disabled by the default
 environment template.
@@ -59,6 +77,7 @@ docker compose down
 
 This preserves the local named database volume. Do not use volume deletion commands unless local data
 is intentionally disposable.
+
 ## Database migrations
 
 The application database URL is supplied only through `DATABASE_URL`; never commit a real credential.

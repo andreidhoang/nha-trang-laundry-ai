@@ -1,6 +1,6 @@
 # Codex and engineer cross-machine handoff
 
-**Reconciled:** 2026-09-13 (Asia/Ho_Chi_Minh)
+**Reconciled:** 2026-10-14 (Asia/Ho_Chi_Minh)
 
 **Repository:** `https://github.com/andreidhoang/nha-trang-laundry-ai.git`
 
@@ -17,18 +17,16 @@ orders and money.
 
 - R1 is a deterministic, staff-only laundry operations console. It supports the reviewed workflows
   in `docs/CORE_BUSINESS_WORKFLOWS_V1.md`.
-- The last complete guarded verification passed **1,189 tests with 3 intentional skips**. Live
-  synthetic verification passed 24/24 security checks, 70/70 daily-operation browser checks,
-  106/106 workflow-conformance checks, and 59/59 detailed console-interaction checks.
+- The last complete guarded verification (round 9, `82a66a9`) passed **4,962 tests with 5 skips**.
+  Live synthetic verification passed the stubbed console suite 942/0, the daily-operations walk
+  81/0 at desk and phone size, workflow conformance 870/0 (desk) and 869/0 (phone) with 212/212
+  controls, and a 43-chapter, 1,220-check film. Re-measure; do not trust these numbers.
 - Pricing, permission, SLA, order state, settlement and delivery decisions remain deterministic
   Python/PostgreSQL behavior. The browser and any model are not business authorities.
 - All thirteen AI/public capabilities remain `NOT_AUTHORIZED`. A fresh clone must report that state;
   it is the correct day-one result, not a missing setup step.
-- The isolated, EVAL_ONLY OpenClaw dependency tree builds and passes its 9 tests, but the registry
-  audit currently reports **4 high and 4 moderate advisories**. Three high findings have no available
-  registry fix. This is the recorded `RUNTIME-SECURITY-001` blocker; do not run `npm audit fix`,
-  repin evidence or treat that runtime as deployable. It is not part of the deterministic R1 shop
-  console.
+- OpenClaw was retired (ADR-0009): there is one dependency tree, `uv.lock`, and no `npm` project.
+  Do not look for an OpenClaw runtime or run `npm audit`.
 - The current shop Mac checkout is `/Users/danghuyhoang/laundry`. Its real-shop containers are
   stopped pending an external archive disk and macOS trust of `.shop/ca/ca.crt`. Do not claim that
   shop cutover is complete until the preflight, restore drill and one owner-approved counter
@@ -63,7 +61,7 @@ backup/restore runbook. They must not start a second production ledger from newl
 ## 3. Fresh machine bootstrap
 
 Prerequisites: Git, Docker Desktop (or compatible Docker Compose), `uv`, and Node.js 24 for the
-isolated OpenClaw comparison-plugin checks. Clone outside Desktop, Documents, Downloads, OneDrive,
+staff-console behaviour and syntax tests (pytest skips them without Node; CI uses 24). Clone outside Desktop, Documents, Downloads, OneDrive,
 Dropbox or iCloud-synced directories.
 
 ```bash
@@ -124,7 +122,11 @@ http://localhost:8081/demo-idp/
 Use one of the four synthetic identities. The owner account can exercise all staff workflows; the
 auditor account must remain read-only.
 
-Browser verification:
+Browser verification needs Google Chrome installed (the scripts default to the `chrome` channel), or
+`uv run --with playwright playwright install chromium` plus `CONSOLE_BROWSER_PATH=<chromium>`. The
+stack must be the demo stack above; the scripts default to `127.0.0.1:8100`, so pass the flags shown.
+Ports used: 8081 (demo console) and 5432 (development database, `compose.yaml`).
+
 
 ```bash
 uv run --with playwright python scripts/verify_console_interaction.py

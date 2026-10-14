@@ -1,7 +1,7 @@
 # Production continuation brief
 
 **Last reconciled:** 2026-10-05 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **203 queue items.** Migrations run `0001`–`0072` (`0069` was reserved and never used).
+**Active work item:** none. **203 queue items.** Migrations run `0001`–`0072`; the numbers `0045` and `0069` were never used, so the tree holds 70 files (a clone that shows 70 has lost nothing).
 Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
 
 ## The whole-app review: round 9, 2026-10-04

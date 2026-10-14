@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bảng vận hành Sạch Cộng</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap">
+<style>
+/* Layout: một cuộn dọc cho người không làm kỹ thuật. Tóm lược trước, chi tiết sau; mỗi phần một hình hoặc một bảng. */
+:root{
+  --bg:#F2F6F7; --surface:#FFFFFF; --ink:#0F2733; --muted:#4A6370; --line:#D3DFE4;
+  --sea:#0B6E7A; --sea-soft:#D9EEF0; --sea-ink:#08525B;
+  --amber:#8A5A00; --amber-soft:#FBEED0;
+  --coral:#A93A27; --coral-soft:#F8E2DD;
+  --green:#276B43; --green-soft:#DCF0E3;
+  --grey-soft:#E6ECEF;
+  --display:"Bricolage Grotesque","Be Vietnam Pro",system-ui,sans-serif;
+  --body:"Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0A1820; --surface:#112630; --ink:#E7F0F3; --muted:#9FB6BF; --line:#24414D;
+    --sea:#5CC7D2; --sea-soft:#12373E; --sea-ink:#8FDDE5;
+    --amber:#E8B655; --amber-soft:#3A2F14;
+    --coral:#F29A87; --coral-soft:#3E1F19;
+    --green:#74CF9B; --green-soft:#13341F;
+    --grey-soft:#1B3039; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0A1820; --surface:#112630; --ink:#E7F0F3; --muted:#9FB6BF; --line:#24414D;
+  --sea:#5CC7D2; --sea-soft:#12373E; --sea-ink:#8FDDE5;
+  --amber:#E8B655; --amber-soft:#3A2F14;
+  --coral:#F29A87; --coral-soft:#3E1F19;
+  --green:#74CF9B; --green-soft:#13341F;
+  --grey-soft:#1B3039; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));}
+.wrap{max-width:980px;margin:0 auto}
+h1,h2,h3{font-family:var(--display);line-height:1.15;text-wrap:balance;margin:0}
+h1{font-size:clamp(2rem,6vw,3.2rem);font-weight:800;letter-spacing:-.01em}
+h2{font-size:clamp(1.5rem,4vw,2rem);font-weight:800;margin-bottom:.4rem}
+h3{font-size:1.15rem;font-weight:600}
+p{margin:.5rem 0;max-width:68ch}
+.lede{font-size:1.15rem;color:var(--ink);max-width:62ch}
+.small{font-size:.9rem;color:var(--muted)}
+a{color:var(--sea-ink)}
+.num{font-variant-numeric:tabular-nums}
+
+/* nav */
+nav.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
+  margin:0 calc(-1*max(16px,env(safe-area-inset-left,0px)));padding:.5rem max(16px,env(safe-area-inset-left,0px));overflow-x:auto;white-space:nowrap}
+nav.top a{display:inline-block;padding:.3rem .7rem;margin-right:.25rem;border-radius:999px;text-decoration:none;color:var(--muted);font-size:.9rem;font-weight:500}
+nav.top a:hover,nav.top a:focus-visible{background:var(--sea-soft);color:var(--sea-ink);outline:none}
+
+header.hero{padding-block:2.2rem 1.2rem}
+.eyebrow{font-size:.85rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--sea-ink);margin-bottom:.6rem}
+.chips{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1.1rem}
+.chip{display:inline-flex;align-items:center;gap:.4rem;padding:.25rem .7rem;border-radius:999px;font-size:.85rem;font-weight:600;border:1px solid transparent}
+.chip.ok{background:var(--green-soft);color:var(--green)}
+.chip.wait{background:var(--amber-soft);color:var(--amber)}
+.chip.off{background:var(--grey-soft);color:var(--muted)}
+.chip.stop{background:var(--coral-soft);color:var(--coral)}
+.chip::before{content:"";width:.5rem;height:.5rem;border-radius:50%;background:currentColor}
+
+section{padding-block:2.2rem 1rem;border-top:1px solid var(--line)}
+section>.intro{margin-bottom:1.2rem}
+
+.grid{display:grid;gap:.9rem}
+.g2{grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr))}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:1rem 1.1rem;min-width:0}
+.card h3{margin-bottom:.3rem}
+.card p{margin:.3rem 0;font-size:.97rem}
+
+/* callout */
+.callout{background:var(--sea-soft);border-radius:10px;padding:1rem 1.2rem;color:var(--ink)}
+.callout.warn{background:var(--amber-soft)}
+.callout b{color:var(--sea-ink)} .callout.warn b{color:var(--amber)}
+
+/* problem -> solution table */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:.95rem}
+th,td{text-align:left;vertical-align:top;padding:.7rem .85rem;border-bottom:1px solid var(--line)}
+th{font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--grey-soft)}
+tr:last-child td{border-bottom:0}
+td.bad{color:var(--coral)} td.good{color:var(--green)}
+
+/* layers diagram */
+.layers{display:grid;gap:.6rem}
+.layer{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:.8rem 1rem}
+.layer .lab{font-size:.78rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:.5rem}
+.layer .items{display:flex;flex-wrap:wrap;gap:.45rem}
+.item{background:var(--grey-soft);border-radius:6px;padding:.3rem .65rem;font-size:.9rem}
+.layer.core{border-color:var(--sea);border-width:2px}
+.layer.core .lab{color:var(--sea-ink)}
+.layer.core .item{background:var(--sea-soft);color:var(--sea-ink);font-weight:500}
+.arrow{text-align:center;color:var(--muted);font-size:.85rem;line-height:1.2}
+.arrow::before{content:"▼";display:block;font-size:.8rem}
+.ai-side{border:2px dashed var(--amber);background:var(--amber-soft);border-radius:10px;padding:.9rem 1rem;margin-top:.9rem}
+.ai-side .lab{font-size:.78rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--amber)}
+.ai-side ul{margin:.4rem 0 0;padding-left:1.1rem}
+
+/* steps */
+ol.steps{list-style:none;margin:0;padding:0;display:grid;gap:.7rem;grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr));counter-reset:s}
+ol.steps li{counter-increment:s;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:.8rem 1rem .8rem 3.2rem;position:relative;min-width:0}
+ol.steps li::before{content:counter(s);position:absolute;left:.85rem;top:.75rem;width:1.7rem;height:1.7rem;border-radius:50%;
+  background:var(--sea);color:#fff;font-weight:700;display:grid;place-items:center;font-size:.9rem}
+:root[data-theme="dark"] ol.steps li::before{color:#04222a}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) ol.steps li::before{color:#04222a}}
+ol.steps b{display:block;font-family:var(--display);font-weight:600}
+ol.steps span{font-size:.92rem;color:var(--muted)}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;padding:.05rem .45rem;border-radius:4px;margin-left:.35rem;vertical-align:.1em}
+.tag.m{background:var(--sea-soft);color:var(--sea-ink)} .tag.h{background:var(--amber-soft);color:var(--amber)}
+
+/* price cliff chart */
+.chart{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:1rem 1.1rem}
+.bar{display:grid;grid-template-columns:5.2rem 1fr 6.2rem;gap:.7rem;align-items:center;margin:.45rem 0;font-size:.92rem}
+.bar .track{background:var(--grey-soft);border-radius:4px;height:1.5rem;overflow:hidden}
+.bar .fill{height:100%;background:var(--sea);border-radius:4px}
+.bar.cliff .fill{background:var(--coral)}
+.bar .v{text-align:right;font-weight:600}
+.bar .k{font-weight:500}
+
+/* timeline */
+.tl{position:relative;margin:0;padding:0;list-style:none}
+.tl::before{content:"";position:absolute;left:.62rem;top:.4rem;bottom:.4rem;width:2px;background:var(--line)}
+.tl li{position:relative;padding:0 0 1.2rem 2.2rem}
+.tl li::before{content:"";position:absolute;left:.2rem;top:.35rem;width:.9rem;height:.9rem;border-radius:50%;background:var(--sea);border:3px solid var(--bg)}
+.tl .when{font-family:var(--display);font-weight:800;font-size:1.05rem}
+.tl ul{margin:.3rem 0 0;padding-left:1.1rem}
+.tl li li{padding:0;position:static}.tl li li::before{display:none}
+.tl ul li{margin:.15rem 0;font-size:.97rem}
+
+/* roles */
+.role h3{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+.role ul{margin:.4rem 0 0;padding-left:1.1rem;font-size:.95rem}
+
+/* ai chips */
+.cap{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.5rem}
+.cap .chip{font-size:.8rem;font-weight:500}
+
+/* status lists */
+.todo{list-style:none;margin:0;padding:0;display:grid;gap:.5rem}
+.todo li{display:flex;gap:.7rem;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:.7rem .9rem;min-width:0}
+.todo .box{flex:none;width:1.15rem;height:1.15rem;border:2px solid var(--muted);border-radius:4px;margin-top:.25rem}
+.todo b{display:block}
+
+footer{padding-block:2rem 3rem;border-top:1px solid var(--line);margin-top:2rem;color:var(--muted);font-size:.88rem}
+:focus-visible{outline:2px solid var(--sea);outline-offset:2px}
+@media (max-width:520px){.bar{grid-template-columns:4.2rem 1fr 5.4rem;gap:.5rem}}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+</style>
+
+<div class="wrap">
+<nav class="top" aria-label="Mục lục">
+  <a href="#tong-quan">Tổng quan</a><a href="#van-de">Vấn đề</a><a href="#ben-trong">Bên trong</a>
+  <a href="#mot-don">Một đơn hàng</a><a href="#gia-tri">Giá trị</a><a href="#ai">AI ở đâu</a>
+  <a href="#mot-ngay">Một ngày</a><a href="#chu-tiem">Chủ tiệm mỗi tối</a><a href="#vai-tro">Vai trò</a><a href="#hien-trang">Hiện trạng</a>
+</nav>
+
+<header class="hero" id="tong-quan">
+  <div class="eyebrow">Giặt Là Sạch Cộng · 3A Lê Đại Hành, Nha Trang</div>
+  <h1>Bảng vận hành Sạch Cộng</h1>
+  <p class="lede">Một phần mềm đặt ngay ở quầy, để tiệm không tính sai tiền, không sót đơn, không mất dấu đồ của khách. Còn AI là phần thêm vào sau, và hiện chưa bật.</p>
+  <div class="chips" aria-label="Tình trạng hiện tại">
+    <span class="chip ok">Quầy và sổ sách: đã dựng, đã kiểm thử</span>
+    <span class="chip off">AI trả lời khách: chưa bật</span>
+    <span class="chip wait">Chạy tiền thật: chờ chủ tiệm ký</span>
+  </div>
+  <div class="callout" style="margin-top:1.4rem">
+    <b>Điều quan trọng nhất cần biết.</b> Dù gọi là “ứng dụng AI”, hôm nay không có mô hình AI nào đang chạy trong hệ thống. Toàn bộ phần tính tiền, hẹn giờ, thu tiền, đếm két đều do quy tắc cố định xử lý, cho kết quả giống nhau mỗi lần. Chúng tôi chủ ý làm vậy: việc nào liên quan đến tiền và cam kết với khách thì máy không được đoán. AI chỉ được thêm sau, ở vai trò soạn nháp cho nhân viên duyệt.
+  </div>
+</header>
+
+<section id="van-de">
+  <div class="intro">
+    <h2>Tiệm đang gặp những vấn đề gì, và hệ thống xử lý ra sao</h2>
+    <p>Đây là những chỗ một tiệm giặt hay mất tiền, mất uy tín hoặc mất dấu đồ khi làm bằng sổ tay và trí nhớ. Mỗi dòng bên dưới là một việc hệ thống đang làm thật.</p>
+  </div>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Tình huống hằng ngày</th><th>Làm bằng sổ và trí nhớ</th><th>Với hệ thống</th></tr></thead>
+    <tbody>
+      <tr><td><b>Tính giá</b><br><span class="small">Có mức giá rơi xuống ở 6 kg</span></td>
+        <td class="bad">Mỗi người tính một kiểu; khách bị tính sai, hoặc nhân viên tự “làm tròn cho đẹp”.</td>
+        <td class="good">Máy tính đúng bảng giá đã xác nhận, nhắc nhân viên khi túi đồ gần 6 kg, không tự làm tròn.</td></tr>
+      <tr><td><b>Hẹn giờ trả đồ</b></td>
+        <td class="bad">Hẹn miệng, quên, đến giờ khách tới mới biết trễ.</td>
+        <td class="good">Mỗi đơn có giờ hẹn in trên phiếu. Quá hẹn hiện nhãn đỏ “Trễ hẹn”; sắp tới hẹn (còn 2 tiếng) hiện nhãn vàng. Giờ hẹn đầu tiên luôn được giữ để đo “đúng hẹn” cho trung thực.</td></tr>
+      <tr><td><b>Thu tiền và két</b></td>
+        <td class="bad">Cuối ngày két lệch mà không biết lệch ở đâu, ai thu, lúc nào.</td>
+        <td class="good">Mỗi lần thu ghi tên người, giờ, tiền mặt hay chuyển khoản. Cuối ngày máy tính sẵn “két phải có” để đếm so; lệch thì ghi “thừa” hoặc “thiếu” bằng chữ, không tự bù.</td></tr>
+      <tr><td><b>Khách chuyển khoản</b></td>
+        <td class="bad">Tiền vào không rõ của đơn nào; nhân viên xác nhận khi chưa thấy tiền.</td>
+        <td class="good">Mỗi đơn có mã QR đúng số tiền và nội dung riêng. Nhân viên phải tích “đã thấy tiền vào tài khoản” mới ghi nhận.</td></tr>
+      <tr><td><b>Đồ khách không tới lấy</b></td>
+        <td class="bad">Đồ nằm tiệm hàng tháng, không ai nhắc, không có căn cứ tính phí hay thanh lý.</td>
+        <td class="good">Danh sách “Đồ chờ lấy”, nhắc khách ngày 0, 3, 7, 14. Miễn phí 20 ngày, từ ngày 21 tính phí lưu kho, sau 60 ngày và đã liên hệ đủ lần mới được thanh lý.</td></tr>
+      <tr><td><b>Khiếu nại và bồi hoàn</b></td>
+        <td class="bad">Thỏa thuận miệng, mỗi người đền một mức, không ai biết đã đền bao nhiêu.</td>
+        <td class="good">Bồi hoàn làm trên máy, có trần theo từng món. Nhân viên chỉ duyệt khoản nhỏ (đến 100.000đ mỗi món); khoản lớn hơn và mọi trường hợp mất đồ chờ chủ tiệm duyệt.</td></tr>
+      <tr><td><b>Khách doanh nghiệp (khách sạn, homestay, spa)</b></td>
+        <td class="bad">Ghi nợ trong sổ riêng, nhớ hạn mức bằng đầu, khó đối chiếu cuối tháng.</td>
+        <td class="good">Công nợ có hạn mức do chủ tiệm đặt, sao kê in được, hạn trả ngày 15 tháng sau, tiền trả trừ vào đơn nợ cũ nhất trước.</td></tr>
+      <tr><td><b>Hóa đơn cho kế toán</b></td>
+        <td class="bad">Gom tay từng phiếu, dễ sót hoặc trùng.</td>
+        <td class="good">Một danh sách “Hóa đơn cần xuất” tải thẳng cho kế toán; đơn đã hoàn tiền sau khi xuất hóa đơn được đánh dấu để báo kế toán.</td></tr>
+      <tr><td><b>Dữ liệu của khách</b></td>
+        <td class="bad">Số điện thoại chép khắp nơi, không biết khách có đồng ý hay không.</td>
+        <td class="good">Chỉ lưu khi khách đồng ý (nhân viên đọc câu đồng ý trên màn hình). Khách xin xoá thì xoá tên, số, địa chỉ; đơn và tiền vẫn giữ để đối chiếu.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="ben-trong">
+  <div class="intro">
+    <h2>Bên trong hệ thống hoạt động thế nào</h2>
+    <p>Hình dung ba tầng. Nhân viên chỉ thấy tầng trên cùng. Mọi quyết định về tiền nằm ở tầng giữa, và mọi thứ đều được ghi lại ở tầng dưới.</p>
+  </div>
+  <div class="layers">
+    <div class="layer"><div class="lab">1 · Người dùng thao tác</div>
+      <div class="items"><span class="item">Nhân viên quầy (điện thoại hoặc máy tính)</span><span class="item">Người duyệt</span><span class="item">Chủ tiệm</span><span class="item">Kế toán</span><span class="item">Kiểm toán (chỉ xem)</span></div></div>
+    <div class="arrow">bấm nút trên màn hình “Bảng vận hành”</div>
+    <div class="layer core"><div class="lab">2 · Bộ quy tắc, quyết định thay con người, không phải AI</div>
+      <div class="items"><span class="item">Giá và khuyến mãi</span><span class="item">Giờ hẹn và trễ hạn</span><span class="item">Thu, hoàn tiền, két</span><span class="item">Phí lưu kho</span><span class="item">Công nợ và hạn mức</span><span class="item">Ai được làm gì, ai duyệt</span></div></div>
+    <div class="arrow">ghi lại mọi việc, không xoá</div>
+    <div class="layer"><div class="lab">3 · Sổ cái, nơi giữ dữ liệu</div>
+      <div class="items"><span class="item">Đơn hàng</span><span class="item">Tiền đã thu và đã hoàn</span><span class="item">Khách (nếu đồng ý lưu)</span><span class="item">Lịch sử: ai làm gì, lúc nào</span><span class="item">Bản sao lưu 2 giờ 30 sáng mỗi ngày</span></div></div>
+  </div>
+  <div class="ai-side">
+    <div class="lab">Bên cạnh, chưa nối vào: trợ lý AI</div>
+    <ul>
+      <li>Chỉ được đọc tin nhắn tiếng Việt, hỏi thêm thông tin còn thiếu, và <b>soạn nháp</b> câu trả lời.</li>
+      <li>Muốn biết giá, giờ hẹn, tình trạng đơn thì phải hỏi tầng 2; <b>không tự tính, không tự đoán</b>.</li>
+      <li>Nháp phải qua tay nhân viên duyệt rồi mới gửi. AI không có quyền gửi tin.</li>
+    </ul>
+  </div>
+  <p class="small">Cách nhớ: tầng 2 là “cuốn sổ quy định của tiệm” mà máy không thể làm trái. Tầng 3 là “cuốn sổ cái” ghi sửa là thêm dòng mới, không tẩy xoá dòng cũ.</p>
+
+  <h3 style="margin-top:1.6rem">Ví dụ về một quy tắc cứng: mức giá rơi xuống ở 6 kg</h3>
+  <p>Bảng giá của tiệm: dưới 6 kg giá 25.000đ/kg, từ 6 kg giá 20.000đ/kg. Hệ quả là túi nhẹ hơn có thể đắt hơn túi nặng. Hệ thống áp đúng quy tắc, nhắc nhân viên khi gần ngưỡng, và không bao giờ làm mượt giá.</p>
+  <div class="chart" role="img" aria-label="Biểu đồ giá giặt sấy theo cân nặng: 5 kg 125.000đ, 5,9 kg 147.500đ, 6 kg 120.000đ, 7 kg 140.000đ, 10 kg 200.000đ">
+    <div class="bar"><span class="k">5 kg</span><span class="track"><span class="fill" style="width:62.5%"></span></span><span class="v num">125.000đ</span></div>
+    <div class="bar cliff"><span class="k">5,9 kg</span><span class="track"><span class="fill" style="width:73.75%"></span></span><span class="v num">147.500đ</span></div>
+    <div class="bar"><span class="k">6 kg</span><span class="track"><span class="fill" style="width:60%"></span></span><span class="v num">120.000đ</span></div>
+    <div class="bar"><span class="k">7 kg</span><span class="track"><span class="fill" style="width:70%"></span></span><span class="v num">140.000đ</span></div>
+    <div class="bar"><span class="k">10 kg</span><span class="track"><span class="fill" style="width:100%"></span></span><span class="v num">200.000đ</span></div>
+    <p class="small" style="margin-top:.7rem">Thanh đỏ là chỗ khách dễ thắc mắc: 5,9 kg trả nhiều hơn 6 kg. Đây là bảng giá chủ tiệm đã xác nhận, không phải lỗi. Giá giặt sấy tính theo công thức trong PRICEBOOK_V1.</p>
+  </div>
+</section>
+
+<section id="mot-don">
+  <div class="intro">
+    <h2>Đường đi của một đơn hàng</h2>
+    <p>Mỗi đơn đi qua các bước theo đúng thứ tự này. Hệ thống từ chối nếu nhân viên làm tắt. Nhãn <span class="tag m">MÁY</span> là việc máy tự tính, <span class="tag h">NGƯỜI</span> là việc nhân viên làm.</p>
+  </div>
+  <ol class="steps">
+    <li><b>Phát phiếu <span class="tag h">NGƯỜI</span></b><span>Khách quen: gõ 4 số cuối điện thoại. Khách vãng lai: phát phiếu luôn. Máy cấp số phiếu để ghi lên túi đồ.</span></li>
+    <li><b>Cân và chọn dịch vụ <span class="tag h">NGƯỜI</span></b><span>Nhân viên cân đồ, chọn món và số kg.</span></li>
+    <li><b>Tính giá <span class="tag m">MÁY</span></b><span>Máy ra “Tổng khách trả” theo bảng giá và ưu đãi đang có hiệu lực.</span></li>
+    <li><b>Khách đồng ý, tạo đơn <span class="tag h">NGƯỜI</span></b><span>Máy ghi lại lời đồng ý rồi mở trang đơn.</span></li>
+    <li><b>Nhận đồ vào tiệm <span class="tag m">MÁY</span></b><span>Máy ra giờ hẹn trả để nhân viên đọc cho khách; in phiếu cho khách.</span></li>
+    <li><b>Giặt <span class="tag h">NGƯỜI</span></b><span>Bấm “Bắt đầu giặt” và chọn máy giặt đang dùng.</span></li>
+    <li><b>Kiểm tra đồ <span class="tag h">NGƯỜI</span></b><span>Chưa sạch thì “Giặt lại”, không tính thêm tiền.</span></li>
+    <li><b>Báo đồ sẵn sàng <span class="tag h">NGƯỜI</span></b><span>Từ đây máy bắt đầu đếm ngày chờ lấy và nhắc khách.</span></li>
+    <li><b>Thu tiền <span class="tag m">MÁY</span></b><span>Máy điền sẵn số còn lại (kèm phí lưu kho nếu có). Không thu quá số còn lại. Đồ chỉ giao khi đã trả đủ, trừ khách công nợ.</span></li>
+    <li><b>Giao và đóng đơn <span class="tag h">NGƯỜI</span></b><span>Ghi tên người giao đồ. Đơn đóng, tiền vào báo cáo ngày.</span></li>
+  </ol>
+  <h3 style="margin-top:1.4rem">Khi đơn đi chệch đường</h3>
+  <div class="grid g3" style="margin-top:.6rem">
+    <div class="card"><h3>Đồ chưa sạch</h3><p>Giặt lại, giá giữ nguyên. Nếu khách đã mang đồ về rồi mới quay lại, đó là khiếu nại, xử lý ở mục riêng.</p></div>
+    <div class="card"><h3>Tiệm không nhận đồ</h3><p>Đồ đã hỏng sẵn hoặc tiệm không giặt loại này: ghi lý do, trả túi đồ, đơn huỷ, không có tiền nào chuyển.</p></div>
+    <div class="card"><h3>Hẹn lại giờ</h3><p>Chọn giờ mới và lý do, báo khách. Giờ hẹn đầu vẫn được giữ để số “đúng hẹn” của chủ tiệm không bị làm đẹp.</p></div>
+    <div class="card"><h3>Giao trễ</h3><p>Máy đo mức trễ so với giờ hẹn đầu; nếu lỗi do tiệm thì giảm trừ 10% tổng tiền đã thu, mỗi đơn chỉ một lần.</p></div>
+    <div class="card"><h3>Khách huỷ đơn đã đặt cọc</h3><p>Máy hoàn đúng số khách đã trả, bằng đúng cách đã thu (tiền mặt hoặc chuyển khoản).</p></div>
+    <div class="card"><h3>Khách không tới lấy</h3><p>Ngày 0/3/7/14 nhắc khách. Ngày 21 bắt đầu phí lưu kho (tối đa bằng một nửa tiền giặt). Sau ngày 60 và đã liên hệ đủ 3 lần trong 2 ngày khác nhau mới được thanh lý.</p></div>
+  </div>
+</section>
+
+<section id="gia-tri">
+  <div class="intro">
+    <h2>Giá trị hệ thống mang lại cho chủ tiệm</h2>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h3>Tiền đúng từng đồng</h3><p>Giá do máy tính; hoàn tiền đúng số đã thu; đếm két cuối ngày có con số “phải có” để so. Chênh lệch không còn là chuyện đoán mò, và lệch thì máy chỉ ghi lại, không tự điều chỉnh hay trừ lương ai.</p></div>
+    <div class="card"><h3>Không sót đơn, không mất dấu đồ</h3><p>Mỗi túi đồ có số phiếu, giờ hẹn, trạng thái. Màn hình “Hôm nay” có mục “Cần làm” gom mọi thứ đang chờ: đơn trễ, chờ duyệt, đồ chờ lấy, sự cố.</p></div>
+    <div class="card"><h3>Biết ai làm gì, lúc nào</h3><p>Mỗi nhân viên có tài khoản riêng, không dùng chung. Mọi thao tác ghi tên và giờ. Sửa sai là thêm một bản ghi mới kèm lý do, bản cũ vẫn còn.</p></div>
+    <div class="card"><h3>Chủ tiệm giữ quyền với việc lớn</h3><p>Miễn phí lưu kho, bồi hoàn lớn, mất đồ, mở công nợ, thanh lý đồ: máy không cho nhân viên tự làm. Chỉ chủ tiệm hoặc người duyệt.</p></div>
+    <div class="card"><h3>An toàn với dữ liệu khách</h3><p>Chỉ lưu khi khách đồng ý; ô ghi chú không nhận số điện thoại; khách xin xoá thì xoá. Giảm rủi ro khiếu nại và rủi ro pháp lý về dữ liệu cá nhân.</p></div>
+    <div class="card"><h3>Việc kế toán gọn hơn</h3><p>Danh sách hóa đơn cần xuất, sổ thu chi theo hạng mục, báo cáo ngày/tuần/tháng. Tiền khách trả công nợ tính vào ngày khách trả.</p></div>
+    <div class="card"><h3>Đo được chất lượng dịch vụ</h3><p>Báo cáo hiện tỷ lệ đúng hẹn (đo theo giờ hẹn đầu), số đơn trễ, phút mỗi mẻ giặt. Biên lợi nhuận chỉ hiện khi sổ tháng đã đủ điện, nước, hoá chất, lương, mặt bằng.</p></div>
+    <div class="card"><h3>Sẵn sàng cho AI mà không mất kiểm soát</h3><p>Khi bật AI, nó chỉ chạm được vào hệ thống qua 10 “cửa” cố định, có giới hạn số lần gọi và không có quyền gửi tin hay tính tiền. Phần chống sai sót đã dựng trước khi có AI.</p></div>
+  </div>
+</section>
+
+<section id="ai">
+  <div class="intro">
+    <h2>AI nằm ở đâu trong hệ thống này</h2>
+    <p>Phần này viết thẳng, để anh/chị không bị hiểu nhầm về những gì đang có.</p>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h3>Hôm nay</h3>
+      <p><b>Chưa có mô hình AI nào chạy.</b> Mục “Trợ lý AI” trên màn hình trả lời các câu hỏi cố định bằng cách tra sổ sách (ví dụ hôm nay thu bao nhiêu), không phải một mô hình ngôn ngữ. Màn hình “Bản nháp” để duyệt nháp đã có, nhưng chưa có gì tạo ra nháp.</p></div>
+    <div class="card"><h3>Khi được bật</h3>
+      <p>Một “nhân viên tư vấn ảo” đọc tin nhắn tiếng Việt của khách, hỏi thêm cho đủ thông tin, gọi các công cụ của hệ thống để lấy giá, giờ hẹn, tình trạng đơn, rồi <b>soạn nháp</b> trả lời cho nhân viên duyệt. Mỗi lượt làm việc bị giới hạn: tối đa 3 lần gọi mô hình, 6 lần gọi công cụ, 20 giây.</p></div>
+  </div>
+  <div class="callout warn" style="margin-top:.9rem">
+    <b>Vì sao chưa bật.</b> Phải có chủ tiệm ký quyết định <b>DEC-006</b>: dữ liệu khách gửi cho nhà cung cấp AI được dùng, lưu và xoá thế nào, đặt ở khu vực nào. Chưa ký thì hệ thống bị khoá, dù kỹ sư có chìa khoá API trong tay cũng không gọi được.
+  </div>
+  <h3 style="margin-top:1.4rem">13 việc AI có thể được giao, hiện đều chưa được cấp phép</h3>
+  <div class="cap" aria-label="13 việc AI, tất cả chưa cấp phép">
+    <span class="chip off">Chạy thử nội bộ</span><span class="chip off">Hỏi đáp công khai</span><span class="chip off">Nêu giá niêm yết</span>
+    <span class="chip off">Hỏi thông tin nhận đồ</span><span class="chip off">Ghi nhận thông tin khách nói</span><span class="chip off">Biên nhận tiếp nhận</span>
+    <span class="chip off">Biên nhận sự cố</span><span class="chip off">Tình trạng đơn</span><span class="chip off">Giải thích hẹn trả</span>
+    <span class="chip off">Báo giá ước tính</span><span class="chip off">Đặt lịch</span><span class="chip off">Tư vấn giao nhận</span><span class="chip off">Nhắn chăm sóc lại</span>
+  </div>
+  <p class="small">Mỗi việc sẽ được bật từng cái một, cái nào cũng cần chữ ký chủ tiệm. Việc đầu tiên sẽ là “chạy thử nội bộ”, chỉ để nhân viên xem nháp, chưa gửi cho khách thật.</p>
+  <h3 style="margin-top:1.4rem">Dùng mô hình AI nào</h3>
+  <p>Chưa quyết. Ba ứng viên đang được cân nhắc cho tiếng Việt và chi phí: Gemini Flash (Google), Claude Sonnet (Anthropic) và GPT-5 mini (OpenAI). Tài liệu thiết kế ước tính chi phí khoảng dưới 100 đồng mỗi cuộc trò chuyện với mô hình rẻ nhất; đó là ước tính, chưa đo thật. Cách chọn đúng là thử cả ba trên các cuộc hội thoại thật của tiệm rồi mới quyết.</p>
+</section>
+
+<section id="mot-ngay">
+  <div class="intro">
+    <h2>Một ngày làm việc của tiệm</h2>
+    <p>Tiệm mở 08:00 đến 20:00 hằng ngày. Bảng vận hành chạy trên máy ở quầy, nhân viên đăng nhập bằng tài khoản của chính mình.</p>
+  </div>
+  <ol class="tl">
+    <li><div class="when">Mở ca · trước 08:00</div>
+      <ul><li>Bật máy, mở bảng vận hành, đăng nhập bằng tài khoản riêng.</li>
+      <li>Mở màn hình <b>Hôm nay</b>: đọc “Đã thu tại quầy” và mục <b>Cần làm</b>. Hết việc thì mục này ghi “Không có gì chờ bạn”.</li>
+      <li>Bấm <b>Đếm két</b>, đếm tiền lẻ trong két, ghi <b>tiền đầu ngày</b>. Mỗi ngày ghi một lần.</li>
+      <li>Nếu màn hình báo “Đang ngoại tuyến” thì chưa nhận đơn, báo kỹ thuật.</li></ul></li>
+    <li><div class="when">Trong ngày · 08:00 đến 18:00</div>
+      <ul><li><b>Khách vào cửa:</b> Nhận đồ → cân → tính giá → khách đồng ý → nhận đồ → in phiếu.</li>
+      <li><b>Khách tới lấy:</b> tìm theo số phiếu → thu tiền → giao đồ.</li>
+      <li><b>Giữa giờ:</b> liếc mục Cần làm; xử lý đơn trễ, đơn chờ duyệt; nhắc khách chưa lấy đồ (mục “Nhắc khách lấy đồ”).</li>
+      <li><b>Có khiếu nại:</b> Thêm → Khiếu nại → ghi lại trên máy, không thỏa thuận miệng.</li></ul></li>
+    <li><div class="when">Chiều tối · sau 18:00</div>
+      <ul><li>Thẻ <b>Tóm tắt cuối ngày</b> tự hiện trên Hôm nay. Chủ tiệm đọc và đóng ngày.</li></ul></li>
+    <li><div class="when">Đóng ca · trước 20:00 và trước 0 giờ</div>
+      <ul><li><b>Đếm két cuối ngày:</b> máy hiện “Két phải có” (tiền đầu ngày + tiền mặt thu − tiền mặt hoàn − chi trả từ két). Đếm tiền thật, gõ số, máy ghi “Khớp”, “Thừa …” hoặc “Thiếu …”.</li>
+      <li>Chuyển khoản không nằm trong két: đối chiếu dòng “Chuyển khoản” với ứng dụng ngân hàng của tiệm.</li>
+      <li>Để máy <b>bật qua đêm</b> (chỉ tắt màn hình). Máy tự sao lưu lúc 02:30.</li>
+      <li>Phải ghi số đếm trước 0 giờ. Quá nửa đêm máy không cho ghi vào ngày đã qua; ghi ra giấy và đưa chủ tiệm.</li></ul></li>
+  </ol>
+</section>
+
+<section id="chu-tiem">
+  <div class="intro">
+    <h2>Chủ tiệm mỗi tối: 10 phút nhìn gì</h2>
+    <p>Anh/chị không cần biết kỹ thuật. Mỗi tối chỉ cần xem năm chỗ này.</p>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h3>1 · Tóm tắt cuối ngày</h3><p>Trên màn hình <b>Hôm nay</b>. Là bản tóm tắt cố định của ngày, kèm mục “Cần chú ý” khi có gì bất thường (ví dụ két lệch).</p></div>
+    <div class="card"><h3>2 · Duyệt</h3><p>Những việc chờ chữ ký của chủ tiệm: bồi hoàn lớn, miễn phí lưu kho, mở công nợ, thanh lý. Máy xếp sẵn, mở thẻ là thấy lý do.</p></div>
+    <div class="card"><h3>3 · Báo cáo</h3><p><b>Hôm nay → Báo cáo</b>. Số đã thu theo tiền mặt và chuyển khoản; đơn tạo/đơn xong (ví dụ “3 / 5 đơn”); đúng hẹn; thừa thiếu két từng ngày.</p></div>
+    <div class="card"><h3>4 · Đồ chờ lấy</h3><p>Danh sách đồ giặt xong khách chưa lấy, đơn chờ lâu nhất lên đầu, kèm số lần đã liên hệ và phí lưu kho tới giờ.</p></div>
+    <div class="card"><h3>5 · Hóa đơn cần xuất</h3><p><b>Thêm → Hóa đơn cần xuất</b> → tải danh sách gửi kế toán. Kế toán xuất xong, nhân viên ghi số hóa đơn lại.</p></div>
+    <div class="card"><h3>Cuối tháng</h3><p>Chủ tiệm chốt sổ công nợ bằng một lệnh kỹ thuật, ghi các khoản chi vào <b>Sổ thu chi</b>, rồi xem biên lợi nhuận khi sổ tháng đã đủ.</p></div>
+  </div>
+  <p class="small">Mọi nút nằm ở các màn hình tên đúng như trên. Nhân viên quầy không thấy mục Báo cáo; mục này hiện khoá với dòng ghi ai mở được.</p>
+</section>
+
+<section id="vai-tro">
+  <div class="intro">
+    <h2>Ai được làm gì</h2>
+  </div>
+  <div class="grid g3">
+    <div class="card role"><h3>Nhân viên quầy</h3><ul><li>Nhận đồ, tính giá, thu tiền, giao đồ</li><li>Giặt lại, nhắc khách, ghi liên hệ</li><li>Đếm két, ghi khiếu nại</li><li>Duyệt bồi hoàn nhỏ (đến 100.000đ mỗi món)</li><li>Không miễn phí lưu kho, không duyệt khoản lớn</li></ul></div>
+    <div class="card role"><h3>Người duyệt</h3><ul><li>Miễn phí lưu kho</li><li>Xử lý hóa đơn cần xuất</li><li>Xem báo cáo</li></ul></div>
+    <div class="card role"><h3>Chủ tiệm</h3><ul><li>Tất cả việc trên, và:</li><li>Duyệt khoản lớn và mọi vụ mất đồ</li><li>Mở công nợ, đặt hạn mức</li><li>Thanh lý đồ, xoá thông tin khách</li><li>Công bố các chính sách</li></ul></div>
+    <div class="card role"><h3>Kế toán</h3><ul><li>Xem báo cáo</li><li>Ghi sổ thu chi</li><li>Nhận danh sách hóa đơn</li></ul></div>
+    <div class="card role"><h3>Kiểm toán</h3><ul><li>Chỉ đọc, không sửa được gì</li></ul></div>
+  </div>
+</section>
+
+<section id="hien-trang">
+  <div class="intro">
+    <h2>Hiện trạng thật và việc cần chủ tiệm</h2>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h3><span class="chip ok">Đã xong</span></h3>
+      <p>Toàn bộ quy trình quầy: nhận đồ, giá, thu tiền, hoàn tiền, két, công nợ, lưu kho, nhắc khách, khiếu nại, bồi hoàn, hóa đơn, báo cáo. Đã qua 4.962 bài kiểm tra tự động và một lượt chạy thử đủ 43 chương, 1.220 phép kiểm, không lỗi. Mọi dữ liệu trong lúc thử là dữ liệu giả.</p></div>
+    <div class="card"><h3><span class="chip off">Chưa có</span></h3>
+      <p>AI trả lời khách. Kết nối kênh nhắn tin với khách (Zalo, Telegram). Sửa số đếm két của ngày đã qua ngay trên máy (hiện ghi giấy đưa chủ tiệm). Chạy trên tiền và đơn thật của tiệm.</p></div>
+  </div>
+  <h3 style="margin-top:1.4rem">Việc chỉ chủ tiệm làm được</h3>
+  <ul class="todo" style="margin-top:.6rem">
+    <li><span class="box"></span><span><b>Đọc và ký 13 quyết định kinh doanh (DEC-040 đến DEC-052).</b>Đây là những chỗ nhóm xây dựng đã tạm chọn phương án tốt nhất theo ủy quyền “quyết định tốt nhất và hoàn thành”: ví dụ không đền bù hai lần khi huỷ đơn, giữ phí lưu kho khi tạm dừng đơn, cách đếm két. Chưa ký thì vẫn chỉ là tạm.</span></li>
+    <li><span class="box"></span><span><b>Công bố sáu thông tin của tiệm</b>, bằng lệnh kỹ thuật viên chạy theo chỉ dẫn: tài khoản ngân hàng (để có mã QR), thông báo bảo mật khách hàng (để lưu được khách), ngày nghỉ Tết, chính sách phí lưu kho, điều khoản công nợ, chính sách tin nhắn dịch vụ. Chưa công bố thì tính năng tương ứng tự khoá, không tự đoán.</span></li>
+    <li><span class="box"></span><span><b>Quyết định DEC-006</b> về dữ liệu khách gửi cho nhà cung cấp AI. Đây là cửa duy nhất để AI được phép chạy.</span></li>
+    <li><span class="box"></span><span><b>Chọn máy chạy thật, có ổ đĩa sao lưu ngoài máy</b>, và làm thử một lần khôi phục dữ liệu trước khi nhập đơn thật.</span></li>
+    <li><span class="box"></span><span><b>Chọn kênh nhắn tin với khách</b> (quyết định DEC-016) và tài khoản chính thức, để sau này AI có chỗ nhận tin.</span></li>
+  </ul>
+  <div class="callout" style="margin-top:1.2rem">
+    <b>Gợi ý thứ tự.</b> Bước 1: ký các quyết định và công bố sáu thông tin, để quầy chạy đủ tính năng. Bước 2: chạy song song một tuần với sổ tay, so số cuối ngày. Bước 3: bắt đầu dùng thật. Bước 4 (sau cùng): quyết định DEC-006 rồi thử AI ở chế độ nội bộ.
+  </div>
+</section>
+
+<footer>
+  Tài liệu viết ngày 14/10/2026 cho chủ tiệm Giặt Là Sạch Cộng, dựa trên mã nguồn và tài liệu của dự án (nhánh main, bản f0ddf1a). Hướng dẫn thao tác chi tiết từng nút nằm ở tệp <code>docs/HUONG_DAN_CA_LAM_VIEC_VI.md</code>; bản đồ kỹ thuật về AI nằm ở <code>docs/AI_ROLE_MAP.md</code>.
+</footer>
+</div>
+
+</html>

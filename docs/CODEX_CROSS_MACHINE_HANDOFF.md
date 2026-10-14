@@ -42,6 +42,8 @@ git status --short
 git rev-parse HEAD
 ```
 
+**For the business owner (Vietnamese, non-technical):** `docs/GIOI_THIEU_CHO_CHU_TIEM_VI.html` - open it in a browser. It explains what the app solves, how it works, where AI is (nowhere yet), and the daily routine. Keep it in step with the app when workflows change.
+
 **AI models and providers:** read `docs/AI_MODEL_AND_PROVIDER_SETUP.md` before touching anything
 model-related. No provider key is read by any code today and no model call is authorized (`DEC-006`).
 For which model operates in which workflow, and what is built vs not wired, read `docs/AI_ROLE_MAP.md`.

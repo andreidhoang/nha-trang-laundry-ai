@@ -1,4 +1,9 @@
-# PILOT-RELEASE-PREFLIGHT-001 — trustworthy preparation for the owner-selected shop Mac
+# PILOT-RELEASE-PREFLIGHT-001 — trustworthy release preparation and target handoff
+
+Target update, 2026-10-22: the owner selected Windows and requested a GitHub engineer handoff.
+`docs/WINDOWS_ENGINEER_HANDOFF_2026-10-22.md` supersedes the Mac target. This item's local fixes,
+regressions and preparation evidence remain in scope; actual Windows adaptation/acceptance is the
+separate `WINDOWS-DEPLOYMENT-001` item. No target-host deployment evidence is inferred here.
 
 Goal: close demonstrated false-success paths in release/recovery preparation, and specify the
 existing dedicated-Mac pilot through real counter acceptance without inventing release evidence.

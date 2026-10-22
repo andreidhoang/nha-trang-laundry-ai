@@ -14,6 +14,11 @@ Windows startup/schedules/preflight, trusted browser access, backup mounts/recov
 policy, fresh target image scans and owner cutover remain blockers (`WINDOWS-DEPLOYMENT-001`).
 Do not apply the Mac `launchctl`/`security` procedure as if it were a Windows deployment.
 The portable sanitized evidence summary is `evidence/handoff/2026-10-22/verification-summary.json`.
+The October 22 full attempt had 5,178 passing tests and one stale inventory assertion failure
+(203 expected versus 205 actual queue items), with five documented skips. The guard is corrected;
+its six context tests and 63 real-role tests pass. A clean full post-correction run has not been
+performed. `PILOT-RELEASE-PREFLIGHT-001` stays IN_PROGRESS for that acceptance/evidence step;
+`WINDOWS-DEPLOYMENT-001` stays PENDING behind it, with actual deployment blocked on host evidence.
 Ignored `.demo` videos/logs/images and private runtime do not travel through GitHub; their inventory
 labels availability explicitly. No provider allowance, billing or capability authorization changed.
 

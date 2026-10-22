@@ -296,7 +296,9 @@ def test_context_drift_check_passes() -> None:
     # GOODS-AND-DRAWER-009, INVOICE-TRUTH-009, COUNTER-UI-RACE-009, CONSOLE-SHELL-009,
     # CONSOLE-COPY-ACCESS-009, PLATFORM-SECURITY-009, OPS-OBSERVABILITY-009, CASH-COUNT-009,
     # ROUNDNINE-RESIDUALS-009, ROUNDNINE-REVIEW-LOOP-009 and ROUNDNINE-FILMED-009.
-    assert "203 work items" in result.stdout
+    # 205 after local recovery/release preparation and the owner-selected Windows handoff:
+    # PILOT-RELEASE-PREFLIGHT-001 and WINDOWS-DEPLOYMENT-001. Keep this inventory guard explicit.
+    assert "205 work items" in result.stdout
     assert "13 capabilities" in result.stdout
 
 

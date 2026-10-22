@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-10-22T11:09:58.091026+00:00",
+  "recorded_at": "2026-10-22T11:41:33.595119+00:00",
   "scope": "Engineering handoff; no production/capability authorization",
   "branch": "codex/engineer-setup",
   "base_commit": "e97e8bc26646013ae101aa5bde20d991a08043be",
@@ -67,14 +67,76 @@
     },
     {
       "name": "October 22 full handoff rerun",
-      "status": "RUNNING",
-      "environment": "Fresh isolated PostgreSQL database; no demo data used",
-      "result_pending": true
+      "status": "FAILED",
+      "passed": 5178,
+      "failed": 1,
+      "skipped": 5,
+      "errors": 0,
+      "duration_seconds": 2011.53,
+      "environment": "Mac; fresh isolated PostgreSQL 16.15; CI=true; Node24; no skipped database integrations",
+      "failure": "packages/evals/tests/test_context_harness.py::test_context_drift_check_passes expected 203 work items; authoritative queue contains 205 after the two newly declared items.",
+      "correction": "Explicit inventory assertion updated to 205, with both new item IDs documented.",
+      "post_correction_full_rerun": "NOT_RUN; receiving engineer must run final full acceptance checks before completing PILOT-RELEASE-PREFLIGHT-001.",
+      "application_source_binding": "application-source-binding.json",
+      "junit_sha256": "b2866c365c508981137282334ea0476f6c973666e6b4dc220be868f8a5ade160"
     },
     {
       "name": "Windows deployment and production acceptance",
       "status": "NOT_RUN",
       "reason": "No target Windows host available in the Mac session"
+    },
+    {
+      "name": "October 22 repository static and contract gates",
+      "status": "PASSED",
+      "commands": [
+        "uv run ruff check .",
+        "uv run ruff format --check .",
+        "uv run mypy apps packages",
+        "uv run python scripts/verify_contracts.py",
+        "uv run python scripts/check_context_drift.py",
+        "git diff --check"
+      ],
+      "limits": "Local checks, not hosted CI or target-host acceptance"
+    },
+    {
+      "name": "October 22 staged-source credential checks",
+      "status": "PASSED",
+      "scanner": "gitleaks 8.28.0",
+      "findings": 0,
+      "scanner_image_digest": "sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854",
+      "scope": "Entire staged source tree with existing repository rules; additionally exact current provider credential compared in memory against every staged blob. No credential emitted."
+    },
+    {
+      "name": "October 22 preservation and local demo readiness",
+      "status": "PASSED",
+      "original_sales_draft_paths_unchanged": 9,
+      "demo_readyz_http_status": {
+        "8081": 200,
+        "8089": 200,
+        "8091": 200
+      },
+      "provider_requests_made": 0
+    },
+    {
+      "name": "October 22 affected context suite after queue-count correction",
+      "status": "PASSED",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "errors": 0,
+      "duration_seconds": 2.41,
+      "command": "uv run pytest packages/evals/tests/test_context_harness.py -q",
+      "junit_sha256": "992a16eb41d5b3f3a7a5e52a0683147a46809d2ab82821741e57773c5369d3be"
+    },
+    {
+      "name": "October 22 real API/worker DB role suite",
+      "status": "PASSED",
+      "passed": 63,
+      "failed": 0,
+      "skipped": 0,
+      "errors": 0,
+      "duration_seconds": 36.15,
+      "junit_sha256": "ae1533ebfe0487b213c7388c8a3712ed6f84d1fbf3664cc60a87744f097b0ed3"
     }
   ],
   "authorization": {
@@ -83,5 +145,6 @@
     "billing_enabled": false,
     "production_deployment": false
   },
-  "evidence_availability": "Committed summaries and recovery result copies are portable. Local-only artifact paths below are not included in Git; private runtime is never an export."
+  "evidence_availability": "Committed summaries and recovery result copies are portable. Local-only artifact paths below are not included in Git; private runtime is never an export.",
+  "remaining_engineering_verification": "Clean full post-correction run and declared delivery evidence; PILOT-RELEASE-PREFLIGHT-001 remains IN_PROGRESS. Windows item is PENDING behind it; real deployment is blocked on actual Windows host acceptance."
 }

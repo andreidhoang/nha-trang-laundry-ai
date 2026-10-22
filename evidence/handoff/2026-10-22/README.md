@@ -6,6 +6,9 @@ Start with `docs/WINDOWS_ENGINEER_HANDOFF_2026-10-22.md`.
   verification. It does not authorize deployment, provider use or public capabilities.
 - `recovery-replay-result.json` and `source-bindings.json` are non-secret copies of the
   isolated synthetic PostgreSQL latest/time-target replay result and seven source hashes.
+- `application-source-binding.json` records the full-run source hashes and the single test-only
+  inventory correction afterward. The failed full attempt and passing targeted recheck remain
+  distinct; a clean post-correction full run is still required.
 - `local-artifact-inventory.json` records hashes of selected evidence retained on the Mac. Paths
   marked `LOCAL_ONLY_NOT_IN_GIT` are deliberately absent from a fresh clone. Ask for an allowlisted
   transfer or rerun the documented checks; do not copy `.demo/` or `.shop/` wholesale.

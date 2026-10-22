@@ -6322,8 +6322,7 @@ items:
   blocked_by_decisions: []
 - id: PILOT-RELEASE-PREFLIGHT-001
   phase: PRODUCTION_HARDENING
-  title: Trustworthy recovery and deployment checks for the owner-selected dedicated
-    Mac pilot
+  title: Trustworthy recovery and deployment checks with the current Windows host handoff
   status: IN_PROGRESS
   priority: 359
   depends_on:
@@ -6350,7 +6349,7 @@ items:
   - recovery_stream_failures_refused
   - readiness_and_mac_preflight_fail_closed
   - deployed_identity_image_in_supply_chain_gate
-  - owner_selected_mac_plan_and_target_prerequisites
+  - current_target_plan_and_prerequisites
   - regression_and_preservation_evidence
   - rollback_assessment
   blocked_by_decisions: []

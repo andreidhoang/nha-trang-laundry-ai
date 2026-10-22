@@ -43,6 +43,11 @@ policy-publication, signer and release authorities retain their boundaries.
 6. `context/tasks/TASK-pilot-release-preflight-001.md` and
    `context/tasks/TASK-windows-deployment-001.md` before continuing their items.
 
+Queue handoff: `PILOT-RELEASE-PREFLIGHT-001` remains `IN_PROGRESS` until a clean final full run and
+its declared evidence are recorded. `WINDOWS-DEPLOYMENT-001` is `PENDING` behind that dependency;
+the actual Windows deployment is blocked on the target-host conditions below. Do not mark either
+item complete from this source push or the targeted recheck alone.
+
 The older production-readiness assessment and Mac plan contain dated observations, not current
 Windows acceptance. No business schema migration was added by this setup/review work: migrations
 still span `0001`–`0072`, with `0045`/`0069` intentionally absent (70 files).
@@ -132,7 +137,12 @@ solve a scheduler/network problem by exposing PostgreSQL or disabling certificat
   The CI image loop now includes Keycloak so that omission no longer silently passes.
 - **Interrupted checks:** the October 16 full-run helper failed before tests; its TLS smoke used
   an inadequate trust input and failed certificate validation. Neither is reported as a pass.
-  The October 22 handoff rerun and exact outcomes are recorded separately in the portable summary.
+  The October 22 full attempt finished with **5,178 passed, one failed and five skipped**. Its sole
+  failure was the context test still expecting 203 work items after the queue grew to 205. The
+  explicit count guard was corrected; all six affected context tests and 63 real-role tests then
+  passed. Application/deployment code did not change after the full attempt. A clean full run
+  after that test-only correction has **not** been performed and remains an acceptance task.
+  Exact outcomes, original failure and source hashes are in the portable summary.
 
 No Windows host, fresh Windows browser workflow, Windows scheduler or production installation was
 observed. No billing was enabled, new generation allowance granted, public capability activated or

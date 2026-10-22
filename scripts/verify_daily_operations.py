@@ -55,7 +55,13 @@ import pathlib
 import sys
 import urllib.request
 
-from console_recording import Recorder, add_arguments, viewport, watch_render_defects
+from console_recording import (
+    Recorder,
+    add_arguments,
+    viewport,
+    watch_page_errors,
+    watch_render_defects,
+)
 from playwright.sync_api import sync_playwright
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -146,9 +152,9 @@ with sync_playwright() as pw:
         **REC.context_options(),  # type: ignore[arg-type]
     )
     render_defects = watch_render_defects(ctx)
+    errors = watch_page_errors(ctx)
+    console_errors: list[str] = []
     page = REC.film(ctx, ctx.new_page(), "chu-cua-hang")
-    errors = []
-    page.on("pageerror", lambda e: errors.append(str(e)))
     api_calls = []
 
     def _record(resp):
@@ -175,7 +181,7 @@ with sync_playwright() as pw:
     )
     page.on(
         "console",
-        lambda m: errors.append(f"console.{m.type}: {m.text}") if m.type == "error" else None,
+        lambda m: console_errors.append(m.text) if m.type == "error" else None,
     )
 
     # Everything the walk carries from one screen to the next, bound before any section runs.
@@ -207,9 +213,13 @@ with sync_playwright() as pw:
     page.wait_for_timeout(800)
     shot(page, "01-signed-out.png")
     ok("the console loads without being signed in", "Chưa đăng nhập" in page.content())
+    signed_out_session = ctx.request.get(f"{BASE}/internal/v1/session")
     ok(
         "and it does not silently sign anyone in",
-        "Bảng vận hành không tự đăng nhập" in page.content(),
+        signed_out_session.status == 401
+        and not any(cookie["name"] == "staff_session" for cookie in ctx.cookies())
+        and "Đăng nhập bằng tài khoản được cửa hàng cấp" in page.content(),
+        f"session HTTP {signed_out_session.status}; no authenticated session cookie",
     )
     signin_button = page.locator("a.button", has_text="Tới trang đăng nhập")
     if signin_button.count():
@@ -688,7 +698,7 @@ with sync_playwright() as pw:
     last = last_call("POST", "/order-requests")
     ok(
         "a customer code the shop never issued is refused, not created",
-        bool(last) and last[1] >= 400 and "CONTACT_BINDING_UNKNOWN" in last[3],
+        bool(last) and last[1] == 422 and "CONTACT_BINDING_UNKNOWN" in last[3],
         f"HTTP {last[1]} {last[3][:110]}" if last else "no call",
     )
     unknown_order = api_post(
@@ -705,7 +715,8 @@ with sync_playwright() as pw:
     )
     ok(
         "and an order naming a customer the quote was not written for is refused too",
-        unknown_order["status"] >= 400,
+        unknown_order["status"] == 409
+        and "customer reference this store has never issued or bound" in unknown_order["body"],
         f"HTTP {unknown_order['status']} {unknown_order['body'][:110]}",
     )
 
@@ -752,7 +763,7 @@ with sync_playwright() as pw:
     )
     ok(
         "an order changed by someone else meanwhile is refused, not overwritten",
-        stale["status"] >= 400,
+        stale["status"] == 409 and "STALE_VERSION" in stale["body"],
         f"HTTP {stale['status']} {stale['body']}",
     )
 
@@ -792,6 +803,7 @@ with sync_playwright() as pw:
         **REC.context_options(),  # type: ignore[arg-type]
     )
     auditor_defects = watch_render_defects(actx)
+    watch_page_errors(actx, errors)
     apage = REC.film(actx, actx.new_page(), "kiem-toan-vien")
     apage.goto(CONSOLE, wait_until="networkidle")
     atok = token(arguments.auditor_subject)
@@ -1010,7 +1022,8 @@ with sync_playwright() as pw:
     )
     ok(
         "an order whose fulfilment mode contradicts the price it cites is refused",
-        mismatch["status"] >= 400,
+        mismatch["status"] == 409
+        and "fulfilment mode is not the one the quote was priced under" in mismatch["body"],
         f"HTTP {mismatch['status']} {mismatch['body'][:140]}",
     )
     ok(
@@ -1166,6 +1179,7 @@ with sync_playwright() as pw:
         (render_defects + auditor_defects)[:4],
     )
 
+    ok("no uncaught JavaScript errors in any browser tab", not errors, errors[:6])
     print(f"\n{'=' * 78}\nRESULT: {len(PASS)} ok, {len(FAIL)} failed\n{'=' * 78}")
     for f in FAIL:
         print(f"  - {f}")
@@ -1174,8 +1188,11 @@ with sync_playwright() as pw:
     for film in REC.save():
         print(f"  video: {film}")
     browser.close()
-    if errors:
-        print("\n  page errors:", errors[:5])
+    if console_errors:
+        print(
+            "\n  console.error diagnostics (including deliberate HTTP refusals):",
+            console_errors[:5],
+        )
 
 print()
 if FAIL:

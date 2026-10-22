@@ -5,6 +5,11 @@ Internal operations and constrained AI concierge for **Giặt Là Sạch Cộng*
 
 ## Current status
 
+**October 22 engineering handoff:** application/deployment changes are on `codex/engineer-setup`.
+The intended shop host is now **Windows**, and production deployment remains blocked pending
+target-specific verification. Start with the [Windows engineer handoff](docs/WINDOWS_ENGINEER_HANDOFF_2026-10-22.md)
+for setup, outstanding work and evidence; the previous Mac pilot plan is historical.
+
 `DOMAIN_CORE_ACTIVE — PUBLIC_AUTOMATION_NOT_AUTHORIZED — SPEC_APPROVED_WITH_EXECUTION_GATES`
 
 The repository contains verified business truth, price/promotion/SLA seed data, an implementation-ready

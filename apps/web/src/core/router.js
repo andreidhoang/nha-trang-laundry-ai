@@ -239,8 +239,15 @@ function match(pattern, path) {
   const params = {};
   for (let index = 0; index < expected.length; index += 1) {
     const part = expected[index];
-    if (part.startsWith(":")) params[part.slice(1)] = decodeURIComponent(actual[index]);
-    else if (part !== actual[index]) return null;
+    if (part.startsWith(":")) {
+      try {
+        params[part.slice(1)] = decodeURIComponent(actual[index]);
+      } catch (error) {
+        // An incomplete escape in a pasted address is an unknown route, not a broken screen.
+        if (error instanceof URIError) return null;
+        throw error;
+      }
+    } else if (part !== actual[index]) return null;
   }
   return params;
 }

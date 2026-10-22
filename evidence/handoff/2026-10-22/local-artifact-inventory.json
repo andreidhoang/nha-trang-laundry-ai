@@ -1,0 +1,906 @@
+{
+  "schema_version": 1,
+  "purpose": "Hash inventory for requesting an allowlisted transfer or reproducing evidence; not a release manifest",
+  "excluded": [
+    "private runtime",
+    "credentials and secret files",
+    "recovery private identities",
+    "database volumes"
+  ],
+  "artifacts": [
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/README.md",
+      "sha256": "5671b2792f8d9a18807e95544d331ea8f7a9ab9a2533d1fc51d36fc4546ace6d",
+      "bytes": 4987,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/after-v2.json",
+      "sha256": "050edfb6d205f3b23094816876bf0de59471bd43e8a3e7e061c4ddbe57eb5fbc",
+      "bytes": 14355,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/after-v3.json",
+      "sha256": "6d4613f99c6183617cb6003216928792e569681a22c3e50c26d5021ca649f1eb",
+      "bytes": 15356,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/after.json",
+      "sha256": "419ae59368273c888395f60f1c9a75b6f30ae4a999742c857887ee97f8b6743e",
+      "bytes": 13030,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/before-v3.json",
+      "sha256": "dec7d8821fe1e01c7aae9c371754013a773dd3598fc374f3dca0097ad0782f7e",
+      "bytes": 7664,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/final-gate-1.log",
+      "sha256": "a8bdfc1769143d3846c01c31e213800669fb91e8e2781f4f394b52137fefc522",
+      "bytes": 310,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/final-gate-2.log",
+      "sha256": "4abe1fd7370225a20120732e40aa58fc8a3fd7c335e1a787fc0d1d7572405c5b",
+      "bytes": 141,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/final-gate-3.log",
+      "sha256": "6c16358f99aa660dceaf02530a39d8d8c6b82ddf1725619b02710f5f8627e8c9",
+      "bytes": 3161,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/final-gate-4.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/final-state.json",
+      "sha256": "69538e1507a0bf214069d8a15ee719ffb8ea86d9310c053f6543eb247a8fb25c",
+      "bytes": 3147,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/focused-timeout.log",
+      "sha256": "36b4bbf7525c01a1e2ee956a97d5b5e139745200c99565d4ace1db0c39675344",
+      "bytes": 179,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/free-tier-final.jpg",
+      "sha256": "cb222cdb7c910b1cde73f25d6170cd9b6994e3dee159573f137383d5cdfbf50a",
+      "bytes": 42874,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/full-suite-start-binding.json",
+      "sha256": "f705a4692ea45179e2a65820c0067340e988951f97888f085393b04c8b553c9d",
+      "bytes": 155107,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/full-suite.log",
+      "sha256": "2eae65d3b0cb300438471310d0e3adae838254447b288aa08e1f02245bb69a19",
+      "bytes": 7200,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/generation-diagnostic.json",
+      "sha256": "4eb32da2a9fbf55ccfb84069ed175017d892dc62a984d16b9556277db568aec1",
+      "bytes": 873,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-archive/gemini-timeout-final-image.tar",
+      "sha256": "ee4a974684a4596adab3442d81d14e4ba583992d767c7306145ae3f16e5c2d58",
+      "bytes": 48925184,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-archive/manifest.json",
+      "sha256": "17da0000acaa9f6ee8a33e0c2c2c54de6517d107ebb1a0429555719a4a29051b",
+      "bytes": 454,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-id.txt",
+      "sha256": "f1e5f1b42f31ab275c412e38e52ad9aac57d281cef5a8899d247c333e222b9bc",
+      "bytes": 72,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/api.cdx.json",
+      "sha256": "a146d4300661219c9cf8e407c6302302e12318d03bf2c45a703e0a922fcdefa8",
+      "bytes": 137454,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/api.sarif",
+      "sha256": "4e0237d3320d089d37a7c5bef2e47ce32696a1407c999777b7ebed034b461dbc",
+      "bytes": 766,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/build-archive.log",
+      "sha256": "3ad98e4cda64815c8d0da6c2ae1c089f32b3e0054776db0f66bfbf95d7e388ec",
+      "bytes": 4359,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/build-image-id.txt",
+      "sha256": "73fe8d2d4b0f961cc482c39c7cd47c5e7724aa2f0a612194b46e7632e826c652",
+      "bytes": 71,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/build-status.json",
+      "sha256": "a00bfae4644fd6da9707a06515b639589d5a187a78286a225892cadfe84fe1ab",
+      "bytes": 1145,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/final-image-binding.json",
+      "sha256": "1aac09f22b45dd50c81785c44430451bf28a15cf00f8803b13377c890c67c912",
+      "bytes": 428,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/final-image-scan-summary.json",
+      "sha256": "aedb80f9c2ed1a7041c3464fc91388c80cf6682ab2e2f9bdaef4122a369d1417",
+      "bytes": 4713,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/high-critical.log",
+      "sha256": "b2216a699d57c9c2b2513909e055307c0458e040e93c2f8877afe49cf73d9f39",
+      "bytes": 735,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/load-image.log",
+      "sha256": "55e5cf7d9e8b7165e971721d8cfe2ac71ed3463c8b5091fb75a2bf6fca85e61f",
+      "bytes": 57,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/new-packaged-inventory.json",
+      "sha256": "ed8e07fe1e279b038b4992129cae279fcf950894b7a7b600354a71a6019df296",
+      "bytes": 41272,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/previous-packaged-inventory.json",
+      "sha256": "830d90d54991478d895933b7b487c57346b41d2634ebf22ad361ace2893e5524",
+      "bytes": 41272,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/sbom.log",
+      "sha256": "77e93fa5987b33a2d7c35f8ea4ae45ea74571ddfc1ffa1d0b55e4c10076fd705",
+      "bytes": 735,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/scan-results.json",
+      "sha256": "943764786ab9b47eefc7ef8754e2e235ba87709d9318dbf786bd372ee9030fe7",
+      "bytes": 3191,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/scanner-binding.json",
+      "sha256": "cf3d9f6e635a73b72496371ad953066506fe75a25debf36c20edc74e32efa18f",
+      "bytes": 698,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/scanner-version.log",
+      "sha256": "d6ba09a5538c0b2f281b92d2f34a3a8725a24900fd48908c70b0959398854dea",
+      "bytes": 16,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/source-runtime-delta.json",
+      "sha256": "893895d8f69bb87243c1c66fd1e0d979a0f91f213a478e445ddffc6654b66244",
+      "bytes": 39318,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/image-verification-timeout15/trivy-db-metadata.json",
+      "sha256": "f210c7dfd0a85ab308eb8546ed8c16f019c6cb9d49ecc0bd9701bd89ec35df6c",
+      "bytes": 170,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/integration-tests-redaction-metadata.json",
+      "sha256": "f2dc05abfe31ec9aa933c8e36e8d9d91b569d4ed1e58084922c5b9624ae6deaa",
+      "bytes": 1087,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/integration-tests.sanitized.xml",
+      "sha256": "6901dd6fcbc85b9bdf6e168d09c047191b8eb89cce7db47a05407ff31769e1a3",
+      "bytes": 860857,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/live-backend-logs-v3.json",
+      "sha256": "454bc44acc49ba3197e6f05786f9113256c34134912498a5d27593cd578684e7",
+      "bytes": 20748,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/live-results-v2.json",
+      "sha256": "0038ca3889ae558f86252f9f42f18f58ddeb3ef84063e25c16f2d1945eebf9e3",
+      "bytes": 9039,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/live-results-v3.json",
+      "sha256": "73845830333c91da064e27db45610337b2f9dda65667652dedab2be624df5cb0",
+      "bytes": 8948,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/live-results.json",
+      "sha256": "dd60a49ae8347b4d619d6e66ef1ddd3a178814c93e01ef1a6d0b16d8b0c7236d",
+      "bytes": 9128,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/manual-signin-activation.json",
+      "sha256": "8172a7b649c397aced5fdaceaa3966f0dd68dc2c4e692c634db45ad695ea66cf",
+      "bytes": 5220,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/manual-signin-browser-attempt1-loading/manual-signin-video/desktop/dang-nhap-va-ket-qua-da-luu-1-desktop.webm",
+      "sha256": "98510228b6e79760d4c9e477c4afd3d56526b566cd698bcb23a626e20ac479eb",
+      "bytes": 462886,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/manual-signin-browser-attempt2-console/manual-signin-video/desktop/dang-nhap-va-ket-qua-da-luu-1-desktop.webm",
+      "sha256": "11dd7d1284071a225eaeab0cd427a0d51f0f3b72f748cda564345b4630e7b6c1",
+      "bytes": 3461231,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/manual-signin-browser.json",
+      "sha256": "9bd03a1785601f7511ae9b40633ccae9b9f8aa8b6f717ba43191867b9af0a5d1",
+      "bytes": 4404,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/manual-signin-favicon-fix.json",
+      "sha256": "0beacf73ca357476aa80c5003715b5630a68d1088be80442848d1e042ef62a03",
+      "bytes": 761,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/manual-signin-video/desktop/dang-nhap-va-ket-qua-da-luu-1-desktop.webm",
+      "sha256": "9910850636f252149d9fdaa9ec2fe7e06f28d077fbcbe2508993494c4360d2a4",
+      "bytes": 3669733,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/manual-signin-video/phone/dang-nhap-va-ket-qua-da-luu-1-phone.webm",
+      "sha256": "2555efac068ab3715083ca811195473d2806ffcb8acf725d835ee8e21e9fe2c0",
+      "bytes": 2102478,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/prepare-suite.log",
+      "sha256": "9aa70bd3736a100e2c9f591d8161a9914e53385561c008e25fe041f7b8b59b77",
+      "bytes": 940,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/preservation-original.json",
+      "sha256": "721f5b0d73185ec9e60239adb0486bf93353b554ba8e195a810c7e209af92aa6",
+      "bytes": 1862,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/preservation-setup.json",
+      "sha256": "d3d1044d0c2d5b776c2b6e5a87835bad4e1f6b0c1861115ff4927323f1d49c21",
+      "bytes": 606,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/provider-secret-hygiene-final.json",
+      "sha256": "41132da2d27f40660d4f02da3f373b6b6d2debe7a0c0ffc9c3ae4fc4203258bd",
+      "bytes": 305,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/provider-tunnels-v2.json",
+      "sha256": "3108fe4d657bcd596526febb022f71df08fb27e417a5c6d899341ab6c4507735",
+      "bytes": 951,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/provider-tunnels-v3.json",
+      "sha256": "301d94cb7406a27fbe668e017c22b297e895c8aee63d416a4dc360ce330ecbaf",
+      "bytes": 869,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/provider-usage-final.jpg",
+      "sha256": "34cc2fb6e0ca60a2b596848fafe08777522d1d99246e25b265635bdc40d14ece",
+      "bytes": 32976,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/request-accounting.json",
+      "sha256": "16275e4d524e1d62baf06869fa8169a160b51163e461a7ff6bb5929c384523a7",
+      "bytes": 1351,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/restart-persistence.json",
+      "sha256": "750f31d8ea87c16550992c0f90c82066aabe4008421b5788210838c9a5541c95",
+      "bytes": 2296,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-final/1-4.52s.png",
+      "sha256": "b632161df1f89cf001e14cb7dc426341a1f8763f5fc2d0e4cae3f4c244eeeff8",
+      "bytes": 214896,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-final/2-18.06s.png",
+      "sha256": "b568980924a324967bf7b18e353310683405590b1c52c0c07158bad2c2bc2619",
+      "bytes": 203004,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-final/3-31.61s.png",
+      "sha256": "5d3c867eb2fe97b46290645ff456fe2df63e5692779f796ece06bd959ef9e693",
+      "bytes": 202903,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-final/4-45.16s.png",
+      "sha256": "1db2891e44c8a136ee74550211a0e2709ae706eabed86795116ab72a8061e068",
+      "bytes": 179248,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-final/5-58.71s.png",
+      "sha256": "2554748673a56b7688b1b60fa8de453828a6ebf291fec585f48a3404bfa252cd",
+      "bytes": 213230,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-final/6-72.26s.png",
+      "sha256": "f2518c00fc4b7a6453a560700a2bca85f778f4d94a0aedb80f9f48e977e191c1",
+      "bytes": 236602,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-final/7-81.29s.png",
+      "sha256": "6a6182d393d871e42a07c2a42b567892308dececb0a5144c15327c5a9836ee5e",
+      "bytes": 223092,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-final/8-88.51s.png",
+      "sha256": "a73dc48ea0a40c94bb176aeb03646d667cc795f3a12b2235d0852e782b61c946",
+      "bytes": 115404,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-final/contact-sheet.jpg",
+      "sha256": "5ba09bac3299ac0600a4fef040edeac0058abd9c96ae2571e43b79eb3262c903",
+      "bytes": 402102,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-final/index.json",
+      "sha256": "98de15c8939342be02eb6d831289d3e8502fc5a55cd8ebda245ef5125350bd24",
+      "bytes": 1848,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-initial/1-4.66s.png",
+      "sha256": "197e62ed11126cf0f9b48a727f5ce846b2668ef548663a37f2582541b4be684c",
+      "bytes": 213431,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-initial/2-18.64s.png",
+      "sha256": "d0f81ab152cfc4b1ef842797cd33740be6468d8a09ff9fc5255fda26ce896909",
+      "bytes": 229925,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-initial/3-32.62s.png",
+      "sha256": "5f810f0a100e2eea83cb5c248d050337058a0875d42dc65bb87de208119793c3",
+      "bytes": 226623,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-initial/4-46.6s.png",
+      "sha256": "0701d718156dfb7ceb217ab4f885c882760bd989d8b353dccfe47f2c31e4116b",
+      "bytes": 221109,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-initial/5-60.58s.png",
+      "sha256": "5939fd5c02e0b3cdd1dd368990d19c566b406dd24acb9d8edfc8249ff98da149",
+      "bytes": 227814,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-initial/6-74.56s.png",
+      "sha256": "c23deb792c42f084ad8edf92b6bb8cb4fa8d5097a4a1b7ad876cc73dcf1579e3",
+      "bytes": 230224,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-initial/7-83.88s.png",
+      "sha256": "46fbee5c8d3d46f87449122c4091f7dba2d52059d2fd55459fa30e9bce8c2d88",
+      "bytes": 221138,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-initial/8-91.34s.png",
+      "sha256": "cbff23bd86e691519d4a1950a8dda4d7f32193b9c2e1547d2903c0ade16b5598",
+      "bytes": 121667,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-initial/contact-sheet.jpg",
+      "sha256": "8b618f3ce984917bf208d0b8301dcecebd41c045ae645128efdb425130b32063",
+      "bytes": 423453,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-initial/index.json",
+      "sha256": "25005ba6c731b4366ee2b763610d003f8854fa89f65e2a70e7ec905002945817",
+      "bytes": 1576,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-second/1-4.91s.png",
+      "sha256": "5a58f9702d922d11f4db4831ebaa7d19eb2c3b2a798715c44981de959368152b",
+      "bytes": 219543,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-second/2-19.62s.png",
+      "sha256": "e18c798abb114ab2dfcf9378d2d83f4b7363ae2e9625a7163db154feec6f7ced",
+      "bytes": 233346,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-second/3-34.34s.png",
+      "sha256": "b0db6fa3a346f5e3b6e542b2ea3c5e66f5cb994e3fdf755a39d7cc6f6acc6837",
+      "bytes": 245738,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-second/4-49.06s.png",
+      "sha256": "73b734223e97c19a60a8e0567d00aa57a821ca98b8195c7202a51d2eee7dc7cb",
+      "bytes": 176844,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-second/5-63.78s.png",
+      "sha256": "e9a6d2f2a2c951768f27d67bfbc7033ed7e381627101565745a7304f8dd94920",
+      "bytes": 221802,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-second/6-78.5s.png",
+      "sha256": "869486268c4ac8581cf9b36c3caca9f9d3b548d5381ab6fc5506265d8209949f",
+      "bytes": 230888,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-second/7-88.31s.png",
+      "sha256": "02aea026d9a9e30d4f502968ca0ea1e5739c382be50f6963ad86cabcc82dda50",
+      "bytes": 218153,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-second/8-96.16s.png",
+      "sha256": "b202aff781d48681a931cf377c5326e8bc1317bb5733fc85a0ee1ec01b0b2ca1",
+      "bytes": 120223,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-second/contact-sheet.jpg",
+      "sha256": "2e8d6f03fd7caacae48be8c18c944a8f133737095a21904c76b7d73264bbb459",
+      "bytes": 414724,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-second/index.json",
+      "sha256": "ec8c89661f39546bf0986bc945e6394afd203c9930fa1f0f5a62c5df190ddb31",
+      "bytes": 1807,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-console/1-0.85s.png",
+      "sha256": "3bd90a22ed5d3024f922e6272b04b26be27cc36795bf5d8429b302f18de9c3ae",
+      "bytes": 2666,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-console/2-3.39s.png",
+      "sha256": "c080901a77ea956bd650d2017096499e98dc5a9344d142b70815b7c2233ed8ca",
+      "bytes": 126874,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-console/3-5.94s.png",
+      "sha256": "0524dac727835a49ee9327cc65ef2eca1849ddfe4e8ed1f4ef44f1f38a8beb27",
+      "bytes": 213301,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-console/4-8.48s.png",
+      "sha256": "4a9ff0d50b203b51a7976d60ec864db201cc6e9f6d432d1a573708cc5bc46f0f",
+      "bytes": 227496,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-console/5-11.02s.png",
+      "sha256": "4d223537985b39ace503c043d5dd201f60bfce57b83af8df8a67c2a1359e0e7a",
+      "bytes": 208827,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-console/6-13.57s.png",
+      "sha256": "cead90f9f3721a4114f36ec62950aaa5519418627902d00ef0b4e2ed6246560c",
+      "bytes": 229487,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-console/7-15.26s.png",
+      "sha256": "b97cfd1c32c30fd44cdcbc9d270a10337fb1e53b775a8b96f6175435c790530c",
+      "bytes": 231808,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-console/8-16.62s.png",
+      "sha256": "64e5ef109ee2f3707cb5e8bb6f44208c9a67bbe845f17352c7f7a77370ff27f4",
+      "bytes": 226300,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-console/contact-sheet.jpg",
+      "sha256": "05c2dd3cce7bc7006aa55fd6d364581c8e0aff30f5dac04128c4db2ac9ad55c6",
+      "bytes": 387869,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-console/index.json",
+      "sha256": "76ea12435d6c801c39c09cc61789f4d0c6863640699b6cbbc4ef4364fc7c5800",
+      "bytes": 1858,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-desktop/1-1.01s.png",
+      "sha256": "3bd90a22ed5d3024f922e6272b04b26be27cc36795bf5d8429b302f18de9c3ae",
+      "bytes": 2666,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-desktop/2-4.02s.png",
+      "sha256": "4a6c52f35f69a5991ad06959081d45fb9bd8e764c6acfc91f1ac1465220d2123",
+      "bytes": 146136,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-desktop/3-7.04s.png",
+      "sha256": "9da34226bf598c4c041108ae2fb402be8da8fa49324fd8e0fbc7c0ef6eadbf38",
+      "bytes": 216045,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-desktop/4-10.06s.png",
+      "sha256": "a4168c2ac46e5397a216111e2d5ef43f7932ac786e10173d35e9d56c4e189d8d",
+      "bytes": 227596,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-desktop/5-13.08s.png",
+      "sha256": "4e5b972cbe530e59fd3709fc0d72ae55f7f396ac206e67cf9e6e8920eaee9476",
+      "bytes": 200699,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-desktop/6-16.1s.png",
+      "sha256": "48b0b74271f65c7c73c4d3bcac0f69f979a90e75aa1429a01045442e251427c0",
+      "bytes": 223671,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-desktop/7-18.11s.png",
+      "sha256": "52acc67e12935632c9665587e375a10e9f8589dcd294b4a91823eace591cc633",
+      "bytes": 120243,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-desktop/8-19.72s.png",
+      "sha256": "0de7b256e878d9a87b4406ea6398f23dce570f16f8e4c31bae9238e7d1702171",
+      "bytes": 120818,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-desktop/contact-sheet.jpg",
+      "sha256": "88af3ebb439524eba8610b5fc11a6df164fd3ae1193ffd612bad2765453e41fc",
+      "bytes": 325070,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-desktop/index.json",
+      "sha256": "c4c00cbdf1a2a29429148d2a0d993adcda83641edc0ae044930024ba60203c6d",
+      "bytes": 1899,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-initial/1-0.24s.png",
+      "sha256": "79ecc967d14009e019dd5cf75be9d421ecf7887454f87e111820ac5db358b3e6",
+      "bytes": 2675,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-initial/2-0.98s.png",
+      "sha256": "972a1a88f4afb38ff037e93976dcb2b58cfa4d3fe8279fc2fec31b0f328d3197",
+      "bytes": 63192,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-initial/3-1.71s.png",
+      "sha256": "7ecadf11d06ff3cf3922229575c57e267a97bb6c47741e5a77ec723d357cdb44",
+      "bytes": 85290,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-initial/4-2.44s.png",
+      "sha256": "e10028edb806af8bf875b7d90df128548d28cdf65182f4b394e5d86a0200a691",
+      "bytes": 44986,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-initial/5-3.17s.png",
+      "sha256": "b3dfcc7907aea9ee7885cfcdff967c03f6d4bd9387139c64921dc24f39b5d0f8",
+      "bytes": 130495,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-initial/6-3.9s.png",
+      "sha256": "cd1607e79fe30efc03cb9aaa8c7e901c2ecd5979ea8b260e660ef305dfc03bbd",
+      "bytes": 146938,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-initial/7-4.39s.png",
+      "sha256": "d7b6e0d98b37c51658165fc5065b42fc6db2d5fea944ad6e9860a0eb7acc4ed4",
+      "bytes": 148145,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-initial/8-4.78s.png",
+      "sha256": "05c06aeda06638be98a1e403d49827a241d64a201809d3595623b22e12d621a5",
+      "bytes": 148657,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-initial/contact-sheet.jpg",
+      "sha256": "964a0f81f265b434c15c4e16d8342e74f88e9c07c935df3ab740617716636a20",
+      "bytes": 262478,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-initial/index.json",
+      "sha256": "0c13c6da9516820b3a286ee39ee01a3374b806ae5ff648198f321c4f36bb3e52",
+      "bytes": 1726,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-phone/1-0.95s.png",
+      "sha256": "4075b238a6e89d018de96832ae2a475925d82a098f69871b73c2ac89daa920f3",
+      "bytes": 378908,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-phone/2-3.78s.png",
+      "sha256": "5c464bc9d1a152e1e44cfa37ada9becf9ab48a114b7da7244ab2a68f2da47b9a",
+      "bytes": 447270,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-phone/3-6.62s.png",
+      "sha256": "c2f541ce4378681adda0689602173a354053759412dce267f249bbe37b6cd30d",
+      "bytes": 798778,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-phone/4-9.46s.png",
+      "sha256": "6ed71aa291c67cbef16e266cb47b2de04adbf6b4f639505bf9d27c31b98fc24d",
+      "bytes": 840981,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-phone/5-12.3s.png",
+      "sha256": "fb59ba1e100b8599d5e6a4136ec28bce5334ff159a5fe6791ef362d196203be7",
+      "bytes": 760835,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-phone/6-15.14s.png",
+      "sha256": "f3d680e68f089e92b122add6495ddd7fa275a036a46cdb8b33a831a4cfc87797",
+      "bytes": 501495,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-phone/7-17.03s.png",
+      "sha256": "e752be578629aa5d7c11023d5de927bb0b2c84d37770e6b164f6453c46c49539",
+      "bytes": 500114,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-phone/8-18.54s.png",
+      "sha256": "c97c3f879ba4fe37c0fe9e7ddc9d547de38ddbb069379388880ffa45acfc95c5",
+      "bytes": 508424,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-phone/contact-sheet.jpg",
+      "sha256": "60e96c5b53827093fceda060bb37280053e8300c3c92fb8a66974c8fd5c6a9ee",
+      "bytes": 234159,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/review-signin-phone/index.json",
+      "sha256": "3c450e0e58bda36b4f901e22b8d83878f032356574a5c182dd53c134547da332",
+      "bytes": 1877,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/reviewer-notes.json",
+      "sha256": "24f06250acd4cb1086e5019c4a7b6edb2ee99d9a60ba16bde78f9a4fc1082b3f",
+      "bytes": 15192,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/role-tests-redaction-metadata.json",
+      "sha256": "8994114c6cba39d37e33bb7ac82acf39f78bcb4641e75173b24ee1c1697198f9",
+      "bytes": 1069,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/role-tests.sanitized.xml",
+      "sha256": "4d1e441aeafa5876f496342998d1c8b262d422801c757a14def5b4e931f2161e",
+      "bytes": 11716,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/roles-suite.log",
+      "sha256": "a79ff469597bcb1828697a048fa8af65a5f3fa32c2f885600a3dd8d637a7a4f9",
+      "bytes": 233,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/static-1.log",
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "bytes": 19,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/static-2.log",
+      "sha256": "1c6e7f5ab80012221550f34e5eb09d40745c7051da407e322657d95108634b59",
+      "bytes": 28,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/static-3.log",
+      "sha256": "4366c994eeb51c69db610dc0d5262eba91eb7fda2d0fec066471caa4a1436d30",
+      "bytes": 45,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/static-4.log",
+      "sha256": "a8bdfc1769143d3846c01c31e213800669fb91e8e2781f4f394b52137fefc522",
+      "bytes": 310,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/static-5.log",
+      "sha256": "4abe1fd7370225a20120732e40aa58fc8a3fd7c335e1a787fc0d1d7572405c5b",
+      "bytes": 141,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/static-6.log",
+      "sha256": "6c16358f99aa660dceaf02530a39d8d8c6b82ddf1725619b02710f5f8627e8c9",
+      "bytes": 3161,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/static-7.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/static-results.json",
+      "sha256": "b8bbb48be5e786805691015f9bdd62560c4cad789c16f639a05625db445ca633",
+      "bytes": 717,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/suite-results.json",
+      "sha256": "ba7064108da1689cb297b034f49addf23f9ac5424a2d0f0e6e6ea8c61569955e",
+      "bytes": 521,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/verified-assistant.jpg",
+      "sha256": "08442e5aecd4f72d33b524c5acccfc1897726a0aff036c278853d31fe8994bbc",
+      "bytes": 85303,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/video/tro-ly-gemini-cuc-bo-1-demo-owner.webm",
+      "sha256": "a173bcad1f4b5f46f92140ad10678542ef74e0fbf62905011831639a2e66fb4c",
+      "bytes": 14925038,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/video-v2/tro-ly-gemini-cuc-bo-1-demo-owner.webm",
+      "sha256": "55eea27e09174592975e803a002bbe59fc0ee94b5b4ea8063e99ab64b2ab149c",
+      "bytes": 14495672,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/gemini-free-evaluation-2026-10-15/video-v3/tro-ly-gemini-cuc-bo-1-demo-owner.webm",
+      "sha256": "374f2435790be59e4a6698482d83971f11706838344796343117928300d2efc5",
+      "bytes": 12764576,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/deployment-preparation-2026-10-16/recovery-replay/result.json",
+      "sha256": "8eecfb0a612fd8e1d06a4640fe60f962820694633d8f7964a00588f413fde3f2",
+      "bytes": 1434,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/deployment-preparation-2026-10-16/recovery-replay/source-bindings.json",
+      "sha256": "903d72e7f6b4af77a5aa7d3333378d74d61123d27ec6cfdadf68affe5c75f206",
+      "bytes": 803,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/deployment-preparation-2026-10-16/recovery-replay/artifact-manifest.json",
+      "sha256": "aadd39ede4efdbad06da5b8780fd25dcc3f81525aa4089fe94e4c2d36004e6cb",
+      "bytes": 5175,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/deployment-preparation-2026-10-16/focused-tests.log",
+      "sha256": "1440eb0fb5c467fdda48803bda6b0edbf1b971c61d094cd9f00cb09918145380",
+      "bytes": 181,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    },
+    {
+      "local_relative_path": ".demo/deployment-preparation-2026-10-16/keycloak-scan/scan-summary.json",
+      "sha256": "e4b512d0ff37ef215e783059ce7ace8c37b3b9152523f736845e72c72bb3321c",
+      "bytes": 6939,
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    }
+  ]
+}

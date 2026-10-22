@@ -640,6 +640,8 @@ def test_a_resource_type_the_server_does_not_know_is_refused_not_waved_through(
     operator = _member(connection, store_id, StaffRole.OPERATOR)
     approver = _member(connection, store_id, StaffRole.OPS_APPROVER)
     approval_id = uuid4()
+    # Collection may precede this test by more than the envelope's fifteen-minute lifetime.
+    requested_at = datetime.now(UTC)
     with connection.transaction(), connection.cursor() as cursor:
         cursor.execute(
             """
@@ -660,8 +662,8 @@ def test_a_resource_type_the_server_does_not_know_is_refused_not_waved_through(
                 HASH_A,
                 HASH_B,
                 operator.staff_user_id,
-                NOW,
-                NOW + timedelta(minutes=15),
+                requested_at,
+                requested_at + timedelta(minutes=15),
                 f"JCS-SHA256-V1:{uuid4().hex * 2}",
                 store_id,
             ),
@@ -672,7 +674,7 @@ def test_a_resource_type_the_server_does_not_know_is_refused_not_waved_through(
                 approval_request_id, status, row_version, updated_at
             ) VALUES (%s, 'REQUESTED', 1, %s)
             """,
-            (approval_id, NOW),
+            (approval_id, requested_at),
         )
 
     with pytest.raises(ApprovalStateError, match="cannot be verified") as refused:
@@ -921,6 +923,8 @@ def test_a_resource_type_the_server_does_not_know_is_not_claimed(connection: Any
     store_id = _shop(connection)
     operator = _member(connection, store_id, StaffRole.OPERATOR)
     approval_id = uuid4()
+    # Exercise unknown-resource refusal, not expiry since module collection.
+    requested_at = datetime.now(UTC)
     with connection.transaction(), connection.cursor() as cursor:
         cursor.execute(
             """
@@ -942,8 +946,8 @@ def test_a_resource_type_the_server_does_not_know_is_not_claimed(connection: Any
                 HASH_B,
                 POLICY,
                 operator.staff_user_id,
-                NOW,
-                NOW + timedelta(minutes=15),
+                requested_at,
+                requested_at + timedelta(minutes=15),
                 f"JCS-SHA256-V1:{uuid4().hex * 2}",
                 store_id,
             ),
@@ -954,7 +958,7 @@ def test_a_resource_type_the_server_does_not_know_is_not_claimed(connection: Any
                 approval_request_id, status, row_version, updated_at
             ) VALUES (%s, 'APPROVED', 1, %s)
             """,
-            (approval_id, NOW),
+            (approval_id, requested_at),
         )
 
     with pytest.raises(ApprovalStateError, match="cannot be verified") as refused:

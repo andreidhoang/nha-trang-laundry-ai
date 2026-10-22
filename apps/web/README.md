@@ -106,10 +106,12 @@ not a same-origin absolute path is ignored.
 - Role names in user-facing copy gloss through the role map in `src/core/i18n.js` (`enumLabel` →
   `Gloss (TOKEN)`) — the same dual-language rule as every other enum token, never a bare token and
   never a hand translation per screen.
-- The `Trợ lý AI` screen (`src/screens/assistant.js`, capability `ASSISTANT`) calls no model: the
-  brain is deterministic and server-side, the SSE stream is paced replay of an answer that was
-  persisted before the stream started, and conversation history is read from the server only — the
-  browser keeps no transcript.
+- The `Trợ lý AI` screen (`src/screens/assistant.js`, capability `ASSISTANT`) displays server-produced
+  facts and answers from deterministic governed reads. An explicitly enabled synthetic local demo
+  may use Gemini only to classify an otherwise unsupported question into a fixed intent; it cannot
+  supply answer text, facts, prices, order changes or messages. Each answer records whether that
+  classifier was used or unavailable. The SSE stream replays an answer persisted before streaming,
+  and conversation history is read from the server only; the browser keeps no transcript.
 - Every module parses (`node --check` against a `.mjs` copy, skipped where node is absent).
 
 ## What this console deliberately does not do

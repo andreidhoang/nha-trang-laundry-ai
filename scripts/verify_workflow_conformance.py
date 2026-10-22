@@ -60,8 +60,15 @@ from decimal import Decimal
 from typing import Any
 
 from conformance_coverage import coverage, recorded_before_this_run
-from console_recording import Recorder, add_arguments, viewport, watch_render_defects
+from console_recording import (
+    Recorder,
+    add_arguments,
+    viewport,
+    watch_page_errors,
+    watch_render_defects,
+)
 from playwright.sync_api import sync_playwright
+from workflow_database import hold_order_lock
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--base-url", default="http://127.0.0.1:8100")
@@ -366,6 +373,8 @@ DECLARED_CONTROLS = (
 PASS: list[str] = []
 FAIL: list[str] = []
 REC = Recorder(arguments.video, arguments.slow_mo, "moi-quy-trinh")
+PAGE_ERRORS: list[str] = []
+CONSOLE_ERRORS: list[str] = []
 TOUCHED: set[str] = set()
 #: Declared controls this stack could not offer in this run, each with the server's evidence that
 #: it was closed before the run began (`conformance_coverage.recorded_before_this_run`). The gate
@@ -404,22 +413,31 @@ def token(subject: str) -> str:
         return json.load(response)["id_token"]
 
 
+def recorded_context(browser: Any, label: str, **options: Any) -> Any:
+    """Film and monitor every tab, including a different role's private cookie jar."""
+
+    context = browser.new_context(viewport=viewport(), **options, **REC.context_options())
+    watch_page_errors(context, PAGE_ERRORS)
+
+    def opened(page: Any) -> None:
+        page.on(
+            "console",
+            lambda message: (
+                CONSOLE_ERRORS.append(message.text) if message.type == "error" else None
+            ),
+        )
+        REC.film(context, page, label)
+
+    context.on("page", opened)
+    return context
+
+
 class Console:
     """The console, as the person at the counter reaches it."""
 
     def __init__(self, page: Any, context: Any) -> None:
         self.page = page
         self.context = context
-        self.page_errors: list[str] = []
-        page.on("pageerror", lambda error: self.page_errors.append(str(error)))
-        page.on(
-            "console",
-            lambda message: (
-                self.page_errors.append(f"console.error: {message.text}")
-                if message.type == "error"
-                else None
-            ),
-        )
 
     # -- signing in ------------------------------------------------------------------
     def sign_in(self, subject: str) -> int:
@@ -965,7 +983,35 @@ class Console:
         control = self.step_control(step)
         if control is None:
             return f"(the page offers no {step}; primary is {self.primary_step() or 'none'})"
-        control.click()
+
+        def submit_step(button: Any) -> None:
+            # A filmed or loaded machine can take longer than the old fixed sleep. Wait for
+            # this order's actual command response, including refusals; never press it again.
+            with self.page.expect_response(
+                lambda response: (
+                    response.request.method == "POST"
+                    and response.url.split("?", 1)[0]
+                    == f"{BASE}/internal/v1/orders/{order_id}/steps"
+                ),
+                timeout=15000,
+            ):
+                button.click()
+
+        if step in {
+            "RECEIVE",
+            "TAKE_PAYMENT",
+            "COLLECT",
+            "DELIVERY_PICKUP",
+            "DELIVERY_RETURN",
+            "CANCEL",
+            "HOLD",
+            "START_WASH",
+            "REWASH",
+            "REJECT_INTAKE",
+        }:
+            control.click()  # Opens a sheet, or arms HOLD; no mutation is sent yet.
+        else:
+            submit_step(control)
         self.page.wait_for_timeout(600)
         if step == "RECEIVE":
             if slot:
@@ -973,7 +1019,7 @@ class Console:
                 touched("orderDetail.receive-slot")
             submit = self.page.locator("#receive-submit")
             if not submit.is_disabled():
-                submit.click()
+                submit_step(submit)
                 touched("orderDetail.receive-submit")
         elif step == "CANCEL":
             if custody:
@@ -986,11 +1032,11 @@ class Console:
             if not confirm.is_disabled():
                 confirm.click()
                 self.page.wait_for_timeout(200)
-                confirm.click()
+                submit_step(confirm)
                 touched("orderDetail.cancel-confirm")
         elif step == "HOLD":
             # A two-press control: the first press arms it, the second commits.
-            control.click()
+            submit_step(control)
             touched("orderDetail.hold-confirm")
         elif step == "START_WASH":
             with contextlib.suppress(Exception):
@@ -998,12 +1044,12 @@ class Console:
                     "dialog[open] button[data-machine-skip]", state="visible", timeout=8000
                 )
             if machine:
-                self.page.locator(
-                    f"dialog[open] button[data-machine-code='{machine}']"
-                ).first.click()
+                submit_step(
+                    self.page.locator(f"dialog[open] button[data-machine-code='{machine}']").first
+                )
                 touched("orderDetail.machine-pick")
             else:
-                self.page.locator("dialog[open] button[data-machine-skip]").first.click()
+                submit_step(self.page.locator("dialog[open] button[data-machine-skip]").first)
                 touched("orderDetail.machine-skip")
         elif step in {"REWASH", "REJECT_INTAKE"}:
             prefix = "orderDetail.rewash" if step == "REWASH" else "orderDetail.reject"
@@ -1019,11 +1065,11 @@ class Console:
                 touched("orderDetail.rewash-machine")
             confirm = self.page.locator("dialog[open] #step-reason-submit")
             if not confirm.is_disabled():
-                confirm.click()
                 if step == "REJECT_INTAKE":
                     # It ends the order: two presses, as Huỷ đơn.
-                    self.page.wait_for_timeout(200)
                     confirm.click()
+                    self.page.wait_for_timeout(200)
+                submit_step(confirm)
                 touched(f"{prefix}-confirm")
         self.page.wait_for_timeout(1800)
         return self.said()
@@ -2219,14 +2265,36 @@ def scenario_ai_refuses(console: Console) -> None:
     question = console.page.locator("#assistant-question")
     if question.count():
         console.type_into("#assistant-question", "Hôm nay tiệm thế nào?", "assistant.question")
-        console.page.locator("button[type=submit]").first.click()
-        console.page.wait_for_timeout(3200)
+        response = console.press_capturing(
+            console.page.locator("button[type=submit]").first,
+            f"/stores/{STORE}/assistant/turns",
+        )[0]
         touched("assistant.submit")
+        turn = response["body"] or {}
+        if response["status"] == 201 and turn.get("answer"):
+            console.page.get_by_text(turn["answer"], exact=True).last.wait_for(timeout=20000)
+        history = console.call("GET", f"/internal/v1/stores/{STORE}/assistant/turns")
+        persisted = next(
+            (
+                item
+                for item in (history["body"] or [])
+                if item.get("turn_id") == turn.get("turn_id")
+            ),
+            {},
+        )
         answered = console.text()
         ok(
-            "the assistant answers from the shop's own records and says it calls no model",
-            "không gọi mô hình" in answered,
-            "",
+            "the assistant discloses optional classification and persists this governed answer",
+            "Gemini có thể hỗ trợ hiểu câu hỏi" in answered
+            and "câu trả lời sẽ ghi rõ khi có sử dụng" in answered
+            and "không đổi đơn, tính giá hay gửi tin nhắn" in answered
+            and response["status"] == 201
+            and history["status"] == 200
+            and turn.get("intent") == persisted.get("intent") == "TODAY_OVERVIEW"
+            and turn.get("reason_codes") == persisted.get("reason_codes") == []
+            and turn.get("answer") == persisted.get("answer")
+            and console.page.locator("[data-ai-status=classified]").count() == 0,
+            f"HTTP {response['status']}; persisted intent {persisted.get('intent')}",
         )
         ok(
             "and it names the question it understood rather than guessing silently",
@@ -2368,7 +2436,7 @@ def scenario_band(console: Console) -> None:
     done = console.confirm("WALK_IN")
     ok(
         "and the customer can agree to it, so it becomes an order",
-        (done["acceptance"] or {}).get("status", 0) < 300 and done["order"]["status"] < 300,
+        (done["acceptance"] or {}).get("status") == 201 and done["order"]["status"] == 201,
         f"acceptance {(done['acceptance'] or {}).get('status')} order {done['order']['status']} "
         f"{done['order']['text'][:120]}",
     )
@@ -2472,7 +2540,8 @@ def _prepay_then_collect(
     ok(
         "and a paid order whose laundry was never handed over cannot be closed",
         "COMPLETE" not in offered
-        and closing["status"] >= 400
+        and closing["status"] == 409
+        and "INVALID_STATE_TRANSITION: production is not released" in closing["text"]
         and (stored(order_id, "commercial_status") != "COMPLETED" if READS_DATABASE else True),
         f"HTTP {closing['status']} {closing['text'][:120]}",
     )
@@ -2550,21 +2619,7 @@ def scenario_busy(console: Console) -> None:
     order_id = order["order_id"]
     total = order["quote"]["net_service_subtotal_vnd"]
     grouped = f"{total:,}".replace(",", ".")
-    # A second connection takes this order's row for twelve seconds -- longer than the API's
-    # five-second lock_timeout -- the way a slow report or a stuck session would.
-    holder = subprocess.Popen(
-        [
-            "psql",
-            arguments.database_url,
-            "-q",
-            "-c",
-            f"BEGIN; SELECT 1 FROM orders WHERE id='{order_id}' FOR UPDATE; "
-            "SELECT pg_sleep(12); COMMIT;",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    time.sleep(1.0)
+    # Open the sheet first: filming and navigation must not consume the held-lock interval.
     console.open_order(order_id)
     control = console.step_control("TAKE_PAYMENT")
     if control is not None:
@@ -2573,23 +2628,21 @@ def scenario_busy(console: Console) -> None:
     # The remaining amount is prefilled (PAYMENT-001); `grouped` is what the sheet shows.
     note(f"the sheet takes the {grouped} ₫ that remains")
     submit = console.page.locator("#payment-submit")
-    submit.click()
-    try:
+    with hold_order_lock(arguments.database_url, order_id):
+        submit.click()
         console.page.wait_for_selector("text=Hệ thống đang bận", timeout=12000)
-    except Exception:
-        console.page.wait_for_timeout(1000)
-    said = console.said()
-    ok(
-        "a payment that cannot get its row in time is told 'busy, try again', not a server fault",
-        "Hệ thống đang bận" in said and "Đừng thử lại" not in said,
-        said[:200],
-    )
-    ok(
-        "and nothing was written for it",
-        sql(f"select count(*) from order_settlements where order_id='{order_id}'") == "0",
-        "",
-    )
-    holder.wait(timeout=30)
+        said = console.said()
+        ok(
+            "a payment that cannot get its row in time is told 'busy, try again', "
+            "not a server fault",
+            "Hệ thống đang bận" in said and "Đừng thử lại" not in said,
+            said[:200],
+        )
+        ok(
+            "and nothing was written for it",
+            sql(f"select count(*) from order_settlements where order_id='{order_id}'") == "0",
+            "",
+        )
     note("the other connection let go of the row")
     if submit.count() and submit.is_enabled():
         submit.click()
@@ -3290,7 +3343,7 @@ def scenario_export_range(console: Console) -> None:
 
     head("13", "XUẤT THEO KHOẢNG — 7 ngày, người khác duyệt, xuất đúng một lần")
     browser = console.context.browser
-    context = browser.new_context(viewport=viewport())
+    context = recorded_context(browser, "nguoi-yeu-cau-xuat")
     requester = Console(context.new_page(), context)
     requester.sign_in("demo-approver")
     requester.open("#/exports", settle=1500)
@@ -3355,7 +3408,7 @@ def scenario_export_range(console: Console) -> None:
             request_row,
         )
     page.locator("#export-approval").click()
-    page.wait_for_timeout(1600)
+    page.get_by_text("Chờ chủ tiệm duyệt", exact=True).wait_for(timeout=15000)
     touched("exports.request-approval")
     approval_id = sql(
         f"select id from approval_requests where resource_id = '{request_id}'"
@@ -3458,7 +3511,7 @@ def scenario_export_range(console: Console) -> None:
 def _second_device(console: Console, subject: str) -> Console:
     """Another browser, signed in as `subject`: its own context, so its own cookie jar."""
 
-    context = console.context.browser.new_context(viewport=viewport())
+    context = recorded_context(console.context.browser, f"thiet-bi-{subject}")
     device = Console(context.new_page(), context)
     if device.sign_in(subject) not in (200, 201):
         raise AssertionError(f"{subject} could not sign in on a second device")
@@ -4307,7 +4360,7 @@ def scenario_report(console: Console) -> None:
     ok("the navigation reaches Báo cáo", console.page.url.endswith("#/reports"), console.page.url)
 
     console.page.locator("[aria-label='Khoảng ngày'] [data-value='today']").click()
-    console.page.wait_for_timeout(1500)
+    console.page.locator("[data-kpi=ORDERS_CREATED] .kpi__value").wait_for(timeout=20000)
     touched("reports.preset")
 
     def tile_value(key: str) -> str:
@@ -4980,7 +5033,9 @@ def scenario_shop_capture(console: Console) -> None:
     posted: list[dict[str, Any]] = []
     if control is not None:
         control.click()
-        console.page.wait_for_timeout(700)
+        console.page.locator("dialog[open] [data-suggested-vehicle='O_TO']").wait_for(
+            state="attached", timeout=15000
+        )
         hint = console.page.locator("dialog[open] [data-suggested-vehicle]")
         ok(
             "the leg sheet says what the rule suggests, and picks nothing for the driver",
@@ -5850,7 +5905,7 @@ def scenario_export_payments(console: Console) -> None:
     today = _datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
 
     browser = console.context.browser
-    context = browser.new_context(viewport=viewport(), accept_downloads=True)
+    context = recorded_context(browser, "nguoi-yeu-cau-thanh-toan", accept_downloads=True)
     requester = Console(context.new_page(), context)
     requester.sign_in("demo-approver")
 
@@ -5983,7 +6038,7 @@ def scenario_export_payments(console: Console) -> None:
         shown_line,
     )
     page.locator("#export-approval").click()
-    page.wait_for_timeout(1600)
+    page.get_by_text("Chờ chủ tiệm duyệt", exact=True).wait_for(timeout=15000)
     touched("exports.request-approval")
     ok(
         "the envelope is raised and the screen waits for an owner",
@@ -8019,8 +8074,8 @@ def scenario_daily_summary(console: Console) -> None:
     # until it is pressed. A context of its own because a Playwright clock belongs to the whole
     # context -- pinned on the main one, it would reach every later page -- and so this check does
     # not depend on the hour the run happens to start at.
-    morning_context = console.context.browser.new_context(
-        viewport=viewport(), storage_state=console.context.storage_state()
+    morning_context = recorded_context(
+        console.context.browser, "buoi-sang", storage_state=console.context.storage_state()
     )
     morning = morning_context.new_page()
     morning.clock.set_fixed_time("2026-09-26T03:00:00Z")
@@ -10102,6 +10157,10 @@ def scenario_late_delivery(console: Console) -> None:
             refused["text"][:160],
         )
         _open_late(console)
+        console.page.get_by_text(
+            "Chủ tiệm chưa công bố mức bồi hoàn, nên chưa đo được chuyến nào giao trễ.",
+            exact=True,
+        ).wait_for(timeout=15000)
         ok(
             "and the screen says so in one line, with no row",
             "chưa công bố mức bồi hoàn" in console.text()
@@ -10163,6 +10222,7 @@ def scenario_late_delivery(console: Console) -> None:
     else:
         _open_late(console)
     entry = console.page.locator(f"#late-list [data-late='{store_fault}']")
+    entry.wait_for(state="visible", timeout=15000)
     entry_text = entry.first.inner_text() if entry.count() else ""
     ok(
         "the screen shows hẹn → giao, trễ 3 giờ, the failed trip, and the credit on its button",
@@ -10390,7 +10450,7 @@ def scenario_platform_bounds(console: Console) -> None:
 
     head("G9", "NỀN TẢNG — giới hạn trang danh sách, khoá lặp lại theo người")
     console.sign_in("demo-owner")
-    console.open("#/today", settle=800)
+    console.open("#/", settle=800)
     for template, bound in PAGE_BOUNDS_G9:
         path = template.format(store=STORE)
         answers = {
@@ -10399,7 +10459,7 @@ def scenario_platform_bounds(console: Console) -> None:
         }
         ok(
             f"{template.split('/')[-1]}: limit 0 and {bound + 1} are 422, {bound} is served",
-            answers[0] == 422 and answers[bound + 1] == 422 and answers[bound] not in (409, 422),
+            answers[0] == 422 and answers[bound + 1] == 422 and answers[bound] == 200,
             answers,
         )
 
@@ -10427,11 +10487,11 @@ def scenario_platform_bounds(console: Console) -> None:
             },
         )
 
-    context = console.context.browser.new_context(viewport=viewport())
+    context = recorded_context(console.context.browser, "nguoi-duyet")
     try:
         approver = Console(context.new_page(), context)
         approver.sign_in("demo-approver")
-        approver.open("#/today", settle=800)
+        approver.open("#/", settle=800)
         mine = export_with_fixed_key(console)
         theirs = export_with_fixed_key(approver)
         again = export_with_fixed_key(approver)
@@ -11112,7 +11172,7 @@ def scenario_counter_race(console: Console) -> None:
     in_flight = bool(held) and page.locator("#new-price").is_disabled()
     box = page.locator("#new-line-0-qty")
     box.click()
-    box.press("Control+A")
+    box.press("ControlOrMeta+A")
     page.keyboard.type("6.2", delay=12)
     touched("newOrder.line-qty")
     page.wait_for_timeout(200)
@@ -11145,6 +11205,7 @@ def scenario_counter_race(console: Console) -> None:
         "priced 5,8 kg, and 'Tiếp tục' is not offered for that price",
         in_flight
         and _quantities(read_1) == [Decimal("5.8")]
+        and box.input_value() == "6.2"
         and page.locator("#new-next").count() == 0
         and "Đã sửa sau khi tính giá" in receipt
         and (
@@ -11153,7 +11214,7 @@ def scenario_counter_race(console: Console) -> None:
             else ""
         )
         == "Tính lại",
-        f"in_flight={in_flight} lines={read_1.get('lines')} "
+        f"in_flight={in_flight} typed={box.input_value()} lines={read_1.get('lines')} "
         f"next={page.locator('#new-next').count()}",
     )
     second = console.price()
@@ -11185,7 +11246,7 @@ def scenario_counter_race(console: Console) -> None:
     # quote for B's intake -- never a revision of A's, never an acceptance on it.
     box = page.locator("#new-line-0-qty")
     box.click()
-    box.press("Control+A")
+    box.press("ControlOrMeta+A")
     page.keyboard.type("5.8", delay=12)
     page.wait_for_timeout(200)
     held.clear()
@@ -13652,22 +13713,20 @@ def _browser_launch_options() -> dict[str, object]:
 
 
 def main() -> int:
-    selected = {arguments.only: SCENARIOS[arguments.only]} if arguments.only else dict(SCENARIOS)
     if arguments.only and arguments.only not in SCENARIOS:
         raise SystemExit(f"unknown scenario {arguments.only!r}; choose from {sorted(SCENARIOS)}")
+    selected = {arguments.only: SCENARIOS[arguments.only]} if arguments.only else dict(SCENARIOS)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=True,
             **_browser_launch_options(),  # type: ignore[arg-type]
             **REC.launch_options(),  # type: ignore[arg-type]
         )
-        context = browser.new_context(
-            viewport=viewport(),
-            permissions=["clipboard-read", "clipboard-write"],
-            **REC.context_options(),  # type: ignore[arg-type]
+        context = recorded_context(
+            browser, "chu-cua-hang", permissions=["clipboard-read", "clipboard-write"]
         )
         render_defects = watch_render_defects(context)
-        console = Console(REC.film(context, context.new_page(), "chu-cua-hang"), context)
+        console = Console(context.new_page(), context)
         ok("the console signs in", console.sign_in("demo-owner") in (200, 201))
 
         head("0", "ĐIỀU HƯỚNG — every navigation destination, reached by clicking it")
@@ -13745,10 +13804,17 @@ def main() -> int:
         if extra:
             note(f"touched but not declared (add them to DECLARED_CONTROLS): {extra}")
 
-        if console.page_errors:
-            note(f"page errors seen: {console.page_errors[:6]}")
+        ok("no uncaught JavaScript errors in any browser tab", not PAGE_ERRORS, PAGE_ERRORS[:6])
+        if CONSOLE_ERRORS:
+            note(
+                "console.error diagnostics (including deliberate HTTP refusals): "
+                f"{CONSOLE_ERRORS[:6]}"
+            )
         REC.finish()
-        context.close()
+        # A failed scenario may not have reached its own second-context cleanup. Close every
+        # cookie jar before asking Playwright for a completed video, including failed evidence.
+        for remaining_context in browser.contexts:
+            remaining_context.close()
         for film in REC.save():
             print(f"  video: {film}", flush=True)
         browser.close()

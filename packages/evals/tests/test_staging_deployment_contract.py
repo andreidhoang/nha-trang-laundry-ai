@@ -40,10 +40,14 @@ def test_private_tls_topology_is_deny_by_default(staging_config: dict[str, objec
     assert _mapping(tls, "build")["dockerfile"] == "deploy/staging/Caddy.Dockerfile"
     tls_dockerfile = (ROOT / "deploy/staging/Caddy.Dockerfile").read_text(encoding="utf-8")
     assert (
-        "caddy:2.10.2-alpine@"
-        "sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d" in tls_dockerfile
+        "caddy:2.11.7-alpine@"
+        "sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f" in tls_dockerfile
     )
     assert "setcap -r /usr/bin/caddy" in tls_dockerfile
+    assert "golang:1.26.9-alpine3.23@sha256:" in tls_dockerfile
+    assert "GOTOOLCHAIN=local" in tls_dockerfile
+    assert "golang.org/x/net@v0.60.0" in tls_dockerfile
+    assert "COPY --from=caddy-build /out/caddy /usr/bin/caddy" in tls_dockerfile
     assert tls["entrypoint"] == ["caddy"]
     ports = tls["ports"]
     assert isinstance(ports, list) and ports == [
@@ -64,6 +68,33 @@ def test_private_tls_topology_is_deny_by_default(staging_config: dict[str, objec
     assert _mapping(networks, "database-private")["external"] is True
     assert set(_mapping(_mapping(services, "tls"), "networks")) == {"ingress-private"}
     assert set(_mapping(_mapping(services, "worker"), "networks")) == {"database-private"}
+
+
+def test_local_database_uses_the_patched_runtime_without_removing_privilege_drop() -> None:
+    result = subprocess.run(
+        ["docker", "compose", "-f", "compose.yaml", "config", "--format", "json"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    postgres = _mapping(_mapping(json.loads(result.stdout), "services"), "postgres")
+    build = _mapping(postgres, "build")
+    assert build["dockerfile"] == "deploy/production/Postgres.Dockerfile"
+    assert build["target"] == "postgres-runtime"
+    dockerfile = (ROOT / str(build["dockerfile"])).read_text(encoding="utf-8")
+    assert "postgres:16.15-alpine3.23@sha256:" in dockerfile
+    assert "golang:1.26.9-alpine3.23@sha256:" in dockerfile
+    assert "GOTOOLCHAIN=local" in dockerfile
+    assert "github.com/tianon/gosu@6456aaa0f3c854d199d0f037f068eb97515b7513" in dockerfile
+    runtime = dockerfile.split("AS postgres-runtime", 1)[1].split(
+        "FROM postgres-runtime AS postgres-backup", 1
+    )[0]
+    assert "COPY --from=gosu-build /go/bin/gosu /usr/local/bin/gosu" in runtime
+    assert "gosu nobody true" in runtime
+    assert "ENTRYPOINT" not in runtime and "USER" not in runtime
+    assert "rm " not in runtime
+    assert _mapping(postgres, "environment")["POSTGRES_DB"] == "nha_trang_laundry"
 
 
 def test_secrets_identities_and_migration_job_are_least_privilege(

@@ -1,5 +1,12 @@
 # Production Readiness Assessment
 
+> Current navigation (2026-10-16): the dated findings below are historical. Use the
+> [dedicated Mac release plan](SHOP_MAC_RELEASE_PLAN_2026-10-16.md), the
+> [October 15 application verification](audit/LOCAL_READINESS_2026-10-15.md) and the
+> [Free-tier Gemini evidence](audit/GEMINI_FREE_TIER_VERIFICATION_2026-10-15.md) for later measured
+> corrections. Machine delivery/capability state remains authoritative; none of these documents
+> authorizes deployment or customer AI.
+
 **Assessed:** 2026-08-18
 **Commit assessed:** `1d5be44` (the tree on `main` after today's decision-ratification round)
 **Supersedes:** the 2026-08-14 assessment of `8e5395d` (same path; see git history)

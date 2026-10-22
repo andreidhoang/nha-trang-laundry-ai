@@ -13,10 +13,21 @@ rules:
   - This index is deliberately not hash-pinned by any bundle. A pointer inside the thing it points
     at cannot be updated without invalidating itself.
 current:
-  path: evidence/agent-shadow/local-synthetic-suite-v5.json
+  path: evidence/agent-shadow/local-synthetic-suite-v6.json
   derived_by: scripts/capture_local_agent_evidence.py
   release_effect: NONE
 superseded:
+  - path: evidence/agent-shadow/local-synthetic-suite-v5.json
+    sha256: sha256:5062c20661bb6b228b4b306a515e5e65b4306a5dbd13cdf95a8cb8fafa152ea5
+    superseded_on: '2026-10-15'
+    superseded_by: evidence/agent-shadow/local-synthetic-suite-v6.json
+    review: docs/audit/LOCAL_READINESS_2026-10-15.md
+    reason: >-
+      Local readiness fixes recheck worker authority before execution, across model/tool boundaries
+      and before committing terminal state. This changes the pinned agent_runner.py. Re-derived
+      with capture_local_agent_evidence.py, whose default and supersession guard also advance;
+      no recorded hashes were hand-edited. All 32 cases remain SKIP on DETERMINISTIC_DEGRADED,
+      with unchanged release blockers and no provider or release authorization.
   - path: evidence/agent-shadow/local-synthetic-suite-v4.json
     sha256: sha256:1f0dbb9affbd28e4bd514ec85dcaa4f236fd8ce6102890c2e996335981b00ce4
     superseded_on: '2026-09-28'

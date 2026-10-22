@@ -847,7 +847,7 @@ def build_domain_backend(
 def build_domain_facade_service(
     *,
     database_url: str,
-    connection_factory: Callable[[str], Any] = psycopg.connect,
+    connection_factory: Callable[[str], Any] = application_connect,
     now: Callable[[], datetime] | None = None,
 ) -> AgentFacadeService:
     """The domain backend with the admission ledger every facade process shares.

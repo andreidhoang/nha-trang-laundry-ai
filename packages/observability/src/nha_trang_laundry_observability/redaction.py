@@ -15,7 +15,10 @@ _MAX_ITEMS = 50
 _MAX_TEXT = 512
 _SAFE_FIELD = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 _BEARER = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}")
-_API_KEY = re.compile(r"(?i)\b(?:sk|api|nvapi|nvcf)[-_][A-Za-z0-9_-]{8,}")
+_API_KEY = re.compile(
+    r"(?i)\b(?:(?:sk|api|nvapi|nvcf)[-_][A-Za-z0-9_-]{8,}"
+    r"|AIza[A-Za-z0-9_-]{20,}|AQ\.[A-Za-z0-9_-]{24,})"
+)
 _VIETNAMESE_PHONE = re.compile(r"(?<!\d)(?:\+?84|0)[\s.-]?[0-9]{2,3}(?:[\s.-]?[0-9]){6,8}(?!\d)")
 
 _SENSITIVE_FIELDS = {
@@ -54,8 +57,8 @@ def _safe_field_name(value: object) -> tuple[str, bool]:
     normalized = _normalized_field(raw)
     compact = normalized.replace("_", "")
     sensitive = any(marker in compact for marker in _SENSITIVE_MARKERS)
-    if sensitive and _SAFE_FIELD.fullmatch(raw):
-        return raw, True
+    # A credential can itself contain a word such as "password". Mask its field name before
+    # considering whether that name also means its value is sensitive.
     if not _SAFE_FIELD.fullmatch(raw) or _contains_sensitive_text(raw):
         digest = sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:12]
         return f"unsafe_field_{digest}", sensitive

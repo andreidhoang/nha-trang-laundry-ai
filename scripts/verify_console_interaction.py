@@ -2689,6 +2689,9 @@ def range_price_queue_item() -> dict[str, object]:
     }
 
 
+BODY_PROBES: dict[str, dict] = {}
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     """Static files plus one drip-fed SSE endpoint.
 
@@ -2704,7 +2707,40 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         pass
 
+    def response_body_probe(self) -> bool:
+        """A real partial HTTP body; route.fulfill cannot simulate a stalled transport."""
+
+        name = self.path.removeprefix("/__probe__/response-body/")
+        probe = BODY_PROBES.get(name)
+        if not self.path.startswith("/__probe__/response-body/") or probe is None:
+            return False
+        probe["calls"] += 1
+        probe["method"] = self.command
+        probe["idempotency_key"] = self.headers.get("Idempotency-Key")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", "11")  # {"ok":true}
+        self.end_headers()
+        self.wfile.write(b'{"ok":')
+        self.wfile.flush()
+        probe["started"].set()
+        if probe["mode"] == "broken":
+            return True  # socket closes before Content-Length bytes arrive
+        probe["release"].wait(10)
+        try:
+            self.wfile.write(b"true}")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # expected when the browser aborts the timed-out body
+        return True
+
+    def do_POST(self) -> None:
+        if not self.response_body_probe():
+            self.send_error(501)
+
     def do_GET(self) -> None:
+        if self.response_body_probe():
+            return
         # CONSOLE-SHELL-009 (C7): the console under `/staff/`, the way the API serves it, so a real
         # service worker can install there, wait, and take over -- only once the section that needs
         # it asks, so every earlier section runs exactly as before (its `/staff/sw.js` is a 404).
@@ -2790,6 +2826,82 @@ def hold_step1(name: str, route: Route, status: int, body: object) -> bool:
         return False
     held_step1.setdefault(name, []).append((route, status, body))
     return True
+
+
+def verify_response_body_deadlines(browser) -> None:  # type: ignore[no-untyped-def]
+    """Use the actual request module against incomplete HTTP responses, on a blank page."""
+
+    probe_context = browser.new_context()
+    probe_page = probe_context.new_page()
+    probe_page.route("**/__probe__/blank", lambda route: route.fulfill(body="<!doctype html>"))
+    try:
+        for name, mode, method, action, expected in (
+            ("read-deadline", "stall", "GET", "deadline", "TIMEOUT"),
+            ("write-deadline", "stall", "POST", "deadline", "TIMEOUT"),
+            ("broken-body", "broken", "GET", "none", "NETWORK"),
+            ("signed-out-body", "stall", "POST", "departure", "SIGNED_OUT"),
+            ("cancelled-body", "stall", "GET", "cancel", "AbortError"),
+            ("complete-body", "stall", "GET", "complete", "resolved"),
+        ):
+            probe = {
+                "started": threading.Event(),
+                "release": threading.Event(),
+                "calls": 0,
+                "mode": mode,
+            }
+            BODY_PROBES[name] = probe
+            probe_page.goto(f"http://localhost:{PORT}/__probe__/blank")
+            probe_page.clock.install()
+            probe_page.evaluate(
+                """async ({name, method}) => {
+                  window.__api = await import('/src/core/api.js');
+                  document.cookie = 'staff_csrf=synthetic-body-probe; path=/';
+                  window.__abort = new AbortController();
+                  window.__result = {state: 'pending'};
+                  window.__api.request('/__probe__/response-body/' + name, {
+                    method, signal: window.__abort.signal,
+                    ...(method === 'POST' ? {idempotencyKey: 'synthetic-body-probe'} : {})
+                  }).then(value => window.__result = {state: 'resolved', value})
+                    .catch(error => window.__result = {
+                      state: 'rejected', kind: error.kind || error.name,
+                      correlation: error.correlationId || ''
+                    });
+                }""",
+                {"name": name, "method": method},
+            )
+            check(f"{name}: the real server sent response headers", probe["started"].wait(2))
+            probe_page.wait_for_timeout(100)
+            if action == "deadline":
+                probe_page.clock.fast_forward(31_000 if method == "POST" else 21_000)
+            elif action == "departure":
+                probe_page.evaluate("() => window.__api.markDeparture()")
+                probe["release"].set()
+            elif action == "cancel":
+                probe_page.evaluate("() => window.__abort.abort()")
+            elif action == "complete":
+                probe["release"].set()
+            probe_page.wait_for_timeout(200)
+            result = probe_page.evaluate("window.__result")
+            seen = result.get("kind") or result["state"]
+            check(
+                f"{name}: response-body completion follows the request's {expected} contract",
+                seen == expected
+                and (expected not in {"TIMEOUT", "NETWORK"} or bool(result.get("correlation")))
+                and (expected != "resolved" or result.get("value") == {"ok": True}),
+                repr(result),
+            )
+            check(
+                f"{name}: only one request was sent, with the write key preserved",
+                probe["calls"] == 1
+                and probe["method"] == method
+                and (method != "POST" or probe["idempotency_key"] == "synthetic-body-probe"),
+                f"calls={probe['calls']}",
+            )
+            probe["release"].set()
+    finally:
+        for probe in BODY_PROBES.values():
+            probe["release"].set()
+        probe_context.close()
 
 
 with sync_playwright() as playwright:
@@ -4145,6 +4257,7 @@ with sync_playwright() as playwright:
         route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
 
     page.route("**/internal/**", route_api)
+    verify_response_body_deadlines(browser)
     page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
     page.wait_for_timeout(1200)
     # CONSOLE-REDESIGN-001: pricing happens inside Nhận đồ. One press issues the ticket and opens
@@ -4281,6 +4394,22 @@ with sync_playwright() as playwright:
     page.reload(wait_until="networkidle")
     page.wait_for_timeout(1000)
 
+    assistant_disclosure = page.locator(".notice.chat__seam").inner_text()
+    check(
+        "the assistant disclosure names optional Gemini use and answer provenance",
+        "Gemini có thể hỗ trợ hiểu câu hỏi" in assistant_disclosure
+        and "câu trả lời sẽ ghi rõ khi có sử dụng" in assistant_disclosure
+        and "không gọi mô hình ngôn ngữ" not in assistant_disclosure,
+        assistant_disclosure,
+    )
+    check(
+        "the assistant disclosure preserves action limits and stored-answer playback",
+        "không đổi đơn, tính giá hay gửi tin nhắn" in assistant_disclosure
+        and "Câu trả lời được lưu trước khi hiện dần" in assistant_disclosure
+        and "Mỗi lượt hỏi được lưu kèm người hỏi" in assistant_disclosure,
+        assistant_disclosure,
+    )
+
     composer = page.locator("#assistant-question")
     check(
         "the empty transcript welcomes with four suggestion chips",
@@ -4382,6 +4511,38 @@ with sync_playwright() as playwright:
         composer.input_value() == "Còn gì chờ duyệt?",
         repr(composer.input_value()),
     )
+
+    # Provider provenance is persisted server metadata. It must survive refresh without turning
+    # a successful classification into a warning, and failures must offer a useful next step.
+    for provider_code, marker, explanation in (
+        ("CLASSIFIED", "classified", "Số liệu và câu trả lời do máy chủ kiểm tra"),
+        ("UNAVAILABLE", "unavailable", "Chưa kết nối được Gemini"),
+        ("INVALID_RESPONSE", "unavailable", "Hãy thử hỏi ngắn và cụ thể hơn"),
+        ("BUDGET_EXHAUSTED", "unavailable", "Đã hết số lượt thử Gemini"),
+        ("NOT_CONFIGURED", "unavailable", "Gemini chưa sẵn sàng"),
+        ("INPUT_LIMIT", "unavailable", "Hãy rút ngắn câu hỏi"),
+    ):
+        state["assistant_history"] = [
+            {
+                "turn_id": "00000000-0000-4000-8000-0000000000cd",
+                "question": "Hôm nay thế nào?",
+                "intent": "TODAY_OVERVIEW",
+                "answer": ASSISTANT_ANSWER,
+                "links": [],
+                "reason_codes": [f"ASSISTANT_GEMINI_{provider_code}"],
+                "created_at": "2026-08-15T03:00:00+00:00",
+            }
+        ]
+        page.reload(wait_until="networkidle")
+        note = page.locator(f"[data-ai-status='{marker}']")
+        check(
+            f"Gemini {provider_code} has useful Vietnamese provenance after refresh",
+            note.count() == 1
+            and explanation in note.inner_text()
+            and page.locator(".chat__assistant .notice[data-state='warn']").count() == 0
+            and "ASSISTANT_GEMINI_" not in page.locator("main").inner_text(),
+            page.locator("main").inner_text()[:200],
+        )
 
     # `ASSISTANT-RETENTION-001`. `DEC-008` disposes of a transcript's words at 180 days and keeps
     # the turn -- its intent, reason codes, actor and timestamp are ledger. Before this the console
@@ -8797,6 +8958,13 @@ with sync_playwright() as playwright:
     )
     total_text, wash_text, iron_text, promo_text, credit_text, fee_text = formatted
 
+    # Exercise the unavailable branch explicitly: Chrome on macOS exposes Web Share even in
+    # headless mode. This document has no sharing; the reload below installs the supported stub.
+    page.evaluate(
+        "Object.defineProperty(navigator, 'share', "
+        "{configurable: true, writable: true, value: undefined});"
+    )
+
     # First paint: the order read alone. The quote read fails, so the lines are not in.
     state["receipt_quote_fails"] = True
     page.evaluate("location.hash = '#/orders'")
@@ -8934,7 +9102,10 @@ with sync_playwright() as playwright:
     page.set_viewport_size({"width": 1280, "height": 900})
 
     # A browser with a share sheet gets "Chia sẻ", and it shares plain text.
-    page.add_init_script("navigator.share = async (data) => { window.__shared = data; };")
+    page.add_init_script(
+        "Object.defineProperty(navigator, 'share', {configurable: true, writable: true, "
+        "value: async (data) => { window.__shared = data; }});"
+    )
     page.reload()
     page.wait_for_timeout(1800)
     share = page.locator("#receipt-share")
@@ -11617,6 +11788,24 @@ with sync_playwright() as playwright:
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
 
+    # A truncated percent escape in a copied link must reach the unknown-route screen. Routing
+    # used to decode parameters before its render guard and throw, leaving the old screen behind.
+    for malformed in ("#/orders/%", "#/customers/%E0%A4%A", "#/incidents/%FF"):
+        page.goto(f"http://localhost:{PORT}/{malformed}", wait_until="networkidle")
+        page.wait_for_timeout(400)
+        check(
+            f"a malformed route {malformed} shows the unknown-screen fallback",
+            page.locator("main h1").inner_text() == "Không có màn hình này"
+            and page.locator("main [data-crash]").count() == 0,
+            page.locator("main").inner_text()[:160],
+        )
+    page.goto(f"http://localhost:{PORT}/#/orders", wait_until="networkidle")
+    page.wait_for_timeout(500)
+    check(
+        "normal navigation recovers after a malformed route",
+        page.locator("main h1").inner_text() == "Đơn hàng",
+    )
+
     # --- C8: a screen that crashes, and an error that is not the server's ------------------------
     page.evaluate(
         """async () => {
@@ -11800,7 +11989,7 @@ with sync_playwright() as playwright:
     def retype_qty(value: str) -> None:
         box = page.locator("#new-line-0-qty")
         box.click()
-        box.press("Control+A")
+        box.press("ControlOrMeta+A")
         page.keyboard.type(value, delay=12)
         page.wait_for_timeout(150)
 
@@ -12331,7 +12520,7 @@ with sync_playwright() as playwright:
     def typed_part(value: str) -> None:
         field = page.locator("#payment-amount")
         field.click()
-        field.press("Control+A")
+        field.press("ControlOrMeta+A")
         page.keyboard.type(value, delay=15)
 
     open_order(partly)
@@ -15507,12 +15696,17 @@ with sync_playwright() as playwright:
         banner_now[:160],
     )
     check(
-        "K2 (idle expiry, nothing held): a destination pressed says the session ended and that the "
-        "screen needs the server -- not a bare 'Chưa đăng nhập', not an empty or broken screen",
+        "K2 (idle expiry, nothing held): a destination pressed explains the expiry and offers "
+        "visible sign-in and recheck controls -- not a bare 'Chưa đăng nhập' or a broken screen",
         address() == "#/orders"
         and expired_line.count() == 1
         and "Phiên đăng nhập đã kết thúc" in expired_line.first.inner_text()
-        and "cần máy chủ" in main_text,
+        and "Đăng nhập bằng tài khoản được cửa hàng cấp" in main_text
+        and page.locator(
+            "main a.button[href='/signin/']", has_text="Tới trang đăng nhập"
+        ).first.is_visible()
+        and page.locator("main button", has_text="Kiểm tra lại phiên").first.is_visible()
+        and page.locator("main button", has_text="Kiểm tra lại phiên").first.is_enabled(),
         main_text[:160],
     )
     state["authenticated"] = True
@@ -15872,8 +16066,36 @@ with sync_playwright() as playwright:
     )
 
     # Neighbour: someone else signed in elsewhere. The press is not carried over to them; the
-    # screen is drawn again for the person now signed in -- nothing typed by the last one stays.
+    # old workspace is retired before the new identity is exposed. Resetting only the outlet
+    # left body sheets, receipt/incident hand-offs and late request callbacks owned by the last
+    # person. A different person starts at home; the same-person cases above still preserve input.
     typed_on_new()
+    page.evaluate(
+        """async () => {
+            const kit = await import('/src/ui/kit.js');
+            const receipt = await import('/src/screens/receipt.js');
+            const incidents = await import('/src/screens/incidents.js');
+            const api = await import('/src/core/api.js');
+            const order = '00000000-0000-4000-8000-0000000000ab';
+            receipt.offerReceipt(order);
+            incidents.setIncidentOrderPrefill(order);
+            const held = kit.sheet({title: 'Synthetic prior person',
+                body: 'SYNTHETIC_PRIOR_PERSON_CONTEXT'});
+            held.open();
+            held.close();
+            const originalFetch = window.fetch;
+            window.__identityOldOutcome = null;
+            window.fetch = (url, init) => url === '/internal/v1/identity-transition-probe'
+                ? new Promise(resolve => { window.__releaseIdentityProbe = () => {
+                    window.fetch = originalFetch;
+                    resolve(new Response('{}', {status: 200,
+                        headers: {'Content-Type': 'application/json'}}));
+                }; }) : originalFetch(url, init);
+            void api.request('/internal/v1/identity-transition-probe').then(
+                () => { window.__identityOldOutcome = 'accepted'; },
+                error => { window.__identityOldOutcome = error.kind; });
+        }"""
+    )
     expire()
     press_visible("/orders")
     SESSION_OK["staff_user_id"] = "00000000-0000-4000-8000-0000000000bb"
@@ -15881,13 +16103,43 @@ with sync_playwright() as playwright:
     press_visible("/orders")
     check(
         "K2 (another person signed in elsewhere, Đơn hàng pressed again): not carried to them -- "
-        "Nhận đồ is drawn afresh, the 3.5 kg typed by the last person is gone, no banner",
-        address() == "#/new"
+        "Hôm nay opens, the 3.5 kg typed by the last person is gone, no banner",
+        address() == "#/"
         and qty_now() is None
-        and page.locator("#new-walk-in").count() == 1
+        and page.locator("#screen-title").inner_text() == "Hôm nay"
         and "Chưa mở" not in banner_text()
         and "Phiên đăng nhập đã kết thúc" not in banner_text(),
         f"{address()} qty={qty_now()!r} {banner_text()[:100]!r}",
+    )
+    identity_isolation = page.evaluate(
+        """async () => {
+            window.__releaseIdentityProbe();
+            await new Promise(resolve => setTimeout(resolve, 30));
+            return {
+                oldBodyGone: !document.body.textContent.includes('SYNTHETIC_PRIOR_PERSON_CONTEXT'),
+                receiptGone: !(await import('/src/screens/receipt.js')).takeReceiptOffer(
+                    '00000000-0000-4000-8000-0000000000ab'),
+                oldOutcome: window.__identityOldOutcome,
+            };
+        }"""
+    )
+    check(
+        "K2 identity boundary clears body sheets and receipt hand-offs "
+        "and withholds A's late answer",
+        identity_isolation
+        == {
+            "oldBodyGone": True,
+            "receiptGone": True,
+            "oldOutcome": "SIGNED_OUT",
+        },
+        repr(identity_isolation),
+    )
+    page.evaluate("async () => (await import('/src/core/router.js')).navigate('/incidents')")
+    page.wait_for_timeout(900)
+    check(
+        "K2 identity boundary clears the old incident order hand-off before B opens Khiếu nại",
+        page.locator("main h1").first.inner_text() == "Khiếu nại"
+        and page.locator("#incident-create[open]").count() == 0,
     )
     SESSION_OK["staff_user_id"] = "00000000-0000-4000-8000-0000000000aa"
     page.evaluate(

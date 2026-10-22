@@ -37,9 +37,8 @@ RUN apk add --no-cache --virtual .app-python-rundeps \
       gdbm=1.26-r0 libbz2=1.0.8-r6 libffi=3.5.2-r0 libncursesw=6.5_p20251123-r0 \
       libnsl=2.0.1-r1 libpanelw=6.5_p20251123-r0 libtirpc=1.3.5-r1 \
       'libuuid>=2.41.6-r1' 'libcrypto3>=3.5.8-r0' 'libssl3>=3.5.8-r0' \
-      readline=8.3.1-r0 xz-libs=5.8.3-r0 \
-    && apk del --no-network .python-rundeps sqlite-libs \
-    && rm -f /usr/local/lib/python3.12/lib-dynload/_sqlite3*.so \
+      readline=8.3.1-r0 xz-libs=5.8.3-r0 'sqlite-libs>=3.53.4-r0' \
+    && apk del --no-network .python-rundeps \
     && addgroup -g 10001 -S app \
     && adduser -u 10001 -S -D -H -s /sbin/nologin -G app app
 WORKDIR /app
@@ -54,6 +53,9 @@ COPY --chown=10001:10001 packages/observability/src packages/observability/src
 COPY --chown=10001:10001 packages/policy/src packages/policy/src
 COPY --chown=10001:10001 specs/contracts specs/contracts
 USER 10001:10001
+# The opt-in local Gemini budget uses SQLite independently of business transactions. Keep its
+# patched runtime library and extension, and fail the image build if application imports break.
+RUN python -c "import sqlite3; from nha_trang_laundry_api.main import app; connection = sqlite3.connect(':memory:'); assert connection.execute('SELECT 1').fetchone() == (1,); connection.close()"
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]

@@ -900,9 +900,12 @@ def load_app_signal_cursor(path: str) -> AppSignalCursor | None:
         text = file.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
+    # main() bounds failure details to 200 characters. Keep the recovery action and its lost
+    # coverage ahead of the path, which can use the entire allowance on its own.
     recovery = (
-        f"the saved read position {path} is unreadable; delete it and the next run counts the "
-        f"last {APP_SIGNAL_WINDOW_SECONDS // 60} minutes (anything older has not been checked)"
+        "saved read position unreadable; delete the --app-signal-cursor file; next run checks "
+        f"only the last {APP_SIGNAL_WINDOW_SECONDS // 60} minutes (older events remain unchecked). "
+        f"Path: {path}"
     )
     try:
         parsed = json.loads(text)

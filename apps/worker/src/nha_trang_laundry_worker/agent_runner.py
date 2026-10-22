@@ -13,7 +13,7 @@ import re
 import secrets
 import threading
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -319,6 +319,7 @@ class AgentToolBridgeSession:
         issuer: AgentRunnerTokenIssuer,
         transport: AgentToolTransport,
         observer: AgentToolCallObserver | None = None,
+        authority_valid: Callable[[], bool] | None = None,
     ) -> None:
         if len(bridge_token) < 32:
             raise ValueError("bridge token must have at least 32 characters")
@@ -327,6 +328,7 @@ class AgentToolBridgeSession:
         self._issuer = issuer
         self._transport = transport
         self._observer = observer
+        self._authority_valid = authority_valid or (lambda: True)
         self._order_request_id = job.order_request_id
         self._public_code = job.public_code
         self._row_version = job.row_version
@@ -390,7 +392,7 @@ class AgentToolBridgeSession:
         """Authenticate a loopback tool call and forward only the server-derived route."""
 
         current_time = now or datetime.now(UTC)
-        if self._closed:
+        if self.is_closed:
             raise AgentToolBridgeRejected("TOOL_UNAVAILABLE: agent bridge is closed")
         self._verify_executor(bridge_token, binding_id, current_time)
         contract = TOOL_REGISTRY.get(operation)
@@ -418,8 +420,10 @@ class AgentToolBridgeSession:
         request = self._build_request(
             contract, validated, expected_path, idempotency_key, current_time
         )
+        if self.is_closed:
+            raise AgentToolBridgeRejected("TOOL_UNAVAILABLE: agent bridge is closed")
         response = self._transport.send(request)
-        if self._closed:
+        if self.is_closed:
             # The runner revoked this bridge while the call was in flight. Whatever the facade did
             # is now an unknown outcome for a human; the result must not reach the model.
             raise AgentToolBridgeRejected(
@@ -459,6 +463,8 @@ class AgentToolBridgeSession:
     def is_closed(self) -> bool:
         """True once revoked; a runtime must start no further model or tool work after that."""
 
+        if not self._authority_valid():
+            self.close()
         return self._closed
 
     def _verify_executor(self, bridge_token: str, binding_id: UUID, now: datetime) -> None:
@@ -773,6 +779,7 @@ class AgentRunner:
         bridge_token: str | None = None,
         observer: AgentToolCallObserver | None = None,
         now: datetime | None = None,
+        authority_valid: Callable[[], bool] | None = None,
     ) -> AgentRunResult:
         current_time = now or datetime.now(UTC)
         self._validate_job(job, current_time, runtime)
@@ -783,6 +790,7 @@ class AgentRunner:
             issuer=self._issuer,
             transport=transport,
             observer=observer,
+            authority_valid=authority_valid,
         )
         invocation = AgentRuntimeInvocation(
             run_id=job.run_id,
@@ -823,6 +831,8 @@ class AgentRunner:
 
         def invoke() -> None:
             try:
+                if bridge.is_closed:
+                    raise AgentRunRejected("RUN_REVOKED: worker authority was revoked")
                 result.append(runtime.invoke(invocation, bridge))
             except BaseException as error:  # Propagate controlled runtime errors unchanged.
                 errors.append(error)

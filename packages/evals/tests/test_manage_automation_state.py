@@ -774,6 +774,8 @@ def test_undeclared_result_values_are_rejected_for_new_and_persisted_state(
         "sk-synthetic-value",
         "nvapi-synthetic-value",
         "nvcf-synthetic-value",
+        "AIzaSYNTHETICONLYKEYMATERIAL0000000000000000",
+        "AQ.SYNTHETICONLYKEYMATERIAL0000000000000000",
         "aaaaaaaa.bbbbbbbb.cccccccc",
     ],
 )

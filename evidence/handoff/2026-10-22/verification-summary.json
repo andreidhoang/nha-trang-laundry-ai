@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-22T11:09:58.091026+00:00",
+  "scope": "Engineering handoff; no production/capability authorization",
+  "branch": "codex/engineer-setup",
+  "base_commit": "e97e8bc26646013ae101aa5bde20d991a08043be",
+  "deployment_target": "Windows; unverified; owner steering October 22 supersedes Mac pilot target",
+  "checks": [
+    {
+      "name": "October 15 full repository tests",
+      "status": "PASSED",
+      "passed": 5127,
+      "skipped": 5,
+      "failed": 0,
+      "environment": "Mac with isolated PostgreSQL 16.15; earlier source binding"
+    },
+    {
+      "name": "October 15 real DB role tests",
+      "status": "PASSED",
+      "passed": 63,
+      "skipped": 0,
+      "failed": 0
+    },
+    {
+      "name": "October 15 Gemini final live cases",
+      "status": "PASSED",
+      "cases": 5,
+      "browser_assertions": 74,
+      "database_assertions": 19,
+      "mocked": false,
+      "synthetic_only": true,
+      "provider_allowance_remaining": 0
+    },
+    {
+      "name": "October 16 focused preparation regressions",
+      "status": "PASSED",
+      "passed": 129,
+      "failed": 0
+    },
+    {
+      "name": "October 16 actual encrypted PostgreSQL latest/time-target replay",
+      "status": "PASSED",
+      "result": "recovery-replay-result.json",
+      "source_binding": "source-bindings.json",
+      "limits": "One Docker host, synthetic DB, no app migrations, synthetic scratch key; not target-host/off-host RPO/RTO"
+    },
+    {
+      "name": "October 16 Keycloak image scan",
+      "status": "BLOCKED",
+      "image": "sha256:3ab4320ef5da9cc9542e91100ca0e779e79347e4334449828a6d3348fe2910a3",
+      "architecture": "linux/arm64",
+      "build_passed": true,
+      "vulnerability_report_available": false,
+      "high_critical_count": null,
+      "reason": "No completed scan retained; missing Java DB in original attempts. Empty finding output is not a clean scan."
+    },
+    {
+      "name": "October 16 TLS smoke",
+      "status": "FAILED",
+      "reason": "Certificate verification failed; no application acceptance inferred"
+    },
+    {
+      "name": "October 16 Mac preflight",
+      "status": "FAILED",
+      "failed_groups": 5,
+      "scope": "Historical Mac prerequisites only"
+    },
+    {
+      "name": "October 22 full handoff rerun",
+      "status": "RUNNING",
+      "environment": "Fresh isolated PostgreSQL database; no demo data used",
+      "result_pending": true
+    },
+    {
+      "name": "Windows deployment and production acceptance",
+      "status": "NOT_RUN",
+      "reason": "No target Windows host available in the Mac session"
+    }
+  ],
+  "authorization": {
+    "capabilities": "All thirteen remain NOT_AUTHORIZED",
+    "new_provider_requests": 0,
+    "billing_enabled": false,
+    "production_deployment": false
+  },
+  "evidence_availability": "Committed summaries and recovery result copies are portable. Local-only artifact paths below are not included in Git; private runtime is never an export."
+}

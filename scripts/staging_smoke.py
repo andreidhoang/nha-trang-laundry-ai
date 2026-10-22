@@ -76,6 +76,13 @@ def run_smoke(base_url: str, ca_file: Path) -> None:
         raise RuntimeError("private API health smoke failed")
     _require_browser_headers(health.headers, require_no_store=False)
 
+    # Liveness can stay green during a database outage. Readiness is a separate,
+    # bounded DB connectivity check; it does not certify migrations or shop config.
+    ready = _request(target, "/readyz", context, allow_http_error=True)
+    if ready.status != 200 or json.loads(ready.body) != {"status": "ready"}:
+        raise RuntimeError("private API database readiness smoke failed")
+    _require_browser_headers(ready.headers, require_no_store=True)
+
     # `b"Staff Operations"` was the marker here and that string exists nowhere in `apps/web/`: the
     # console was localised to Vietnamese and this was never updated. So this check failed against
     # every deployment, including the private staging host it was pinned to -- and because both

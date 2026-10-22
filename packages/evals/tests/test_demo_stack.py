@@ -313,6 +313,20 @@ def test_application_roles_receive_no_ddl_or_destructive_grants() -> None:
             assert forbidden not in statement.upper()
 
 
+@pytest.mark.parametrize("role", ["laundry_migrate", "laundry_api", "laundry_worker"])
+def test_only_the_migration_identity_can_create_the_retention_role(role: str) -> None:
+    """Migration 0038 must run without giving runtime identities role administration."""
+    material = _load_script("generate_demo_material")
+    script = material.role_initialisation_sql(dict.fromkeys(material.ROLES, "synthetic-password"))
+    statement = next(
+        line for line in script.splitlines() if line.startswith(f"CREATE ROLE {role} ")
+    )
+    attributes = set(statement.rstrip(";").split())
+    assert {"NOSUPERUSER", "NOCREATEDB", "NOREPLICATION", "NOBYPASSRLS"} <= attributes
+    assert ("CREATEROLE" in attributes) is (role == "laundry_migrate")
+    assert ("NOCREATEROLE" in attributes) is (role != "laundry_migrate")
+
+
 def test_compose_overlay_is_valid_for_the_installed_docker_compose() -> None:
     """Skipped where Docker is absent, because the overlay's validity is a property of Compose."""
     probe = subprocess.run(

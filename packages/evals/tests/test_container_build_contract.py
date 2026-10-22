@@ -63,6 +63,8 @@ def test_build_context_excludes_private_state_secrets_and_raw_material() -> None
         ".openclaw",
         ".env",
         ".env.*",
+        ".demo",
+        "**/.demo",
         "evidence",
         "releases",
         "templates",

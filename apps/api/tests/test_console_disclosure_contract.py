@@ -22,10 +22,12 @@ exactly the day the screen must stop saying it.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
-import inspect
+import json
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -1020,29 +1022,162 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
 
 
 @pytest.mark.parametrize("entry", _entries("MODEL_SEAM"), ids=lambda e: e["slot_id"])
-def test_the_assistant_streaming_disclosure_still_matches_the_seam(entry: dict[str, Any]) -> None:
-    """The disclosure this item exists for, bound to the one line that can falsify it.
+@pytest.mark.parametrize("enabled", [False, True])
+def test_assistant_disclosure_matches_the_actual_injected_factory(
+    entry: dict[str, Any], enabled: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old default-only source check missed a factory injected by the real API dependency.
 
-    `assistant.js` tells operators the streamed text is display pacing of an already-saved answer,
-    "không phải mô hình đang sinh từ". True only while `AssistantService` defaults to the
-    deterministic brain. Handing it a provider-backed brain is a one-line change at a seam that
-    exists so the swap can happen; before this test nothing in the repository would have noticed
-    the sentence going false.
+    Invoke that dependency in both modes and substitute only the external transport. A provider
+    may select an existing renderer but cannot supply answer facts, free text or money decisions.
+    No database connection, real credential or external request is involved.
     """
-    from nha_trang_laundry_api.assistant import AssistantService
+    from nha_trang_laundry_api import assistant_gemini as gemini
+    from nha_trang_laundry_api.assistant import AssistantContextReads, DeterministicAssistantBrain
+    from nha_trang_laundry_api.auth import AuthSettings
+    from pydantic import SecretStr
 
-    signature = inspect.signature(AssistantService.__init__)
-    assert signature.parameters["brain"].default is None, (
-        "the brain is injected, so the default the disclosure relies on is the fallback below"
+    binding = entry["binding"]
+    assert binding["service"] == "AssistantService"
+    assert binding["answer_renderer"] == "DeterministicAssistantBrain"
+    assert binding["optional_classifier"] == "GeminiAssistantBrain"
+    assert binding["stream"] == "persisted_answer_only"
+    settings = AuthSettings(
+        database_url="postgresql://unused.invalid/disclosure-test",
+        oidc_issuer="https://demo-idp.local",
+        oidc_audience="nha-trang-laundry-staff-demo",
+        oidc_jwks_url="http://demo-idp:9000/.well-known/jwks.json",
     )
+    monkeypatch.setattr(api_main, "AuthSettings", lambda: settings)
+    monkeypatch.setenv("ASSISTANT_GEMINI_ENABLED", str(enabled).lower())
+    monkeypatch.setenv("AGENT_PROVIDER_API_KEY", "fake-disclosure-test-key")
+    tmp_path.chmod(0o700)
+    monkeypatch.setenv("ASSISTANT_GEMINI_BUDGET_PATH", str(tmp_path / "budget.sqlite3"))
+    monkeypatch.setenv("ASSISTANT_GEMINI_MAX_CALLS", "5")
+    provider_output = {"intent": "TODAY_OVERVIEW"}
+    calls: list[str] = []
 
-    source = inspect.getsource(AssistantService.__init__)
-    expected = entry["binding"]["default_brain"]
-    assert f"brain or {expected}()" in source, (
-        f"{entry['module']} tells operators no language model is called. That holds because "
-        f"{entry['binding']['service']} falls back to {expected}. The fallback changed, so either "
-        "the disclosure is now false or this binding is stale — resolve it, do not relax the test."
+    def generate(_: Any, question: str, api_key: SecretStr) -> bytes:
+        assert api_key.get_secret_value() == "fake-disclosure-test-key"
+        calls.append(question)
+        return json.dumps(
+            {
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": json.dumps(provider_output)}],
+                        },
+                    }
+                ]
+            }
+        ).encode()
+
+    monkeypatch.setattr(gemini.HttpsGeminiTransport, "generate", generate)
+    principal = StaffPrincipal(
+        staff_user_id=uuid4(),
+        oidc_subject="demo-owner",
+        roles=frozenset({StaffRole.OWNER_ADMIN}),
+        mfa_verified=True,
+        session_id=uuid4(),
     )
+    reads = AssistantContextReads((("ACTIVE", 7),), 8, 2, 3, False, (), lambda _: None)
+    deterministic = DeterministicAssistantBrain()
+    question = "Khối lượng công việc ra sao?"
+    gemini._configured_brain.cache_clear()
+    try:
+        service = getattr(api_main, binding["factory"])()
+        assert service._brain_factory is not None, (
+            "test the injected route factory, not its fallback"
+        )
+        brain = service._brain_factory(principal, gemini.DEMO_STORE_ID)
+        answer = brain.answer(question, reads)
+        if enabled:
+            expected = deterministic.answer("Hôm nay thế nào?", reads)
+            assert answer.intent == expected.intent
+            assert answer.answer == expected.answer
+            assert answer.links == expected.links
+            assert answer.reason_codes == (*expected.reason_codes, "ASSISTANT_GEMINI_CLASSIFIED")
+            assert calls == [question]
+            # Free-form facts are not a valid classification, even alongside a valid enum.
+            provider_output["answer"] = "invented facts must never reach the operator"
+            refused = brain.answer(question, reads)
+            assert refused.answer == deterministic.answer(question, reads).answer
+            assert refused.intent == "UNSUPPORTED"
+            assert "ASSISTANT_GEMINI_INVALID_RESPONSE" in refused.reason_codes
+        else:
+            assert answer == deterministic.answer(question, reads)
+            assert calls == []
+        calls_before_money = len(calls)
+        money_question = "Doanh thu hôm nay bao nhiêu?"
+        assert brain.answer(money_question, reads) == deterministic.answer(money_question, reads)
+        assert len(calls) == calls_before_money
+    finally:
+        gemini._configured_brain.cache_clear()
+
+
+@pytest.mark.parametrize("entry", _entries("MODEL_SEAM"), ids=lambda e: e["slot_id"])
+def test_assistant_streaming_reads_the_saved_answer_without_regeneration(
+    entry: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stored classified answers use the same read-only SSE path as deterministic answers."""
+    from nha_trang_laundry_api.assistant import (
+        AssistantAnswer,
+        AssistantContextReads,
+        AssistantService,
+    )
+    from nha_trang_laundry_api.auth import AuthSettings
+    from nha_trang_laundry_db.assistant import AssistantTurn
+
+    assert entry["binding"]["stream"] == "persisted_answer_only"
+
+    class NoRegeneration:
+        def answer(self, question: str, context_reads: AssistantContextReads) -> AssistantAnswer:
+            raise AssertionError("streaming a stored turn must never invoke a brain")
+
+    principal = StaffPrincipal(
+        uuid4(), "demo-owner", frozenset({StaffRole.OWNER_ADMIN}), True, uuid4()
+    )
+    store_id, turn_id = uuid4(), uuid4()
+    stored = AssistantTurn(
+        turn_id,
+        store_id,
+        principal.staff_user_id,
+        "a prior question",
+        "TODAY_OVERVIEW",
+        "Saved governed answer.\nWhitespace stays intact.\n",
+        (),
+        ("ASSISTANT_GEMINI_CLASSIFIED",),
+        str(uuid4()),
+        datetime.now(UTC),
+    )
+    service = AssistantService(
+        AuthSettings(database_url="postgresql://unused.invalid/disclosure-test"),
+        brain=NoRegeneration(),
+        brain_factory=lambda *_: NoRegeneration(),
+    )
+    reads: list[dict[str, Any]] = []
+
+    def get_saved(**kwargs: Any) -> AssistantTurn:
+        reads.append(kwargs)
+        return stored
+
+    monkeypatch.setattr(service, "get_turn", get_saved)
+    response = api_main.stream_assistant_turn(store_id, turn_id, principal, service)
+    assert reads == [{"principal": principal, "store_id": store_id, "turn_id": turn_id}]
+    assert response.media_type == "text/event-stream"
+
+    async def consume() -> str:
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else str(chunk))
+        return "".join(chunks)
+
+    frames = [part.removeprefix("data: ") for part in asyncio.run(consume()).strip().split("\n\n")]
+    assert frames[-1] == "[DONE]"
+    assert "".join(json.loads(frame) for frame in frames[:-1]) == stored.answer
+    assert len(reads) == 1
 
 
 @pytest.mark.parametrize(

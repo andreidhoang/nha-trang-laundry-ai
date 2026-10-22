@@ -1,0 +1,9 @@
+{
+  "deploy/production/backup/restore.sh": "46ab4017d0b5546d3c2054efa32049027248114f1c5bc77d2543110303120808",
+  "deploy/production/backup/base-backup.sh": "1c6b75dde6661d359e75d3a6d20e59d071ecb1ab076c02399e40ff6cabb848cd",
+  "deploy/production/backup/archive-wal.sh": "4ea5599974116fc30acaa48b3bc49506f43fb0e0d141a98a06cfcf5b6dd5e427",
+  "deploy/production/backup/r1-archive-upload.sh": "2bcf1b1b3a9c33043b129ba57684dcc4fc806c3e72a18e322e24e22c0fe973a7",
+  "deploy/production/backup/r1-archive-fetch.sh": "a6e2128ec5328ac68019b895a46a806fc020ed43928e6f9b6ee3cd90d939f20a",
+  "deploy/production/backup/r1-archive-list.sh": "9d71b8b32b21f334b499286604e3c203ec0501bd339c1f8b63224bfabf50c838",
+  "deploy/production/Postgres.Dockerfile": "ca09a4ff1d229bd5ab9d9399831e3974c61b4b502211d158afe37b633c01f9ed"
+}

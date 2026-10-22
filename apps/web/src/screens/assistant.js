@@ -1,14 +1,15 @@
 /**
- * Trợ lý AI: the owner-assistant chat, a thin window onto a deterministic server brain.
+ * Trợ lý AI: the owner-assistant chat, a thin window onto governed server answers.
  *
  * Everything this screen shows was decided on the server. The assistant there matches a question
- * against a fixed intent table and answers from governed reads; it never calls a model and never
- * computes money, policy or order state. This screen's job is to carry the question over, render
+ * against a fixed intent table and answers from governed reads. An explicitly enabled synthetic
+ * demo may use Gemini to classify an otherwise unsupported question; facts and links still come
+ * from deterministic server code. This screen's job is to carry the question over, render
  * the answer honestly, and keep the operator's half-typed text safe while doing so.
  *
  * What this screen deliberately does NOT do:
  *
- *   - **No model and no token generation.** The answer is fully decided and persisted by the POST
+ *   - **No browser model call or token generation.** The answer is fully decided and persisted by the POST
  *     that records the turn. The typewriter effect is the server pacing that already-durable text
  *     over SSE (`.../turns/{id}/stream`) so it reads progressively — transport pacing, not a model
  *     thinking. If the stream cannot run (no EventSource, a network drop), the full answer from
@@ -263,6 +264,33 @@ function assistantMark() {
   );
 }
 
+/** Provider provenance comes only from the persisted server result, including on refresh. */
+function answerNotes(item) {
+  const codes = Array.isArray(item.reason_codes) ? item.reason_codes : [];
+  const failureNotes = {
+    ASSISTANT_GEMINI_UNAVAILABLE: "Chưa kết nối được Gemini. Bạn có thể dùng các câu hỏi gợi ý.",
+    ASSISTANT_GEMINI_INVALID_RESPONSE: "Gemini chưa hiểu rõ câu hỏi. Hãy thử hỏi ngắn và cụ thể hơn.",
+    ASSISTANT_GEMINI_BUDGET_EXHAUSTED: "Đã hết số lượt thử Gemini. Các câu hỏi gợi ý vẫn dùng được.",
+    ASSISTANT_GEMINI_NOT_CONFIGURED: "Gemini chưa sẵn sàng. Các câu hỏi gợi ý vẫn dùng được.",
+    ASSISTANT_GEMINI_INPUT_LIMIT: "Câu hỏi quá dài để thử với Gemini. Hãy rút ngắn câu hỏi.",
+  };
+  const failed = codes.find((code) => Object.hasOwn(failureNotes, code));
+  const classified = codes.includes("ASSISTANT_GEMINI_CLASSIFIED");
+  const note = failed
+    ? failureNotes[failed]
+    : classified
+      ? "Gemini hỗ trợ hiểu câu hỏi. Số liệu và câu trả lời do máy chủ kiểm tra."
+      : null;
+  return [
+    note
+      ? h("p", { class: "chat__stamp", dataAiStatus: failed ? "unavailable" : "classified" }, note)
+      : null,
+    reasonCodeList(
+      codes.filter((code) => code !== "ASSISTANT_GEMINI_CLASSIFIED" && !Object.hasOwn(failureNotes, code)),
+    ),
+  ];
+}
+
 /**
  * One assistant answer rendered whole — history items and the stream fallback take this path.
  *
@@ -275,7 +303,7 @@ function answerBlock(item) {
     { class: "chat__assistant" },
     h("div", { class: "chat__head" }, assistantMark(), intentRow(String(item.intent || ""))),
     h("div", { class: "chat__answer stack stack--tight" }, answerBody(item.answer)),
-    reasonCodeList(Array.isArray(item.reason_codes) ? item.reason_codes : []),
+    ...answerNotes(item),
     linkRow(item),
     provenance(item),
   );
@@ -349,7 +377,7 @@ function liveAnswer(store, clearance) {
     render(badgeHost, intentRow(String(turn.intent || "")));
     render(
       footer,
-      reasonCodeList(Array.isArray(turn.reason_codes) ? turn.reason_codes : []),
+      ...answerNotes(turn),
       linkRow(turn),
       provenance(turn),
     );
@@ -823,18 +851,17 @@ export function render_() {
       ),
     }),
     // MODEL_SEAM. This sentence is machine-bound in the disclosure registry and stays on screen on
-    // every visit: it is the claim about what the assistant is *not* that a person must be able to
-    // read without asking. Compact, never collapsed.
+    // every visit: governed facts and recorded answers stay deterministic even when an explicitly
+    // enabled local classifier helps interpret a question. Compact, never collapsed.
     h(
       "div",
       { class: "notice chat__seam", dataState: "info" },
       h(
         "p",
         null,
-        "Trợ lý này không gọi mô hình ngôn ngữ và không tính tiền. Mỗi câu trả lời được máy " +
-          "chủ quyết định và ghi lại trước, rồi hiện dần trên màn hình — chữ chạy là nhịp hiển " +
-          "thị của câu trả lời đã lưu, không phải mô hình đang sinh từ. Mọi lượt hỏi đều được " +
-          "ghi lại kèm người hỏi.",
+        "Trợ lý chỉ đọc dữ liệu bạn được phép xem; không đổi đơn, tính giá hay gửi tin nhắn. " +
+          "Gemini có thể hỗ trợ hiểu câu hỏi; câu trả lời sẽ ghi rõ khi có sử dụng. Câu trả lời " +
+          "được lưu trước khi hiện dần. Mỗi lượt hỏi được lưu kèm người hỏi.",
       ),
     ),
     h(

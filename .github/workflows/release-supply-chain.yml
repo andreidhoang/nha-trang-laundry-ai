@@ -57,9 +57,23 @@ jobs:
           trivy_image="aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f"
           trivy_version="$(docker run --rm "$trivy_image" --version | sed -n 's/^Version: //p' | head -1)"
           test "$trivy_version" = "0.72.0"
-          for service in api worker public-agent-tools; do
+          for service in api worker public-agent-tools tls keycloak postgres-runtime postgres; do
             tag="nha-trang-laundry-${service}:candidate"
-            docker build --pull=false --file "apps/${service}/Dockerfile" --tag "$tag" .
+            build_args=()
+            case "$service" in
+              tls) dockerfile="deploy/staging/Caddy.Dockerfile" ;;
+              keycloak) dockerfile="deploy/production/Keycloak.Dockerfile" ;;
+              postgres-runtime)
+                dockerfile="deploy/production/Postgres.Dockerfile"
+                build_args=(--target postgres-runtime)
+                ;;
+              postgres)
+                dockerfile="deploy/production/Postgres.Dockerfile"
+                build_args=(--target postgres-backup)
+                ;;
+              *) dockerfile="apps/${service}/Dockerfile" ;;
+            esac
+            docker build --pull=false --file "$dockerfile" "${build_args[@]}" --tag "$tag" .
             archive="$RUNNER_TEMP/${service}.tar"
             docker save "$tag" --output "$archive"
             docker run --rm \
@@ -67,12 +81,14 @@ jobs:
               --volume "$PWD/artifacts/supply-chain:/out" \
               --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
               "$trivy_image" image --input "/work/${service}.tar" --scanners vuln \
+              --detection-priority comprehensive \
               --format cyclonedx --output "/out/${service}.cdx.json"
             docker run --rm \
               --volume "$RUNNER_TEMP:/work:ro" \
               --volume "$PWD/artifacts/supply-chain:/out" \
               --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
               "$trivy_image" image --input "/work/${service}.tar" --scanners vuln \
+              --detection-priority comprehensive \
               --format sarif --severity CRITICAL,HIGH --exit-code 1 \
               --output "/out/${service}.sarif"
             image_id="$(jq -er '.runs[0].properties.imageID | select(test("^sha256:[0-9a-f]{64}$"))' \

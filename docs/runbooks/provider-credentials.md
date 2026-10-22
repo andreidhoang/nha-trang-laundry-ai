@@ -8,6 +8,12 @@ Which model to evaluate and in what order: `docs/AI_MODEL_AND_PROVIDER_SETUP.md`
 `docs/adr/0007-production-deployment-topology.md` §rotation,
 `specs/SECURITY_RELIABILITY_SPEC_V1.md`, `DEC-006`, `DEC-009`.
 
+**Scoped local authorization, October 15, 2026:** the user separately permits implementation and
+synthetic local Gemini verification. `local-gemini-evaluation.md` defines its default-off, demo-only
+guard and persistent attempt cap. A live run also needs an explicit spending allowance. This
+exception does not authorize customer data, public capabilities or production deployment. It is
+recorded in `docs/audit/LOCAL_READINESS_2026-10-15.md`.
+
 This runbook exists because the question "where is the API key stored so the model can be called?"
 has a precise answer in this repository and the answer has two halves. People reliably read the first
 half and skip the second.
@@ -30,7 +36,7 @@ repo. Và **có key không có nghĩa là được phép gọi model** — cổn
 |---|---|
 | **Canonical location** | the process environment of the service that calls the provider |
 | **Container location** | a file under `/run/secrets`, one secret per file — `WorkerSettings` reads that directory when it exists (`apps/worker/src/nha_trang_laundry_worker/host.py`) |
-| **Reserved variable name** | `AGENT_PROVIDER_API_KEY` — one variable for whichever provider the pinned registry selects |
+| **Variable name** | `AGENT_PROVIDER_API_KEY` — implemented by the local classifier; reserved for the separately pinned public runtime |
 | **Never** | committed to the repository, written into `runtime/model-registry-v2.yaml`, written into any file under `evidence/`, pasted into a chat transcript, echoed into a log line, or passed as a command-line argument |
 
 `WorkerSettings` sets `env_file=None` deliberately. The worker does not load a `.env` file; a
@@ -44,31 +50,20 @@ pinned registry and `MODEL-PIN-001` would be unenforceable — a deployment coul
 no change to any pinned file. The registry names the provider; the environment supplies only the
 secret for it.
 
-## 2. What actually reads a provider credential today: nothing
+## 2. Implemented credential reader
 
-This is the part that surprises people, so it is stated with the evidence.
+`apps/api/src/nha_trang_laundry_api/assistant_gemini.py` reads `AGENT_PROVIDER_API_KEY` as a
+`SecretStr` from the process environment after the local demo authorization guards. It uses a fixed
+Gemini endpoint and model; it does not choose a provider by detecting vendor-shaped variables.
+The local settings do not load an environment file. Setting the key alone still enables nothing.
 
-Repository-wide there is no provider-key reference in any executable path. The one there used to be
-was a placeholder in `scripts/verify_agent_runtime.py`, passed to OpenClaw's offline `config validate`
-and `security audit`; that script was retired with the OpenClaw runtime (ADR-0009, `OPENCLAW-RETIRE-001`).
-
-There is no credential read at all: no
-`AGENT_PROVIDER_API_KEY` field on `WorkerSettings`, no provider client, no HTTP call to any inference
-endpoint.
-
-Wiring the read is `PROVIDER-TRANSPORT-001`. Until that item lands, setting the variable has no
-effect on any code path, and an agent that reports "the model is now configured" because a variable
-is exported has reported something untrue.
-
-`AGENT_PROVIDER_API_KEY` is therefore a **reserved** name, not yet an implemented one. Whether the
-transport reads it under that name or under the vendor SDK's `OPENAI_API_KEY` convention is
-`PROVIDER-TRANSPORT-001`'s call to confirm. Until it does, this runbook governs *handling*
-and the transport packet governs *naming*.
+The public worker still has no credential field or live provider transport. That separate work is
+`PROVIDER-TRANSPORT-001`; the local assistant does not complete or authorize it.
 
 ## 3. Possession is not authorization
 
-Before any real provider call — even with synthetic data — all of the following must hold. Each is a
-file you can read, not a judgement call:
+For the public runtime and all real customer processing, all of the following must hold. The
+separately authorized local synthetic evaluation above has its own narrower guard and evidence:
 
 | Gate | Where | Current value |
 |---|---|---|
@@ -79,11 +74,10 @@ file you can read, not a judgement call:
 | Real customer model calls enabled | `activation` in the registry | `false` |
 | Transport implemented | `PROVIDER-TRANSPORT-001` | not delivered |
 
-For customer-supplied **media** specifically there is a second, independent gate: `DEC-009` is `OPEN`
-with fail-closed `NOT_SUPPORTED`. No image, attachment or document byte may be fetched and sent to any
-inference endpoint until that decision is answered, regardless of which credentials exist.
+For media there is a second, independent decision: `DEC-009` is `RESOLVED` for staff-supplied media
+only. Customer-supplied media remains prohibited, and the local classifier accepts text only.
 
-**A credential for a provider with no `evidence/provider/` record authorizes nothing at all.** As of
+**A credential alone authorizes nothing. Public release requires a provider evidence record.** As of
 this document that includes every provider except OpenAI, and `specs/contracts/provider-data-evidence-v1.schema.json`
 pins `provider` to `const: "openai"` — so a record for another vendor cannot even be written without a
 schema version, and that schema is itself one of the 21 hash-pinned files. See
@@ -93,9 +87,9 @@ schema version, and that schema is itself one of the 21 hash-pinned files. See
 
 - **Never write a credential value anywhere.** Not into a file, not into a commit, not into a task
   packet, not into an evidence record, not into a memory file, not back into the conversation.
-- **Never make a provider call.** Provider calls, secrets and capability authorization are outside
-  what an agent may decide (`CLAUDE.md` §"What an agent may not decide here"). This holds even for a
-  one-off "just checking the key works" request.
+- **Never infer provider-call permission from a key.** The user must explicitly authorize the
+  destination, purpose and cost scope. The scoped local authorization above grants no production
+  capability or account-level privacy approval.
 - **A pasted credential is a leaked credential.** If one appears in a transcript, say so and tell the
   owner to rotate it. Do not carry it forward.
 - **Refer to a credential by variable name, never by value** — `AGENT_PROVIDER_API_KEY`, not the
@@ -117,8 +111,8 @@ a ticket, a log, a screenshot, or any shared document.
 The log redactor (`packages/observability/src/nha_trang_laundry_observability/redaction.py`) and the
 evidence-record guards (`scripts/record_delivery_evidence.py`, `scripts/manage_automation_state.py`)
 match credentials by shape. They recognise `Bearer`/`Basic` headers, `sk-` prefixed keys,
-`name = value` assignment forms, JWT triples, and — since this document — NVIDIA `nvapi-`/`nvcf-`
-prefixes.
+`name = value` assignment forms, JWT triples, and — since this document — NVIDIA `nvapi-`/`nvcf-`, Google `AIza` and `AQ.` credential forms. All three guards
+have synthetic regression cases for these prefixes.
 
 A committed secret is separately scanned by gitleaks, but only inside
 `.github/workflows/release-supply-chain.yml` — there is no pre-commit hook. That scan therefore

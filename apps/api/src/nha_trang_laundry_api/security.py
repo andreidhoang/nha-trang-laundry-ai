@@ -128,6 +128,10 @@ class BrowserSecurityMiddleware:
             if (
                 len(cookie_token) < 32
                 or len(cookie_token) > 200
+                # Header values are decoded as Latin-1, while compare_digest only accepts
+                # ASCII strings. Malformed tokens must be denied before that comparison.
+                or not cookie_token.isascii()
+                or not header_token.isascii()
                 or not hmac.compare_digest(cookie_token, header_token)
             ):
                 _record_rejection("CSRF_REJECTED")

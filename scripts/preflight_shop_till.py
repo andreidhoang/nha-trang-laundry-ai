@@ -70,11 +70,32 @@ def check_checkout_location() -> Result:
     CPython silently skips, and macOS TCC refuses a launch agent read access to these directories.
     """
 
-    home = Path.home()
+    try:
+        home = Path.home().resolve()
+        checkout = ROOT.resolve()
+        cloud_drive = (home / "Library/Mobile Documents/com~apple~CloudDocs").resolve()
+    except (OSError, RuntimeError):
+        return Result(
+            "The checkout is outside iCloud Drive",
+            False,
+            "the checkout location could not be resolved",
+            "Use a local checkout under ~/laundry and check its directory permissions.",
+        )
+
+    # A symlink outside iCloud still reads the same evictable files. The explicit iCloud Drive
+    # location is synced regardless of whether Desktop and Documents syncing is enabled.
+    if checkout.is_relative_to(cloud_drive):
+        return Result(
+            "The checkout is outside iCloud Drive",
+            False,
+            f"{checkout} is inside iCloud Drive",
+            f"Move {checkout} to ~/laundry before bringing the stack up.",
+        )
+
     synced_parents = [home / "Desktop", home / "Documents", home / "Downloads"]
-    inside = any(str(ROOT).startswith(str(parent) + os.sep) for parent in synced_parents)
+    inside = any(checkout.is_relative_to(parent) for parent in synced_parents)
     if not inside:
-        return Result("The checkout is outside iCloud Drive", True, str(ROOT))
+        return Result("The checkout is outside iCloud Drive", True, str(checkout))
 
     accounts = home / "Library/Preferences/MobileMeAccounts.plist"
     desktop_synced = False
@@ -97,7 +118,14 @@ def check_dataless_files() -> Result:
     """Files iCloud has already evicted. Each one is a container that will not start."""
 
     code, output = _run("find", str(ROOT / "deploy"), "-flags", "+dataless")
-    evicted = [line for line in output.splitlines() if line.strip()] if code == 0 else []
+    if code != 0:
+        return Result(
+            "No deployment file has been evicted to iCloud",
+            False,
+            "deployment file scan failed or timed out; eviction status is unknown",
+            "Check that deploy/ is readable and macOS find is available, then rerun the preflight.",
+        )
+    evicted = [line for line in output.splitlines() if line.strip()]
     return Result(
         "No deployment file has been evicted to iCloud",
         not evicted,
@@ -116,7 +144,16 @@ def check_archive_path() -> Result:
             "export R1_LOCAL_ARCHIVE_PATH=/Volumes/<drive>/laundry-archive",
         )
     path = Path(configured)
-    if not path.is_dir():
+    try:
+        exists = path.is_dir()
+    except OSError:
+        return Result(
+            "The archive directory is accessible",
+            False,
+            "archive directory metadata could not be checked",
+            "Check the attached drive and directory permissions, then rerun the preflight.",
+        )
+    if not exists:
         return Result(
             "The archive directory exists",
             False,
@@ -125,13 +162,30 @@ def check_archive_path() -> Result:
             "root-owned directory here and every archive write would fail.",
         )
     writable = os.access(path, os.W_OK)
-    same_disk = ""
+    if not writable:
+        return Result("The archive directory is writable", False, str(path))
     try:
-        if path.stat().st_dev == ROOT.stat().st_dev:
-            same_disk = " — WARNING: same disk as the database it protects"
+        same_filesystem = path.stat().st_dev == ROOT.stat().st_dev
     except OSError:
-        pass
-    return Result("The archive directory is writable", writable, f"{path}{same_disk}")
+        return Result(
+            "The archive has a separate filesystem",
+            False,
+            "archive or checkout filesystem could not be checked",
+            "Check the attached drive and directory permissions, then rerun the preflight.",
+        )
+    if same_filesystem:
+        return Result(
+            "The archive has a separate filesystem",
+            False,
+            f"{path} is on the same filesystem as the checkout",
+            "Attach a separate physical drive and set R1_LOCAL_ARCHIVE_PATH "
+            "to its archive directory.",
+        )
+    return Result(
+        "The archive directory is writable on a separate filesystem",
+        True,
+        f"{path} — confirm the drive is physically separate from the database disk at installation",
+    )
 
 
 def check_secret_material() -> Result:
@@ -140,13 +194,23 @@ def check_secret_material() -> Result:
     required = [
         ".shop/secrets/migration_database_url",
         ".shop/secrets/api_database_url",
+        ".shop/secrets/worker_database_url",
         ".shop/secrets/postgres_password",
+        ".shop/secrets/oidc_issuer",
+        ".shop/secrets/oidc_audience",
+        ".shop/secrets/oidc_jwks_url",
+        ".shop/secrets/oidc_mfa_claim",
+        ".shop/secrets/oidc_mfa_value",
+        ".shop/secrets/hash_key",
         ".shop/secrets/tls_certificate",
         ".shop/secrets/tls_private_key",
+        ".shop/secrets/keycloak_database_password",
         ".shop/secrets/backup_encryption_recipients",
+        ".shop/secrets/backup_repository_credential",
+        ".shop/secrets/backup_source_password",
         ".shop/ca/ca.crt",
     ]
-    missing = [name for name in required if not (ROOT / name).exists()]
+    missing = [name for name in required if not (ROOT / name).is_file()]
     return Result(
         "The machine has been bootstrapped",
         not missing,
@@ -166,9 +230,9 @@ def check_archive_credential() -> Result:
     path = ROOT / ".shop/secrets/backup_repository_credential"
     return Result(
         "An archive client configuration is present (not read, so not verified)",
-        path.exists(),
+        path.is_file(),
         "present — confirm it is the [archive] type = local remote if you are using a drive"
-        if path.exists()
+        if path.is_file()
         else "missing",
         "printf '[archive]\\ntype = local\\n' > .shop/secrets/backup_repository_credential "
         "&& chmod 600 .shop/secrets/backup_repository_credential",

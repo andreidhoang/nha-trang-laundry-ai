@@ -8,8 +8,16 @@ has rows for only 3 (`INTERNAL_SHADOW`, `PUBLIC_FAQ`, `LIST_PRICE_INFO`) and set
 `capability_requirements` listing all 13. Credential handling: `docs/runbooks/provider-credentials.md`.
 Which model runs where, and what is built vs not wired: **`docs/AI_ROLE_MAP.md`**.
 
-**Tiếng Việt, ngắn:** hiện chưa có đoạn code nào đọc API key; chưa được gọi model thật cho tới khi
-`DEC-006` được chủ sở hữu ký. Bản này chỉ nói *nên chọn model nào* và *kỹ sư làm gì, theo thứ tự nào*.
+**Local update, October 15, 2026:** the user separately authorized synthetic local Gemini
+implementation and verification. The default-off staff intent classifier is now wired behind the
+demo identity/store guard; see `docs/runbooks/local-gemini-evaluation.md`. Five live synthetic
+Gemini 3.5 Flash-Lite cases passed on a dedicated unbilled project; current evidence is in
+`docs/audit/GEMINI_FREE_TIER_VERIFICATION_2026-10-15.md`. This does not resolve
+`DEC-006`, change the public runtime registry or authorize real customer processing. The steps below
+describe the separate public Concierge integration.
+
+**Tiếng Việt, ngắn:** bản thử nội bộ Gemini chỉ nhận diện câu hỏi giả lập và mặc định tắt. Triển khai
+AI cho khách thật vẫn cần `DEC-006` và các cổng phát hành; bản thử không tự cấp quyền đó.
 
 ## 1. Truth today (re-verify before relying on it)
 
@@ -17,8 +25,8 @@ Which model runs where, and what is built vs not wired: **`docs/AI_ROLE_MAP.md`*
 |---|---|
 | Pinned model: provider `openai`, `api_model_id: gpt-5.6-terra`, transport `responses`, `EVAL_ONLY`, `real_customer_model_calls_enabled: false` | `runtime/model-registry-v2.yaml` |
 | Worker runtime speaks the OpenAI **Responses** protocol, bounded: ≤3 model calls, ≤6 tool calls, 20 s, 8,000 input / 1,200 output tokens, $0.10 per turn | `apps/worker/src/nha_trang_laundry_worker/responses_runtime.py`, registry `limits` |
-| **No code reads a provider key and no HTTP call to any inference endpoint exists** | `docs/runbooks/provider-credentials.md` §2 |
-| The key name is reserved: `AGENT_PROVIDER_API_KEY` (env or `/run/secrets`), never a repo file | same runbook §1 |
+| Local staff classifier can read a key and call Gemini only under explicit synthetic demo guards; public worker transport is still absent | `docs/runbooks/local-gemini-evaluation.md` |
+| `AGENT_PROVIDER_API_KEY` is implemented for the local classifier (process environment), still reserved for the public transport; never a repo file | provider-credentials runbook §1 |
 | Model never computes money, decides policy/SLA/state/permission, selects a customer, or sends | `CLAUDE.md`, `AGENTS.md` |
 
 ## 2. Which model — recommendation (not a decision; owner and DEC-006 decide)

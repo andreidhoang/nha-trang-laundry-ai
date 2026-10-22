@@ -105,6 +105,8 @@ def test_complete_serialized_event_redacts_nested_secret_and_pii_values() -> Non
         "sk-synthetic-only-key-material-000000",
         "nvapi-SYNTHETICONLYKEYMATERIAL0000000000000000",
         "nvcf-SYNTHETICONLYKEYMATERIAL0000000000000000",
+        "AIzaSYNTHETICONLYKEYMATERIAL0000000000000000",
+        "AQ.SYNTHETICONLYKEYMATERIAL0000000000000000",
     ],
 )
 def test_vendor_prefixed_provider_credentials_are_redacted(credential: str) -> None:
@@ -113,6 +115,18 @@ def test_vendor_prefixed_provider_credentials_are_redacted(credential: str) -> N
     serialized = json.dumps(sanitized, sort_keys=True)
 
     assert credential not in serialized
+    assert REDACTED in serialized
+
+
+@pytest.mark.parametrize("prefix", ["AIza", "AQ."])
+@pytest.mark.parametrize("tail", ["SYNTHETICONLYKEYMATERIAL", "password", "phone", "secret"])
+def test_google_provider_credentials_in_field_names_are_not_serialized(
+    prefix: str, tail: str
+) -> None:
+    credential = prefix + tail + "X" * 30
+    serialized = json.dumps(sanitize({credential: "value", "x-goog-api-key": credential}))
+    assert credential not in serialized
+    assert "unsafe_field_" in serialized
     assert REDACTED in serialized
 
 
@@ -234,6 +248,43 @@ def test_traceparent_is_extracted_and_injected_without_business_identifiers() ->
     assert spans[0].parent is not None
     assert spans[0].parent.span_id == 0x901
     assert outgoing["traceparent"].startswith("00-00000000000000000000000000000901-")
+
+
+def test_recording_spans_keep_error_status_without_exception_text_or_stacktrace() -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    telemetry = Telemetry(
+        meter_provider=MeterProvider(),
+        tracer_provider=provider,
+        instrumentation_name="test.exception_privacy",
+    )
+    sensitive = "Bearer " + "synthetic-trace-credential-material"
+    original = RuntimeError("provider failure with " + sensitive)
+    incoming = {"traceparent": "00-00000000000000000000000000000901-0000000000000901-01"}
+
+    with (
+        pytest.raises(RuntimeError) as caught,
+        telemetry.start_span("http_request", carrier=incoming, attributes={"component": "api"}),
+        telemetry.start_span("outbox_process", attributes={"component": "worker"}),
+    ):
+        raise original
+
+    assert caught.value is original
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 2
+    serialized = "\n".join(span.to_json() for span in spans)
+    # Keep regression-failure diagnostics safe too: report booleans, never the exported payload.
+    leaked = [value in serialized for value in (sensitive, str(original), "exception.stacktrace")]
+    assert leaked == [False, False, False]
+    for span in spans:
+        assert span.status.status_code.name == "ERROR"
+        assert span.status.description == "operation failed"
+        assert not span.events
+    outer = next(span for span in spans if span.name == "http_request")
+    assert outer.context is not None
+    assert outer.context.trace_id == 0x901
+    assert outer.parent is not None and outer.parent.span_id == 0x901
 
 
 def test_bundled_metric_slo_and_alert_contracts_match_runtime_registry() -> None:

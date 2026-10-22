@@ -20,6 +20,7 @@ import os
 import threading
 import time
 from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -62,6 +63,7 @@ from nha_trang_laundry_worker.durable_agent_worker import (
 from nha_trang_laundry_worker.pipeline import (
     CapturingEvidenceSink,
     RunScopedContextLoader,
+    _record_draft_for_review,
     build_agent_pipeline,
     load_pinned_prompt,
 )
@@ -261,6 +263,11 @@ class _NullConnection:
 
     def transaction(self) -> Any:
         return _NullContext()
+
+
+class _UnavailableConnection:
+    def transaction(self) -> Any:
+        raise AssertionError("a closed or revoked observer must not touch its old connection")
 
 
 class _NullContext:
@@ -560,7 +567,7 @@ def test_a_facade_result_arriving_after_revocation_never_reaches_model_or_ledger
 def test_a_closed_run_ledger_refuses_a_late_write() -> None:
     repository = _LeaseEnforcingRepository(lease=timedelta(seconds=20))
     claimed = repository.claim_next(None, worker_role=None, now=datetime.now(UTC))
-    observer = _DatabaseToolCallObserver(_NullConnection(), repository, claimed, uuid4())  # type: ignore[arg-type]
+    observer = _DatabaseToolCallObserver(_UnavailableConnection(), repository, claimed, uuid4())  # type: ignore[arg-type]
     observer.close()  # the worker has begun recording the run's outcome
 
     with pytest.raises(AgentRunStateError, match="no longer live"):
@@ -588,6 +595,157 @@ def test_a_revoked_run_makes_no_further_provider_call() -> None:
     assert provider.requests == []
     assert output.disposition == "REQUIRE_HUMAN"
     assert output.terminal_code == "RUN_REVOKED"
+
+
+@pytest.mark.parametrize(
+    "revocation_point",
+    (
+        "claim",
+        "policy",
+        "provider",
+        "tool",
+        "ledger",
+        "failure",
+        "failure_write",
+        "evidence",
+        "completion",
+        "draft",
+    ),
+)
+def test_pipeline_revocation_prevents_new_work_and_terminal_writes(revocation_point: str) -> None:
+    """Exercise real pipeline/runner/runtime boundaries with no provider or database access."""
+    revoked = threading.Event()
+    drafts: list[str] = []
+
+    class Repository(_LeaseEnforcingRepository):
+        def claim_next(
+            self, connection: Any, *, worker_role: Any, now: datetime
+        ) -> ClaimedAgentRun:
+            claimed = super().claim_next(connection, worker_role=worker_role, now=now)
+            if revocation_point == "claim":
+                revoked.set()
+            return claimed
+
+        def complete_draft(self, connection: Any, **values: Any) -> None:
+            super().complete_draft(connection, **values)
+            if revocation_point == "completion":
+                revoked.set()
+
+        def record_tool_call(self, connection: Any, entry: Any) -> None:
+            super().record_tool_call(connection, entry)
+            if revocation_point == "ledger":
+                revoked.set()
+
+        def fail(self, connection: Any, **values: Any) -> None:
+            super().fail(connection, **values)
+            if revocation_point == "failure_write":
+                revoked.set()
+
+    repository = Repository(lease=timedelta(seconds=30))
+
+    class Connection:
+        @contextmanager
+        def transaction(self) -> Generator[None, None, None]:
+            before_events, before_drafts = repository.events[:], drafts[:]
+            try:
+                yield
+            except BaseException:
+                repository.events[:], drafts[:] = before_events, before_drafts
+                raise
+
+    def facts(_: Any, claimed: ClaimedAgentRun) -> AgentRunPolicyFacts:
+        if revocation_point == "policy":
+            revoked.set()
+        if revocation_point == "failure_write":
+            raise RuntimeError("synthetic unreadable policy facts")
+        return AgentRunPolicyFacts(
+            data_classification=claimed.data_classification,
+            suppression_states=(),
+            has_source_event=False,
+            source_contact_binding_id=None,
+            gate=None,
+        )
+
+    class Provider(ScriptedResponsesTransport):
+        def create(self, request: Any, *, timeout_seconds: float) -> Any:
+            response = super().create(request, timeout_seconds=timeout_seconds)
+            if revocation_point in {"provider", "failure"}:
+                revoked.set()
+            if revocation_point == "failure":
+                raise ResponsesTransportTimeout("synthetic uncertain provider outcome")
+            return response
+
+    class Tool(_CatalogTransport):
+        def send(self, request: AgentToolForwardRequest) -> AgentToolForwardResponse:
+            response = super().send(request)
+            if revocation_point == "tool":
+                revoked.set()
+            return response
+
+    class Sink(CapturingEvidenceSink):
+        def take(self, run_id: UUID) -> Any:
+            result = super().take(run_id)
+            if revocation_point == "evidence":
+                revoked.set()
+            return result
+
+    def record_draft(_: Any, __: Any, result: Any, ___: Any, ____: Any) -> None:
+        drafts.append(result.draft_text)
+        if revocation_point == "draft":
+            revoked.set()
+
+    provider = Provider(
+        [_tool_call(), _final()]
+        if revocation_point in {"provider", "tool", "ledger"}
+        else [_final()]
+    )
+    tool = Tool()
+    assembled = build_agent_pipeline(
+        config=_config(),
+        provider_transport=provider,
+        tool_transport=tool,
+        runner=AgentRunner(_issuer()),
+        instructions=INSTRUCTIONS,
+        input_text_for=lambda _: "synthetic question",
+        repository=repository,  # type: ignore[arg-type]
+        policy_gate=AgentRunPolicyGate(facts_reader=facts),
+        evidence_sink=Sink(),
+        draft_recorder=record_draft,
+    )
+
+    result = assembled.run_cycle(Connection(), lambda: not revoked.is_set())
+
+    assert result.status == "ABANDONED"
+    assert len(provider.requests) == (
+        0 if revocation_point in {"claim", "policy", "failure_write"} else 1
+    )
+    assert len(tool.requests) == (1 if revocation_point in {"tool", "ledger"} else 0)
+    assert repository.events == []
+    assert drafts == []
+
+
+def test_a_revoked_worker_ledger_refuses_a_write_even_before_observer_close() -> None:
+    repository = _LeaseEnforcingRepository(lease=timedelta(seconds=20))
+    claimed = repository.claim_next(None, worker_role=None, now=datetime.now(UTC))
+    observer = _DatabaseToolCallObserver(
+        _UnavailableConnection(),
+        repository,  # type: ignore[arg-type]
+        claimed,
+        uuid4(),
+        authority_valid=lambda: False,
+    )
+    with pytest.raises(AgentRunStateError, match="authority was revoked"):
+        observer.record(
+            sequence_number=1,
+            operation=AgentToolOperation.CATALOG_RESOLVE,
+            arguments={"query": "synthetic"},
+            result=AgentToolBridgeResult(
+                status_code=200, body={"ok": True}, trace_id=None, response_headers={}
+            ),
+            started_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+        )
+    assert repository.events == []
 
 
 def test_a_tool_ledger_failure_is_named_and_stops_the_run() -> None:
@@ -721,6 +879,62 @@ def test_persisted_runtime_evidence_names_its_run(database_url: str) -> None:
     assert result.status == "DRAFT_REQUIRES_HUMAN"
     assert row is not None
     assert UUID(row[0]["runtime_evidence"]["run_id"]) == command.agent_run_id
+
+
+@pytest.mark.parametrize("revocation_point", ("completion", "draft", "failure"))
+def test_worker_revocation_rolls_back_terminal_transaction(
+    database_url: str, revocation_point: str
+) -> None:
+    """Real nested repository transactions cannot commit after a local fence is lost."""
+    revoked = threading.Event()
+
+    class Repository(AgentRunRepository):
+        def complete_draft(self, connection: Any, **values: Any) -> None:
+            super().complete_draft(connection, **values)
+            if revocation_point == "completion":
+                revoked.set()
+
+        def fail(self, connection: Any, **values: Any) -> None:
+            super().fail(connection, **values)
+            if revocation_point == "failure":
+                revoked.set()
+
+    def record_draft(*args: Any) -> None:
+        _record_draft_for_review(*args)
+        revoked.set()
+
+    def unavailable_facts(_: Any, __: Any) -> AgentRunPolicyFacts:
+        raise RuntimeError("synthetic unavailable policy facts")
+
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        command = _enqueue(connection)
+        assembled = build_agent_pipeline(
+            config=_config(),
+            provider_transport=ScriptedResponsesTransport([_final()]),
+            tool_transport=_CatalogTransport(),
+            runner=AgentRunner(_issuer()),
+            instructions=INSTRUCTIONS,
+            input_text_for=lambda _: "synthetic question",
+            repository=Repository(),
+            draft_recorder=record_draft,
+            policy_gate=(
+                AgentRunPolicyGate(facts_reader=unavailable_facts)
+                if revocation_point == "failure"
+                else None
+            ),
+        )
+        result = assembled.run_cycle(connection, lambda: not revoked.is_set())
+        status = connection.execute(
+            "SELECT status, failure_code FROM agent_runs WHERE id = %s", (command.agent_run_id,)
+        ).fetchone()
+        draft_count = connection.execute(
+            "SELECT count(*) FROM agent_drafts WHERE agent_run_id = %s", (command.agent_run_id,)
+        ).fetchone()
+
+    assert result.status == "ABANDONED"
+    assert result.agent_run_id == str(command.agent_run_id)
+    assert status == ("PROCESSING", None)
+    assert draft_count == (0,)
 
 
 def test_a_hanging_runtime_thread_is_not_left_calling_the_provider() -> None:

@@ -191,6 +191,7 @@ def test_the_database_branch_is_a_profile_rather_than_a_second_file(
 
     assert "postgres" not in _mapping(shop_config, "services")
     postgres = _mapping(_mapping(self_managed_config, "services"), "postgres")
+    assert _mapping(postgres, "build")["target"] == "postgres-backup"
     assert postgres["read_only"] is True
     assert postgres["cap_drop"] == ["ALL"]
     assert not postgres.get("ports")

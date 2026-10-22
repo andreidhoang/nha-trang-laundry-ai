@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -36,26 +37,38 @@ def _command_index(steps: list[dict[str, Any]], command: str) -> int:
 
 def test_python_quality_job_uses_healthy_synthetic_postgres_16() -> None:
     job = _python_quality_job()
-    services = job.get("services")
-    assert isinstance(services, dict)
-    postgres = services.get("postgres")
-    assert isinstance(postgres, dict)
-    assert str(postgres.get("image", "")).startswith("postgres:16.")
+    assert not job.get("services"), "a pre-checkout service cannot use the patched local build"
+    steps = _run_steps(job)
+    start = next(
+        step
+        for step in steps
+        if step.get("name") == "Start the patched synthetic PostgreSQL runtime"
+    )
+    command = str(start["run"])
+    assert "--file deploy/production/Postgres.Dockerfile --target postgres-runtime" in command
+    assert "--publish 127.0.0.1:5432:5432" in command
+    assert "laundry-quality-postgres:ci" in command
+    assert "seq 1 90" in command and "unhealthy)" in command
+    assert steps.index(start) < _command_index(steps, "uv run python scripts/apply_migrations.py")
+    dockerfile = (ROOT / "deploy/production/Postgres.Dockerfile").read_text(encoding="utf-8")
+    assert "postgres:16.15-alpine3.23@sha256:" in dockerfile
+    assert "COPY --from=gosu-build /go/bin/gosu /usr/local/bin/gosu" in dockerfile
 
-    service_environment = postgres.get("env")
-    assert isinstance(service_environment, dict)
+    service_environment = dict(re.findall(r"--env ([A-Z_]+)=([^\s]+)", command))
     assert service_environment == {
         "POSTGRES_DB": "nha_trang_laundry_ci",
         "POSTGRES_USER": "ci_app",
         "POSTGRES_PASSWORD": "ci-only-password",
     }
 
-    options = str(postgres.get("options", ""))
-    assert "--health-cmd" in options
-    assert "pg_isready -U ci_app -d nha_trang_laundry_ci" in options
-    assert "--health-interval" in options
-    assert "--health-timeout" in options
-    assert "--health-retries" in options
+    assert "--health-cmd" in command
+    # TCP is unavailable during the upstream entrypoint's temporary initialization server.
+    assert "pg_isready -h 127.0.0.1 -U ci_app -d nha_trang_laundry_ci" in command
+    assert "--health-interval" in command
+    assert "--health-timeout" in command
+    assert "--health-retries" in command
+    cleanup = next(step for step in steps if step.get("if") == "always()")
+    assert "docker rm --force --volumes laundry-quality-postgres" in cleanup["run"]
 
     job_environment = job.get("env")
     assert isinstance(job_environment, dict)

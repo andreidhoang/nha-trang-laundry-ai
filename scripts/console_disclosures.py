@@ -11,10 +11,12 @@ at 12,830 lines, and not one of these strings appeared in `test_staff_console_co
 binding it to what the system actually does, is the same defect class the governance layer exists to
 prevent — sitting in the one layer that layer does not reach.
 
-The worked example: `assistant.js` tells operators the streamed text is display pacing of a saved
-answer, "không phải mô hình đang sinh từ". That is true today and becomes false the moment a
-provider-backed brain is passed to `AssistantService(brain=...)`, which is a one-line change at a
-dependency-injection seam that exists so the swap can happen.
+The worked example: `assistant.js` explains that answer facts remain governed and streaming replays
+a saved answer, while an explicitly enabled local Gemini classifier may help interpret a question.
+The former blanket no-model sentence survived a provider factory injection because its old test
+inspected only the constructor's deterministic fallback. MODEL_SEAM now exercises the actual API
+factory in disabled and enabled modes, strict enum-to-deterministic rendering, and stored-answer
+streaming. A constructor default cannot establish the behavior of an injected dependency.
 
 A slot's identity is its file, its key, and the hash of its normalized text. Rewording a disclosure
 therefore changes its identity and fails the check until it is re-registered — which is the point.
@@ -61,8 +63,8 @@ DISCLOSURE_KEYS = (
 #: silently when the gap it describes closes.
 
 #: Keyed slots are not the whole population, and assuming they were would have missed the example
-#: this item exists for. The assistant's streaming disclosure - the sentence that becomes false the
-#: moment `AssistantService` is given a provider-backed brain - is rendered positionally as
+#: this item exists for. The assistant's governed-answer and optional-classifier disclosure is
+#: rendered positionally as
 #: `h("p", null, "...")` inside a `notice` element, so no key names it. Notice bodies are therefore
 #: enumerated as well, under the synthetic key below.
 NOTICE_KEY = "notice"
@@ -74,8 +76,8 @@ NOTICE_MINIMUM_LENGTH = 40
 #: `null,` paragraph of a notice left roughly sixty claims invisible, including two that mattered
 #: more than their count: the `notice__title` carrying "MANUAL_SEND_RECORDED không có nghĩa là khách
 #: đã nhận" -- one of the four chrome examples the UX spec names -- and a second model-seam claim in
-#: `assistant.js` rendered as a `screen__lede`, falsified by the same one-line brain swap as the
-#: registered one. A string passed after a props object is not less of a disclosure for it.
+#: `assistant.js` rendered as a `screen__lede`, whose governed-facts claim must hold through the
+#: injected brain factory too. A string after a props object is no less of a disclosure for it.
 CLAIM_CLASSES = ("notice__title", "screen__lede", "hint", "eyebrow", "notice")
 
 #: Object literals that are pure claim vocabulary rather than screen prose.

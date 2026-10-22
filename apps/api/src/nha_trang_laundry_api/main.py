@@ -258,6 +258,7 @@ from nha_trang_laundry_api.assistant import (
     answer_sse_frames,
     sla_policy_notice_vi,
 )
+from nha_trang_laundry_api.assistant_gemini import local_demo_brain_factory
 from nha_trang_laundry_api.auth import (
     AuthenticationAttemptLimiter,
     AuthenticationError,
@@ -1628,7 +1629,8 @@ def get_identity_service() -> StaffIdentityService:
 
     **Fail closed, no key cache.** A cache window is a window in which a rotated or revoked signing
     key still mints sessions, and the cost avoided is one HTTP GET over a loopback bridge per
-    sign-in, already bounded to five attempts per 300s per source by `AuthenticationAttemptLimiter`.
+    sign-in, bounded by `AuthenticationAttemptLimiter` after thirty failures per 300s per source
+    by default. Successful exchanges reset that source's counter.
 
     **The blast radius is new sign-ins only.** `current_principal` never touches JWKS: sessions are
     opaque rows in `staff_sessions`, so staff already signed in keep working for the eight-hour idle
@@ -7202,7 +7204,8 @@ class AssistantHistoryItemResponse(BaseModel):
 
 def get_assistant_service() -> AssistantService:
     try:
-        return AssistantService(AuthSettings())
+        settings = AuthSettings()
+        return AssistantService(settings, brain_factory=local_demo_brain_factory(settings))
     except AssistantUnavailable as error:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, detail="assistant unavailable"
@@ -7221,11 +7224,12 @@ def post_assistant_turn(
     principal: Annotated[StaffPrincipal, Depends(require_operations_staff)],
     service: Annotated[AssistantService | None, Depends(get_assistant_service)] = None,
 ) -> AssistantTurnResponse:
-    """Ask the deterministic assistant one question and record the answered turn.
+    """Ask the governed assistant one question and record the answered turn.
 
     The role gate is the operations gate; the repository re-checks store membership, and both
-    failures surface as the one opaque 403 every other store refusal produces. The brain never
-    calls a model and never computes money — it answers from governed reads or says it cannot.
+    failures surface as the one opaque 403 every other store refusal produces. Optional local
+    synthetic Gemini classification cannot supply facts or writes; server templates answer
+    from governed reads or say they cannot.
     """
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="assistant unavailable")

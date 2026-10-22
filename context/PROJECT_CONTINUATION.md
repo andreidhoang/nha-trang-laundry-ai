@@ -1,8 +1,40 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-10-05 (Asia/Ho_Chi_Minh)
-**Active work item:** none. **203 queue items.** Migrations run `0001`–`0072`; the numbers `0045` and `0069` were never used, so the tree holds 70 files (a clone that shows 70 has lost nothing).
+**Last reconciled:** 2026-10-22 (Asia/Ho_Chi_Minh)
+**Active work item:** `PILOT-RELEASE-PREFLIGHT-001` (verification/handoff). **205 queue items.** Migrations run `0001`–`0072`; the numbers `0045` and `0069` were never used, so the tree holds 70 files (a clone that shows 70 has lost nothing).
 Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
+
+## Windows target and GitHub handoff, 2026-10-22
+
+The owner superseded the Mac deployment choice: the application will run on a **Windows machine**.
+Read `docs/WINDOWS_ENGINEER_HANDOFF_2026-10-22.md` first. `codex/engineer-setup` carries application,
+recovery, tests and deployment context. Separate sales drafts remain excluded by the owner.
+The Mac remains the demo/evidence environment; no target Windows host was accessible or verified.
+Windows startup/schedules/preflight, trusted browser access, backup mounts/recovery, actual realm
+policy, fresh target image scans and owner cutover remain blockers (`WINDOWS-DEPLOYMENT-001`).
+Do not apply the Mac `launchctl`/`security` procedure as if it were a Windows deployment.
+The portable sanitized evidence summary is `evidence/handoff/2026-10-22/verification-summary.json`.
+Ignored `.demo` videos/logs/images and private runtime do not travel through GitHub; their inventory
+labels availability explicitly. No provider allowance, billing or capability authorization changed.
+
+## Owner-selected shop Mac: release preparation, 2026-10-16
+
+The owner selected **this dedicated Mac** for the first real-shop pilot. The current plan and
+requirements matrix are [the shop Mac release specification](../docs/SHOP_MAC_RELEASE_PLAN_2026-10-16.md).
+Prepare the deterministic, staff-operated private till first. Customer AI, public channels and
+automatic sends remain closed. All thirteen capability authorizations remain `NOT_AUTHORIZED`.
+
+October 15 local code/browser evidence and the real Free-tier Gemini sample are in
+`docs/audit/LOCAL_READINESS_2026-10-15.md` and
+`docs/audit/GEMINI_FREE_TIER_VERIFICATION_2026-10-15.md`; no old run is relabeled for new source.
+Gemini's local allowance is exhausted. The shop will use separate data, identity and credentials.
+
+Read-only Mac preflight found missing shop bootstrap material, archive configuration/destination,
+and trusted shop CA; the original preserved demo also occupies shop port 8443. Three demos on
+8081/8089/8091 remain running. `REALM-POLICY-001` is now accurately blocked until an actual R1 realm
+and authenticated admin read-back exist. Local preparation corrects recovery integrity and
+false-success checks; target installation, backup custody, actual restore, alert delivery and
+owner counter acceptance remain their own evidence requirements.
 
 ## The whole-app review: round 9, 2026-10-04
 

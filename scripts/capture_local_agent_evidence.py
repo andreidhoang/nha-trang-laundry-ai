@@ -35,8 +35,11 @@ SUPERSEDED_OUTPUTS = (
     # `context/tasks/TASK-evidence-repin-001.md`; every case status, the release-blocker list the
     # manifest reports and the DETERMINISTIC_DEGRADED runtime path are unchanged.
     "evidence/agent-shadow/local-synthetic-suite-v4.json",
+    # Superseded 2026-10-15 after local worker authority and claim-loss corrections.
+    # Re-derived against the corrected runner; all cases remain non-release SKIP.
+    "evidence/agent-shadow/local-synthetic-suite-v5.json",
 )
-DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v5.json"
+DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v6.json"
 PINNED_ARTIFACTS = (
     "specs/evals/eval-manifest-v1.yaml",
     "specs/evals/fixture-registry-v1.json",

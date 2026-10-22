@@ -393,3 +393,168 @@ def test_the_guide_says_typing_on_after_a_held_press_keeps_the_screen() -> None:
     assert "nhập tiếp ở màn hình đang giữ thì máy ở lại màn hình đó" in row
     source = (WEB / "src" / "core" / "router.js").read_text()
     assert "function forgetHeld()" in source
+
+
+# A different person after an idle expiry owns a fresh workspace. These tests execute the
+# session/request modules; body sheets and the actual screen hand-offs are checked in Chrome.
+_IDENTITY_TRANSITION = """
+const api = await import("./src/core/api.js");
+const session = await import("./src/core/session.js");
+const held = [];
+const calls = [];
+const response = (status, body) => new Response(JSON.stringify(body), {
+  status, headers: {"Content-Type": "application/json"},
+});
+globalThis.fetch = (path, init = {}) => {
+  calls.push(String(path));
+  const next = globalThis.__answers.shift();
+  if (next === "hold") return new Promise((resolve, reject) => held.push({
+    resolve: (status, body) => resolve(response(status, body)), reject,
+  }));
+  const [status, body] = next || [200, {}];
+  return Promise.resolve(response(status, body));
+};
+const A = {staff_user_id: "person-a", roles: ["OPERATOR"], mfa_verified: true,
+  session_id: "session-a"};
+const B = {...A, staff_user_id: "person-b", session_id: "session-b"};
+const STORES_A = {store_ids: ["store-a"], stores: [{store_id: "store-a", name: "A shop"}]};
+const STORES_B = {store_ids: ["store-b"], stores: [{store_id: "store-b", name: "B shop"}]};
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+let cleared = 0;
+let privateDraft = "synthetic prior-person draft";
+session.onSignOut(() => { cleared++; privateDraft = ""; });
+globalThis.__answers.push([200, A], [200, STORES_A]);
+await session.refresh();
+"""
+
+
+@pytest.mark.parametrize("intermediate", ["active", "ended", "unreachable"])
+def test_different_person_retires_old_responses_and_clears_before_exposing_identity(
+    intermediate: str,
+) -> None:
+    got = _run(
+        _IDENTITY_TRANSITION
+        + f"""
+globalThis.__answers.push("hold");
+const old = api.request("/internal/v1/slow-a").then(() => "accepted", e => e.kind);
+if ({json.dumps(intermediate)} === "ended") session.end();
+if ({json.dumps(intermediate)} === "unreachable") {{
+  globalThis.__answers.push([503, {{detail: "unavailable"}}]);
+  await session.refresh();
+}}
+const before = {{cleared, privateDraft}};
+let exposedBeforeCleanup = false;
+session.subscribe(() => {{
+  if (session.principal()?.staffUserId === B.staff_user_id && cleared !== 1) {{
+    exposedBeforeCleanup = true;
+  }}
+}});
+globalThis.__answers.push([200, B], [200, STORES_B]);
+await session.refresh();
+held.shift().resolve(200, {{synthetic: true}});
+const result = await old;
+console.log(JSON.stringify({{before, cleared, privateDraft, result, exposedBeforeCleanup,
+  principal: session.principal()?.staffUserId, status: session.snapshot().status,
+  stores: session.snapshot().memberStoreIds, store: session.storeId(),
+  logoutCalls: calls.filter(p => p.includes('/logout')).length}}));
+"""
+    )
+    assert got == {
+        "before": {"cleared": 0, "privateDraft": "synthetic prior-person draft"},
+        "cleared": 1,
+        "privateDraft": "",
+        "result": "SIGNED_OUT",
+        "exposedBeforeCleanup": False,
+        "principal": "person-b",
+        "status": "active",
+        "stores": ["store-b"],
+        "store": "store-b",
+        "logoutCalls": 0,
+    }
+
+
+@pytest.mark.parametrize("intermediate", ["ended", "unreachable"])
+def test_same_person_recovery_keeps_draft_and_does_not_retire_their_pending_response(
+    intermediate: str,
+) -> None:
+    got = _run(
+        _IDENTITY_TRANSITION
+        + f"""
+globalThis.__answers.push("hold");
+const old = api.request("/internal/v1/slow-a").then(() => "accepted", e => e.kind);
+if ({json.dumps(intermediate)} === "ended") session.end();
+else {{
+  globalThis.__answers.push([503, {{detail: "unavailable"}}]);
+  await session.refresh();
+}}
+globalThis.__answers.push([200, {{...A, session_id: "new-session-a"}}], [200, STORES_A]);
+await session.refresh();
+held.shift().resolve(200, {{synthetic: true}});
+console.log(JSON.stringify({{cleared, privateDraft, result: await old,
+  principal: session.principal()?.staffUserId, stores: session.snapshot().memberStoreIds}}));
+"""
+    )
+    assert got == {
+        "cleared": 0,
+        "privateDraft": "synthetic prior-person draft",
+        "result": "accepted",
+        "principal": "person-a",
+        "stores": ["store-a"],
+    }
+
+
+@pytest.mark.parametrize("late_result", ["success", "failure", "unauthorized"])
+def test_old_member_store_completion_cannot_erase_new_person_scope(late_result: str) -> None:
+    got = _run(
+        _IDENTITY_TRANSITION
+        + f"""
+globalThis.__answers.push([200, A], "hold");
+const refreshA = session.refresh();
+await settle();
+globalThis.__answers.push([200, B], [200, STORES_B]);
+await session.refresh();
+let lateNotifications = 0;
+session.subscribe(() => {{ lateNotifications++; }});
+const slow = held.shift();
+if ({json.dumps(late_result)} === "failure") slow.reject(new TypeError("synthetic network error"));
+else slow.resolve({401 if late_result == "unauthorized" else 200}, STORES_A);
+await refreshA;
+console.log(JSON.stringify({{cleared, lateNotifications,
+  principal: session.principal()?.staffUserId,
+  status: session.snapshot().status, stores: session.snapshot().memberStoreIds,
+  names: session.snapshot().storeNames, store: session.storeId(),
+  known: session.snapshot().storeScopeKnown}}));
+"""
+    )
+    assert got == {
+        "cleared": 1,
+        "lateNotifications": 0,
+        "principal": "person-b",
+        "status": "active",
+        "stores": ["store-b"],
+        "names": {"store-b": "B shop"},
+        "store": "store-b",
+        "known": True,
+    }
+
+
+def test_older_session_read_cannot_restore_the_previous_person() -> None:
+    got = _run(
+        _IDENTITY_TRANSITION
+        + """
+globalThis.__answers.push("hold");
+const refreshA = session.refresh();
+globalThis.__answers.push([200, B], [200, STORES_B]);
+await session.refresh();
+held.shift().resolve(200, A);
+await refreshA;
+console.log(JSON.stringify({cleared, principal: session.principal()?.staffUserId,
+  status: session.snapshot().status, stores: session.snapshot().memberStoreIds}));
+"""
+    )
+    assert got == {
+        "cleared": 1,
+        "principal": "person-b",
+        "status": "active",
+        "stores": ["store-b"],
+    }

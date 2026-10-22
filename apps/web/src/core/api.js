@@ -170,6 +170,7 @@ export async function request(path, options = {}) {
 
   const era = departures;
   let response;
+  let body;
   try {
     response = await fetch(path, {
       method,
@@ -180,6 +181,9 @@ export async function request(path, options = {}) {
       redirect: "error",
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
+    // fetch resolves when headers arrive. Keep the deadline and transport classification active
+    // until the body is read too: a half-delivered response must not hold a form open forever.
+    body = await readBody(response);
   } catch (cause) {
     if (era !== departures) throw apiError("SIGNED_OUT", { correlationId });
     if (options.signal?.aborted) throw cause;
@@ -188,7 +192,6 @@ export async function request(path, options = {}) {
     clearTimeout(timer);
   }
 
-  const body = await readBody(response);
   // Sent by somebody who has since signed out: whatever the server said is not for this page.
   if (era !== departures) throw apiError("SIGNED_OUT", { correlationId });
 

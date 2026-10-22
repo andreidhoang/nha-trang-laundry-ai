@@ -21,6 +21,7 @@ from nha_trang_laundry_contracts import (
     ToolArgumentsInvalid,
     load_agent_tool_registry,
 )
+from nha_trang_laundry_db.connection import application_connect
 from nha_trang_laundry_observability import current_correlation
 
 from nha_trang_laundry_agent_tools.auth import (
@@ -163,7 +164,7 @@ class PostgresAgentCallLedger:
     _LOCK_NAMESPACE = 0x41474654  # "AGFT"
 
     def __init__(
-        self, database_url: str, *, connection_factory: Callable[[str], Any] = psycopg.connect
+        self, database_url: str, *, connection_factory: Callable[[str], Any] = application_connect
     ) -> None:
         if not database_url:
             raise AgentToolUnavailable("the call ledger requires an explicit database URL")
@@ -271,7 +272,14 @@ class AgentFacadeService:
         authorize_operation(claims, operation)
         _authorize_bound_path(claims, path_parameters)
         _validate_required_headers(contract.header_parameters, idempotency_key, if_match)
-        validated = contract.validate_model_arguments(arguments)
+        try:
+            validated = contract.validate_model_arguments(arguments)
+        except RecursionError as error:
+            # The JSON decoder can accept deeper values than the schema/injection validator.
+            # Refuse those inputs before admitting the bearer or reaching any domain adapter.
+            raise ToolArgumentsInvalid(
+                operation.value, ("$: argument nesting exceeds validation limits",)
+            ) from error
         # AGENT-SHADOW-DEFECTS-001 F7: one admission per bearer, within the operation's registered
         # per-run limit, before the backend is reached. Validation runs first so a malformed body
         # cannot spend a run's budget; nothing after this point runs for a refused bearer.
@@ -369,7 +377,14 @@ async def _invoke_fixed_route(
         if contract.method == "GET":
             arguments: Mapping[str, Any] = {}
         else:
-            raw = await request.json()
+            try:
+                raw = await request.json()
+            except (ValueError, RecursionError) as error:
+                # JSON syntax/encoding errors and Python's integer/depth limits all describe
+                # invalid caller input. Keep this guard around parsing, before bearer admission.
+                raise ToolArgumentsInvalid(
+                    operation.value, ("$: valid JSON object required",)
+                ) from error
             if not isinstance(raw, dict):
                 raise ToolArgumentsInvalid(operation.value, ("$: JSON object required",))
             arguments = raw
@@ -467,7 +482,10 @@ def _authorize_bound_path(claims: AgentRunnerClaims, path_parameters: Mapping[st
             raise AgentAuthorizationError("cross-request access denied")
     public_code = path_parameters.get("public_code")
     if public_code is not None and (
-        claims.public_code is None or not hmac.compare_digest(public_code, claims.public_code)
+        claims.public_code is None
+        or not public_code.isascii()
+        or not claims.public_code.isascii()
+        or not hmac.compare_digest(public_code, claims.public_code)
     ):
         raise AgentAuthorizationError("public order locator is not bound to this run")
 
@@ -481,11 +499,13 @@ def _validate_required_headers(
         or not all(character.isalnum() or character in "._:-" for character in idempotency_key)
     ):
         raise ToolArgumentsInvalid("header", ("Idempotency-Key: invalid or missing",))
+    # A PostgreSQL BIGINT row version needs at most 19 decimal digits plus two quotes.
     if "If-Match" in required and (
         if_match is None
-        or len(if_match) < 3
+        or not 3 <= len(if_match) <= 21
         or not if_match.startswith('"')
         or not if_match.endswith('"')
+        or not if_match.isascii()
         or not if_match[1:-1].isdigit()
     ):
         raise ToolArgumentsInvalid("header", ("If-Match: invalid or missing",))

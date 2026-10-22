@@ -12,7 +12,11 @@ x-logging: &default-logging
 
 services:
   postgres:
-    image: postgres:16.10-alpine
+    image: ${LOCAL_POSTGRES_IMAGE:-nha-trang-laundry-postgres-runtime:local}
+    build:
+      context: .
+      dockerfile: deploy/production/Postgres.Dockerfile
+      target: postgres-runtime
     logging: *default-logging
     environment:
       POSTGRES_DB: nha_trang_laundry

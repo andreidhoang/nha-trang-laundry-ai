@@ -16,9 +16,9 @@ document element, outside `<body>`: Playwright's locators pierce open shadow roo
 ones, `page.content()` sees an empty custom element, `innerText` of the body does not include it,
 and it takes no pointer events, so it can neither be found by a check nor intercept a click. With
 Its styles are a constructed stylesheet and CSSOM properties, not an inline `<style>`: the
-console's `style-src 'self'` refuses the latter, and the refusal would land in the page-error list
-the scripts report. With `--video` omitted every function here is a no-op and the scripts behave
-exactly as before.
+console's `style-src 'self'` refuses the latter, and the refusal would land in the console-error
+diagnostics. With `--video` omitted the Recorder adds no captions or delays. The independent
+render-defect and uncaught-error monitors remain active in both filmed and ordinary verification.
 """
 
 from __future__ import annotations
@@ -201,6 +201,25 @@ def add_arguments(parser: Any) -> None:
     parser.add_argument(
         "--slow-mo", type=int, default=250, help="milliseconds per action while recording"
     )
+
+
+def watch_page_errors(context: Any, found: list[str] | None = None) -> list[str]:
+    """Collect uncaught JavaScript errors from every page, including secondary tabs.
+
+    Refused HTTP requests can emit console.error during negative-path checks. Those diagnostics
+    are separate: only Playwright's pageerror event represents an uncaught JavaScript exception.
+    Call before creating pages; existing pages are also covered.
+    """
+
+    errors = found if found is not None else []
+
+    def watch(page: Any) -> None:
+        page.on("pageerror", lambda error: errors.append(str(error)))
+
+    context.on("page", watch)
+    for page in context.pages:
+        watch(page)
+    return errors
 
 
 _DEFECT_SCRIPT = r"""

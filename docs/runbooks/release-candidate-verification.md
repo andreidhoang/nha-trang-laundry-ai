@@ -25,12 +25,15 @@ uv run python scripts/verify_release_candidate.py \
   --stage SHADOW \
   --capability INTERNAL_SHADOW \
   --artifact-root <read-only-evidence-root> \
+  --supply-chain-evidence <read-only-evidence-root/supply-chain-evidence.json> \
   --at <rfc3339-verification-time>
 ```
 
 Success prints only the verified envelope, canonical payload hash, validity window, and artifact count.
 Any missing artifact, hash mismatch, schema violation, wrong deployment envelope, untrusted signer,
 identity reuse, invalid signature, premature activation, or expiry exits nonzero.
+The supply-chain evidence must be inside the artifact root and hash-bound by the signed manifest;
+an unrelated scan report cannot satisfy it.
 
 ## Activation boundary
 

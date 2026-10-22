@@ -691,8 +691,7 @@ function signedOutScreen() {
         ? h(
             "p",
             { dataSessionExpired: "true" },
-            "Phiên đăng nhập đã kết thúc, nên màn hình này (cần máy chủ) chưa mở được. Đăng nhập " +
-              "lại rồi bấm “Kiểm tra lại phiên”.",
+            "Phiên đăng nhập đã kết thúc. Đăng nhập lại rồi bấm “Kiểm tra lại phiên”.",
           )
         : null,
       state.signedOutElsewhere
@@ -708,8 +707,7 @@ function signedOutScreen() {
         : h(
             "p",
             null,
-            "Bảng vận hành không tự đăng nhập. Nhà cung cấp danh tính cấp token, đổi lấy cookie " +
-              "phiên, rồi chuyển bạn về đây.",
+            "Đăng nhập bằng tài khoản được cửa hàng cấp để tiếp tục làm việc.",
           ),
       signInPath
         ? h(
@@ -720,8 +718,7 @@ function signedOutScreen() {
         : h(
             "p",
             { class: "hint" },
-            "Triển khai này chưa khai báo đường dẫn đăng nhập. Đặt thẻ meta console-signin-path " +
-              "trong index.html để hiện nút.",
+            "Chưa có trang đăng nhập. Hãy liên hệ chủ cửa hàng để được hỗ trợ.",
           ),
       h(
         "div",
@@ -839,7 +836,7 @@ let heldRecheck = false;
  * with the server answering, until "Kiểm tra lại phiên" was found. Now the press asks: still out,
  * and the screen stays held as it was; the same person signed in again, and the press goes where
  * it was pressed (`router.resumeHeld`). Someone else signed in: nothing is carried over to them --
- * the screen is drawn again for them by the session's subscriber, the last person's typing gone.
+ * the session first clears the previous person's workspace and starts the new person at home.
  * One read at a time; a second press meanwhile is the one made when the read answers.
  */
 function recheckForHeld() {
@@ -1057,11 +1054,12 @@ function contentKey() {
 }
 
 /**
- * Clear everything the person who just signed out could have left in this page (C1).
+ * Clear everything the previous person could have left in this page (C1).
  *
- * Run by `session.signOut()` once the server has ended the session, before subscribers hear of it
- * -- so the signed-out screen they render lands on an empty page, in the same task, with nothing
- * painted in between. Not run for an idle expiry: that path keeps the screen on purpose.
+ * Run after an acknowledged sign-out, or before a session read exposes a different person.
+ * Cleanup precedes subscribers, so no previous-person content is painted under the new identity.
+ * An idle expiry alone keeps the screen for same-person recovery. Identity-change cleanup is
+ * local only; it does not end the new person's server session.
  *
  *   - every open dialog is closed, and every node a screen appended to `<body>` -- sheets, the
  *     account sheet with its device list, toasts -- is removed with whatever it said;
@@ -1176,8 +1174,9 @@ async function boot() {
     // is where `unreachableScreen()` belongs; mid-shift the banner below carries it and the form
     // stays exactly where the operator left it.
     //
-    // A sign-out is the opposite case (C1): the person chose to leave, `wipeWorkspace()` has
-    // already emptied the page, and the signed-out screen is rendered in its place at once.
+    // A sign-out is the opposite case (C1): `wipeWorkspace()` has already emptied the page.
+    // A confirmed identity change uses the same cleanup before exposing the new principal,
+    // then starts them at home; it never carries the previous person's held work to them.
     //
     // K2 (round-9b verification 2): unless the outlet shows "Đang kiểm tra phiên" for a read made
     // because the server answered -- that screen gives way to what the read found.

@@ -20,6 +20,7 @@ from nha_trang_laundry_api.auth import (
     AuthSettings,
     IdentityPlatformVerifier,
     SigningKey,
+    StaffIdentityService,
     identity_token_digest,
 )
 from nha_trang_laundry_api.main import app, current_principal, get_identity_service
@@ -213,6 +214,42 @@ def test_a_cookie_the_strict_parser_rejects_does_not_switch_csrf_off(neighbour: 
     assert no_token.status_code == 403
 
 
+@pytest.mark.parametrize(
+    ("cookie_token", "header_token"),
+    [
+        (b"a" * 32, b"a" * 31 + b"\xe9"),
+        (b"a" * 31 + b"\xe9", b"a" * 32),
+        (b"a" * 31 + b"\xe9", b"a" * 31 + b"\xe9"),
+    ],
+)
+def test_non_ascii_csrf_tokens_are_rejected_before_authentication(
+    cookie_token: bytes, header_token: bytes
+) -> None:
+    """Raw HTTP headers may contain non-ASCII bytes; token comparison must still deny safely."""
+
+    def authentication_must_not_run() -> StaffPrincipal:
+        raise AssertionError("malformed CSRF token reached authentication")
+
+    app.dependency_overrides[current_principal] = authentication_must_not_run
+    client = TestClient(app, base_url=ORIGIN, raise_server_exceptions=False)
+    try:
+        response = client.post(
+            "/internal/v1/staff",
+            headers=[
+                (b"cookie", b"staff_session=opaque-session; staff_csrf=" + cookie_token),
+                (b"origin", ORIGIN.encode("ascii")),
+                (b"x-csrf-token", header_token),
+            ],
+            json={"oidc_subject": "new-staff", "display_name": "New Staff"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "CSRF validation failed"}
+    assert response.headers["Cache-Control"] == "no-store"
+
+
 def test_identity_exchange_replaces_session_and_issues_strict_csrf_cookie() -> None:
     app.dependency_overrides[get_identity_service] = BrowserIdentityService
     client = TestClient(app, base_url=ORIGIN)
@@ -342,8 +379,39 @@ def test_an_id_token_is_a_sign_in_that_just_happened_not_a_credential_to_keep() 
             verifier.verify(token)
 
 
+@pytest.mark.parametrize("issued_at", [-(10**100), -1e100, -62_135_596_801])
+def test_signed_out_of_range_issue_time_is_refused_before_session_creation(
+    issued_at: int | float,
+) -> None:
+    private_key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
+    verifier = IdentityPlatformVerifier(_settings(), StaticJwksClient(private_key.public_key()))
+    token = jwt.encode(
+        _claims(iat=issued_at), private_key, algorithm="RS256", headers={"kid": "staff-key"}
+    )
+
+    def no_database(_: str) -> Any:
+        raise AssertionError("an invalid issue time must be refused before session creation")
+
+    service = StaffIdentityService(_settings(), verifier=verifier, connection_factory=no_database)
+    app.dependency_overrides[get_identity_service] = lambda: service
+    original_limiter = api_main._AUTH_LIMITER
+    api_main._AUTH_LIMITER = AuthenticationAttemptLimiter(limit=2, window_seconds=60)
+    try:
+        response = TestClient(app, base_url=ORIGIN).post(
+            "/internal/v1/auth/session",
+            headers={"Origin": ORIGIN, "Authorization": f"Bearer {token}"},
+        )
+    finally:
+        api_main._AUTH_LIMITER = original_limiter
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "identity exchange rejected"}
+    assert "set-cookie" not in response.headers
+
+
 def test_every_spelling_of_one_signed_token_is_the_same_sign_in() -> None:
-    """A signature segment has spare bits; each spelling verifies, and all bind to one digest."""
+    """Noncanonical signatures are refused; signing-input aliases still bind to one digest."""
 
     private_key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
     verifier = IdentityPlatformVerifier(_settings(), StaticJwksClient(private_key.public_key()))
@@ -359,7 +427,20 @@ def test_every_spelling_of_one_signed_token_is_the_same_sign_in() -> None:
     assert len(spellings) == 16
     spellings.add(f"{token}==")
 
-    digests = {verifier.verify(spelling).token_digest for spelling in spellings}
+    assert verifier.verify(token).token_digest == identity_token_digest(token)
+
+    def no_database(_: str) -> Any:
+        raise AssertionError("a noncanonical token must be refused before session creation")
+
+    service = StaffIdentityService(_settings(), verifier=verifier, connection_factory=no_database)
+    # PyJWT 2.14+ rejects noncanonical compact JWS (GHSA-hxm8-2xgr-2p9m). The previous
+    # assertion required those spellings to authenticate, undoing that security expectation.
+    for spelling in spellings - {token}:
+        with pytest.raises(AuthenticationError, match="invalid staff identity token"):
+            service.exchange(spelling)
+
+    # Independently retain the one-sign-in binding even for spellings the verifier rejects.
+    digests = {identity_token_digest(spelling) for spelling in spellings}
 
     assert digests == {identity_token_digest(token)}
 

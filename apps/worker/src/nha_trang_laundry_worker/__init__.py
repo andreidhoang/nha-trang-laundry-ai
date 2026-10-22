@@ -102,6 +102,8 @@ class InternalOutboxWorker:
         event: ClaimedOutboxEvent,
         authority: AuthorityCheck,
     ) -> WorkerRunResult:
+        if not authority():
+            return WorkerRunResult(str(event.event_id), "ABANDONED")
         handler = self._handlers.get(event.event_type)
         if handler is None:
             if not authority():
@@ -125,7 +127,7 @@ class InternalOutboxWorker:
         except Exception:
             if not authority():
                 return WorkerRunResult(str(event.event_id), "ABANDONED")
-            self._repository.retry_or_dead_letter_internal(
+            retry_status = self._repository.retry_or_dead_letter_internal(
                 connection,
                 event_id=event.event_id,
                 claim_token=event.claim_token,
@@ -133,6 +135,13 @@ class InternalOutboxWorker:
                 error_class="INTERNAL_HANDLER_TRANSIENT_FAILURE",
                 retryable=True,
             )
+            if retry_status == "DEAD":
+                self._telemetry.record(
+                    "dlq_items_total",
+                    1,
+                    {"component": "worker", "queue": "internal", "outcome": "failed"},
+                )
+                return WorkerRunResult(str(event.event_id), "DEAD")
             self._telemetry.record(
                 "queue_retries_total",
                 1,

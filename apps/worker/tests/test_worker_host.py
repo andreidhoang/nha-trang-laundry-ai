@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import threading
 from collections.abc import Generator
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -294,6 +295,79 @@ def test_internal_worker_continues_durable_w3c_parent_without_business_identifie
     assert spans[0].parent is not None and spans[0].parent.span_id == 0x902
     assert spans[0].attributes is not None
     assert "traceparent" not in spans[0].attributes
+
+
+@pytest.mark.parametrize("repository_status", ("PENDING", "DEAD"))
+def test_internal_retry_reports_the_repository_terminal_state(repository_status: str) -> None:
+    event = _offline_claimed_event()
+    recorded_metrics: list[str] = []
+
+    class Repository:
+        def claim_next_internal(self, *_: Any, **__: Any) -> ClaimedOutboxEvent:
+            return event
+
+        def retry_or_dead_letter_internal(self, *_: Any, **__: Any) -> str:
+            return repository_status
+
+    class Metrics:
+        def start_span(self, *_: Any, **__: Any) -> Any:
+            return nullcontext()
+
+        def record(self, name: str, *_: Any) -> None:
+            recorded_metrics.append(name)
+
+    def failing_handler(_: ClaimedOutboxEvent) -> None:
+        raise RuntimeError("synthetic handler failure")
+
+    result = InternalOutboxWorker(
+        {event.event_type: failing_handler},
+        repository=Repository(),  # type: ignore[arg-type]
+        telemetry=Metrics(),  # type: ignore[arg-type]
+    ).run_once(object())
+
+    assert result.status == ("DEAD" if repository_status == "DEAD" else "RETRY_SCHEDULED")
+    assert recorded_metrics == [
+        "dlq_items_total" if repository_status == "DEAD" else "queue_retries_total"
+    ]
+
+
+def test_internal_handler_does_not_start_if_authority_is_revoked_during_claim() -> None:
+    event = _offline_claimed_event()
+    revoked = threading.Event()
+    handled: list[UUID] = []
+
+    class Repository:
+        def claim_next_internal(self, *_: Any, **__: Any) -> ClaimedOutboxEvent:
+            revoked.set()
+            return event
+
+        def complete_internal(self, *_: Any, **__: Any) -> None:
+            raise AssertionError("an abandoned claim must not complete")
+
+    result = InternalOutboxWorker(
+        {event.event_type: lambda claimed: handled.append(claimed.event_id)},
+        repository=Repository(),  # type: ignore[arg-type]
+    ).run_once(object(), authority_valid=lambda: not revoked.is_set())
+
+    assert result.status == "ABANDONED"
+    assert handled == []
+
+
+def _offline_claimed_event() -> ClaimedOutboxEvent:
+    return ClaimedOutboxEvent(
+        event_id=uuid4(),
+        claim_token=uuid4(),
+        aggregate_type="TEST",
+        aggregate_id=uuid4(),
+        event_type="order.state_transitioned.v1",
+        payload={},
+        idempotency_key="synthetic:authority",
+        correlation_id=uuid4(),
+        attempt_count=6,
+        lease_expires_at=datetime.now(UTC) + timedelta(seconds=30),
+        traceparent=None,
+        tracestate=None,
+    )
 
 
 def _insert_internal_event(

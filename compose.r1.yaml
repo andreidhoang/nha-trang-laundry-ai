@@ -86,6 +86,7 @@ services:
     build:
       context: .
       dockerfile: deploy/production/Postgres.Dockerfile
+      target: postgres-backup
     init: true
     read_only: true
     cap_drop: ["ALL"]

@@ -53,6 +53,7 @@ from console_recording import (  # noqa: E402
     Recorder,
     add_arguments,
     viewport,
+    watch_page_errors,
     watch_render_defects,
 )
 
@@ -178,6 +179,7 @@ def main() -> int:
         )
         context = browser.new_context(viewport=viewport(), **REC.context_options())
         defects = watch_render_defects(context)
+        page_errors = watch_page_errors(context)
         console = Console(REC.film(context, context.new_page(), "tin-dich-vu"))
         page = console.page
 
@@ -480,6 +482,11 @@ def main() -> int:
         console.shot("09b-resumed-recorded")
 
         ok("no screen showed [object Object], undefined ₫ or NaN", not defects)
+        ok(
+            "no uncaught JavaScript errors in any browser tab",
+            not page_errors,
+            str(page_errors[:6]),
+        )
         REC.finish()
         context.close()
         for film in REC.save():

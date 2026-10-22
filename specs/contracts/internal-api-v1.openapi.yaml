@@ -1066,7 +1066,7 @@ paths:
           type: string
     post:
       operationId: post_assistant_turn
-      summary: Ask the deterministic assistant one question and record the answered turn.
+      summary: Ask the governed assistant one question and record the answered turn.
       x-authorization-dependencies:
       - require_operations_staff
       - get_assistant_service

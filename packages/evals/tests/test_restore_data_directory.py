@@ -160,6 +160,24 @@ def test_a_directory_that_is_not_empty_is_still_refused_and_left_alone(tmp_path:
     assert _mode(data_directory) == 0o755, "a refused restore must not change anything"
 
 
+@pytest.mark.parametrize("created", [False, True])
+def test_a_malformed_target_does_not_prepare_the_directory(tmp_path: Path, created: bool) -> None:
+    data_directory = tmp_path / "restore"
+    if created:
+        data_directory.mkdir()
+        data_directory.chmod(0o755)
+
+    result = _restore(tmp_path, data_directory, target="2026-09-30 09:00:00+07:")
+
+    assert result.returncode == 6, result.stderr
+    assert "refusing" in result.stderr
+    if created:
+        assert not list(data_directory.iterdir())
+        assert _mode(data_directory) == 0o755
+    else:
+        assert not data_directory.exists()
+
+
 # --- "everything we have": the most common restore could not be expressed ----------------------
 #
 # The clean re-run of the drill restored to a time just after the last commit -- and then, obeying

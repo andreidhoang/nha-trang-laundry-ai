@@ -72,8 +72,10 @@ _refuse_target() {
 _target_stamp() {
     # `latest`: every backup is at or before the end of the archive (see `recover_to_end` below).
     case "$target_time" in latest|LATEST) printf '99999999999999\n'; return 0 ;; esac
-    _dt=$(printf '%s' "$target_time" | sed -E 's/([+-][0-9]{2}:?[0-9]{2}?|Z)$//' | sed -E 's/\.[0-9]+$//')
-    _off=$(printf '%s' "$target_time" | sed -nE 's/.*([+-][0-9]{2}:?[0-9]{2}?|Z)$/\1/p')
+    # The minute pair is optional as a group: HH, HHMM or HH:MM. Stacking `{2}?`
+    # is not a POSIX ERE and BSD sed rejects it before any target can be read.
+    _dt=$(printf '%s' "$target_time" | sed -E 's/([+-][0-9]{2}(:?[0-9]{2})?|Z)$//' | sed -E 's/\.[0-9]+$//')
+    _off=$(printf '%s' "$target_time" | sed -nE 's/.*([+-][0-9]{2}(:?[0-9]{2})?|Z)$/\1/p')
     case "$_dt" in
         [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][\ T][0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;;
         [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][\ T][0-9][0-9]:[0-9][0-9]) _dt="${_dt}:00" ;;
@@ -186,6 +188,18 @@ unset IFS
 mkdir -p "$data_directory"
 chmod 0700 "$data_directory"
 
+# A pipeline's exit status in POSIX sh is only its last command's status. A tar
+# payload can be complete even when its gzip footer, authenticated decryption or
+# fetch failed, so neither tar's status nor pg_control proves the upstream stages.
+# Stage each layer on the recovery disk and check it before extracting anything.
+# The private sibling directory is removed on every ordinary exit or interruption;
+# it can hold a full encrypted, compressed and uncompressed backup at once.
+umask 077
+work="$(mktemp -d "${data_directory}.restore-work.XXXXXX")"
+trap 'rm -rf "$work"' 0
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 # One line at a time, not `for candidate in $candidates`: that word-splits, so a repository prefix
 # or an object name containing a space would be torn into fragments and every fetch would miss.
 # A space in these paths is expected rather than exotic -- the identity arrives on removable media
@@ -194,19 +208,18 @@ restored=""
 while IFS= read -r candidate; do
     [ -n "$candidate" ] || continue
     echo "trying $candidate"
-    if "$fetch_command" "$candidate" \
-      | age -d -i "$identity" \
-      | gzip -dc \
-      | tar -x -C "$data_directory"; then
-        # `tar` succeeding is not enough on its own: a truncated stream can extract a prefix. A
-        # base backup without a control file is not one.
+    if "$fetch_command" "$candidate" > "$work/base.age" \
+      && age -d -i "$identity" "$work/base.age" > "$work/base.tar.gz" \
+      && gzip -dc "$work/base.tar.gz" > "$work/base.tar" \
+      && tar -x -f "$work/base.tar" -C "$data_directory"; then
+        # A valid archive without a control file still is not a PostgreSQL backup.
         if [ -s "$data_directory/global/pg_control" ]; then
             restored="$candidate"
             break
         fi
         echo "  $candidate extracted without a control file; discarding it" >&2
     else
-        echo "  $candidate could not be extracted" >&2
+        echo "  $candidate failed fetch, integrity verification or extraction" >&2
     fi
     # A partial extraction must not be mistaken for the next candidate's work.
     rm -rf "${data_directory:?}/"* "${data_directory:?}/".[!.]* 2>/dev/null || true
@@ -221,16 +234,35 @@ CANDIDATES
 }
 echo "restored from $restored to $target_time"
 
-# `restore_command` fetches and decrypts one segment at a time, so the private key is needed for
-# the whole of recovery and not only for the base backup. The inner double quotes are what make a
-# path with a space work; the outer single quotes are PostgreSQL's.
+# WAL needs the same checked stages as the base backup. Generate a fixed local
+# helper rather than nesting shell traps inside PostgreSQL's quoted configuration.
+# PostgreSQL runs restore_command in PGDATA; only its archive name and destination
+# placeholders become arguments. No incomplete or unauthenticated bytes reach %p.
+cat > "$data_directory/restore-wal.sh" <<WAL_HELPER
+#!/bin/sh
+set -eu
+umask 077
+segment="\${1:?a WAL archive name is required}"
+destination="\${2:?a WAL destination is required}"
+case "\$segment" in *[!A-Za-z0-9._-]*) exit 64 ;; esac
+work="\$(mktemp -d .restore-wal.XXXXXX)"
+trap 'rm -rf "\$work"' 0
+trap 'exit 130' INT
+trap 'exit 143' TERM
+"${fetch_command}" "${repository}/wal/\$segment.gz.age" > "\$work/wal.age"
+age -d -i "${identity}" "\$work/wal.age" > "\$work/wal.gz"
+gzip -dc "\$work/wal.gz" > "\$work/wal"
+mv "\$work/wal" "\$destination"
+WAL_HELPER
+chmod 0700 "$data_directory/restore-wal.sh"
+
 if [ "$recover_to_end" = yes ]; then
 cat > "$data_directory/postgresql.auto.conf" <<CONF
-restore_command = '"${fetch_command}" "${repository}/wal/%f.gz.age" | age -d -i "${identity}" | gzip -dc > %p'
+restore_command = 'sh "./restore-wal.sh" "%f" "%p"'
 CONF
 else
 cat > "$data_directory/postgresql.auto.conf" <<CONF
-restore_command = '"${fetch_command}" "${repository}/wal/%f.gz.age" | age -d -i "${identity}" | gzip -dc > %p'
+restore_command = 'sh "./restore-wal.sh" "%f" "%p"'
 recovery_target_time = '${target_time}'
 recovery_target_action = 'promote'
 CONF

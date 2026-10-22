@@ -57,6 +57,15 @@ RECORDING_MARGIN = timedelta(seconds=5)
 CLAIM_LOST_STATUS = "CLAIM_LOST"
 
 
+class _AuthorityRevoked(AgentRunStateError):
+    """Roll back a local write boundary whose worker authority was revoked."""
+
+
+def _require_authority(authority: Callable[[], bool]) -> None:
+    if not authority():
+        raise _AuthorityRevoked("worker authority was revoked")
+
+
 @dataclass(frozen=True, slots=True)
 class DurableAgentRunWorkerResult:
     agent_run_id: str | None
@@ -78,11 +87,13 @@ class _DatabaseToolCallObserver(AgentToolCallObserver):
         repository: AgentRunRepository,
         claimed: ClaimedAgentRun,
         correlation_id: UUID,
+        authority_valid: Callable[[], bool] | None = None,
     ) -> None:
         self._connection = connection
         self._repository = repository
         self._claimed = claimed
         self._correlation_id = correlation_id
+        self._authority_valid = authority_valid or (lambda: True)
         self._lock = threading.Lock()
         self._closed = False
 
@@ -103,29 +114,33 @@ class _DatabaseToolCallObserver(AgentToolCallObserver):
         with self._lock:
             if self._closed:
                 raise AgentRunStateError("agent run is no longer live; late tool call not recorded")
-            self._repository.record_tool_call(
-                self._connection,
-                AgentToolCallLedgerEntry(
-                    agent_run_id=self._claimed.agent_run_id,
-                    claim_token=self._claimed.claim_token,
-                    sequence_number=sequence_number,
-                    operation=operation,
-                    request_fingerprint=request_fingerprint(
-                        {str(key): value for key, value in arguments.items()}
+            _require_authority(self._authority_valid)
+            with self._connection.transaction():
+                _require_authority(self._authority_valid)
+                self._repository.record_tool_call(
+                    self._connection,
+                    AgentToolCallLedgerEntry(
+                        agent_run_id=self._claimed.agent_run_id,
+                        claim_token=self._claimed.claim_token,
+                        sequence_number=sequence_number,
+                        operation=operation,
+                        request_fingerprint=request_fingerprint(
+                            {str(key): value for key, value in arguments.items()}
+                        ),
+                        result_status_code=result.status_code,
+                        result_code=_result_code(result),
+                        trace_id=result.trace_id,
+                        safe_summary={
+                            "result_code": _result_code(result),
+                            "status_code": result.status_code,
+                            "top_level_keys": sorted(str(key) for key in result.body),
+                        },
+                        started_at=started_at,
+                        completed_at=completed_at,
+                        correlation_id=self._correlation_id,
                     ),
-                    result_status_code=result.status_code,
-                    result_code=_result_code(result),
-                    trace_id=result.trace_id,
-                    safe_summary={
-                        "result_code": _result_code(result),
-                        "status_code": result.status_code,
-                        "top_level_keys": sorted(str(key) for key in result.body),
-                    },
-                    started_at=started_at,
-                    completed_at=completed_at,
-                    correlation_id=self._correlation_id,
-                ),
-            )
+                )
+                _require_authority(self._authority_valid)
 
 
 class DurableAgentRunWorker:
@@ -164,7 +179,11 @@ class DurableAgentRunWorker:
         transport: AgentToolTransport,
         correlation_id: UUID,
         now: datetime | None = None,
+        authority_valid: Callable[[], bool] | None = None,
     ) -> DurableAgentRunWorkerResult:
+        authority = authority_valid or (lambda: True)
+        if not authority():
+            return DurableAgentRunWorkerResult(None, "STOPPED")
         timestamp = now or datetime.now(UTC)
         context = CorrelationContext.from_uuid(correlation_id)
         claimed = self._repository.claim_next(
@@ -173,12 +192,16 @@ class DurableAgentRunWorker:
         if claimed is None:
             return DurableAgentRunWorkerResult(None, "IDLE")
         with correlation_scope(context):
+            if not authority():
+                return self._abandoned(claimed, context)
             # Before the runner, before any model call: suppression, the derived classification, the
             # kill switches and the release manifest (AGENT-SHADOW-DEFECTS-001 F5). A handoff is a
             # refusal here too -- with no model call there is nothing for a human to review.
             decision = self._policy_gate.decide(
                 connection, claimed, provider_backed=runtime.provider_backed, now=timestamp
             )
+            if not authority():
+                return self._abandoned(claimed, context)
             if not decision.allowed:
                 return self._record_failure(
                     connection,
@@ -187,9 +210,10 @@ class DurableAgentRunWorker:
                     correlation_id,
                     timestamp,
                     context,
+                    authority,
                 )
             observer = _DatabaseToolCallObserver(
-                connection, self._repository, claimed, correlation_id
+                connection, self._repository, claimed, correlation_id, authority
             )
             try:
                 result = self._runner.execute(
@@ -198,6 +222,7 @@ class DurableAgentRunWorker:
                     transport=transport,
                     observer=observer,
                     now=timestamp,
+                    authority_valid=authority,
                 )
             except Exception as error:
                 observer.close()
@@ -205,7 +230,13 @@ class DurableAgentRunWorker:
                 # attributed to the next one.
                 self._drain_terminal_evidence(claimed.agent_run_id)
                 return self._record_failure(
-                    connection, claimed, _failure_code(error), correlation_id, timestamp, context
+                    connection,
+                    claimed,
+                    _failure_code(error),
+                    correlation_id,
+                    timestamp,
+                    context,
+                    authority,
                 )
             observer.close()
             safe_summary: dict[str, Any] = {
@@ -231,6 +262,7 @@ class DurableAgentRunWorker:
                 # draft used to be committed on its own before the claim was checked, so a run
                 # finishing at its deadline left a reviewable draft behind a failed completion.
                 with connection.transaction():
+                    _require_authority(authority)
                     self._repository.complete_draft(
                         connection,
                         agent_run_id=claimed.agent_run_id,
@@ -239,8 +271,12 @@ class DurableAgentRunWorker:
                         correlation_id=correlation_id,
                         completed_at=timestamp,
                     )
+                    _require_authority(authority)
                     if self._draft_recorder is not None and result.draft_text:
                         self._draft_recorder(connection, claimed, result, correlation_id, timestamp)
+                        _require_authority(authority)
+            except _AuthorityRevoked:
+                return self._abandoned(claimed, context)
             except AgentRunStateError:
                 return self._claim_lost(claimed, "COMPLETE_DRAFT", context)
             self._logger.record(
@@ -263,16 +299,22 @@ class DurableAgentRunWorker:
         correlation_id: UUID,
         timestamp: datetime,
         context: CorrelationContext,
+        authority: Callable[[], bool],
     ) -> DurableAgentRunWorkerResult:
         try:
-            self._repository.fail(
-                connection,
-                agent_run_id=claimed.agent_run_id,
-                claim_token=claimed.claim_token,
-                failure_code=failure_code,
-                correlation_id=correlation_id,
-                completed_at=timestamp,
-            )
+            with connection.transaction():
+                _require_authority(authority)
+                self._repository.fail(
+                    connection,
+                    agent_run_id=claimed.agent_run_id,
+                    claim_token=claimed.claim_token,
+                    failure_code=failure_code,
+                    correlation_id=correlation_id,
+                    completed_at=timestamp,
+                )
+                _require_authority(authority)
+        except _AuthorityRevoked:
+            return self._abandoned(claimed, context)
         except AgentRunStateError:
             # Raising here used to escape `run_once` from inside its own `except`, losing the
             # failure code. The run is not this worker's to write any more; say so and stop.
@@ -286,6 +328,21 @@ class DurableAgentRunWorker:
             fields={"agent_run_id": claimed.agent_run_id, "failure_code": failure_code},
         )
         return DurableAgentRunWorkerResult(str(claimed.agent_run_id), "FAILED")
+
+    def _abandoned(
+        self, claimed: ClaimedAgentRun, context: CorrelationContext
+    ) -> DurableAgentRunWorkerResult:
+        self._logger.record(
+            component="agent-worker",
+            name="agent.run.abandoned",
+            outcome="requires_human",
+            correlation=context,
+            fields={
+                "agent_run_id": claimed.agent_run_id,
+                "reason_code": "WORKER_AUTHORITY_REVOKED",
+            },
+        )
+        return DurableAgentRunWorkerResult(str(claimed.agent_run_id), "ABANDONED")
 
     def _claim_lost(
         self, claimed: ClaimedAgentRun, unrecorded: str, context: CorrelationContext

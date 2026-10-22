@@ -1,0 +1,45 @@
+{
+  "status": "PASS",
+  "evidence_kind": "LOCAL_SYNTHETIC_POSTGRES_REPLAY",
+  "started_at": "2026-10-16T13:09:21.522511+00:00",
+  "completed_at": "2026-10-16T13:09:39.155537+00:00",
+  "image_id": "sha256:c5d80a2d06ec9017c939d7019f6bbd140818f3c367ef72a482c8d80a59f90beb",
+  "container": "laundry-release-recovery-replay-20261016",
+  "container_id": "d78d52e2b24d185f8f2c41c3b6525c4e9332b6029cf3ecaed60416856f3f93b6",
+  "retained_volume": "laundry-release-recovery-replay-20261016-data",
+  "network_mode": "none",
+  "published_ports": [],
+  "latest": {
+    "promoted": true,
+    "server_version": "16.15",
+    "positions": [
+      1,
+      2,
+      3
+    ],
+    "markers": [
+      "synthetic_before_base_20261016",
+      "synthetic_after_base_replayed_20261016",
+      "synthetic_after_target_excluded_20261016"
+    ]
+  },
+  "target": {
+    "promoted": true,
+    "server_version": "16.15",
+    "positions": [
+      1,
+      2
+    ],
+    "markers": [
+      "synthetic_before_base_20261016",
+      "synthetic_after_base_replayed_20261016"
+    ]
+  },
+  "source_binding": "source-bindings.json",
+  "limitations": [
+    "same Docker host and volume; not off-host or independent failure domain",
+    "synthetic isolated database without application migrations or real customer data",
+    "synthetic key generated in scratch volume; excludes real key-holder handover time",
+    "not target-host recovery acceptance or release authority"
+  ]
+}

@@ -302,6 +302,28 @@ def test_release_workflow_has_least_privilege_and_local_scanners() -> None:
     assert "--severity CRITICAL,HIGH --exit-code 1" in text
 
 
+def test_release_scan_includes_gateway_identity_and_both_database_targets() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release-supply-chain.yml").read_text())
+    steps = workflow["jobs"]["supply-chain"]["steps"]
+    scan = next(step["run"] for step in steps if "Build exact images" in step.get("name", ""))
+    # Infrastructure uses the same blocking scanner and digest binding as the applications.
+    assert (
+        "for service in api worker public-agent-tools tls keycloak postgres-runtime postgres; do"
+        in scan
+    )
+    assert 'tls) dockerfile="deploy/staging/Caddy.Dockerfile"' in scan
+    assert 'keycloak) dockerfile="deploy/production/Keycloak.Dockerfile"' in scan
+    assert scan.count('dockerfile="deploy/production/Postgres.Dockerfile"') == 2
+    assert "build_args=(--target postgres-runtime)" in scan
+    assert "build_args=(--target postgres-backup)" in scan
+    assert '"${build_args[@]}"' in scan
+    # Include Go dependencies inside apk-owned backup clients, not only Alpine advisories.
+    assert scan.count("--detection-priority comprehensive") == 2
+    assert "--severity CRITICAL,HIGH --exit-code 1" in scan
+    assert "artifacts/supply-chain/${service}-scan.json" in scan
+    assert "continue-on-error" not in scan
+
+
 def test_normalizer_rejects_sbom_for_a_different_image_digest(tmp_path: Path) -> None:
     sarif = tmp_path / "scan.sarif"
     _write_json(sarif, {"runs": [{"results": []}]})

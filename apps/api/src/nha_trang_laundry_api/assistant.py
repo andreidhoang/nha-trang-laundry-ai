@@ -1,14 +1,12 @@
-"""Trợ lý AI — the internal owner-assistant, deterministic by construction.
+"""Trợ lý AI — the internal owner-assistant, with deterministic factual answers.
 
 The brain answers questions about the business in Vietnamese from reads the server already
-governs. It never calls a model, never calculates money, policy, SLA or order state, and never
+governs. It never calculates money, policy, SLA or order state, and never
 estimates: what the governed data does not say, the answer says it does not know.
 
-The seam for a live model is `AssistantBrain`, a protocol with one method. A provider-backed
-implementation enters only after capability authorization plus a credential — and holding the
-credential alone authorizes nothing, per `docs/runbooks/provider-credentials.md`. Until those
-gates pass, `DeterministicAssistantBrain` is the only implementation and matching is pure string
-work over a fixed intent table: no model call exists anywhere on this path.
+`DeterministicAssistantBrain` is the default. An explicitly enabled synthetic local evaluation
+may classify an otherwise unsupported question with Gemini; the model supplies only an enum and
+the same deterministic renderers supply the answer. Public capability gates remain closed.
 
 Two properties are pinned by unit tests:
 
@@ -53,6 +51,7 @@ from uuid import UUID, uuid4
 
 from nha_trang_laundry_db.approvals import ApprovalRepository
 from nha_trang_laundry_db.assistant import (
+    AssistantAuthorizationError,
     AssistantLink,
     AssistantTurn,
     AssistantTurnRepository,
@@ -62,7 +61,7 @@ from nha_trang_laundry_db.assistant import (
 )
 from nha_trang_laundry_db.connection import application_connect
 from nha_trang_laundry_db.idempotency import IdempotencyRepository, IdempotentCommand
-from nha_trang_laundry_db.identity import StaffPrincipal
+from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.shadow_console import ShadowConsoleRepository
 from nha_trang_laundry_db.store_access import StoreAccessError, require_store_membership
 from nha_trang_laundry_domain.sla import STANDARD_WASH_SLA, ProductionSlaPolicy
@@ -154,6 +153,9 @@ class AssistantBrain(Protocol):
     """The live-model seam. One question plus governed reads in; one answer out."""
 
     def answer(self, question: str, context_reads: AssistantContextReads) -> AssistantAnswer: ...
+
+
+AssistantBrainFactory = Callable[[StaffPrincipal, UUID], AssistantBrain]
 
 
 @dataclass(frozen=True, slots=True)
@@ -503,12 +505,14 @@ class AssistantService:
         settings: AuthSettings,
         connection_factory: Callable[[str], Any] = application_connect,
         brain: AssistantBrain | None = None,
+        brain_factory: AssistantBrainFactory | None = None,
     ) -> None:
         if not settings.database_url:
             raise AssistantUnavailable("assistant database is not configured")
         self._database_url = settings.database_url
         self._connection_factory = connection_factory
         self._brain: AssistantBrain = brain or DeterministicAssistantBrain()
+        self._brain_factory = brain_factory
         self._turns = AssistantTurnRepository()
         self._approvals = ApprovalRepository()
         self._idempotency = IdempotencyRepository()
@@ -522,6 +526,12 @@ class AssistantService:
         idempotency_key: str,
         correlation_id: UUID | None = None,
     ) -> StoredAssistantTurn:
+        if not principal.roles & {
+            StaffRole.OWNER_ADMIN,
+            StaffRole.OPS_APPROVER,
+            StaffRole.OPERATOR,
+        }:
+            raise AssistantAuthorizationError("assistant access is not authorized")
         with self._connection_factory(self._database_url) as connection:
             with connection.cursor() as cursor:
                 # Membership first, outside the idempotency wrapper: a staff member who has lost
@@ -532,25 +542,29 @@ class AssistantService:
                     store_id=store_id,
                     error=StoreAccessError,
                 )
-            context_reads = self._build_reads(connection, principal=principal, store_id=store_id)
-            answer = self._brain.answer(question, context_reads)
-            turn_id = uuid4()
-            # Tier-2 conversation-memory discipline: only the redacted text may reach the table.
-            # Matching ran on the verbatim question; what is stored — and what a replay returns —
-            # is the same text with credentials and personal contact details substituted out.
-            redacted_question = redact_text(question)
-            redacted_answer = redact_text(answer.answer)
 
             def commit() -> dict[str, object]:
+                # Only the winner of idempotency admission may read or invoke a brain. Replays
+                # and conflicts must not spend a provider call or regenerate an existing answer.
+                context_reads = self._build_reads(
+                    connection, principal=principal, store_id=store_id
+                )
+                brain = (
+                    self._brain_factory(principal, store_id)
+                    if self._brain_factory is not None
+                    else self._brain
+                )
+                answer = brain.answer(question, context_reads)
+                turn_id = uuid4()
                 turn = self._turns.record_turn(
                     connection,
                     RecordTurnCommand(
                         turn_id=turn_id,
                         store_id=store_id,
                         principal=principal,
-                        question=redacted_question,
+                        question=redact_text(question),
                         intent=answer.intent,
-                        answer=redacted_answer,
+                        answer=redact_text(answer.answer),
                         links=answer.links,
                         reason_codes=answer.reason_codes,
                         correlation_id=correlation_id or uuid4(),

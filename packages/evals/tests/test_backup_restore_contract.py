@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import gzip
+import io
 import json
 import os
 import shutil
+import signal
 import subprocess
+import tarfile
+import time
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -190,7 +195,10 @@ def test_the_backup_scripts_can_actually_run_where_they_are_mounted() -> None:
 
     assert "base-backup.sh" in compose, "nothing schedules or mounts the base backup"
     assert "r1-archive-upload.sh" in compose
-    assert "rclone=" in dockerfile, "the upload command has no client to exec"
+    assert "rclone/rclone:1.75.2@sha256:" in dockerfile
+    assert "COPY --from=rclone-binary /usr/local/bin/rclone /usr/local/bin/rclone" in dockerfile
+    assert "filippo.io/age/cmd/age@v1.3.2" in dockerfile
+    assert "COPY --from=age-build /go/bin/age /go/bin/age-keygen /usr/local/bin/" in dockerfile
     assert (ROOT / "deploy/production/backup/r1-archive-upload.sh").is_file()
 
     # Staged before upload: a streamed pipeline stores its own truncation, and DEC-026 requires a
@@ -226,10 +234,9 @@ def test_the_restore_command_is_built_from_values_that_cannot_break_it() -> None
     """
 
     restore = (ROOT / "deploy/production/backup/restore.sh").read_text("utf-8")
-    assert 'restore_command = \'"${fetch_command}"' in restore, (
-        "the interpolated paths must be quoted inside the command, or a space in the identity "
-        "path yields FATAL: could not locate required checkpoint record"
-    )
+    assert 'restore_command = \'sh "./restore-wal.sh" "%f" "%p"\'' in restore
+    assert '"${fetch_command}" "${repository}/wal/' in restore
+    assert 'age -d -i "${identity}"' in restore
     assert "exit 4" in restore, "a % or a quote must be refused rather than written"
     # Newest first, but not newest only.
     assert "sort -r" in restore
@@ -608,6 +615,11 @@ def test_an_empty_object_already_in_the_repository_is_never_waved_through(
         ("2025-12-31 23:00:00-05", "20260101040000"),
         ("2100-03-01 01:00:00+07", "21000228180000"),
         ("2026-09-03 08:09+0530", "20260903023900"),
+        ("2026-09-03T08:09:12.123456+05:30", "20260903023912"),
+        ("2026-09-03 23:15:00-03:30", "20260904024500"),
+        ("2026-09-03 23:15:00-0330", "20260904024500"),
+        ("2026-09-03T08:09:12.123456Z", "20260903080912"),
+        ("2026-09-03 08:09:12", "20260903080912"),
     ],
 )
 def test_the_recovery_target_converts_the_same_under_every_posix_shell(
@@ -618,15 +630,16 @@ def test_the_recovery_target_converts_the_same_under_every_posix_shell(
     `restore.sh` is `#!/bin/sh`, and the conversion used `10#` and GNU `date -d`. It was measured
     under busybox and worked; on the Debian drill host the runbook provisions, `/bin/sh` is dash and
     the runbook's own '+07' target aborted before anything was restored, and on macOS BSD `date` has
-    no `-d`. The function is extracted from the script and run under every shell present, so the
-    script's behaviour rather than its spelling is what is held.
+    no `-d`. BSD sed also rejects stacked repetition in the timezone expression (`{2}?`). The
+    function is extracted from the script and run under every shell present with the host's tools,
+    so the script's behaviour rather than its spelling is what is held.
     """
 
     script = (ROOT / "deploy/production/backup/restore.sh").read_text("utf-8")
     code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
     assert "10#" not in code and "date -d" not in code and "date -u -d" not in code
     body = script[script.index("_decimal() {") : script.index("target_stamp=$(_target_stamp)")]
-    shells = [shell for shell in ("dash", "bash", "busybox") if shutil.which(shell)]
+    shells = [shell for shell in ("sh", "dash", "bash", "busybox") if shutil.which(shell)]
     assert shells, "no POSIX shell available to run the restore script's conversion"
     for shell in shells:
         argv = [shell, "sh", "-c"] if shell == "busybox" else [shell, "-c"]
@@ -640,19 +653,35 @@ def test_the_recovery_target_converts_the_same_under_every_posix_shell(
         assert (result.returncode, result.stdout.strip()) == (0, utc_stamp), (shell, result.stderr)
 
 
-@pytest.mark.parametrize("target", ["yesterday", "2026-13-01 00:00:00", "2026-09-03 25:00:00+07"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        "yesterday",
+        "2026-13-01 00:00:00",
+        "2026-09-03 25:00:00+07",
+        "2026-09-03 14:05:00+7",
+        "2026-09-03 14:05:00+07:",
+        "2026-09-03 14:05:00+07:0",
+        "2026-09-03 14:05:00+070",
+        "2026-09-03 14:05:00+07:000",
+        "2026-09-03 14:05:00+07Z",
+    ],
+)
 def test_an_unreadable_recovery_target_is_refused(target: str) -> None:
     script = (ROOT / "deploy/production/backup/restore.sh").read_text("utf-8")
     body = script[script.index("_decimal() {") : script.index("target_stamp=$(_target_stamp)")]
-    shell = shutil.which("dash") or shutil.which("sh") or "sh"
-    result = subprocess.run(
-        [shell, "-c", body + "\n_target_stamp"],
-        env={"PATH": os.environ.get("PATH", ""), "target_time": target},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 6 and "refusing" in result.stderr
+    shells = [shell for shell in ("sh", "dash", "bash", "busybox") if shutil.which(shell)]
+    assert shells, "no POSIX shell available to run the restore script's conversion"
+    for shell in shells:
+        argv = [shell, "sh", "-c"] if shell == "busybox" else [shell, "-c"]
+        result = subprocess.run(
+            [*argv, body + "\n_target_stamp"],
+            env={"PATH": os.environ.get("PATH", ""), "target_time": target},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 6 and "refusing" in result.stderr, (shell, result.stderr)
 
 
 def test_a_compressor_that_dies_part_way_never_yields_an_encrypted_backup(tmp_path: Path) -> None:
@@ -692,3 +721,229 @@ def test_a_compressor_that_dies_part_way_never_yields_an_encrypted_backup(tmp_pa
     assert result.returncode != 0
     assert "nothing was uploaded" in result.stderr
     assert not (work / "b1.tar.gz.age").exists()
+
+
+@pytest.fixture
+def encrypted_restore_repository(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Real authenticated encryption around a small synthetic PostgreSQL-shaped tar archive."""
+
+    missing = [name for name in ("age", "age-keygen", "gzip") if not shutil.which(name)]
+    if missing:
+        message = f"restore integrity checks require {', '.join(missing)}"
+        if os.environ.get("CI"):
+            pytest.fail(message)
+        pytest.skip(message)
+    identity = tmp_path / "key holder" / "synthetic-identity"
+    identity.parent.mkdir()
+    subprocess.run(["age-keygen", "-o", str(identity)], check=True, capture_output=True)
+    repository = tmp_path / "archive with spaces"
+    (repository / "base").mkdir(parents=True)
+    (repository / "wal").mkdir()
+    fetch = tmp_path / "fetch object.sh"
+    fetch.write_text(
+        '#!/bin/sh\ncat "$1" || exit 1\n'
+        'case "$1" in *"${FAIL_FETCH_SUFFIX:-never-match}") exit 42 ;; esac\n',
+        encoding="utf-8",
+    )
+    fetch.chmod(0o700)
+    listing = tmp_path / "list objects.sh"
+    listing.write_text(
+        '#!/bin/sh\nfor file in "$1"*; do [ ! -f "$file" ] || printf "%s\\n" "$file"; done\n',
+        encoding="utf-8",
+    )
+    listing.chmod(0o700)
+    return repository, identity, fetch
+
+
+def _encrypt_restore_object(identity: Path, destination: Path, payload: bytes) -> None:
+    recipient = subprocess.run(
+        ["age-keygen", "-y", str(identity)], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    subprocess.run(
+        ["age", "-r", recipient, "-o", str(destination)],
+        input=payload,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _synthetic_base_payload(marker: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        for name, content in (("global/pg_control", marker), ("PG_VERSION", b"16\n")):
+            entry = tarfile.TarInfo(name)
+            entry.size = len(content)
+            archive.addfile(entry, io.BytesIO(content))
+    return gzip.compress(buffer.getvalue())
+
+
+def _invoke_restore(
+    tmp_path: Path,
+    repository: Path,
+    identity: Path,
+    fetch: Path,
+    *,
+    fail_fetch_suffix: str = "never-match",
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["sh", str(ROOT / "deploy/production/backup/restore.sh")],
+        env={
+            **os.environ,
+            "BACKUP_IDENTITY_FILE": str(identity),
+            "BACKUP_REPOSITORY_PREFIX": str(repository),
+            "RECOVERY_TARGET_TIME": "latest",
+            "PGDATA": str(tmp_path / "restored data"),
+            "BACKUP_LIST_COMMAND": str(tmp_path / "list objects.sh"),
+            "BACKUP_FETCH_COMMAND": str(fetch),
+            "FAIL_FETCH_SUFFIX": fail_fetch_suffix,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("defect", ["gzip-footer", "gzip-crc", "fetch-exit"])
+@pytest.mark.parametrize("older_valid_backup", [False, True])
+def test_base_restore_requires_every_upstream_stage_to_succeed(
+    tmp_path: Path,
+    encrypted_restore_repository: tuple[Path, Path, Path],
+    defect: str,
+    older_valid_backup: bool,
+) -> None:
+    """A complete tar can survive failed fetch/decompression; only validated artifacts may win."""
+
+    repository, identity, fetch = encrypted_restore_repository
+    newest = repository / "base/base-20261015T020000Z.tar.gz.age"
+    compressed = _synthetic_base_payload(b"newest-but-invalid")
+    if defect == "gzip-footer":
+        compressed = compressed[:-8]
+    elif defect == "gzip-crc":
+        compressed = compressed[:-8] + bytes([compressed[-8] ^ 1]) + compressed[-7:]
+    _encrypt_restore_object(identity, newest, compressed)
+    if older_valid_backup:
+        _encrypt_restore_object(
+            identity,
+            repository / "base/base-20261015T010000Z.tar.gz.age",
+            _synthetic_base_payload(b"older-verified"),
+        )
+
+    result = _invoke_restore(
+        tmp_path,
+        repository,
+        identity,
+        fetch,
+        fail_fetch_suffix=newest.name if defect == "fetch-exit" else "never-match",
+    )
+
+    restored = tmp_path / "restored data"
+    if older_valid_backup:
+        assert result.returncode == 0, result.stderr
+        assert (restored / "global/pg_control").read_bytes() == b"older-verified"
+        assert (restored / "recovery.signal").is_file()
+    else:
+        assert result.returncode != 0, "a failed upstream stage must never prepare recovery"
+        assert not (restored / "recovery.signal").exists()
+        assert not (restored / "PG_VERSION").exists()
+    assert not list(tmp_path.glob("restored data.restore-work.*"))
+
+
+@pytest.mark.parametrize("defect", [None, "gzip-footer", "fetch-exit", "age-authentication"])
+def test_generated_wal_restore_requires_authenticated_complete_output(
+    tmp_path: Path,
+    encrypted_restore_repository: tuple[Path, Path, Path],
+    defect: str | None,
+) -> None:
+    repository, identity, fetch = encrypted_restore_repository
+    _encrypt_restore_object(
+        identity,
+        repository / "base/base-20261015T010000Z.tar.gz.age",
+        _synthetic_base_payload(b"valid-base"),
+    )
+    prepared = _invoke_restore(tmp_path, repository, identity, fetch)
+    assert prepared.returncode == 0, prepared.stderr
+    restored = tmp_path / "restored data"
+    settings = (restored / "postgresql.auto.conf").read_text("utf-8")
+    command = next(line.split(" = ", 1)[1][1:-1] for line in settings.splitlines())
+    # Expand exactly PostgreSQL's placeholders; apostrophe doubling is PostgreSQL string syntax.
+    command = command.replace("''", "'").replace("%f", "000000010000000000000001")
+    destination = restored / "pg_wal/RECOVERYXLOG"
+    destination.parent.mkdir()
+    command = command.replace("%p", "pg_wal/RECOVERYXLOG")
+    payload = b"synthetic WAL bytes" * 10_000
+    compressed = gzip.compress(payload)
+    if defect == "gzip-footer":
+        compressed = compressed[:-8]
+    wal = repository / "wal/000000010000000000000001.gz.age"
+    _encrypt_restore_object(identity, wal, compressed)
+    if defect == "age-authentication":
+        content = wal.read_bytes()
+        wal.write_bytes(content[:-1] + bytes([content[-1] ^ 1]))
+    result = subprocess.run(
+        ["sh", "-c", command],
+        cwd=restored,
+        env={
+            **os.environ,
+            "FAIL_FETCH_SUFFIX": wal.name if defect == "fetch-exit" else "never-match",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if defect is None:
+        assert result.returncode == 0, result.stderr
+        assert destination.read_bytes() == payload
+    else:
+        assert result.returncode != 0, result.stderr
+        assert not destination.exists(), "failed WAL decoding must publish no partial file"
+    assert not list(restored.glob(".restore-wal.*")), "temporary plaintext must be removed"
+
+
+def test_interrupted_wal_restore_removes_private_work_files(
+    tmp_path: Path, encrypted_restore_repository: tuple[Path, Path, Path]
+) -> None:
+    repository, identity, fetch = encrypted_restore_repository
+    _encrypt_restore_object(
+        identity,
+        repository / "base/base-20261015T010000Z.tar.gz.age",
+        _synthetic_base_payload(b"valid-base"),
+    )
+    prepared = _invoke_restore(tmp_path, repository, identity, fetch)
+    assert prepared.returncode == 0, prepared.stderr
+    restored = tmp_path / "restored data"
+    settings = (restored / "postgresql.auto.conf").read_text("utf-8")
+    command = next(line.split(" = ", 1)[1][1:-1] for line in settings.splitlines())
+    command = command.replace("''", "'").replace("%f", "000000010000000000000001")
+    command = command.replace("%p", "pg_wal/RECOVERYXLOG")
+    destination = restored / "pg_wal/RECOVERYXLOG"
+    destination.parent.mkdir()
+    started = tmp_path / "fetch-started"
+    fetch.write_text(
+        '#!/bin/sh\nprintf partial\n: > "$RESTORE_STARTED_FILE"\nexec sleep 30\n',
+        encoding="utf-8",
+    )
+    process = subprocess.Popen(
+        ["sh", "-c", command],
+        cwd=restored,
+        env={**os.environ, "RESTORE_STARTED_FILE": str(started)},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not started.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert started.exists(), "the restore command never started its fetch"
+        work_paths = list(restored.glob(".restore-wal.*"))
+        assert len(work_paths) == 1
+        assert work_paths[0].stat().st_mode & 0o777 == 0o700
+        os.killpg(process.pid, signal.SIGTERM)
+        process.communicate(timeout=5)
+        assert process.returncode != 0
+        assert not destination.exists()
+        assert not list(restored.glob(".restore-wal.*"))
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate(timeout=5)

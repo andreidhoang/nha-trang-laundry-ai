@@ -171,11 +171,14 @@ BINDINGS: dict[str, dict[str, Any]] = {
     "screens/assistant.js#screen__lede:96537d9c63dd": {
         "kind": "MODEL_SEAM",
         "service": "AssistantService",
-        "default_brain": "DeterministicAssistantBrain",
+        "factory": "get_assistant_service",
+        "answer_renderer": "DeterministicAssistantBrain",
+        "optional_classifier": "GeminiAssistantBrain",
+        "stream": "persisted_answer_only",
         "why": "The second model-seam claim in the same file, invisible to the first enumerator "
         "because it renders as a screen__lede. It says every answer comes only from governed "
-        "operational data and that what the assistant does not know, it says it does not know. The "
-        "same one-line brain swap falsifies it.",
+        "operational data. Exercise the actual API factory with the classifier off and on: model "
+        "output may select only an enum, never facts or answer text; unknowns use a fixed refusal.",
     },
     # The `ABSENT_TABLE` binding PAYMENT-001 re-keyed to `09965b16428a` is gone, with the sentence
     # it bound: it named the account half's tables as missing, and PAYMENT-002 (`0059`) created
@@ -199,16 +202,17 @@ BINDINGS: dict[str, dict[str, Any]] = {
     # binding is removed with it -- re-keying it to the new guardrail would assert the opposite of
     # what that guardrail says. This is the intended lifecycle: a disclosure binding dies when the
     # limitation it documents is lifted, and its test failing is how the repository finds out.
-    "screens/assistant.js#notice:383d2d025f90": {
+    "screens/assistant.js#notice:d64202d78fde": {
         "kind": "MODEL_SEAM",
         "service": "AssistantService",
-        "default_brain": "DeterministicAssistantBrain",
-        "why": "The disclosure this item exists for. It tells operators the streamed text is "
-        "display pacing of an already-saved answer, not a model generating words. That holds only "
-        "while AssistantService defaults to the "
-        "deterministic brain. Passing a provider-backed brain to AssistantService(brain=...) is a "
-        "one-line change at a seam that exists so the swap can happen, and it makes the sentence "
-        "false with nothing else in the repository noticing. The test asserts the default.",
+        "factory": "get_assistant_service",
+        "answer_renderer": "DeterministicAssistantBrain",
+        "optional_classifier": "GeminiAssistantBrain",
+        "stream": "persisted_answer_only",
+        "why": "The previous constructor-default check missed an injected brain factory while "
+        "the default remained deterministic. The disclosure now acknowledges optional Gemini "
+        "classification and per-answer provenance, retains governed facts and action limits, and "
+        "binds streaming to an already-stored answer without another brain/provider invocation.",
     },
 }
 

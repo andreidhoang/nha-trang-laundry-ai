@@ -64,6 +64,12 @@ const state = {
 let outSince = Number.NEGATIVE_INFINITY;
 /** Whether a session read is on its way. */
 let refreshing = false;
+// Keep the last authenticated person across expiry/offline states. A null current principal
+// means "not yet known", not permission to hand their in-memory workspace to the next person.
+let lastAuthenticatedUserId = null;
+// Only the newest session read may publish identity or membership. In particular, an old
+// member-store response must not overwrite the scope of a person who signed in afterwards.
+let refreshGeneration = 0;
 
 /** @type {Set<() => void>} what must be forgotten when this person signs out (C1) */
 const signOutListeners = new Set();
@@ -107,11 +113,20 @@ export function storeId() {
  * @returns {Promise<void>}
  */
 export async function refresh() {
+  const generation = ++refreshGeneration;
   refreshing = true;
   try {
     const body = await request("/internal/v1/session");
+    if (generation !== refreshGeneration) return;
+    const staffUserId = String(body.staff_user_id);
+    if (lastAuthenticatedUserId !== null && lastAuthenticatedUserId !== staffUserId) {
+      // This response already completed under its request epoch. Clear the previous person's
+      // workspace and retire their other requests before exposing the new identity; keep this
+      // refresh alive to load the new person's stores. This never logs out the new server session.
+      forget(false, true);
+    }
     state.principal = {
-      staffUserId: String(body.staff_user_id),
+      staffUserId,
       roles: Array.isArray(body.roles) ? body.roles.map(String) : [],
       mfaVerified: Boolean(body.mfa_verified),
       sessionId: typeof body.session_id === "string" ? body.session_id : null,
@@ -120,8 +135,10 @@ export async function refresh() {
     state.lastError = "";
     state.signedOut = false;
     state.signedOutElsewhere = false;
+    lastAuthenticatedUserId = staffUserId;
     await loadMemberStores();
   } catch (error) {
+    if (generation !== refreshGeneration) return;
     state.principal = null;
     state.memberStoreIds = [];
     state.storeNames = {};
@@ -142,10 +159,13 @@ export async function refresh() {
       state.lastError = visibleMessage(error);
     }
     outSince = performance.now();
+  } finally {
+    if (generation === refreshGeneration) {
+      refreshing = false;
+      state.answered = false;
+      notify();
+    }
   }
-  refreshing = false;
-  state.answered = false;
-  notify();
 }
 
 /**
@@ -176,8 +196,13 @@ function serverAnswered(sentAt) {
  * @returns {Promise<void>}
  */
 export async function loadMemberStores() {
+  const generation = refreshGeneration;
+  const staffUserId = state.principal?.staffUserId;
+  const stillCurrent = () =>
+    generation === refreshGeneration && staffUserId === state.principal?.staffUserId;
   try {
     const body = await request("/internal/v1/stores");
+    if (!stillCurrent()) return;
     state.memberStoreIds = Array.isArray(body?.store_ids) ? body.store_ids.map(String) : [];
     // The names, when the server knows them. A store minted before the registry has none, and the
     // shell falls back to the shortened identifier for exactly those.
@@ -190,6 +215,7 @@ export async function loadMemberStores() {
       : {};
     state.storeScopeKnown = true;
   } catch (error) {
+    if (!stillCurrent()) return;
     // An empty list and an unanswered question are different facts, and the shell says something
     // different about each. A bare `catch` recorded both as "assigned to nothing", so one failed
     // request made the console tell a member of staff that their account has no shop and to go and
@@ -245,8 +271,8 @@ export function end() {
 /**
  * Register what must be forgotten the moment this person signs out: an in-memory hand-off, a
  * stash, anything the shell or a screen holds for the person who is leaving (CONSOLE-SHELL-009,
- * C1). Called only for a sign-out the server answered -- never for an idle expiry, whose whole
- * promise is that nothing is thrown away.
+ * C1). Also called when a session read establishes a different person. An idle expiry alone
+ * preserves the workspace so the same person can recover their input.
  *
  * @param {() => void} listener
  * @returns {() => void} unregister
@@ -262,9 +288,14 @@ export function onSignOut(listener) {
  * session read restores it); every registered listener drops what it held; then the subscribers
  * are told, and the shell renders the signed-out screen in the place of whatever was open.
  */
-function forget(elsewhere = false) {
+function forget(elsewhere = false, keepCurrentRefresh = false) {
   // First: an answer to anything sent before this moment is not for the page any more.
   markDeparture();
+  if (!keepCurrentRefresh) {
+    refreshGeneration += 1;
+    refreshing = false;
+  }
+  lastAuthenticatedUserId = null;
   outSince = performance.now();
   state.answered = false;
   state.principal = null;

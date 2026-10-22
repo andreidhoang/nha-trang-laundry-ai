@@ -14,7 +14,9 @@ with `DATABASE_URL`, and the root conftest turns this skip into a failure under
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -22,7 +24,12 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
-from nha_trang_laundry_api.assistant import AssistantService
+from nha_trang_laundry_api.assistant import (
+    AssistantAnswer,
+    AssistantContextReads,
+    AssistantService,
+    DeterministicAssistantBrain,
+)
 from nha_trang_laundry_api.auth import AuthSettings
 from nha_trang_laundry_db.assistant import (
     AssistantAuthorizationError,
@@ -309,7 +316,16 @@ def test_service_post_turn_replays_and_conflicts(
     # The service opens its own connections, and they see only committed rows. The fixture
     # connection holds its work in one open implicit transaction — commit it explicitly.
     postgres_connection.commit()
-    service = AssistantService(AuthSettings(database_url=database_url))
+
+    class CountingBrain(DeterministicAssistantBrain):
+        calls = 0
+
+        def answer(self, question: str, context_reads: AssistantContextReads) -> AssistantAnswer:
+            self.calls += 1
+            return super().answer(question, context_reads)
+
+    brain = CountingBrain()
+    service = AssistantService(AuthSettings(database_url=database_url), brain=brain)
 
     first = service.post_turn(
         principal=member,
@@ -326,6 +342,7 @@ def test_service_post_turn_replays_and_conflicts(
     assert first.replayed is False
     assert replay.replayed is True
     assert replay.turn_id == first.turn_id
+    assert brain.calls == 1
 
     with pytest.raises(IdempotencyConflictError, match="IDEMPOTENCY_CONFLICT"):
         service.post_turn(
@@ -336,6 +353,7 @@ def test_service_post_turn_replays_and_conflicts(
         )
 
     history = service.list_turns(principal=member, store_id=store_id, limit=50)
+    assert brain.calls == 1  # Conflicting keys cannot invoke a provider either.
     assert [turn.turn_id for turn in history] == [first.turn_id]
     assert history[0].intent == "TODAY_OVERVIEW"
 
@@ -347,6 +365,57 @@ def test_service_post_turn_replays_and_conflicts(
             question="Hôm nay thế nào?",
             idempotency_key="assistant-postgres-0002",
         )
+    assert brain.calls == 1
+
+
+def test_concurrent_same_key_invokes_one_brain_and_revoked_members_cannot_replay(
+    postgres_connection: psycopg.Connection[Any],
+) -> None:
+    store_id = uuid4()
+    member = _member(postgres_connection, store_id, roles=frozenset({StaffRole.OPERATOR}))
+    postgres_connection.commit()
+    barrier = threading.Barrier(8)
+    calls: list[str] = []
+
+    class CountingBrain(DeterministicAssistantBrain):
+        def answer(self, question: str, context_reads: AssistantContextReads) -> AssistantAnswer:
+            calls.append(question)
+            return super().answer(question, context_reads)
+
+    service = AssistantService(
+        AuthSettings(database_url=os.environ["DATABASE_URL"]), brain=CountingBrain()
+    )
+
+    def invoke(_: int) -> UUID:
+        barrier.wait(timeout=10)
+        return service.post_turn(
+            principal=member,
+            store_id=store_id,
+            question="?",
+            idempotency_key="assistant-concurrent-provider-attempt",
+        ).turn_id
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        turn_ids = list(pool.map(invoke, range(8)))
+    assert len(set(turn_ids)) == 1
+    assert calls == ["?"]
+    owner = _staff(postgres_connection, roles=frozenset({StaffRole.OWNER_ADMIN}))
+    ShadowConsoleRepository.revoke_store(
+        postgres_connection,
+        staff_user_id=member.staff_user_id,
+        store_id=store_id,
+        principal=owner,
+        correlation_id=uuid4(),
+    )
+    postgres_connection.commit()
+    with pytest.raises(StoreAccessError):
+        service.post_turn(
+            principal=member,
+            store_id=store_id,
+            question="?",
+            idempotency_key="assistant-concurrent-provider-attempt",
+        )
+    assert calls == ["?"]
 
 
 def test_service_rejects_a_role_the_brain_is_not_for(
@@ -357,7 +426,12 @@ def test_service_rejects_a_role_the_brain_is_not_for(
     store_id = uuid4()
     auditor = _member(postgres_connection, store_id, roles=frozenset({StaffRole.AUDITOR}))
     postgres_connection.commit()
-    service = AssistantService(AuthSettings(database_url=database_url))
+
+    class NeverCalledBrain:
+        def answer(self, question: str, context_reads: AssistantContextReads) -> AssistantAnswer:
+            raise AssertionError("an unauthorized role must never reach the provider")
+
+    service = AssistantService(AuthSettings(database_url=database_url), brain=NeverCalledBrain())
 
     with pytest.raises(AssistantAuthorizationError):
         service.post_turn(

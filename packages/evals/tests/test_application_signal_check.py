@@ -671,6 +671,38 @@ def test_an_unreadable_position_fails_the_check_rather_than_starting_over(
     assert cursor.read_text(encoding="utf-8") == content
 
 
+def test_a_long_cursor_path_keeps_recovery_advice_in_the_bounded_alert(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A long deployment path must not crowd the recovery action or its coverage loss out."""
+
+    directory = tmp_path
+    for index in range(3):
+        directory /= f"nested-{index}-" + "x" * 80
+    directory.mkdir(parents=True)
+    cursor = directory / "cursor.json"
+    assert len(str(cursor)) > 200
+    cursor.write_text("{", encoding="utf-8")
+    log = tmp_path / "api.log"
+    log.write_text(_request(200, at=datetime.now(UTC), route="/readyz") + "\n", encoding="utf-8")
+
+    arguments = ["--check", "app", "--app-logs", str(log), "--app-signal-cursor", str(cursor)]
+    assert _main(monkeypatch, [*arguments, "--emit-alert"]) == 1
+
+    document = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    result = document["results"]["application_signals"]
+    assert result["passed"] is False
+    assert len(result["detail"]) <= 200
+    for guidance in (
+        "delete the --app-signal-cursor file",
+        f"last {CHECKS.APP_SIGNAL_WINDOW_SECONDS // 60} minutes",
+        "older events remain unchecked",
+    ):
+        assert guidance in result["detail"]
+        assert guidance in document["alert"]["text"]
+    assert cursor.read_text(encoding="utf-8") == "{"
+
+
 # --- defaults in one place, and the place is documented -----------------------------------------
 
 

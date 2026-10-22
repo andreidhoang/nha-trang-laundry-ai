@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-10-04'
+last_updated: '2026-10-16'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -5714,7 +5714,7 @@ items:
 - id: REALM-POLICY-001
   phase: PRODUCTION_HARDENING
   title: The running R1 realm carries the password policy the realm file declares
-  status: PENDING
+  status: BLOCKED
   priority: 340
   depends_on:
   - AUTHZ-LIFECYCLE-001
@@ -5731,6 +5731,11 @@ items:
   - kcadm_read_back_matches_the_realm_file
   - rollback_assessment
   blocked_by_decisions: []
+  blocking_condition: The owner selected this Mac for the real-shop pilot on 2026-10-16,
+    but no R1 Keycloak instance or shop bootstrap material is present. Existing demos
+    use the synthetic identity provider. Completion requires the target R1 realm,
+    its administrator and an authenticated policy convergence/read-back; a development
+    fixture cannot substitute for that deploy-day evidence.
 - id: EINVOICE-REQUEST-001
   phase: PRODUCTION_HARDENING
   title: Invoice requests captured on an order or an account month with a buyer snapshot;
@@ -6313,5 +6318,68 @@ items:
   - single_video_recorded
   - every_chapter_result_reported_as_it_is
   - no_capability_authorisation_changed
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: PILOT-RELEASE-PREFLIGHT-001
+  phase: PRODUCTION_HARDENING
+  title: Trustworthy recovery and deployment checks for the owner-selected dedicated
+    Mac pilot
+  status: IN_PROGRESS
+  priority: 359
+  depends_on:
+  - SHOP-RECOVERY-001
+  - AUTHZ-LIFECYCLE-001
+  context_domains:
+  - platform
+  - evaluation_release
+  - orders_audit
+  normative_sources:
+  - docs/SHOP_MAC_RELEASE_PLAN_2026-10-16.md
+  - docs/runbooks/shop-till-mac.md
+  - docs/runbooks/restore-drill.md
+  contracts: []
+  task_packet: context/tasks/TASK-pilot-release-preflight-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - recovery_stream_failures_refused
+  - readiness_and_mac_preflight_fail_closed
+  - deployed_identity_image_in_supply_chain_gate
+  - owner_selected_mac_plan_and_target_prerequisites
+  - regression_and_preservation_evidence
+  - rollback_assessment
+  blocked_by_decisions: []
+- id: WINDOWS-DEPLOYMENT-001
+  phase: PRODUCTION_HARDENING
+  title: Adapt and verify the owner-selected Windows shop host before real use
+  status: PENDING
+  priority: 360
+  depends_on:
+  - PILOT-RELEASE-PREFLIGHT-001
+  context_domains:
+  - platform
+  normative_sources:
+  - docs/WINDOWS_ENGINEER_HANDOFF_2026-10-22.md
+  contracts: []
+  task_packet: context/tasks/TASK-windows-deployment-001.md
+  acceptance_checks:
+  - uv run ruff check .
+  - uv run ruff format --check .
+  - uv run mypy apps packages
+  - uv run pytest --require-postgres-integration
+  - uv run python scripts/verify_contracts.py
+  - uv run python scripts/check_context_drift.py
+  required_evidence:
+  - actual_windows_host_and_linux_runtime_inventory
+  - target_startup_schedules_and_private_network_boundaries
+  - trusted_browser_mfa_and_database_role_checks
+  - exact_target_images_and_security_evidence
+  - encrypted_archive_and_timed_target_restore
+  - forced_alert_seen_and_owner_counter_acceptance
   - rollback_assessment
   blocked_by_decisions: []

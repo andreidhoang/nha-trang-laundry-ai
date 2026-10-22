@@ -1,7 +1,7 @@
 schema_version: 1
-last_updated: '2026-10-04T22:00:02.575297+00:00'
-current_work_item: null
-last_result: COMPLETE
+last_updated: '2026-10-16T13:06:48.767202+00:00'
+current_work_item: PILOT-RELEASE-PREFLIGHT-001
+last_result: IN_PROGRESS
 blocker: null
 evidence_records:
 - work_item: IDENTITY-001
@@ -705,6 +705,13 @@ blocked_records:
     failure seen arriving on the owner''s phone, which is the owner''s first-install
     step in shop-till-mac.md section 5c. Nothing here can perform it.'
   recorded_at: '2026-09-25T06:45:02.642279+00:00'
+- work_item: REALM-POLICY-001
+  reason: The owner selected this Mac for the real-shop pilot on 2026-10-16, but no
+    R1 Keycloak instance or shop bootstrap material is present. Existing demos use
+    the synthetic identity provider. Completion requires the target R1 realm, its
+    administrator and an authenticated policy convergence/read-back; a development
+    fixture cannot substitute for that deploy-day evidence.
+  recorded_at: '2026-10-16T13:03:25.685694+00:00'
 unblocked_records:
 - work_item: OPENCLAW-REPACK-001
   reason: The exact-commit hosted GitHub workflow was authorized and executed; reevaluating

@@ -1,8 +1,9 @@
 # AI role map — which model operates where in this app
 
 **Purpose:** the single deep-dive for Codex or a new engineer: exactly which AI models run in which
-workflow, what they may decide, and what is built vs. not wired. **Verified against the tree on
-2026-10-14** (static reading only; nothing was executed). Every claim carries `path:line`. Line
+workflow, what they may decide, and what is built vs. not wired. The original map was verified
+against the tree on **2026-10-14** through static reading. The October 15 local classifier update
+below links its separate live evidence. Original code references carry `path:line`. Line
 numbers drift: re-grep before you rely on one. Machine truth outranks this page:
 `runtime/model-registry-v2.yaml`, `delivery/CAPABILITY_STATUS.yaml`, `delivery/GATE_REGISTRY.yaml`,
 `delivery/WORK_QUEUE.yaml`. Sibling docs: `docs/AI_MODEL_AND_PROVIDER_SETUP.md` (what to do, in what
@@ -10,21 +11,16 @@ order), `docs/runbooks/provider-credentials.md` (credential rules).
 
 ## 1. Bottom line
 
-1. **No product AI model is invoked anywhere today.** No code makes a provider call, imports a
-   provider SDK, or reads a provider key. The only `ResponsesProviderTransport` implementation is
-   `ScriptedResponsesTransport` with `provider_backed = False`
-   (`apps/worker/src/nha_trang_laundry_worker/responses_runtime.py:473-498`);
-   `build_agent_pipeline` raises on any provider-backed transport
-   (`apps/worker/src/nha_trang_laundry_worker/pipeline.py:210-214`); a grep for `AGENT_PROVIDER_API_KEY`
-   and `api.openai.com` over `*.py` finds nothing (the key name exists only in docs). The only related
-   code is `packages/evals/tests/test_worker_host_contract.py:37-51`, which asserts that
-   `apps/worker/src/nha_trang_laundry_worker/*.py` (non-recursive) contains none of `import openai`,
-   `from openai`, `import requests`, `import httpx`, `message.send_requested` or `zalo`. The only
-   code mention of the provider route is `provider_route: Literal["/v1/responses"]`
-   (`responses_runtime.py:186`), a pin, not a call. `apps/api/src` has no provider or worker import,
-   and there is no `openai` or `anthropic` import anywhere in `apps/`, `packages/` or `scripts/`. The
-   only outbound HTTP in `scripts/` is shop-alert relay, staging smoke, shop-operations checks and
-   local IdP token fetches; none targets a model provider.
+1. **Production and the default demo remain deterministic.** An opt-in local synthetic staff
+   evaluation now exists in `apps/api/src/nha_trang_laundry_api/assistant_gemini.py`. It reads
+   `AGENT_PROVIDER_API_KEY` only after demo configuration and identity guards, makes a bounded
+   Gemini intent-classification request and uses deterministic server answers. It has no tools,
+   business data context or write authority. See `docs/runbooks/local-gemini-evaluation.md` and the
+   current live verification evidence in `docs/audit/GEMINI_FREE_TIER_VERIFICATION_2026-10-15.md`
+   (five synthetic Gemini 3.5 Flash-Lite cases on an unbilled project). The public worker
+   remains separate: `ScriptedResponsesTransport` is still non-provider-backed and
+   `build_agent_pipeline` still rejects provider-backed transports. The local staff implementation
+   does not complete `PROVIDER-TRANSPORT-001` for the public Concierge.
 2. **What exists is a built, unit-tested, bounded harness** run only against a scripted transport
    and synthetic data: `BoundedResponsesRuntime` (`responses_runtime.py:651`), `AgentRunner` and
    `AgentToolBridgeSession` (`agent_runner.py:748`, `:311`), `DurableAgentRunWorker`
@@ -44,7 +40,8 @@ order), `docs/runbooks/provider-credentials.md` (credential rules).
    Nothing in `apps/`, `runtime/`, `packages/policy` references them. OpenClaw (a retired public
    runtime) is out of the product path (ADR-0009, `docs/adr/0009-retire-public-openclaw-runtime.md`);
    frozen items `AGENT-001`, `OPENCLAW-REPACK-001`, `RUNTIME-SECURITY-001` stay frozen (ADR-0004).
-6. **The staff-visible "Trợ lý AI" is not a model** (section 6). "Bản nháp AI" (Shadow) is a review
+6. **The staff-visible "Trợ lý AI" defaults to fixed rules**, with the restricted local Gemini
+   classifier described above (section 6). "Bản nháp AI" (Shadow) is a review
    queue for drafts that nothing outside synthetic/eval code can currently produce.
 
 ## 2. Who decides what
@@ -165,9 +162,9 @@ NOT_AUTHORIZED through `default_authorization` (`:4`) and `GATE_REGISTRY.yaml` (
 
 ## 6. Staff-app workflows: is a model involved today?
 
-Method: module docstrings plus absence of any provider/worker import in `apps/api/src`
-(case-insensitive grep for `openai|anthropic|nha_trang_laundry_worker|responses_runtime|agent_runner`
-returns nothing). Route lines in `apps/api/src/nha_trang_laundry_api/main.py`.
+Method: trace the route and its service to the configured implementation. The local classifier is
+an explicit exception to the default deterministic staff workflows; it is not a worker runtime.
+Route references below are in `apps/api/src/nha_trang_laundry_api/main.py`.
 
 | Workflow | Model today? | Evidence |
 |---|---|---|
@@ -182,23 +179,23 @@ returns nothing). Route lines in `apps/api/src/nha_trang_laundry_api/main.py`.
 | Daily summary | **No** ("No language model, no provider call and no network", versioned template) | `apps/api/.../daily_summary.py:1-12`; `main.py:8090`; owner asked for an AI summary and it was deferred under `DEC-006` (`context/DECISION_REGISTRY.yaml:1270-1272`) |
 | Unclaimed / storage | **No** | `main.py:9404,9462,9590`; `unclaimed.py` |
 | Ops board / SLA board / approvals queue | **No** | `main.py:7569,3140`; `ops_board.py` |
-| **Trợ lý AI assistant** | **No** (deterministic) | below |
+| **Trợ lý AI assistant** | Default **No**; opt-in synthetic Gemini classification only | below; local Gemini evaluation runbook |
 | **Shadow review (Bản nháp AI)** | **No model in the screen**; displays agent drafts nothing produces yet | section 7 |
 | Manual send (Gửi tay) | **No** (human attests) | `main.py:3324,5615,5649` |
 
 **Trợ lý AI** (`/assistant`, `apps/web/src/screens/assistant.js`; nav `apps/web/src/core/nav.js:130-136`;
 capability `ASSISTANT` `rbac.js:280`): `DeterministicAssistantBrain` is a first-match-wins fixed
 intent table (money refusal first, greeting, today overview, SLA risk, pending approvals, a literal
-UUID order lookup, else UNSUPPORTED) over governed SQL reads (`assistant.py:291-330`). The module
-states it never calls a model (`assistant.py:1-12`). The SSE endpoint only replays the already
+UUID order lookup, else UNSUPPORTED) over governed SQL reads (`assistant.py:291-330`). The default
+`DeterministicAssistantBrain` never calls a model; the opt-in local classifier is separate. The SSE endpoint only replays the already
 stored answer in word frames (`assistant.py:480`; `main.py:7298`). Question and answer are redacted
 and stored append-only in `assistant_turns` (`packages/db/migrations/0026_assistant_turns.sql:11`).
 **The live-model seam** is `AssistantBrain`, a Protocol with one method
-`answer(question, context_reads)` (`assistant.py:153-156`); `AssistantService` takes
-`brain or DeterministicAssistantBrain()` (`assistant.py:511`). No provider-backed implementation
-exists. Per the docstring a provider brain may enter only after capability authorization plus a
-credential, and a credential alone authorizes nothing. This seam is **separate from** the worker's
-Concierge runtime; no import links them.
+`answer(question, context_reads)`; `AssistantService` defaults to `DeterministicAssistantBrain`.
+The route injects `local_demo_brain_factory`, which can select the opt-in synthetic classifier only
+after authenticated role/store checks and idempotency admission. The classifier receives the
+sanitized question only, not `context_reads`; the deterministic renderer retains those reads.
+This seam is **separate from** the worker's Concierge runtime; no import links them.
 
 ## 7. The Shadow review surface
 
@@ -219,7 +216,7 @@ decide (`shadow_console.py:54-59`). `CLAUDE.md` has been corrected in the same c
 
 ## 8. The prompt
 
-Exactly one prompt: `runtime/prompts/public-concierge.vi-VN.md` (vi-VN, `1.0.0-eval`, 42 lines).
+One public Concierge prompt: `runtime/prompts/public-concierge.vi-VN.md` (vi-VN, `1.0.0-eval`, 42 lines).
 It is the Responses `instructions` (≤16,000 chars). Manifest: `runtime/prompts/manifest-v1.yaml`
 (`status: EVAL_ONLY`, `release_authorization: false`, `public_corpus_release: null`). No per-capability,
 retrieval, OCR, summarisation, or grader prompts exist.
@@ -247,6 +244,10 @@ all output is a draft; never claim sent/confirmed/booked/approved (`:33-37`).
 (blockquote at `:40-42`: "Em đã ghi nhận thông tin. Nhân viên sẽ kiểm tra và xác nhận lại với anh/chị; em chưa thể xác nhận giá, thời gian hoặc ngoại lệ này ngay lúc này.") differs from the code's `DETERMINISTIC_HANDOFF_TEXT` (`responses_runtime.py:58`), which
 is what staff see on a code-generated handoff.
 
+The local staff classifier has a separate fixed instruction, `local-staff-intent-v1`, in
+`assistant_gemini.py`. It requests only an intent enum and has no public tools or conversation
+context. It is not the public Concierge prompt or its release identity.
+
 ## 9. Pinned model, limits, candidates
 
 | Item | Registry (machine truth) `runtime/model-registry-v2.yaml` | `docs/AI_MODEL_AND_PROVIDER_SETUP.md` |
@@ -260,7 +261,7 @@ is what staff see on a code-generated handoff.
 
 Notes. (a) "GPT-5 mini" in the doc is not the registry's `gpt-5.6-terra`; do not treat them as
 equal. Strategy docs also name `gpt-5.6-sol` (`specs/AGENT_SYSTEM_AND_EVAL_SPEC_V1.md` section 17,
-reader-reported, not re-read here). (b) Gemini and Claude appear in no code or registry. (c) Code
+reader-reported, not re-read here). (b) Gemini appears only in the opt-in local staff classifier; neither Gemini nor Claude is in the public registry. (c) Code
 is OpenAI-shaped: `ResponsesPriceTable.provider: Literal["openai"]` (`responses_runtime.py:124`) and
 `provider_route: Literal["/v1/responses"]` (`:186`); `ResponsesRuntimeConfig.max_turn_cost_usd` is a
 free `MoneyString` not clamped to the registry's 0.10 (`:199`). A non-Responses provider needs an
@@ -289,7 +290,7 @@ RU/EN/KO is pitched in strategy docs but no prompt, registry entry, or case targ
 | Release minima | P0 pass 1 / 0 failures; frozen regression ≥200; normal-language ≥300 (task success 0.95, safe abstention 0.98); adversarial ≥200 (0 violations); synthetic combinatorial ≥500 (met); public corpus ≥100; shadow exit ≥30 real orders; first 200 automated sends reviewed; bounded: 30 days, ≥100 cases, ≤0.05 correction | `eval-manifest-v1.yaml:52-88` |
 | Local suite | `python -m nha_trang_laundry_evals.runner --mode synthetic-local-suite`: all 32 cases must be `SKIP` + `DETERMINISTIC_DEGRADED`, signed by ephemeral `SYNTHETIC_EPHEMERAL_NOT_RELEASE`, `release_evidence: false`, or the runner raises | `runner.py:1695-1810` (checks near `:1733-1778`); `results.py:29` |
 | Manifest | `release_eligible` must stay false or validation raises; 5 blockers listed | `manifest.py:169-171`; `eval-manifest-v1.yaml:97-102` |
-| Current bundle | `evidence/agent-shadow/local-synthetic-suite-v5.json`; v1-v4 superseded and retained | `evidence/agent-shadow/bundle-index-v1.yaml` |
+| Current bundle | `evidence/agent-shadow/local-synthetic-suite-v6.json`; v1-v5 superseded and retained | `evidence/agent-shadow/bundle-index-v1.yaml` |
 | Gate ladder | G1 internal Shadow (needs provider data approval, P0 primary+fallback+degraded eval pass); G2 public assisted (14 Shadow days, 100 interactions, 30 real orders, published corpus, signed runtime selection); G3 (200 reviewed sends, 14 days); G4 (30 clean days, 100 cases) | `delivery/GATE_REGISTRY.yaml:6-58` |
 
 How a model would be evaluated: the same Vietnamese synthetic corpus through each candidate
@@ -336,7 +337,7 @@ ADR-0003/0004/0008/0009.
 | Read all of the above; write failing tests for a provider adapter against recorded/synthetic fixtures; run synthetic evals | Let a model compute money, policy, SLA, permission or order state; smooth the 6 kg cliff |
 | Fix doc drift, add negative/authorization tests, keep every flag false | Put a key in any repo file, log, chat or command line; invent or ask for one; treat a present key as permission |
 | Implement queue items the controller selects (`run_delivery_loop.py`), record evidence with `--expected-generation` | Flip `real_customer_model_calls_enabled`, `provider_data_gate`, any capability status, or mark a gate passed without a signed manifest |
-| Record a blocker and move to an independent ready item | Add a generic tool, direct-send capability, raw PII fixture or chain-of-thought storage; push, PR, deploy, call a provider, or decide `DEC-001`-`DEC-006`; rewrite frozen items (ADR-0004); relabel a synthetic SKIP as provider-backed or weaken a check |
+| Record a blocker and move to an independent ready item | Add a generic tool, direct-send capability, raw PII fixture or chain-of-thought storage; push, PR, deploy, make an unapproved provider call, or decide `DEC-001`-`DEC-006`; rewrite frozen items (ADR-0004); relabel a synthetic SKIP as provider-backed or weaken a check |
 
 Order of work once `DEC-006` is signed: `PROVIDER-TRANSPORT-001`, `MODEL-PIN-001`, bake-off,
 then authorize one capability at a time, `INTERNAL_SHADOW` first (`AI_MODEL_AND_PROVIDER_SETUP.md:44-54`).

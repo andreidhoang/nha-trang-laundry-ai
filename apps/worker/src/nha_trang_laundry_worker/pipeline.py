@@ -186,6 +186,7 @@ class AgentPipeline:
             runtime=self.runtime,
             transport=self.transport,
             correlation_id=uuid4(),
+            authority_valid=authority_valid,
         )
 
 

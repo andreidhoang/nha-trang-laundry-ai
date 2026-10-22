@@ -304,6 +304,8 @@ def test_recorder_can_block_the_next_unstarted_item_with_cas(tmp_path: Path) -> 
     [
         "Bearer synthetic-sensitive-value",
         "nvapi-SYNTHETICONLYKEYMATERIAL0000000000000000",
+        "AIzaSYNTHETICONLYKEYMATERIAL0000000000000000",
+        "AQ.SYNTHETICONLYKEYMATERIAL0000000000000000",
     ],
 )
 def test_recorder_rejects_sensitive_reason_without_echoing_it(tmp_path: Path, secret: str) -> None:

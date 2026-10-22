@@ -120,8 +120,8 @@ class AuthSettings(BaseSettings):
 class VerifiedIdentity:
     subject: str
     mfa_verified: bool
-    #: SHA-256 of the exact token presented. The session is bound to it, and the database refuses
-    #: a second session for the same digest -- one provider sign-in, one session.
+    #: SHA-256 of the token's signing input. The database refuses a second session for the same
+    #: digest -- one provider sign-in, one session, including any equivalent signature encoding.
     token_digest: str
 
 
@@ -228,7 +228,12 @@ class IdentityPlatformVerifier:
 
         if isinstance(issued_at, bool) or not isinstance(issued_at, int | float):
             raise AuthenticationError("invalid staff identity token")
-        if self._clock() - datetime.fromtimestamp(issued_at, UTC) > self._max_age:
+        try:
+            issued_at_time = datetime.fromtimestamp(issued_at, UTC)
+        except (OverflowError, OSError, ValueError) as error:
+            # A signed numeric date can still fall outside the platform's timestamp range.
+            raise AuthenticationError("invalid staff identity token") from error
+        if self._clock() - issued_at_time > self._max_age:
             raise AuthenticationError("invalid staff identity token")
 
 
@@ -344,12 +349,12 @@ class StaffIdentityService:
 def identity_token_digest(token: str) -> str:
     """The digest a session is bound to: of the token's signed bytes, never its full text.
 
-    A JWS is malleable in its signature segment. An RS256 signature is 256 bytes, which base64url
-    spells in 342 characters carrying 4 bits that decode to nothing, and PyJWT also accepts it with
-    `==` appended -- measured: all sixteen spellings and the padded one verify. Hashing the token as
-    presented let one leaked token mint a session per spelling. `header.payload` is the JWS signing
-    input: change one byte of it and the signature no longer verifies, so it is the same text for
-    every token that passes `verify`. Two issuances are never equal in it: Keycloak gives each a
+    Older PyJWT accepted alternate signature spellings: with a 2048-bit RS256 key, all sixteen
+    variants of the unused base64url bits and a `==`-padded signature verified. Hashing that raw
+    token let one leaked token mint a session per spelling. PyJWT 2.15 now rejects noncanonical
+    encodings; the stable signing-input digest remains defense in depth. `header.payload` is the
+    JWS signing input: change one byte and the signature no longer verifies. It is the same text
+    for every accepted signature spelling. Two issuances differ: Keycloak gives each a
     fresh `jti`, and the `at_hash` of a fresh access token. The raw token is never stored or logged.
     """
 

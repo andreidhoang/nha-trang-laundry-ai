@@ -25,14 +25,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping, MutableMapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
 from opentelemetry import propagate, trace
 from opentelemetry.metrics import Meter, MeterProvider
-from opentelemetry.trace import Span, Tracer, TracerProvider
+from opentelemetry.trace import Span, Status, StatusCode, Tracer, TracerProvider
 
 
 class InstrumentKind(StrEnum):
@@ -203,8 +203,18 @@ class Telemetry:
             operation,
             context=context,
             attributes=safe_attributes(attributes),
+            record_exception=False,
+            set_status_on_exception=False,
         ) as span:
-            yield span
+            try:
+                yield span
+            except Exception:
+                # SDK defaults serialize exception text and stack frames outside our redactor.
+                # Keep the failure signal without exporting either, including on parent spans.
+                # Instrumentation failure must not replace the application exception.
+                with suppress(Exception):
+                    span.set_status(Status(StatusCode.ERROR, description="operation failed"))
+                raise
 
     @staticmethod
     def inject_current(carrier: MutableMapping[str, str]) -> None:

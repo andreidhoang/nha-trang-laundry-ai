@@ -1,10 +1,13 @@
 # Codex and engineer cross-machine handoff
 
-**Reconciled:** 2026-10-14 (Asia/Ho_Chi_Minh)
+**Reconciled:** 2026-10-22 (Asia/Ho_Chi_Minh). Start with
+[the Windows deployment handoff](WINDOWS_ENGINEER_HANDOFF_2026-10-22.md). Windows supersedes the
+Mac as intended shop host; target deployment is blocked. Sections below retain historical local
+setup/evidence and must not be mistaken for a tested Windows production procedure.
 
 **Repository:** `https://github.com/andreidhoang/nha-trang-laundry-ai.git`
 
-**Supported branch:** `main`
+**Application/handoff branch:** `codex/engineer-setup`; `main` does not yet contain this handoff.
 
 **Machine-readable authority:** `delivery/WORK_QUEUE.yaml`, `delivery/LOOP_STATE.yaml`,
 `delivery/CAPABILITY_STATUS.yaml`
@@ -17,7 +20,7 @@ orders and money.
 
 - R1 is a deterministic, staff-only laundry operations console. It supports the reviewed workflows
   in `docs/CORE_BUSINESS_WORKFLOWS_V1.md`.
-- The last complete guarded verification (round 9, `82a66a9`) passed **4,962 tests with 5 skips**.
+- Historical guarded verification (round 9, `82a66a9`) passed **4,962 tests with 5 skips**.
   Live synthetic verification passed the stubbed console suite 942/0, the daily-operations walk
   81/0 at desk and phone size, workflow conformance 870/0 (desk) and 869/0 (phone) with 212/212
   controls, and a 43-chapter, 1,220-check film. Re-measure; do not trust these numbers.
@@ -27,10 +30,10 @@ orders and money.
   it is the correct day-one result, not a missing setup step.
 - OpenClaw was retired (ADR-0009): there is one dependency tree, `uv.lock`, and no `npm` project.
   Do not look for an OpenClaw runtime or run `npm audit`.
-- The current shop Mac checkout is `/Users/danghuyhoang/laundry`. Its real-shop containers are
-  stopped pending an external archive disk and macOS trust of `.shop/ca/ca.crt`. Do not claim that
-  shop cutover is complete until the preflight, restore drill and one owner-approved counter
-  transaction pass.
+- The shop Mac checkout is `/Users/danghuyhoang/laundry`. The earlier handoff recorded stopped
+  real-shop containers and outstanding archive-disk/TLS-trust steps; this synthetic review did
+  not revalidate those host prerequisites. Do not claim shop cutover is complete until the
+  preflight, restore drill and one owner-approved counter transaction pass.
 
 Re-measure instead of trusting these numbers:
 
@@ -42,10 +45,13 @@ git status --short
 git rev-parse HEAD
 ```
 
-**For the business owner (Vietnamese, non-technical):** `docs/GIOI_THIEU_CHO_CHU_TIEM_VI.html` - open it in a browser. It explains what the app solves, how it works, where AI is (nowhere yet), and the daily routine. Keep it in step with the app when workflows change.
+**For the business owner (Vietnamese, non-technical):** `docs/GIOI_THIEU_CHO_CHU_TIEM_VI.html` - open it in a browser. It explains what the app solves, the default deterministic workflows and the daily routine. The optional local Gemini evaluation below is separate from the shop's default behavior. Keep the briefing in step with approved product workflows.
 
 **AI models and providers:** read `docs/AI_MODEL_AND_PROVIDER_SETUP.md` before touching anything
-model-related. No provider key is read by any code today and no model call is authorized (`DEC-006`).
+model-related. The default application remains provider-free. The October 15 setup branch adds an
+explicitly enabled, synthetic-only Gemini intent classifier for local evaluation; see
+`docs/runbooks/local-gemini-evaluation.md`. Production model processing remains blocked by `DEC-006`
+and the existing release gates. Live evaluation also requires an explicitly authorized budget.
 For which model operates in which workflow, and what is built vs not wired, read `docs/AI_ROLE_MAP.md`.
 
 ## 2. Two modes that must not be confused
@@ -53,7 +59,7 @@ For which model operates in which workflow, and what is built vs not wired, read
 | Mode | May run on any engineer machine? | Data | Entry point |
 |---|---:|---|---|
 | Local engineering/demo | Yes | Synthetic only | `docs/runbooks/demo-stack.md` |
-| Real shop till | No; one explicitly chosen shop Mac | Real orders and settlement records | `docs/runbooks/shop-till-mac.md` |
+| Real shop till | Only after the selected Windows target passes its deployment checks | Real orders and settlement records | `docs/WINDOWS_ENGINEER_HANDOFF_2026-10-22.md`; Mac runbook retained as reference |
 
 Git intentionally excludes `.shop/`, `.demo/`, `.env`, private keys, certificates and database
 volumes. A GitHub clone is therefore safe to use for engineering and synthetic UI verification, but
@@ -73,6 +79,8 @@ Dropbox or iCloud-synced directories.
 ```bash
 git clone https://github.com/andreidhoang/nha-trang-laundry-ai.git ~/laundry
 cd ~/laundry
+git switch codex/engineer-setup
+git switch -c codex/engineer-followup
 uv sync --all-packages --all-groups
 uv run python scripts/workspace_env.py --check
 uv run python scripts/verify_contracts.py
@@ -93,8 +101,9 @@ Then read, in order:
 4. `docs/CORE_BUSINESS_WORKFLOWS_V1.md`
 5. `context/tasks/TASK-cross-machine-bootstrap-001.md`
 
-On Windows, choose a local non-synced path and translate only shell syntax; do not translate the
-contracts, environment names or Compose topology. The production shop-till runbook is macOS-specific.
+On Windows, use the reviewed Linux environment described in the Windows handoff. Host startup,
+scheduling, trust and archive mounts require actual adaptation and testing; changing shell syntax
+alone is insufficient. Contracts, environment names and R1 trust boundaries remain unchanged.
 
 ## 4. Reproduce the application with synthetic data
 
@@ -131,18 +140,25 @@ auditor account must remain read-only.
 Browser verification needs Google Chrome installed (the scripts default to the `chrome` channel), or
 `uv run --with playwright playwright install chromium` plus `CONSOLE_BROWSER_PATH=<chromium>`. The
 stack must be the demo stack above; the scripts default to `127.0.0.1:8100`, so pass the flags shown.
-Ports used: 8081 (demo console) and 5432 (development database, `compose.yaml`).
+The demo console uses loopback port 8081; its database is not published to the host.
 
+For the complete workflow check, arrange a temporary loopback connection to the **synthetic demo**
+database and set `DEMO_DATABASE_URL` to its migration-role DSN, using the generated
+`.demo/secrets/migration_database_url` credentials and the connection's host/port. The check runs
+host-side policy and STOP-recording commands that need a direct database connection;
+`--psql-container` alone does not cover them. Use the same demo's hash key for those commands as
+the API uses. Do not print or commit the DSN or key. If material is outside `.demo`, set
+`DEMO_MATERIAL_DIR` to that directory and replace the hash-key path in the command below.
 
 ```bash
 uv run --with playwright python scripts/verify_console_interaction.py
 uv run --with playwright python scripts/verify_daily_operations.py \
   --base-url http://localhost:8081 --idp-url http://localhost:8081/demo-idp
-uv run --with playwright python scripts/verify_workflow_conformance.py \
+env -u NTL_HASH_KEY NTL_HASH_KEY_FILE="$PWD/.demo/secrets/hash_key" \
+  uv run --with playwright python scripts/verify_workflow_conformance.py \
   --base-url http://localhost:8081 --idp-url http://localhost:8081/demo-idp \
   --store 11111111-2222-4333-8444-555555555555 \
-  --psql-container nha-trang-laundry-private-staging-postgres-1 \
-  --database nha_trang_laundry
+  --database-url "${DEMO_DATABASE_URL:?set the synthetic demo migration DSN first}"
 ```
 
 The last two scripts create and settle synthetic orders. Never point them at a real shop unless the
@@ -199,10 +215,11 @@ delivery queue: validating a clone must not rewrite delivery history.
 
 ## 7. Real-shop continuation on the chosen Mac only
 
-The current Mac has already completed checkout relocation and loopback hostname configuration. Its
-remaining blockers are host-local and therefore absent from GitHub:
+The earlier shop handoff records checkout relocation and loopback hostname configuration. Recheck
+the following host-local prerequisites on the chosen Mac; the October 15 synthetic verification
+does not establish their current completion:
 
-1. attach a different physical disk and set
+1. verify a separate physical archive disk is attached and set
    `R1_LOCAL_ARCHIVE_PATH=/Volumes/<drive>/laundry-archive`;
 2. trust `/Users/danghuyhoang/laundry/.shop/ca/ca.crt` in the macOS System keychain;
 3. pass `uv run python scripts/preflight_shop_till.py` with zero blockers;
@@ -232,3 +249,79 @@ Report all of the following:
 
 Do not include passwords, tokens, DSNs, certificate private keys, customer information or raw order
 exports in the report.
+
+## 9. October 15 local review and optional Gemini evaluation
+
+The `codex/engineer-setup` worktree preserves the earlier Mac fixes and adds bounded-input,
+authentication dependency, browser recovery and assistant corrections. Read
+[the dated verification report](audit/LOCAL_READINESS_2026-10-15.md) for requirements, exact
+verification scope, evidence and remaining release blockers. Do not substitute the earlier green
+baseline for the final results in that report.
+
+The optional local staff classifier is documented in
+[the Gemini evaluation runbook](runbooks/local-gemini-evaluation.md). It is off by default, accepts
+synthetic questions only and cannot perform business actions. A provider key alone does not
+authorize requests or establish a billing limit. This narrowly scoped local evaluation does not
+change the public capability registry or approve production data processing. The user authorized
+free-tier requests only, with no paid usage. A later authorized setup created the separate unbilled
+`Laundry Local Free Evaluation` project and a dedicated key. Five live Gemini 3.5 Flash-Lite
+workflows now pass end to end (74 browser checks and 19 persistence/invariant checks). The original
+paid project/key was not used. See the [free-tier verification supplement](audit/GEMINI_FREE_TIER_VERIFICATION_2026-10-15.md)
+for the exact image, preserved failed runs, recording and remaining limits. All authorized
+provider attempts are spent; restarting must not reset the ledger.
+
+The separate Gemini evaluation is reachable at `http://localhost:8091/demo-idp/` on this Mac.
+Sign in as the synthetic owner to inspect saved Gemini results or use deterministic questions.
+New unsupported questions show the exhausted local-evaluation allowance. The provider-free demos
+on ports 8081 and 8089 remain running. To resume the existing Gemini containers after Docker stops,
+without rebuilding, deleting volumes, copying the key or resetting an allowance:
+
+```bash
+docker start laundry-gemini-free-20261015-postgres laundry-gemini-free-20261015-idp \
+  laundry-gemini-free-20261015-google-relay laundry-gemini-free-20261015-api \
+  laundry-gemini-free-20261015-gateway
+```
+
+Wait for `/readyz` on port 8091 to return 200. Private local configuration and persistent volumes
+must remain in place; the current API image and credential are already held by these containers.
+The credential-free image archive and exact image binding are in the ignored evidence supplement.
+
+
+Use the frozen lockfile: PyJWT 2.15.0 is required for the API, worker and Tool Facade. The API image
+also retains the patched SQLite library used by the persistent evaluation budget; rebuild it
+rather than copying host Python results onto an older image. Preserve the budget ledger on
+restart. No business database migration was added by this review.
+
+The reviewed infrastructure uses PostgreSQL 16.15 and Caddy 2.11.7, with patched Go dependencies
+in their helper binaries and the backup tools. Build the repository's Dockerfiles, including the
+separate `postgres-runtime` and `postgres-backup` targets; an upstream tag alone is not the same
+verified artifact. The release workflow now scans all six application/infrastructure images in
+comprehensive mode for those dated results; the later workflow also includes Keycloak. A successful
+Keycloak vulnerability scan was not retained, and exact target-architecture verification is a
+deployment blocker. The dated report records exact image IDs, compatibility checks and limits.
+Adopting these images on a real shop host still requires its backup, restore and cutover checks.
+
+The original checkout and its unrelated edits remain separate. The existing synthetic demo on
+port 8081 must remain available; verification stacks and their databases use separate project
+names and volumes. Never run the destructive-state integration suite against the demo database.
+
+On the reviewed Mac, the updated synthetic demo is also available at
+`http://localhost:8089/demo-idp/`. Its private configuration is now under
+`/Users/danghuyhoang/laundry-codex-setup/.demo/readiness-2026-10-15/runtime`, with the same existing
+named volumes. Relocation preserved the 25 existing orders, 13 settlements and one saved assistant
+turn; subsequent verification records are identified separately in the dated report. To resume
+these already-built, already-initialized services on this Mac:
+
+```bash
+docker compose --project-name nha-trang-laundry-codex-verified-films \
+  --file /Users/danghuyhoang/laundry-codex-setup/.demo/readiness-2026-10-15/runtime/compose.runtime.json \
+  up -d --no-build --pull never --no-deps --wait --wait-timeout 120 \
+  postgres demo-idp api worker tls
+```
+
+This machine-local command uses the recorded image IDs and existing secrets; it is not a fresh
+machine bootstrap or a production deployment command. Keep the ignored runtime directory private.
+The shareable evidence index is
+`.demo/readiness-2026-10-15/evidence/README.md`; it excludes runtime configuration, credentials,
+database connection strings and image archives. The dated report distinguishes recordings from
+earlier images from the final account-switch and packaged-runtime checks.

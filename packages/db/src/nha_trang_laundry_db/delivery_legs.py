@@ -103,8 +103,8 @@ class DeliveryLegRepository:
         """Record one attempt.
 
         A failed attempt is a row and nothing else: nothing is charged, the order stays ACTIVE and
-        the laundry comes back to the shop. A retry is another row, which is why only successes are
-        unique per leg kind.
+        the laundry comes back to the shop. A retry after failure is another row. Success ends
+        that leg: a later press cannot invent another attempt or trip cost for the same journey.
         """
 
         if not command.principal.roles & DELIVERY_ROLES or not command.principal.mfa_verified:
@@ -147,6 +147,17 @@ class DeliveryLegRepository:
                 raise DeliveryLegError("this order's fulfilment mode has no return leg")
             if command.leg_kind is DeliveryLegKind.PICKUP and mode not in MODES_EXPECTING_PICKUP:
                 raise DeliveryLegError("this order's fulfilment mode has no pickup leg")
+            # The success index protects only another SUCCEEDED row. A delayed FAILED press
+            # could still append a fictitious attempt and its cost after the laundry arrived.
+            # Read after acquiring the order lock, so a competing success is visible here when
+            # it commits. The service handles the original key's replay before this new attempt.
+            cursor.execute(
+                "SELECT 1 FROM delivery_legs "
+                "WHERE order_id = %s AND leg_kind = %s AND outcome = 'SUCCEEDED'",
+                (command.order_id, command.leg_kind.value),
+            )
+            if cursor.fetchone() is not None:
+                raise DeliveryLegError("this delivery was already recorded as successful")
             if command.leg_kind is DeliveryLegKind.RETURN:
                 # GOODS-AND-DRAWER-009 (review M2): read under this row lock, so a payment or a
                 # refund racing the courier's press is seen as it stands when the trip is written.

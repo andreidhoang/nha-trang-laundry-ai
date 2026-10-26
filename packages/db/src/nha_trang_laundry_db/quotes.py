@@ -6,7 +6,7 @@ import hmac
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -122,6 +122,12 @@ class QuoteSummary:
     #: order create checks the requested mode against. Null only for a snapshot with no DELIVERY
     #: trace, which no composer-produced revision lacks.
     fulfillment_mode: str | None = None
+    #: These labels and conversion belong to this quote's request, not to an independently
+    #: paginated intake list. Customer names are read live so erasure removes them here too.
+    ticket_number: int | None = None
+    ticket_issued_on: date | None = None
+    order_id: UUID | None = None
+    customer_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,13 +459,26 @@ class QuoteRepository:
                    r.valid_until, quote.bound_order_request_id, request.contact_binding_id,
             """
             + PRICED_FULFILLMENT_MODE_SQL
-            + """ AS priced_mode
+            + """ AS priced_mode,
+                   ticket.ticket_number, ticket.issued_on,
+                   (
+                       SELECT o.id FROM orders o
+                       WHERE o.current_quote_id = quote.id AND o.store_id = quote.store_id
+                       ORDER BY o.created_at, o.id
+                       LIMIT 1
+                   ) AS order_id,
+                   customer.display_name
             FROM quotes AS quote
             JOIN quote_revisions AS r
               ON r.quote_id = quote.id
              AND r.revision = quote.current_revision
             LEFT JOIN order_requests AS request
               ON request.id = quote.bound_order_request_id AND request.store_id = quote.store_id
+            LEFT JOIN counter_tickets AS ticket
+              ON ticket.id = request.contact_binding_id AND ticket.store_id = quote.store_id
+            LEFT JOIN customers AS customer
+              ON customer.id = request.customer_id AND customer.store_id = quote.store_id
+             AND customer.erased_at IS NULL
             WHERE quote.store_id = %s
             ORDER BY quote.created_at DESC, quote.id DESC
             LIMIT %s
@@ -480,6 +499,10 @@ class QuoteRepository:
                 order_request_id=_optional_uuid(row[9]),
                 contact_binding_id=_optional_uuid(row[10]),
                 fulfillment_mode=None if row[11] is None else str(row[11]),
+                ticket_number=None if row[12] is None else int(row[12]),
+                ticket_issued_on=row[13] if isinstance(row[13], date) else None,
+                order_id=_optional_uuid(row[14]),
+                customer_name=None if row[15] is None else str(row[15]),
             )
             for row in cursor.fetchall()
         )

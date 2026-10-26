@@ -62,7 +62,8 @@ from console_recording import (
     watch_page_errors,
     watch_render_defects,
 )
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import expect, sync_playwright
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--base-url", default="http://127.0.0.1:8100")
@@ -482,8 +483,47 @@ with sync_playwright() as pw:
         calls = [c for c in api_calls if c[0] == "POST" and fragment in c[2]]
         return calls[-1] if calls else None
 
+    def expect_order_write(endpoint, expected):
+        """Wait for this order and this intent, never an older POST or an unrelated GET."""
+        oid = page.url.partition("#/orders/")[2].split("?")[0].split("/")[0]
+        url = f"{BASE}/internal/v1/orders/{oid}/{endpoint}"
+
+        def matches(response):
+            if response.request.method != "POST" or response.url != url:
+                return False
+            body = response.request.post_data_json
+            return isinstance(body, dict) and all(body.get(k) == v for k, v in expected.items())
+
+        return page.expect_response(matches, timeout=20_000)
+
+    def wait_order_rendered(response):
+        """A confirmed write is not yet the fresh screen; wait for its stored row version."""
+        order = response.json()
+        version = order["row_version"]
+        row = page.locator("details.tech .tech__row").filter(
+            has=page.get_by_text("Phiên bản dòng", exact=True)
+        )
+        expect(row.locator("dd")).to_have_text(f"v{version}", timeout=20_000)
+        primary = next(
+            (item["step"] for item in order.get("next_steps", []) if item["primary"]), None
+        )
+        if primary:
+            expect(page.locator(f".action-bar--v2 button[data-step={primary}]")).to_be_visible()
+        return order
+
+    def dismiss_sheet():
+        if page.locator("dialog[open]").count():
+            page.keyboard.press("Escape")
+            expect(page.locator("dialog[open]")).to_have_count(0)
+
     def step_control(step):
         """The page's control for `step`: in the action bar, or under "Khác"."""
+        found = page.locator(f"dialog[open] button[data-step={step}]")
+        if found.count():
+            return found.first
+        # An unsuccessful lookup used to leave Khác open, so the next lookup tried to click
+        # the background opener through its own modal. Finish the previous lookup first.
+        dismiss_sheet()
         bar = page.locator(f".action-bar--v2 button[data-step={step}]")
         if bar.count():
             return bar.first
@@ -494,9 +534,12 @@ with sync_playwright() as pw:
         more = page.locator("button[data-more-steps]")
         if more.count():
             more.first.click()
-            page.wait_for_timeout(400)
+            expect(page.locator("#order-more[open]")).to_be_visible()
         found = page.locator(f"dialog[open] button[data-step={step}]")
-        return found.first if found.count() else None
+        if found.count():
+            return found.first
+        dismiss_sheet()
+        return None
 
     def press_step(step, label, machine="first"):
         """A composite step with nothing to attest: one press, one `POST /steps`.
@@ -509,25 +552,32 @@ with sync_playwright() as pw:
         if control is None:
             ok(label, False, f"the page offers no {step}; the primary step is {primary_step()}")
             return False
-        before = len(api_calls)
-        control.click()
-        if step == "START_WASH":
-            page.wait_for_timeout(700)
-            offered = page.locator("dialog[open] button[data-machine-code]")
-            ok(
-                "Bắt đầu giặt asks which machine, with the machines as big buttons and Bỏ qua",
-                offered.count() >= 1
-                and page.locator("dialog[open] button[data-machine-skip]").count() == 1,
-                f"{offered.count()} machines offered",
-            )
-            if machine == "skip":
-                page.locator("dialog[open] button[data-machine-skip]").first.click()
-            elif offered.count():
-                offered.first.click()
-        page.wait_for_timeout(1800)
-        call = last_post("/steps")
-        good = call is not None and len(api_calls) > before and 200 <= call[1] < 300
-        ok(label, good, f"HTTP {call[1]} {call[3][:110]}" if call and not good else "")
+        try:
+            with expect_order_write("steps", {"step": step}) as receipt:
+                control.click()
+                if step == "START_WASH":
+                    offered = page.locator("dialog[open] button[data-machine-code]")
+                    expect(offered.first).to_be_visible()
+                    ok(
+                        "Bắt đầu giặt asks which machine, "
+                        "with the machines as big buttons and Bỏ qua",
+                        offered.count() >= 1
+                        and page.locator("dialog[open] button[data-machine-skip]").count() == 1,
+                        f"{offered.count()} machines offered",
+                    )
+                    if machine == "skip":
+                        page.locator("dialog[open] button[data-machine-skip]").first.click()
+                    elif offered.count():
+                        offered.first.click()
+            response = receipt.value
+            good = 200 <= response.status < 300
+            if good:
+                wait_order_rendered(response)
+            ok(label, good, f"HTTP {response.status} {response.text()[:110]}" if not good else "")
+        except (PlaywrightTimeoutError, AssertionError) as error:
+            ok(label, False, f"no confirmed {step} and matching rendered order: {error}")
+            dismiss_sheet()
+            return False
         return good
 
     def receive(label):
@@ -544,15 +594,14 @@ with sync_playwright() as pw:
             submit.count() == 1 and submit.is_disabled(),
         )
         page.locator("#receive-slot").check()
-        submit.click()
-        page.wait_for_timeout(1800)
-        call = last_post("/steps")
-        good = (
-            call is not None
-            and 200 <= call[1] < 300
-            and '"slot_approved":true' in (last_request_body("/steps") or "")
-        )
-        ok(label, good, "" if good else f"HTTP {call[1]} {call[3][:110]}" if call else "no call")
+        with expect_order_write("steps", {"step": "RECEIVE", "slot_approved": True}) as receipt:
+            submit.click()
+        response = receipt.value
+        good = 200 <= response.status < 300
+        if good:
+            wait_order_rendered(response)
+            expect(page.locator("#order-receive[open]")).to_have_count(0)
+        ok(label, good, "" if good else f"HTTP {response.status} {response.text()[:110]}")
         return good
 
     def pay(label):
@@ -569,13 +618,16 @@ with sync_playwright() as pw:
             "₫" in due and page.locator("#payment-edit").count() == 1,
             due,
         )
-        page.locator("#payment-submit").click()
-        page.wait_for_timeout(2000)
-        call = last_post("/payments")
+        with expect_order_write("payments", {"method": "TIEN_MAT"}) as receipt:
+            page.locator("#payment-submit").click()
+        response = receipt.value
+        if 200 <= response.status < 300:
+            wait_order_rendered(response)
+            expect(page.locator("#payment-submit")).to_have_count(0)
         ok(
             label,
-            call is not None and 200 <= call[1] < 300,
-            f"HTTP {call[1]} {call[3][:120]}" if call else "no payment call was made",
+            200 <= response.status < 300,
+            f"HTTP {response.status} {response.text()[:120]}",
         )
         return (
             page.locator("dialog[open]").first.inner_text()
@@ -1081,13 +1133,16 @@ with sync_playwright() as pw:
             return ""
         control.click()
         page.wait_for_timeout(500)
-        page.locator(f"dialog[open] button[data-leg-outcome={outcome}]").first.click()
-        page.wait_for_timeout(1800)
-        legs = last_post("delivery-legs")
+        kind = "PICKUP" if step == "DELIVERY_PICKUP" else "RETURN"
+        with expect_order_write("delivery-legs", {"leg_kind": kind, "outcome": outcome}) as receipt:
+            page.locator(f"dialog[open] button[data-leg-outcome={outcome}]").first.click()
+        response = receipt.value
+        if 200 <= response.status < 300:
+            expect(page.locator("#order-leg[open] button[data-leg-outcome]")).to_have_count(0)
         ok(
             label,
-            legs is not None and 200 <= legs[1] < 300,
-            f"HTTP {legs[1]} {legs[3][:110]}" if legs else "no call was made",
+            200 <= response.status < 300,
+            f"HTTP {response.status} {response.text()[:110]}",
         )
         said_ = (
             page.locator("dialog[open]").first.inner_text()
@@ -1161,14 +1216,19 @@ with sync_playwright() as pw:
     said = record_leg("DELIVERY_RETURN", "SUCCEEDED", "and so is the successful second attempt")
     closing = page.locator("dialog[open] button[data-step=COMPLETE]")
     ok("the successful trip offers to close the order right away", closing.count() == 1, said[:120])
+    completed = None
     if closing.count():
-        closing.first.click()
-        page.wait_for_timeout(2000)
-    call = last_post("/steps")
+        with expect_order_write("steps", {"step": "COMPLETE"}) as receipt:
+            closing.first.click()
+        completed = receipt.value
+        if 200 <= completed.status < 300:
+            wait_order_rendered(completed)
     ok(
         "the delivery order closes on its successful leg",
-        call is not None and 200 <= call[1] < 300 and '"commercial":"COMPLETED"' in call[3],
-        f"HTTP {call[1]} {call[3][:120]}" if call else "no call was made",
+        completed is not None
+        and 200 <= completed.status < 300
+        and completed.json()["commercial"] == "COMPLETED",
+        f"HTTP {completed.status} {completed.text()[:120]}" if completed else "no call was made",
     )
     shot(page, "22-delivery-completed.png")
 

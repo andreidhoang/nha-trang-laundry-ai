@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -25,14 +26,21 @@ from nha_trang_laundry_api.operations import (
     QuoteRevisionResult,
     UnresolvedQuoteResult,
 )
+from nha_trang_laundry_db.customers import CustomerRepository
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
 from nha_trang_laundry_db.migrations import apply_migrations
 from nha_trang_laundry_db.pricebook import publish_pricebook
+from nha_trang_laundry_db.privacy_notice import publish_privacy_notice
 from nha_trang_laundry_db.quotes import QuoteRepository, QuoteStateError
 from nha_trang_laundry_db.store_access import StoreAccessError
 from nha_trang_laundry_db.stores import StoreRepository
 from nha_trang_laundry_domain.canonical import canonical_document
-from nha_trang_laundry_domain.catalog import FulfillmentMode, QuantityBasis, Unit
+from nha_trang_laundry_domain.catalog import AcquisitionSource, FulfillmentMode, QuantityBasis, Unit
+from nha_trang_laundry_domain.customers import (
+    CustomerKind,
+    ErasureReason,
+    notice_payload_from_documents,
+)
 from nha_trang_laundry_domain.pricebook_import import (
     EXPECTED_SERVICE_COUNT,
     import_pricebook_csv,
@@ -765,6 +773,159 @@ def test_a_priced_quote_is_created_and_listed_over_http(
     assert payload["promotion"] is None
     assert listed.status_code == 200
     assert [item["quote_id"] for item in listed.json()] == [payload["quote_id"]]
+
+
+def test_quote_board_keeps_its_customer_and_conversion_after_newer_unquoted_intakes(
+    connection: Any, service: OperationsService
+) -> None:
+    """A quote list must not depend on the independently bounded latest-100 intake page."""
+    _publish(connection)
+    store_id = uuid4()
+    staff = _staff(connection, store_id, StaffRole.OWNER_ADMIN)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO staff_role_assignments (id, staff_user_id, role, assigned_at)
+            VALUES (%s, %s, 'OWNER_ADMIN', CURRENT_TIMESTAMP)
+            """,
+            (uuid4(), staff.staff_user_id),
+        )
+    publish_privacy_notice(
+        connection,
+        actor_id=staff.staff_user_id,
+        payload=notice_payload_from_documents(
+            notice_markdown=(ROOT / "docs/POLICY_CUSTOMER_PRIVACY_NOTICE_V1.md").read_text(),
+            business_truth=(ROOT / "BUSINESS_TRUTH_INTAKE.md").read_text(),
+            source="docs/POLICY_CUSTOMER_PRIVACY_NOTICE_V1.md",
+        ),
+    )
+    customer = CustomerRepository().create(
+        connection,
+        store_id=store_id,
+        principal=staff,
+        phone="0900001234",
+        display_name="Khách tổng hợp",
+        delivery_address=None,
+        note=None,
+        kind=CustomerKind.RETAIL,
+        service_consent=True,
+        marketing_consent=False,
+        at=datetime.now(UTC),
+        correlation_id=uuid4(),
+    )
+    intake = service.create_order_request(
+        store_id=store_id,
+        contact_binding_id=None,
+        customer_id=customer,
+        idempotency_key=f"intake-{uuid4().hex}",
+        principal=staff,
+    )
+
+    def quote_for(request_id: UUID, store: UUID, person: StaffPrincipal) -> QuoteRevisionResult:
+        result = service.create_quote(
+            store_id=store,
+            bound_order_request_id=request_id,
+            lines=_lines("6"),
+            fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
+            idempotency_key=f"quote-{uuid4().hex}",
+            principal=person,
+        )
+        assert isinstance(result, QuoteRevisionResult)
+        return result
+
+    priced = quote_for(intake.order_request_id, store_id, staff)
+    accepted = service.accept_quote(
+        store_id=store_id,
+        quote_id=priced.quote_id,
+        expected_current_revision=priced.revision,
+        expected_snapshot_hash=priced.snapshot_hash,
+        idempotency_key=f"accept-{uuid4().hex}",
+        principal=staff,
+    )
+    assert isinstance(accepted, QuoteRevisionResult)
+    order = service.create_order(
+        store_id=store_id,
+        bound_contact_id=intake.contact_binding_id,
+        quote_id=accepted.quote_id,
+        quote_revision=accepted.revision,
+        quote_snapshot_hash=accepted.snapshot_hash,
+        fulfillment_mode=FulfillmentMode.SELF_DROP_SELF_COLLECT,
+        accepted_at=datetime.now(UTC),
+        acquisition_source=AcquisitionSource.WALK_IN,
+        idempotency_key=f"order-{uuid4().hex}",
+        principal=staff,
+    )
+    ticket = service.issue_counter_ticket(
+        store_id=store_id, principal=staff, idempotency_key=f"ticket-{uuid4().hex}"
+    )
+    open_intake = service.create_order_request(
+        store_id=store_id,
+        contact_binding_id=ticket.ticket_id,
+        principal=staff,
+        idempotency_key=f"intake-{uuid4().hex}",
+    )
+    unconverted = quote_for(open_intake.order_request_id, store_id, staff)
+    other_store = uuid4()
+    other_staff = _staff(connection, other_store, StaffRole.OPERATOR)
+    other_quote = quote_for(uuid4(), other_store, other_staff)
+    for _ in range(101):
+        newer_ticket = service.issue_counter_ticket(
+            store_id=store_id, principal=staff, idempotency_key=f"ticket-{uuid4().hex}"
+        )
+        service.create_order_request(
+            store_id=store_id,
+            contact_binding_id=newer_ticket.ticket_id,
+            principal=staff,
+            idempotency_key=f"intake-{uuid4().hex}",
+        )
+    app.dependency_overrides[current_principal] = lambda: staff
+    app.dependency_overrides[get_operations_service] = lambda: service
+    try:
+        with TestClient(app) as client:
+            latest_intakes = client.get(f"/internal/v1/stores/{store_id}/order-requests?limit=100")
+            assert latest_intakes.status_code == 200
+            assert len(latest_intakes.json()) == 100
+            assert str(intake.order_request_id) not in {
+                item["order_request_id"] for item in latest_intakes.json()
+            }
+            response = client.get(f"/internal/v1/stores/{store_id}/quotes?limit=100")
+            assert response.status_code == 200
+            listed = {item["quote_id"]: item for item in response.json()}
+            assert set(listed) == {str(priced.quote_id), str(unconverted.quote_id)}
+            converted = listed[str(priced.quote_id)]
+            assert converted["order_id"] == str(order.order_id)
+            assert converted["customer_name"] == "Khách tổng hợp"
+            assert converted["ticket_number"] is not None
+            assert converted["ticket_issued_on"] is not None
+            still_open = listed[str(unconverted.quote_id)]
+            assert still_open["order_id"] is None
+            assert still_open["ticket_number"] == ticket.ticket_number
+            assert still_open["ticket_issued_on"] == ticket.issued_on.isoformat()
+            assert still_open["customer_name"] is None
+            assert str(other_quote.quote_id) not in listed
+            denied = client.get(f"/internal/v1/stores/{other_store}/quotes?limit=100")
+            assert denied.status_code == 403
+            assert denied.json() == {"detail": "operation denied"}
+
+            CustomerRepository().erase(
+                connection,
+                store_id=store_id,
+                customer_id=customer,
+                principal=staff,
+                expected_row_version=1,
+                reason=ErasureReason.CUSTOMER_REQUEST,
+                at=datetime.now(UTC),
+                correlation_id=uuid4(),
+            )
+            refreshed = client.get(f"/internal/v1/stores/{store_id}/quotes?limit=100")
+            after_erasure = {item["quote_id"]: item for item in refreshed.json()}[
+                str(priced.quote_id)
+            ]
+            assert after_erasure["customer_name"] is None
+            assert after_erasure["order_id"] == str(order.order_id)
+            assert after_erasure["ticket_number"] == converted["ticket_number"]
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_a_named_staff_member_accepts_a_quote_and_the_attestation_is_recorded(

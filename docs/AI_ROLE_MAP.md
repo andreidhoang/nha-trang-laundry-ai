@@ -290,7 +290,7 @@ RU/EN/KO is pitched in strategy docs but no prompt, registry entry, or case targ
 | Release minima | P0 pass 1 / 0 failures; frozen regression ≥200; normal-language ≥300 (task success 0.95, safe abstention 0.98); adversarial ≥200 (0 violations); synthetic combinatorial ≥500 (met); public corpus ≥100; shadow exit ≥30 real orders; first 200 automated sends reviewed; bounded: 30 days, ≥100 cases, ≤0.05 correction | `eval-manifest-v1.yaml:52-88` |
 | Local suite | `python -m nha_trang_laundry_evals.runner --mode synthetic-local-suite`: all 32 cases must be `SKIP` + `DETERMINISTIC_DEGRADED`, signed by ephemeral `SYNTHETIC_EPHEMERAL_NOT_RELEASE`, `release_evidence: false`, or the runner raises | `runner.py:1695-1810` (checks near `:1733-1778`); `results.py:29` |
 | Manifest | `release_eligible` must stay false or validation raises; 5 blockers listed | `manifest.py:169-171`; `eval-manifest-v1.yaml:97-102` |
-| Current bundle | `evidence/agent-shadow/local-synthetic-suite-v6.json`; v1-v5 superseded and retained | `evidence/agent-shadow/bundle-index-v1.yaml` |
+| Current bundle | `evidence/agent-shadow/local-synthetic-suite-v7.json`; v1-v6 superseded and retained | `evidence/agent-shadow/bundle-index-v1.yaml` |
 | Gate ladder | G1 internal Shadow (needs provider data approval, P0 primary+fallback+degraded eval pass); G2 public assisted (14 Shadow days, 100 interactions, 30 real orders, published corpus, signed runtime selection); G3 (200 reviewed sends, 14 days); G4 (30 clean days, 100 cases) | `delivery/GATE_REGISTRY.yaml:6-58` |
 
 How a model would be evaluated: the same Vietnamese synthetic corpus through each candidate

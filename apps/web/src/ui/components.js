@@ -1035,7 +1035,8 @@ export function markUpdated(stamp, at = new Date()) {
  *
  * The filter only ever narrows rows already fetched; it computes nothing and never refetches.
  * `reload()` resolves to whether the list on screen is now the server's current answer — the shadow
- * queue's conflict path depends on that signal.
+ * queue's conflict path depends on that signal. A superseded read resolves false and publishes
+ * neither rows, metadata nor hooks: it cannot certify or replace the newer read's result.
  *
  * @param {object} spec
  * @param {() => Promise<any[]>} spec.fetch
@@ -1091,10 +1092,11 @@ export function listView(spec) {
   const filterStatus = h("p", { class: "filter-status" });
   if (spec.filter && spec.filterStatusHiddenWhenInactive) filterStatus.hidden = true;
 
-  /** The rows exactly as last fetched. The filter narrows a copy, never this list. */
+  /** Last successful rows; only a successful current read makes them available to render. */
   let fetched = /** @type {any[]} */ ([]);
   let filterText = "";
   let loaded = false;
+  let readGeneration = 0;
 
   function visibleItems() {
     const predicate = spec.scope?.() || null;
@@ -1106,6 +1108,9 @@ export function listView(spec) {
   }
 
   function renderVisible() {
+    // Typing or changing a local scope is not a successful read. Keep the latest skeleton/error
+    // on screen until the reload succeeds instead of resurrecting rows from before it.
+    if (!loaded) return;
     const visible = visibleItems();
     // The status line is about the typed filter; a scope is its own visible control.
     const filtering = Boolean(spec.filter && filterText.trim());
@@ -1159,10 +1164,14 @@ export function listView(spec) {
   });
 
   async function reload() {
+    const mine = ++readGeneration;
+    loaded = false;
+    filterStatus.textContent = "";
     spec.onLoadStart?.();
     render(host, placeholder());
     try {
       const items = await spec.fetch();
+      if (mine !== readGeneration) return false;
       fetched = items;
       loaded = true;
       const limit = typeof spec.limit === "function" ? spec.limit() : spec.limit;
@@ -1179,6 +1188,7 @@ export function listView(spec) {
       renderVisible();
       return true;
     } catch (error) {
+      if (mine !== readGeneration) return false;
       spec.onError?.(error);
       if (spec.clearMetaOnError) {
         countNode.textContent = UNKNOWN;
@@ -1197,7 +1207,7 @@ export function listView(spec) {
    */
   function setFilter(value) {
     filterText = value;
-    // Before the first answer there is nothing to narrow, and the skeleton stays up.
+    // Keep the typed filter, but only a successful current read may replace loading or failure.
     if (loaded) renderVisible();
   }
 
@@ -1209,7 +1219,7 @@ export function listView(spec) {
     filterStatus,
     reload,
     rerender: renderVisible,
-    items: () => fetched,
+    items: () => (loaded ? fetched : []),
     setFilter,
   };
 }

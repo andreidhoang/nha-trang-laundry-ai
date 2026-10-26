@@ -21,6 +21,8 @@ from nha_trang_laundry_worker.agent_runner import (
     AgentRunner,
     AgentRunnerTokenIssuer,
     AgentRunRejected,
+    AgentRuntimeInvocation,
+    AgentRuntimeOutput,
     AgentToolBridgeRejected,
     AgentToolBridgeSession,
     AgentToolForwardRequest,
@@ -309,6 +311,66 @@ def test_runtime_deadline_revokes_bridge_before_a_late_tool_call() -> None:
 
     runtime.release.set()
     assert runtime.late_tool_rejected.wait(timeout=1)
+
+
+@pytest.mark.parametrize("terminal", ["success", "runtime_error", "model_budget_rejected"])
+def test_terminal_run_revokes_bridge_before_a_retained_runtime_can_call_tools(
+    terminal: str,
+) -> None:
+    current_job = job()
+
+    class RetainingRuntime:
+        provider_backed = False
+        execution_pins = TEST_PINS
+
+        def __init__(self) -> None:
+            self.bridge: AgentToolBridgeSession | None = None
+            self.invocation: AgentRuntimeInvocation | None = None
+
+        def invoke(
+            self, invocation: AgentRuntimeInvocation, bridge: AgentToolBridgeSession
+        ) -> AgentRuntimeOutput:
+            self.bridge = bridge
+            self.invocation = invocation
+            invoke_catalog(bridge, current_job, invocation.bridge_token)
+            if terminal == "runtime_error":
+                raise AgentRunRejected("synthetic runtime failure")
+            return AgentRuntimeOutput(
+                disposition="DRAFT_REQUIRES_HUMAN",
+                terminal_code="SYNTHETIC_SCRIPTED_DRAFT",
+                draft_text="Bản nháp tổng hợp.",
+                model_calls=2 if terminal == "model_budget_rejected" else 0,
+            )
+
+    token_issuer, _ = issuer()
+    runner = AgentRunner(token_issuer)
+    if terminal == "model_budget_rejected":
+        registry = cast(Any, runner)._registry
+        cast(Any, runner)._registry = registry.model_copy(
+            update={"limits": registry.limits.model_copy(update={"max_model_calls": 1})}
+        )
+    transport = RecordingTransport()
+    runtime = RetainingRuntime()
+
+    if terminal == "success":
+        result = runner.execute(job=current_job, runtime=runtime, transport=transport)
+        assert result.status == "DRAFT_REQUIRES_HUMAN"
+        assert result.tool_call_count == 1
+    else:
+        reason = (
+            "synthetic runtime failure"
+            if terminal == "runtime_error"
+            else "model-call budget exhausted"
+        )
+        with pytest.raises(AgentRunRejected, match=reason):
+            runner.execute(job=current_job, runtime=runtime, transport=transport)
+
+    assert runtime.bridge is not None
+    assert runtime.invocation is not None
+    with pytest.raises(AgentToolBridgeRejected, match="bridge is closed"):
+        invoke_catalog(runtime.bridge, current_job, runtime.invocation.bridge_token)
+    assert runtime.bridge.is_closed
+    assert len(transport.requests) == 1
 
 
 def test_cross_bound_order_path_is_rejected_before_transport() -> None:

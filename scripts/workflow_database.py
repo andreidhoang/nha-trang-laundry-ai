@@ -1,10 +1,49 @@
 """Explicit database coordination for the synthetic browser verifier."""
 
+import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
 import psycopg
+
+
+def read_query(
+    query: str, *, database_url: str = "", psql_container: str = "", database: str = ""
+) -> str:
+    """Read verifier evidence, preferring the supplied container's existing client.
+
+    A direct URL also supports the separate lock/fixture helpers; supplying it must not
+    accidentally require a host psql when the caller selected a container for SQL reads.
+    A failed read is a failed verification, never an error string mistaken for stored data.
+    """
+    if psql_container:
+        command = [
+            "docker",
+            "exec",
+            psql_container,
+            "psql",
+            "-U",
+            "app",
+            "-d",
+            database,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-tAc",
+            query,
+        ]
+    elif database_url:
+        command = ["psql", database_url, "-v", "ON_ERROR_STOP=1", "-tAc", query]
+    else:
+        return ""
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        # CalledProcessError's command may contain the private DSN. Keep it out of logs.
+        raise RuntimeError(
+            "verification database read failed; check the selected SQL client"
+        ) from None
+    return result.stdout.strip()
 
 
 @contextmanager

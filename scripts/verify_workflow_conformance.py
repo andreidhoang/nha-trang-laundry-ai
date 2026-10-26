@@ -68,7 +68,7 @@ from console_recording import (
     watch_render_defects,
 )
 from playwright.sync_api import sync_playwright
-from workflow_database import hold_order_lock
+from workflow_database import hold_order_lock, read_query
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--base-url", default="http://127.0.0.1:8100")
@@ -1130,30 +1130,12 @@ def sql(query: str) -> str:
     as skipped rather than silently passing, because a check that cannot run must never look like
     one that did.
     """
-    if arguments.database_url:
-        process = subprocess.run(
-            ["psql", arguments.database_url, "-tAc", query], capture_output=True, text=True
-        )
-        return (process.stdout or process.stderr).strip()
-    if not arguments.psql_container:
-        return ""
-    process = subprocess.run(
-        [
-            "docker",
-            "exec",
-            arguments.psql_container,
-            "psql",
-            "-U",
-            "app",
-            "-d",
-            arguments.database,
-            "-tAc",
-            query,
-        ],
-        capture_output=True,
-        text=True,
+    return read_query(
+        query,
+        database_url=arguments.database_url,
+        psql_container=arguments.psql_container,
+        database=arguments.database,
     )
-    return (process.stdout or process.stderr).strip()
 
 
 def stored(order_id: str, column: str) -> str:
@@ -13773,7 +13755,7 @@ def main() -> int:
             try:
                 scenario(console)
             except Exception:
-                FAIL.append(f"{name} crashed")
+                ok(f"{name} crashed", False)
                 print(traceback.format_exc(), flush=True)
 
         head("8a", "HIỂN THỊ — no screen printed a structure, NaN or an undefined amount")

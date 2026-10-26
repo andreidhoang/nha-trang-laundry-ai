@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -24,7 +25,9 @@ from nha_trang_laundry_api.auth import (
     identity_token_digest,
 )
 from nha_trang_laundry_api.main import app, current_principal, get_identity_service
+from nha_trang_laundry_api.security import RequestSizeLimitMiddleware
 from nha_trang_laundry_db.identity import StaffPrincipal, StaffRole
+from starlette.types import Message, Receive, Scope, Send
 
 OWNER_ID = UUID("00000000-0000-0000-0000-000000000701")
 STAFF_ID = UUID("00000000-0000-0000-0000-000000000702")
@@ -132,6 +135,99 @@ def test_security_headers_trusted_host_and_request_size_are_enforced() -> None:
     assert untrusted_host.status_code == 400
     assert untrusted_host.headers["Content-Security-Policy"].startswith("default-src 'self'")
     assert oversized.status_code == 413
+
+
+@pytest.mark.parametrize("declared_length", [None, "1"])
+@pytest.mark.parametrize("body_size", [262_144, 262_145])
+def test_streamed_json_enforces_actual_body_limit_before_the_staff_write(
+    declared_length: str | None, body_size: int
+) -> None:
+    class RecordingStaffCreationService(StaffCreationService):
+        calls = 0
+
+        def create_staff(
+            self, *, oidc_subject: str, display_name: str, email: str | None, actor_id: UUID
+        ) -> UUID:
+            self.calls += 1
+            return super().create_staff(
+                oidc_subject=oidc_subject,
+                display_name=display_name,
+                email=email,
+                actor_id=actor_id,
+            )
+
+    service = RecordingStaffCreationService()
+    app.dependency_overrides[current_principal] = lambda: StaffPrincipal(
+        OWNER_ID, "owner-subject", frozenset({StaffRole.OWNER_ADMIN}), True
+    )
+    app.dependency_overrides[get_identity_service] = lambda: service
+    client = TestClient(app, base_url=ORIGIN)
+    client.cookies.set("staff_session", "opaque-session")
+    client.cookies.set("staff_csrf", "csrf-token-with-at-least-thirty-two-bytes")
+    headers = {
+        "Origin": ORIGIN,
+        "X-CSRF-Token": "csrf-token-with-at-least-thirty-two-bytes",
+        "Content-Type": "application/json",
+    }
+    if declared_length is not None:
+        headers["Content-Length"] = declared_length
+    body = json.dumps({"oidc_subject": "new-staff", "display_name": "New Staff"}).encode()
+    body += b" " * (body_size - len(body))
+    try:
+        response = client.post(
+            "/internal/v1/staff",
+            headers=headers,
+            content=(body[index : index + 4096] for index in range(0, len(body), 4096)),
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.request.headers.get("Content-Length") == declared_length
+    assert response.headers["Content-Security-Policy"].startswith("default-src 'self'")
+    assert response.headers["Cache-Control"] == "no-store"
+    if body_size > 262_144:
+        assert response.status_code == 413
+        assert response.json() == {"detail": "request body is too large"}
+        assert service.calls == 0
+    else:
+        assert response.status_code == 201
+        assert service.calls == 1
+
+
+@pytest.mark.parametrize("last_chunk", [b"cd", b"cde"])
+def test_raw_asgi_stream_counts_chunks_without_a_fastapi_exception_handler(
+    last_chunk: bytes,
+) -> None:
+    handled: list[bool] = []
+    sent: list[Message] = []
+    incoming = iter(
+        [
+            {"type": "http.request", "body": b"ab", "more_body": True},
+            {"type": "http.request", "body": last_chunk, "more_body": False},
+        ]
+    )
+
+    async def receive() -> Message:
+        return next(incoming)
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    async def consume(scope: Scope, receive: Receive, send: Send) -> None:
+        del scope
+        while (await receive()).get("more_body", False):
+            pass
+        handled.append(True)
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    asyncio.run(
+        RequestSizeLimitMiddleware(consume, max_bytes=4)(
+            {"type": "http", "method": "POST", "path": "/", "headers": []}, receive, send
+        )
+    )
+    assert sent[0]["status"] == (413 if last_chunk == b"cde" else 200)
+    assert handled == ([] if last_chunk == b"cde" else [True])
 
 
 def test_browser_mutation_requires_exact_origin_and_double_submit_csrf() -> None:

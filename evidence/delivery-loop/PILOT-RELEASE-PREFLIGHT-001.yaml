@@ -1,0 +1,89 @@
+schema_version: 1
+work_item: PILOT-RELEASE-PREFLIGHT-001
+recorded_at: '2026-10-26T11:55:28.857441+00:00'
+requirement_contract: BUILD_ENGINEERING_SPEC.md invariants 5/16; ADR-0007 private
+  R1 recovery; TASK-pilot-release-preflight-001; Windows handoff supersedes Mac as
+  actual deployment target. This records local preparation only.
+rollback_impact: No business migration or dependency upgrade. Preserve archives, volumes
+  and unrelated user changes. Do not restore known recovery pipeline false-success,
+  terminal-delivery, stale-list/invoice, quote-association or tool-lifecycle defects.
+  Windows adaptation and production activation remain separate.
+unresolved_assumptions: No actual Windows target is accessible or verified. Exact
+  target image security, real realm/device MFA, private browser trust, scheduling,
+  separate archive/key custody, timed off-host recovery, delivered alerts and owner
+  counter acceptance remain blockers. Provider allowance exhausted; no new live AI;
+  all13capabilities NOT_AUTHORIZED. Local media are not in GitHub. One four-second
+  candidate readiness timeout under concurrent testing has no established cause; no
+  load/SLO acceptance.
+evidence:
+  recovery_stream_failures_refused:
+    historical_replay: evidence/handoff/2026-10-22/recovery-replay-result.json
+    historical_binding: evidence/handoff/2026-10-22/source-bindings.json
+    current_tests: Recovery regressions are included in the fresh October26 full PostgreSQL
+      run. Historical replay remains dated; no new off-host/Windows drill is inferred.
+  readiness_and_mac_preflight_fail_closed:
+    tests:
+    - packages/evals/tests/test_staging_smoke.py
+    - packages/evals/tests/test_shop_till_preflight.py
+    result: Passed in the fresh full run. Verified local TLS smoke passed with CA
+      validation. Old Mac preflight refusals remain historical, not Windows acceptance.
+    monitoring: evidence/handoff/2026-10-26/monitoring.json
+  deployed_identity_image_in_supply_chain_gate:
+    workflow: .github/workflows/release-supply-chain.yml
+    result: Keycloak remains in the exact-image SBOM/blocking scan loop; contract
+      tests pass. Actual fresh target image vulnerability scan remains required.
+  current_target_plan_and_prerequisites: docs/WINDOWS_ENGINEER_HANDOFF_2026-10-22.md;
+    docs/WINDOWS_ENGINEER_PROMPT.md; docs/audit/DAILY_WORKFLOW_REVIEW_2026-10-26.md.
+    Windows remains the owner-selected target, not this Mac.
+  regression_and_preservation_evidence:
+    summary: evidence/handoff/2026-10-26/summary.json
+    recordings: evidence/handoff/2026-10-26/workflow-recordings.json
+    roles_passed: 63
+    business_snapshots_unchanged: 82
+    daily_desktop_passed: 82
+    daily_phone_passed: 82
+    current_list_recovery_passed: 104
+    qr_pixels_passed: 28
+    preservation: Original8081/8089/8091 demos and original~/laundry nine unrelated
+      changes preserved. No production customer/provider/channel/bank calls or writes.
+      Large media/private runtime excluded from Git.
+checks:
+- command: uv run ruff check .
+  status: PASSED
+  log: .demo/daily-review-2026-10-26/final/handoff-check-1.log
+  sha256: 82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18
+- command: uv run ruff format --check .
+  status: PASSED
+  log: .demo/daily-review-2026-10-26/final/handoff-check-2.log
+  sha256: 2852ac673029b548db5824aefbc79efcfde7ea4554a2982f1f695c3e4a999a56
+- command: uv run mypy apps packages
+  status: PASSED
+  log: .demo/daily-review-2026-10-26/final/handoff-check-3.log
+  sha256: c03a022ee0faf6e3859009834422efdd70ba84810630679740b4bdd750ca506d
+- command: uv run pytest --require-postgres-integration
+  status: PASSED
+  full_run:
+    passed: 5197
+    skipped: 5
+    failed: 0
+    junit_sha256: 87048e8b61751436172b8aca3a5c3d9de99f86b1463271e92dcfc547102b8cac
+  latest_affected_checks:
+    verifier_passed: 12
+    frontend_passed: 127
+    frontend_skipped: 4
+    current_unique_passed: 5201
+    current_unique_skipped: 5
+    current_collected_covered: 5206
+  qualification: The full run snapshot predates the last shared-list UI recovery and
+    verifier-only edits. Affected checks were rerun on the latest source and cover
+    every final collected ID with the full run. This is not one immutable final-tree
+    full run. No DB/Node/age skips.
+  summary: evidence/handoff/2026-10-26/summary.json
+- command: uv run python scripts/verify_contracts.py
+  status: PASSED
+  log: .demo/daily-review-2026-10-26/final/handoff-check-4.log
+  sha256: f15b100d5379954015954bcf1af9472b7f0355c5df001a65d56b640e361f1087
+- command: uv run python scripts/check_context_drift.py
+  status: PASSED
+  log: .demo/daily-review-2026-10-26/final/handoff-check-5.log
+  sha256: 476b0c3f52eca50a5ee6daa2190a06d4d4cafda37c3baef593547784cbb1bb6d

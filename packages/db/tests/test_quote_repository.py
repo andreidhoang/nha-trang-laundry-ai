@@ -145,6 +145,10 @@ def test_quote_board_returns_only_server_scoped_current_revisions() -> None:
                 REQUEST_ID,
                 CONTACT_ID,
                 "SELF_DROP_SELF_COLLECT",
+                7,
+                valid_until.date(),
+                REQUEST_ID,
+                "Khách tổng hợp",
             )
         ]
     )
@@ -171,6 +175,10 @@ def test_quote_board_returns_only_server_scoped_current_revisions() -> None:
     assert listed[0].order_request_id == REQUEST_ID
     assert listed[0].contact_binding_id == CONTACT_ID
     assert listed[0].fulfillment_mode == "SELF_DROP_SELF_COLLECT"
+    assert listed[0].ticket_number == 7
+    assert listed[0].ticket_issued_on == valid_until.date()
+    assert listed[0].order_id == REQUEST_ID
+    assert listed[0].customer_name == "Khách tổng hợp"
     assert any("WHERE quote.store_id = %s" in statement for statement in cursor.executed)
     # Membership is checked before anything is read, not alongside it.
     assert "staff_store_assignments" in cursor.executed[0]

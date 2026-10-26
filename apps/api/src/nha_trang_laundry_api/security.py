@@ -6,6 +6,7 @@ import hmac
 
 from nha_trang_laundry_observability import SafeStructuredLogger
 from starlette.datastructures import Headers, MutableHeaders
+from starlette.exceptions import HTTPException
 from starlette.requests import cookie_parser
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -141,8 +142,13 @@ class BrowserSecurityMiddleware:
         await self.app(scope, receive, secure_send)
 
 
-class RequestBodyTooLarge(Exception):
-    pass
+class RequestBodyTooLarge(HTTPException):
+    """Preserve a streamed size refusal through FastAPI's request-body parser."""
+
+    def __init__(self) -> None:
+        # FastAPI turns an arbitrary receive() exception into a generic 400 parse error.
+        # An HTTPException keeps the same 413 as the declared-length and raw ASGI paths.
+        super().__init__(status_code=413, detail="request body is too large")
 
 
 def _cookies(value: str | None) -> dict[str, str]:

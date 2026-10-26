@@ -10,6 +10,27 @@ Application/handoff branch: **`codex/engineer-setup`**, based on `e97e8bc`. Do n
 assuming it contains these changes; use the reviewed branch/commit and retain its exact SHA.
 The separate sales-agent drafts in the owner's original checkout are excluded at their request.
 
+## Current verification refresh — October 26, 2026
+
+Read [the daily workflow review](audit/DAILY_WORKFLOW_REVIEW_2026-10-26.md) and the portable
+[`summary.json`](../evidence/handoff/2026-10-26/summary.json) and
+[`workflow-recordings.json`](../evidence/handoff/2026-10-26/workflow-recordings.json) before reusing
+the dated results below. The clean full snapshot passed **5,197 tests, five skipped**. Later affected
+rechecks passed **12**, then **127 with four skips**; the unique test-ID union is **5,201 passed,
+five skipped**, not another single full run on the final tree. Separate real-role checks passed 63.
+The final daily browser walks passed **82 each on desktop and phone**. Core conformance passed
+**872/871** on the earlier frontend image; the later affected recovery checks passed **104**.
+Separate real-API QR screenshot pixels passed **28 offline decode checks**; this is not bank-transfer
+acceptance. Source/image bindings and availability are recorded in the portable evidence.
+
+These are local synthetic Mac/Linux-container results. The Windows target remains unverified;
+repeat clean checks and acceptance on its exact reviewed source/images. Start with the actual host
+inventory and Linux runtime choice, then the target scheduler/preflight, trusted MFA browser and
+private exposure, exact-image scans, separate encrypted archive/off-host key custody and timed
+restore, observed alerts and owner counter/cash acceptance in §5. No production activation,
+authorization/capability change or additional Gemini allowance follows from this refresh. All 13
+capabilities remain `NOT_AUTHORIZED`; the existing 16-request allowance is exhausted.
+
 ## 1. Product and release scope
 
 R1 is a private staff console for laundry operations. Deterministic Python/PostgreSQL code controls
@@ -37,16 +58,19 @@ policy-publication, signer and release authorities retain their boundaries.
    `delivery/CAPABILITY_STATUS.yaml`; machine state outranks narrative status.
 4. `docs/CORE_BUSINESS_WORKFLOWS_V1.md`, `docs/CORE_OPERATIONS_COMPLETION_SPEC_V1.md`, applicable
    approved Vietnamese specifications and `specs/contracts/`.
-5. `docs/audit/LOCAL_READINESS_2026-10-15.md`,
+5. `docs/audit/DAILY_WORKFLOW_REVIEW_2026-10-26.md` and `evidence/handoff/2026-10-26/`, then
+   `docs/audit/LOCAL_READINESS_2026-10-15.md`,
    `docs/audit/GEMINI_FREE_TIER_VERIFICATION_2026-10-15.md` and the portable
    `evidence/handoff/2026-10-22/verification-summary.json`.
 6. `context/tasks/TASK-pilot-release-preflight-001.md` and
    `context/tasks/TASK-windows-deployment-001.md` before continuing their items.
 
-Queue handoff: `PILOT-RELEASE-PREFLIGHT-001` remains `IN_PROGRESS` until a clean final full run and
-its declared evidence are recorded. `WINDOWS-DEPLOYMENT-001` is `PENDING` behind that dependency;
-the actual Windows deployment is blocked on the target-host conditions below. Do not mark either
-item complete from this source push or the targeted recheck alone.
+Current queue handoff, October 26: `PILOT-RELEASE-PREFLIGHT-001` is `COMPLETE`, recorded through the
+canonical controller with [its evidence](../evidence/delivery-loop/PILOT-RELEASE-PREFLIGHT-001.yaml).
+`WINDOWS-DEPLOYMENT-001` is `BLOCKED` because the actual target is unavailable/unverified; no
+independent work item is selected. Read the October 26 evidence, obtain the target and rerun clean
+verification there. Unblock the Windows item through a fresh generation/CAS only when its
+prerequisite evidence exists, then retain all remaining target acceptance conditions in §5.
 
 The older production-readiness assessment and Mac plan contain dated observations, not current
 Windows acceptance. No business schema migration was added by this setup/review work: migrations
@@ -141,8 +165,9 @@ solve a scheduler/network problem by exposing PostgreSQL or disabling certificat
   failure was the context test still expecting 203 work items after the queue grew to 205. The
   explicit count guard was corrected; all six affected context tests and 63 real-role tests then
   passed. Application/deployment code did not change after the full attempt. A clean full run
-  after that test-only correction has **not** been performed and remains an acceptance task.
-  Exact outcomes, original failure and source hashes are in the portable summary.
+  after that test-only correction had **not** been performed at the October 22 handoff. The
+  October 26 refresh above records later local verification separately. Exact dated outcomes,
+  original failure and source hashes remain in the October 22 portable summary.
 
 No Windows host, fresh Windows browser workflow, Windows scheduler or production installation was
 observed. No billing was enabled, new generation allowance granted, public capability activated or
@@ -150,7 +175,8 @@ real customer data admitted by this handoff.
 
 ## 7. Verify, freeze, then deploy
 
-Run lint/format, `uv run mypy apps packages`, contracts, context and delivery-status checks.
+After reading the October 26 evidence, rerun these checks in the actual Windows target's selected
+Linux environment: lint/format, `uv run mypy apps packages`, contracts, context and delivery status.
 Run `CI=true uv run pytest --require-postgres-integration` with `DATABASE_URL` pointing at a fresh isolated
 test DB, never a demo/shop DB. Node 24 and actual PostgreSQL must be available; bare pytest can
 silently skip database integrations. `CI=true` also makes missing recovery tools fail rather than

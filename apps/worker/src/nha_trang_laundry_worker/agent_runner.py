@@ -455,7 +455,7 @@ class AgentToolBridgeSession:
         return result
 
     def close(self) -> None:
-        """Irrevocably revoke this in-memory bridge after timeout or controlled failure."""
+        """Irrevocably revoke this in-memory bridge when its run ends for any reason."""
 
         self._closed = True
 
@@ -792,25 +792,30 @@ class AgentRunner:
             observer=observer,
             authority_valid=authority_valid,
         )
-        invocation = AgentRuntimeInvocation(
-            run_id=job.run_id,
-            capability=job.capability,
-            session_key=bridge.session_key,
-            bridge_token=token,
-            deadline_at=job.deadline_at,
-        )
-        output = self._invoke_with_deadline(runtime, invocation, bridge, job.deadline_at)
-        if output.model_calls > self._registry.limits.max_model_calls:
-            raise AgentRunRejected("REQUIRE_HUMAN: model-call budget exhausted")
-        # The runtime's disposition, read rather than asserted. Hardcoding DRAFT_REQUIRES_HUMAN
-        # here filed every deterministic handoff as a model draft (AGENT-SHADOW-DEFECTS-001 F1).
-        return AgentRunResult(
-            run_id=job.run_id,
-            status=output.disposition,
-            terminal_code=output.terminal_code,
-            draft_text=output.draft_text,
-            tool_call_count=bridge.tool_call_count,
-        )
+        try:
+            invocation = AgentRuntimeInvocation(
+                run_id=job.run_id,
+                capability=job.capability,
+                session_key=bridge.session_key,
+                bridge_token=token,
+                deadline_at=job.deadline_at,
+            )
+            output = self._invoke_with_deadline(runtime, invocation, bridge, job.deadline_at)
+            if output.model_calls > self._registry.limits.max_model_calls:
+                raise AgentRunRejected("REQUIRE_HUMAN: model-call budget exhausted")
+            # The runtime's disposition, read rather than asserted. Hardcoding DRAFT_REQUIRES_HUMAN
+            # here filed every deterministic handoff as a model draft (AGENT-SHADOW-DEFECTS-001 F1).
+            return AgentRunResult(
+                run_id=job.run_id,
+                status=output.disposition,
+                terminal_code=output.terminal_code,
+                draft_text=output.draft_text,
+                tool_call_count=bridge.tool_call_count,
+            )
+        finally:
+            # A runtime may retain the bridge after returning or raising. Its authority ends
+            # with this run, including a successful draft or rejection of the returned output.
+            bridge.close()
 
     def _invoke_with_deadline(
         self,

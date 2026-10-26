@@ -995,7 +995,10 @@ def test_bound_entries_are_not_a_rounding_error() -> None:
     #   REMEDY_ORDER_REFUNDED REASON_NOTE in core/i18n.js; nothing retired.
     # Pre-production review 9, round 2 (a write answered after a sign-out): 604 + 1 = 605 -- the
     #   SIGNED_OUT message in core/errors.js; nothing retired.
-    assert sum(counts.values()) == _registry()["total"] == 605
+    # October 26 quote-list projection: 605 - 1 = 604. The independently capped intake-list
+    # read is gone, so its "Chưa đọc được danh sách tiếp nhận" fallback no longer describes a
+    # possible screen state. Ticket/customer/conversion now come from each server quote row.
+    assert sum(counts.values()) == _registry()["total"] == 604
 
     # The four capabilities moved out of SERVER_GATE are the vacuous bindings DISCLOSURE-BIND-002
     # corrected. Pinning the split keeps a future change from quietly parking one back on a gate

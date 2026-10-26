@@ -1,8 +1,33 @@
 # Production continuation brief
 
-**Last reconciled:** 2026-10-22 (Asia/Ho_Chi_Minh)
-**Active work item:** `PILOT-RELEASE-PREFLIGHT-001` (verification/handoff). **205 queue items.** Migrations run `0001`–`0072`; the numbers `0045` and `0069` were never used, so the tree holds 70 files (a clone that shows 70 has lost nothing).
+**Last reconciled:** 2026-10-26 (Asia/Ho_Chi_Minh)
+**Current delivery state:** `PILOT-RELEASE-PREFLIGHT-001` COMPLETE; `WINDOWS-DEPLOYMENT-001` BLOCKED on the actual target, with no independent item selected. **205 queue items.** Migrations run `0001`–`0072`; the numbers `0045` and `0069` were never used, so the tree holds 70 files (a clone that shows 70 has lost nothing).
 Live status is `uv run python scripts/report_delivery_status.py`; this brief is a projection.
+
+## Daily workflow verification refresh, 2026-10-26
+
+Current review: [daily workflow report](../docs/audit/DAILY_WORKFLOW_REVIEW_2026-10-26.md), with
+portable [`summary.json`](../evidence/handoff/2026-10-26/summary.json) and
+[`workflow-recordings.json`](../evidence/handoff/2026-10-26/workflow-recordings.json). The clean
+full snapshot passed **5,197 tests/five skips**; later affected rechecks passed **12**, then
+**127/four skips**. The unique test-ID union is **5,201 passed/five skipped**, not one new full
+final-tree run. Separate real-role checks passed **63**. Final daily browser walks passed **82
+each** at desktop and phone sizes; **872/871** core conformance belongs to the earlier frontend
+image, with **104** later affected recovery checks. Separate real-API QR screenshot pixels passed
+**28** offline decode checks; no real bank transfer was performed. Keep each source/image binding
+and skipped check distinct when reporting coverage.
+
+Windows is still the deployment target and remains unverified. Next obtain its edition/build,
+architecture/resources and supported Linux runtime, then prove target startup/schedules/preflight,
+trusted private MFA/browser access and exact-image scans; separate encrypted archive/off-host key
+custody and timed RPO ≤15 minute/RTO ≤4 hour restore; observed alert delivery and owner counter/cash
+acceptance. The canonical October 26 transition completed local preparation with
+[`PILOT-RELEASE-PREFLIGHT-001` evidence](../evidence/delivery-loop/PILOT-RELEASE-PREFLIGHT-001.yaml)
+and blocked `WINDOWS-DEPLOYMENT-001` on the actual target. Read this evidence, rerun clean checks on
+that target and unblock Windows through a fresh generation/CAS only when its prerequisite evidence
+exists; follow the handoff matrix and existing task packet for completion. No production activation,
+authorization or capability changed. All 13 remain `NOT_AUTHORIZED` and no additional Gemini
+allowance exists. The Mac demos and unrelated user changes remain preserved.
 
 ## Windows target and GitHub handoff, 2026-10-22
 
@@ -16,9 +41,11 @@ Do not apply the Mac `launchctl`/`security` procedure as if it were a Windows de
 The portable sanitized evidence summary is `evidence/handoff/2026-10-22/verification-summary.json`.
 The October 22 full attempt had 5,178 passing tests and one stale inventory assertion failure
 (203 expected versus 205 actual queue items), with five documented skips. The guard is corrected;
-its six context tests and 63 real-role tests pass. A clean full post-correction run has not been
-performed. `PILOT-RELEASE-PREFLIGHT-001` stays IN_PROGRESS for that acceptance/evidence step;
-`WINDOWS-DEPLOYMENT-001` stays PENDING behind it, with actual deployment blocked on host evidence.
+its six context tests and 63 real-role tests passed. At that October 22 handoff, a clean full
+post-correction run had not been performed; the October 26 section records later local checks.
+At that date `PILOT-RELEASE-PREFLIGHT-001` was IN_PROGRESS and `WINDOWS-DEPLOYMENT-001` was PENDING
+behind it. That historical state is superseded by the canonical October 26 transition above;
+actual deployment still requires host evidence.
 Ignored `.demo` videos/logs/images and private runtime do not travel through GitHub; their inventory
 labels availability explicitly. No provider allowance, billing or capability authorization changed.
 

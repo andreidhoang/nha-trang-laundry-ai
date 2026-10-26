@@ -1,5 +1,5 @@
 schema_version: 1
-last_updated: '2026-10-16'
+last_updated: '2026-10-26'
 id_policy: Stable domain IDs; phase/milestone labels may change without renaming work
   items.
 items:
@@ -6322,8 +6322,9 @@ items:
   blocked_by_decisions: []
 - id: PILOT-RELEASE-PREFLIGHT-001
   phase: PRODUCTION_HARDENING
-  title: Trustworthy recovery and deployment checks with the current Windows host handoff
-  status: IN_PROGRESS
+  title: Trustworthy recovery and deployment checks with the current Windows host
+    handoff
+  status: COMPLETE
   priority: 359
   depends_on:
   - SHOP-RECOVERY-001
@@ -6356,7 +6357,7 @@ items:
 - id: WINDOWS-DEPLOYMENT-001
   phase: PRODUCTION_HARDENING
   title: Adapt and verify the owner-selected Windows shop host before real use
-  status: PENDING
+  status: BLOCKED
   priority: 360
   depends_on:
   - PILOT-RELEASE-PREFLIGHT-001
@@ -6382,3 +6383,10 @@ items:
   - forced_alert_seen_and_owner_counter_acceptance
   - rollback_assessment
   blocked_by_decisions: []
+  blocking_condition: The owner-selected Windows replacement host is not accessible
+    or verified in this Mac session. Completion requires OS/runtime inventory, startup
+    and operating schedules, trusted private browser/realm MFA/roles, fresh exact
+    target-image security evidence, separate encrypted archive and off-host key custody,
+    timed recovery, delivered alerts and owner-observed counter acceptance. Local
+    synthetic tests, restart snapshots and source push cannot substitute. All customer/provider
+    activation boundaries remain closed.

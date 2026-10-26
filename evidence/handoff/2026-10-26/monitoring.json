@@ -1,0 +1,144 @@
+{
+  "recorded_at": "2026-10-26T11:53:43.147769+00:00",
+  "scope": "Bounded local synthetic readiness monitoring during this review, not a production monitor or SLO/load test. Monitors stopped at handoff; demos remain running.",
+  "ports": [
+    {
+      "port": 8081,
+      "first_sample_at": "2026-10-26T09:25:52.357744+00:00",
+      "last_sample_at": "2026-10-26T11:53:09.755996+00:00",
+      "samples": 185,
+      "ready": 185,
+      "not_ready": 0,
+      "current_status": 200,
+      "not_ready_samples": []
+    },
+    {
+      "port": 8089,
+      "first_sample_at": "2026-10-26T09:25:52.357744+00:00",
+      "last_sample_at": "2026-10-26T11:53:09.755996+00:00",
+      "samples": 185,
+      "ready": 185,
+      "not_ready": 0,
+      "current_status": 200,
+      "not_ready_samples": []
+    },
+    {
+      "port": 8091,
+      "first_sample_at": "2026-10-26T09:25:52.357744+00:00",
+      "last_sample_at": "2026-10-26T11:53:09.755996+00:00",
+      "samples": 185,
+      "ready": 185,
+      "not_ready": 0,
+      "current_status": 200,
+      "not_ready_samples": []
+    },
+    {
+      "port": 8093,
+      "first_sample_at": "2026-10-26T09:25:52.357744+00:00",
+      "last_sample_at": "2026-10-26T11:53:09.755996+00:00",
+      "samples": 185,
+      "ready": 175,
+      "not_ready": 10,
+      "current_status": 200,
+      "not_ready_samples": [
+        {
+          "at": "2026-10-26T09:25:52.357744+00:00",
+          "status": null,
+          "error": "URLError"
+        },
+        {
+          "at": "2026-10-26T09:26:37.832540+00:00",
+          "status": null,
+          "error": "URLError"
+        },
+        {
+          "at": "2026-10-26T09:27:23.114753+00:00",
+          "status": null,
+          "error": "URLError"
+        },
+        {
+          "at": "2026-10-26T09:28:08.324078+00:00",
+          "status": null,
+          "error": "URLError"
+        },
+        {
+          "at": "2026-10-26T09:28:53.430037+00:00",
+          "status": null,
+          "error": "URLError"
+        },
+        {
+          "at": "2026-10-26T09:39:30.434648+00:00",
+          "status": null,
+          "error": "HTTPError"
+        },
+        {
+          "at": "2026-10-26T09:44:50.632467+00:00",
+          "status": null,
+          "error": "HTTPError"
+        },
+        {
+          "at": "2026-10-26T09:48:39.298867+00:00",
+          "status": null,
+          "error": "HTTPError"
+        },
+        {
+          "at": "2026-10-26T09:57:58.573937+00:00",
+          "status": null,
+          "error": "HTTPError"
+        },
+        {
+          "at": "2026-10-26T10:06:19.198672+00:00",
+          "status": null,
+          "error": "HTTPError"
+        }
+      ]
+    },
+    {
+      "port": 8094,
+      "first_sample_at": "2026-10-26T10:16:13.283634+00:00",
+      "last_sample_at": "2026-10-26T11:53:15.554806+00:00",
+      "samples": 130,
+      "ready": 129,
+      "not_ready": 1,
+      "current_status": 200,
+      "not_ready_samples": [
+        {
+          "at": "2026-10-26T10:28:20.014447+00:00",
+          "status": null,
+          "error": "TimeoutError"
+        }
+      ]
+    }
+  ],
+  "candidate_nonready_qualification": "8093 observations include pre-start and planned test database/API restarts. One 8094 readiness sample timed out after four seconds during concurrent verification; its root cause is not established. Later samples and final readiness were healthy. Original three demos were not restarted. This is not SLO or load-test acceptance.",
+  "current_candidate_logs": [
+    {
+      "container": "laundry-daily-review-20261026-api-1",
+      "traceback_count": 0,
+      "asgi_exception_count": 0,
+      "http_500_lines": 0,
+      "logging_scope": "Current container incarnation only; earlier rebuild logs are separate. Expected 401/409/422 browser refusal diagnostics are not uncaught exceptions."
+    },
+    {
+      "container": "laundry-daily-review-20261026-worker-1",
+      "traceback_count": 0,
+      "asgi_exception_count": 0,
+      "http_500_lines": 0,
+      "logging_scope": "Current container incarnation only; earlier rebuild logs are separate. Expected 401/409/422 browser refusal diagnostics are not uncaught exceptions."
+    },
+    {
+      "container": "laundry-daily-review-phone-20261026-api-1",
+      "traceback_count": 0,
+      "asgi_exception_count": 0,
+      "http_500_lines": 0,
+      "logging_scope": "Current container incarnation only; earlier rebuild logs are separate. Expected 401/409/422 browser refusal diagnostics are not uncaught exceptions."
+    },
+    {
+      "container": "laundry-daily-review-phone-20261026-worker-1",
+      "traceback_count": 0,
+      "asgi_exception_count": 0,
+      "http_500_lines": 0,
+      "logging_scope": "Current container incarnation only; earlier rebuild logs are separate. Expected 401/409/422 browser refusal diagnostics are not uncaught exceptions."
+    }
+  ]
+}

@@ -107,6 +107,9 @@ export function render_() {
   const techHost = h("div");
   const subtitle = h("span", { dataField: "invoices-count" });
   const exportSubmission = new Submission("invoice-export");
+  // The accountant may change tabs while a read is still in flight. Only the newest read may
+  // publish rows or a refusal, otherwise an old Cần xuất answer can appear under Đã xuất.
+  let readGeneration = 0;
 
   const tabs = segmented({
     label: "Trạng thái yêu cầu",
@@ -120,14 +123,17 @@ export function render_() {
   });
 
   async function load() {
+    const mine = ++readGeneration;
     render(listHost, skeletonRows(4));
     try {
       const payload = await request(
         `/internal/v1/stores/${encodeURIComponent(store)}/invoice-requests?status=${encodeURIComponent(tab)}&limit=${LIMIT}`,
       );
+      if (mine !== readGeneration) return;
       last = payload;
       draw(payload);
     } catch (error) {
+      if (mine !== readGeneration) return;
       show(listHost, errorNotice(/** @type {any} */ (error), { onRetry: () => void load() }));
     }
   }

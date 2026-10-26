@@ -5,9 +5,10 @@
  * the quote, its revision and its seal forward by itself. This screen is the history and the way
  * back in:
  *
- *   - **The list.** One row per quote: whose ticket it is (joined from the intake list, which
- *     carries `ticket_number` and `order_id` since `READ-ENRICH-001`), its total as the server
- *     stated it, how certain that price is, and its status. Nothing is summed or recomputed.
+ *   - **The list.** One row per quote: its ticket, customer and conversion from the server's
+ *     same-store projection, its total as stated, how certain that price is, and its status.
+ *     Joining two independently capped lists here loses older intakes and falsely calls their
+ *     converted quotes unfinished. Nothing is summed or recomputed.
  *   - **One revision, read-only** (`#/quotes?quote=<id>[&revision=<n>]`). This is where an approver
  *     lands from `#/approvals` before deciding a `QUOTE_REVISION` envelope: the lines and the bands
  *     behind a digest, drawn as a receipt. With `&revision=` it is strictly a read and carries no
@@ -42,9 +43,6 @@ import { customerLabel, finalityPill, modeLabel, receipt } from "../ui/quoting.j
 
 const LIST_LIMIT = 100;
 
-/** The intake list the rows are joined to for their ticket number; the route caps at 100. */
-const REQUEST_LIMIT = 100;
-
 /**
  * @param {import("../core/router.js").RouteContext} [context]
  * @returns {HTMLElement}
@@ -61,14 +59,12 @@ export function render_(context) {
 
 function listScreen() {
   const store = storeId();
-  /** @type {Map<string, any>} order_request_id → the intake, for "Phiếu 17" and "đã thành đơn" */
-  let intakes = new Map();
-  let intakesUnread = false;
   let scope = "open";
   const scopeHost = h("div");
-  const intakeNote = h("div");
 
-  const converted = (item) => Boolean(intakes.get(String(item.order_request_id))?.order_id);
+  const converted = (item) => Boolean(item.order_id);
+  const quoteTitle = (item) =>
+    item.ticket_number != null || item.contact_binding_id ? customerLabel(item) : "Báo giá";
 
   function drawScopes(items) {
     const open = items.filter((item) => !converted(item)).length;
@@ -88,26 +84,15 @@ function listScreen() {
         },
       }),
     );
-    render(
-      intakeNote,
-      intakesUnread
-        ? h(
-            "p",
-            { class: "hint" },
-            "Chưa đọc được danh sách tiếp nhận, nên chưa biết số phiếu và báo giá nào đã thành đơn.",
-          )
-        : null,
-    );
   }
 
   /** @param {any} item a `QuoteSummaryResponse` */
   function quoteRow(item) {
-    const intake = intakes.get(String(item.order_request_id));
     const total = moneyRange(item.display_total_min_vnd, item.display_total_max_vnd, "chưa có tổng");
     return listRow({
       href: `#/quotes?quote=${encodeURIComponent(String(item.quote_id))}`,
       leading: "quote",
-      title: intake ? customerLabel(intake) : "Báo giá",
+      title: quoteTitle(item),
       meta: [
         converted(item) ? "Đã thành đơn" : enumVi(item.status),
         item.fulfillment_mode ? modeLabel(item.fulfillment_mode) : null,
@@ -123,19 +108,7 @@ function listScreen() {
 
   const view = listView({
     limit: LIST_LIMIT,
-    fetch: async () => {
-      const [quotes, requests] = await Promise.all([
-        request(`/internal/v1/stores/${encodeURIComponent(store)}/quotes?limit=${LIST_LIMIT}`),
-        request(
-          `/internal/v1/stores/${encodeURIComponent(store)}/order-requests?limit=${REQUEST_LIMIT}`,
-        ).catch(() => null),
-      ]);
-      intakesUnread = !Array.isArray(requests);
-      intakes = new Map(
-        (Array.isArray(requests) ? requests : []).map((item) => [String(item.order_request_id), item]),
-      );
-      return quotes;
-    },
+    fetch: () => request(`/internal/v1/stores/${encodeURIComponent(store)}/quotes?limit=${LIST_LIMIT}`),
     renderItem: quoteRow,
     container: (rows) => list(rows, { label: "Báo giá", id: "quote-list" }),
     scope: () => (scope === "open" ? (item) => !converted(item) : null),
@@ -157,9 +130,8 @@ function listScreen() {
       label: "Tìm báo giá theo số phiếu",
       noun: "báo giá",
       matches: (item, needle) => {
-        const intake = intakes.get(String(item.order_request_id));
         return matchesFilter(
-          [intake ? customerLabel(intake) : "", item.revision, enumVi(item.status), item.finality],
+          [quoteTitle(item), item.revision, enumVi(item.status), item.finality],
           needle,
         );
       },
@@ -195,7 +167,6 @@ function listScreen() {
       { class: "stack" },
       view.bar.node,
       scopeHost,
-      intakeNote,
       view.filterStatus,
       view.truncation,
       view.host,

@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "artifact_type": "SANITIZED_ENGINEERING_VERIFICATION_HANDOFF",
+  "evidence_date": "2026-10-26",
+  "generated_at": "2026-10-26T11:53:36.554213+00:00",
+  "branch": "codex/engineer-setup",
+  "review_baseline_commit": "713db633436029b7b4a04de58414d2a0af3253e2",
+  "release_effect": "NONE",
+  "production_readiness_claimed": false,
+  "deployment_target": "Windows machine; this evidence was produced on local macOS/arm64 with isolated synthetic PostgreSQL and Chromium.",
+  "secret_values_included": false,
+  "raw_customer_data_included": false,
+  "recording_index": {
+    "path": "evidence/handoff/2026-10-26/workflow-recordings.json",
+    "sha256": "fb8f9e0a6a6fe1340f2a59bde9d9cda7e3431bd71268451b1e291423cc7f5a23"
+  },
+  "python_verification": {
+    "full_postgresql_run": {
+      "collected": 5202,
+      "passed": 5197,
+      "skipped": 5,
+      "failed": 0,
+      "started_at": "2026-10-26T09:45:06.444638+00:00",
+      "finished_at": "2026-10-26T10:55:27.798166+00:00",
+      "exit_code": 0,
+      "single_immutable_final_source_snapshot": false,
+      "source_binding": {
+        "path": ".demo/daily-review-2026-10-26/final/suite-start-binding.json",
+        "sha256": "67d864e7c44c470cdb7e8d33d2151a3cf2b078353a13e721e8aad9fb4c2b55ae",
+        "availability": "LOCAL_ONLY_NOT_IN_GIT"
+      },
+      "junit": {
+        "path": ".demo/daily-review-2026-10-26/final/integration-tests.xml",
+        "sha256": "87048e8b61751436172b8aca3a5c3d9de99f86b1463271e92dcfc547102b8cac",
+        "availability": "LOCAL_ONLY_NOT_IN_GIT"
+      },
+      "log": {
+        "path": ".demo/daily-review-2026-10-26/final/full-suite.log",
+        "sha256": "9056cef485d0200d077c0b53adc3926dd5d70a54a3086f94b00410c5f21a215b",
+        "availability": "LOCAL_ONLY_NOT_IN_GIT"
+      }
+    },
+    "current_collected_case_union": {
+      "collected": 5206,
+      "covered": 5206,
+      "passed": 5201,
+      "skipped": 5,
+      "failed": 0,
+      "missing": 0,
+      "method": "Union of full PostgreSQL results and final affected verifier/frontend suites by current collected node ID. This is not one fresh immutable full run after all later verifier/UI changes.",
+      "new_cases_after_full_suite_started": [
+        "packages/evals/tests/test_workflow_database.py::test_container_reader_remains_usable_when_a_url_is_also_needed",
+        "packages/evals/tests/test_workflow_database.py::test_sql_failure_is_not_data_and_does_not_expose_the_private_url[False]",
+        "packages/evals/tests/test_workflow_database.py::test_sql_failure_is_not_data_and_does_not_expose_the_private_url[True]",
+        "packages/evals/tests/test_workflow_database.py::test_no_database_reader_is_honestly_unavailable"
+      ],
+      "evidence": {
+        "path": ".demo/daily-review-2026-10-26/final/final-case-coverage.json",
+        "sha256": "fee3415486ee03e51a9cb32ce8ded6c7a555f872293941e1587d49730368219d",
+        "availability": "LOCAL_ONLY_NOT_IN_GIT"
+      },
+      "collection": {
+        "path": ".demo/daily-review-2026-10-26/final/final-collected-nodeids.json",
+        "sha256": "28258f7bc21ac2df7c0cebea944760187f77f0b4bae0f4abccabe37988cce951",
+        "availability": "LOCAL_ONLY_NOT_IN_GIT"
+      }
+    },
+    "final_affected_targets": {
+      "verifier": {
+        "collected": 12,
+        "passed": 12,
+        "skipped": 0,
+        "failed": 0,
+        "junit": {
+          "path": ".demo/daily-review-2026-10-26/final/verifier-tests.xml",
+          "sha256": "93ceb987e3523042cd8ce0cc8bfa8ce989983acafb4d897fcd150dce9639fd65",
+          "availability": "LOCAL_ONLY_NOT_IN_GIT"
+        }
+      },
+      "frontend": {
+        "collected": 131,
+        "passed": 127,
+        "skipped": 4,
+        "failed": 0,
+        "junit": {
+          "path": ".demo/daily-review-2026-10-26/final/frontend-tests.xml",
+          "sha256": "db6d2b5582016f2da46d378ab0ed8e3d7d6d0f74ab24403201a7066842f3a935",
+          "availability": "LOCAL_ONLY_NOT_IN_GIT"
+        }
+      },
+      "source_timing": "Four SQL-reader/verifier regressions were added after the long full run started; final affected targets also rechecked the later frontend list-recovery correction. Overlapping tests are not double-counted.",
+      "results": {
+        "path": ".demo/daily-review-2026-10-26/final/final-target-results.json",
+        "sha256": "10911bde969b29e47c6db97cd5af8143a5399910bf2000798f12ddbf64445775",
+        "availability": "LOCAL_ONLY_NOT_IN_GIT"
+      }
+    },
+    "real_database_roles": {
+      "collected": 63,
+      "passed": 63,
+      "skipped": 0,
+      "failed": 0,
+      "junit": {
+        "path": ".demo/daily-review-2026-10-26/final/role-tests.xml",
+        "sha256": "0ae6b0a45fb5658ec365b4b88f37e65f4d0cc5a0211f5365c5ea378d24691c74",
+        "availability": "LOCAL_ONLY_NOT_IN_GIT"
+      },
+      "scope": "Separate real-role synthetic PostgreSQL run; not production identity/MFA acceptance."
+    },
+    "skips": [
+      "Four empty console-disclosure parameter categories.",
+      "One BSD hidden-file-flag platform-specific workspace environment case."
+    ]
+  },
+  "contract_verification": {
+    "result": "PASS",
+    "staff_console_disclosures": 604,
+    "json_contracts": 21,
+    "yaml_contracts": 3,
+    "synthetic_domain_combinatorial_cases": 669,
+    "served_internal_api_operations": 127,
+    "pinned_public_runtime_artifacts": 4,
+    "remaining_release_blockers": 8,
+    "evidence": {
+      "path": ".demo/daily-review-2026-10-26/final/contracts-after-verifier.log",
+      "sha256": "f15b100d5379954015954bcf1af9472b7f0355c5df001a65d56b640e361f1087",
+      "availability": "LOCAL_ONLY_NOT_IN_GIT"
+    }
+  },
+  "browser_verification": {
+    "older_core_image": {
+      "api_image": "sha256:4d1e87f65072c7fe92f72df33065e5d993ead7330b1163af41009dbb0ad9b3a7",
+      "desktop": {
+        "passed": 872,
+        "failed": 0,
+        "scenarios": 43
+      },
+      "phone": {
+        "passed": 871,
+        "failed": 0,
+        "scenarios": 43
+      },
+      "limit": "Precedes final shared-list recovery UI correction; never relabelled as final image."
+    },
+    "final_image": {
+      "api_image": "sha256:9cea2955cfbde327e4fb7cb07b061d3f87903237b27ce15f2d12c3cf48931f49",
+      "daily_desktop": {
+        "passed": 82,
+        "failed": 0
+      },
+      "daily_phone": {
+        "passed": 82,
+        "failed": 0
+      },
+      "real_api_list_recovery": {
+        "cases": 4,
+        "passed": 104,
+        "failed": 0,
+        "fault_injection": "Browser-controlled held GET and bounded HTTP503; normal auth/read/retry/refresh uses real API."
+      },
+      "clean_qr_pixel_checks": {
+        "images": 2,
+        "passed": 28,
+        "failed": 0,
+        "decoder_network_mode": "none",
+        "scope": "Actual synthetic UI PNG pixels; no real bank app or transfer."
+      },
+      "daily_persisted_invariants": {
+        "result": "PASS_IN_PARENT_SQL_EVIDENCE",
+        "walk_in_paid_equals_settled_vnd": 128000,
+        "delivery_paid_equals_settled_vnd": 170000,
+        "both_modes": "COMPLETED / RELEASED / PAID",
+        "delivery_outcomes": [
+          "PICKUP SUCCEEDED",
+          "RETURN FAILED",
+          "RETURN SUCCEEDED"
+        ],
+        "artifact": {
+          "path": ".demo/daily-review-2026-10-26/final/daily-persisted-invariants.json",
+          "sha256": "bf84a3fd6de7829c06d3fb15df0b08420e839ef05a4b896496d48f411f7097f5",
+          "availability": "LOCAL_ONLY_NOT_IN_GIT"
+        }
+      }
+    }
+  },
+  "ai_and_external_evidence": {
+    "new_live_model_requests": 0,
+    "new_paid_usage": 0,
+    "production_provider_evidence_established": false,
+    "all_public_ai_capabilities_authorized": false,
+    "public_capability_status": "All13 remain NOT_AUTHORIZED.",
+    "scope": "Deterministic mocked orchestration/contracts and runtime refusal boundaries were tested; no new live Gemini allowance was used. Earlier provider evidence is not renewed by this run.",
+    "synthetic_policy_publication_is_real_customer_approval": false
+  },
+  "remaining_deployment_conditions": [
+    "Windows target-host installation, startup/shutdown, trust, scheduler and recovery evidence.",
+    "Production identity/MFA/store assignments and real integration credentials/configuration.",
+    "Customer-data/privacy approval and owner policy acceptance.",
+    "Provider production evidence and explicit capability authorization before any AI/public activation.",
+    "Real bank-app/transfer reconciliation and chosen external integrations.",
+    "Off-host encrypted backup/restore, cutover/recovery rehearsal and owner acceptance."
+  ],
+  "artifact_transfer_policy": "Only these sanitized JSON summaries are portable. Every referenced .demo artifact is LOCAL_ONLY_NOT_IN_GIT; transfer an explicit allowlist with matching hashes or rerun. Never transfer private runtime configuration, credentials, database volumes or entire .demo folders.",
+  "limitations": [
+    "Finite reviewed/tested scope does not prove all features bug-free or exhaustive security/production readiness.",
+    "One long full run plus final affected-suite union is distinguished from a single final immutable full rerun.",
+    "Timestamp-frame video inspection is distinguished from continuous playback.",
+    "Mac/arm64 synthetic acceptance does not establish Windows/amd64 deployment acceptance.",
+    "Explicit expected-negative verifier run and superseded failed driver attempts are preserved and excluded from passing totals.",
+    "One four-second candidate readiness timeout during concurrent verification has no established cause; Windows workload/SLO testing remains required."
+  ],
+  "portable_source_binding": {
+    "path": "evidence/handoff/2026-10-26/application-source-binding.json",
+    "sha256": "b6902ff71955b21ada3febcc89ebc82afc0b6dfb3bbd5a269707fb2c23ed46f4"
+  },
+  "bounded_monitoring": {
+    "path": "evidence/handoff/2026-10-26/monitoring.json",
+    "qualification": "Original8081/8089/8091ready in all185samples.8094had one4sreadiness timeout under concurrent tests with unknown root cause; subsequent samples/final checks healthy. No SLO acceptance or ongoing monitor promised."
+  },
+  "local_delivery_state": {
+    "PILOT-RELEASE-PREFLIGHT-001": "COMPLETE",
+    "WINDOWS-DEPLOYMENT-001": "BLOCKED",
+    "effect": "Local engineering preparation only; no capability or deployment authorization."
+  },
+  "secret_scan": {
+    "scanner": "gitleaks8.28.0",
+    "image": "sha256:4dc9a937a15c3be557d1698300513ae4ec7d906bd94e75923731ae8049371821",
+    "result": "PASSED",
+    "findings": 0,
+    "scope": "Full exported Git index snapshot. Secrets/private runtime/large media excluded; no history scan or production image vulnerability conclusion.",
+    "local_final_result": ".demo/daily-review-2026-10-26/final/gitleaks-staged-final-result.json"
+  }
+}

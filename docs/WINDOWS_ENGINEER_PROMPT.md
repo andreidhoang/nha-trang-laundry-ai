@@ -1,12 +1,14 @@
 # Copy-paste prompt for the Windows engineer
 
-You are the Windows deployment engineer for Nha Trang Laundry AI. Clone the engineering handoff branch, complete a clean test run, then implement and verify the remaining deployment work. Continue through routine, reversible fixes without stopping at an audit or plan.
+You are the Windows deployment engineer for Nha Trang Laundry AI. Clone the engineering handoff branch, read the October 26 evidence, rerun clean verification on the actual Windows target, then implement and verify its remaining deployment requirements. Continue through routine, reversible fixes without stopping at an audit or plan.
 
 Repository: https://github.com/andreidhoang/nha-trang-laundry-ai
 
 Branch: `codex/engineer-setup`
 
-Handoff commit: `a9653231c9b9009e5defa1cfdb1080f4aca0f10b`
+Historical October 22 handoff commit: `a9653231c9b9009e5defa1cfdb1080f4aca0f10b`.
+Read the latest branch changes and record the actual starting SHA; the October 26 review is a
+separate source/image-bound refresh, not evidence that this historical commit contains later fixes.
 
 Start here: https://github.com/andreidhoang/nha-trang-laundry-ai/blob/codex/engineer-setup/docs/WINDOWS_ENGINEER_HANDOFF_2026-10-22.md
 
@@ -31,13 +33,26 @@ Preserve any existing checkout and uncommitted changes. Never reset or force-pus
 
 Read `AGENTS.md`, `CLAUDE.md`, `BUILD_ENGINEERING_SPEC.md`, `context/INVARIANTS.md`, the Windows handoff, and `context/PROJECT_CONTINUATION.md`.
 
-Inspect `delivery/WORK_QUEUE.yaml`, `delivery/LOOP_STATE.yaml`, the capability registry, both task packets named in the handoff, and `evidence/handoff/2026-10-22/`.
+Inspect `delivery/WORK_QUEUE.yaml`, `delivery/LOOP_STATE.yaml`, the capability registry and both task packets named in the handoff. Read `docs/audit/DAILY_WORKFLOW_REVIEW_2026-10-26.md` with `evidence/handoff/2026-10-26/summary.json` and `evidence/handoff/2026-10-26/workflow-recordings.json`; retain `evidence/handoff/2026-10-22/` as dated history.
 
-Run the context validator and delivery controller. Resume `PILOT-RELEASE-PREFLIGHT-001`, currently IN_PROGRESS, before its dependent `WINDOWS-DEPLOYMENT-001`. Use the existing controller and fresh generation digests when recording evidence or changing delivery status.
+Run the context validator and delivery controller. `PILOT-RELEASE-PREFLIGHT-001` is COMPLETE,
+with canonical evidence in `evidence/delivery-loop/PILOT-RELEASE-PREFLIGHT-001.yaml`.
+`WINDOWS-DEPLOYMENT-001` is BLOCKED on the unavailable/unverified actual target; no independent
+item is selected. Obtain target access, rerun clean checks there and collect its prerequisite
+evidence. Unblock the Windows item only when that evidence exists, using the existing controller
+and a fresh generation/CAS. The local preparation completion does not accept the Windows host.
 
-## 3. Finish the clean verification
+## 3. Rerun clean verification on the Windows target
 
-The previous full run had 5,178 passes, one stale queue-count assertion failure and five documented skips. That assertion was corrected from 203 to 205 work items; six affected context tests and 63 real-role tests subsequently passed. A clean full run after that correction has NOT been performed.
+The October 22 full run had 5,178 passes, one stale queue-count assertion failure and five skips;
+its guard was corrected and six context rechecks passed. On October 26 a clean full snapshot passed
+**5,197 tests with five skips**. Later affected rechecks passed **12**, then **127 with four skips**;
+the unique test-ID union is **5,201 passed/five skipped**, not a new monolithic final-tree full run.
+Separate real-role checks passed **63**. Final daily browser walks passed **82 each** on desktop and
+phone; core conformance **872/871** belongs to the earlier frontend image, with **104** later
+affected recovery checks. Separate real-API QR screenshot pixels passed **28** offline decode
+checks, without real bank-transfer acceptance. Follow the exact source/image bindings in the
+October 26 portable evidence. None of these local Mac/Linux-container runs verifies Windows.
 
 Install Node 24 and the Linux recovery-test tools `age`, `age-keygen`, `gzip` and `tar`. Use the frozen lockfile and a fresh isolated PostgreSQL test database, with separately provisioned API/worker roles. Keep credentials out of commands, logs and committed files.
 
@@ -53,7 +68,7 @@ uv run python scripts/report_delivery_status.py
 CI=true uv run pytest --require-postgres-integration
 ```
 
-Then run the separate API/worker role tests specified in the handoff with their database URLs securely configured. `CI=true` makes missing recovery tools fail rather than silently skip. Investigate every failure and explain every skip. Do not weaken assertions or describe targeted rechecks as a full-suite pass.
+Then run the separate API/worker role tests specified in the handoff with their database URLs securely configured. `CI=true` makes missing recovery tools fail rather than silently skip. Investigate every failure and explain every skip. Do not weaken assertions or describe targeted rechecks or a union of test IDs as a single full-suite pass. Reproduce the daily browser journeys and persisted money/state invariants on the actual Windows target before accepting it.
 
 ## 4. Work through the Windows blockers
 

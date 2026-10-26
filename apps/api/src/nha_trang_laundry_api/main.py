@@ -1574,6 +1574,10 @@ class QuoteSummaryResponse(BaseModel):
     order_request_id: UUID | None = None
     contact_binding_id: UUID | None = None
     fulfillment_mode: FulfillmentMode | None = None
+    ticket_number: int | None = None
+    ticket_issued_on: date | None = None
+    order_id: UUID | None = None
+    customer_name: str | None = None
 
 
 class IncidentResponse(BaseModel):

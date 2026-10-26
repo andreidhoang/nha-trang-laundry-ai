@@ -7,13 +7,18 @@ places, defaulted FALSE and was written nowhere, so no delivery order could ever
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Event
 from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from nha_trang_laundry_api.auth import AuthSettings
+from nha_trang_laundry_api.operations import OperationsService
 from nha_trang_laundry_db.delivery_legs import (
     DeliveryLegError,
     DeliveryLegKind,
@@ -36,6 +41,7 @@ from nha_trang_laundry_domain.catalog import (
 )
 from nha_trang_laundry_domain.orders import IntakeReadiness
 from nha_trang_laundry_domain.payments import PaymentMethod
+from nha_trang_laundry_domain.shop_capture import TripCost
 from quote_test_data import accepted_quote
 
 # Inside the fixture quote's validity window: `quote_test_data` prices at 2026-08-01 and the
@@ -306,6 +312,170 @@ def test_the_same_return_cannot_succeed_twice(
                 order_id, DeliveryLegKind.RETURN, DeliveryLegOutcome.SUCCEEDED, staff, uuid4(), NOW
             ),
         )
+
+
+def _delivery_evidence(connection: Any, order_id: UUID) -> tuple[object, ...]:
+    """The order and every durable effect a leg can write, apart from generated identifiers."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT o.row_version, o.required_delivery_legs_succeeded,
+                   (SELECT count(*) FROM delivery_legs WHERE order_id = o.id),
+                   (SELECT count(*) FROM delivery_leg_costs WHERE order_id = o.id),
+                   (SELECT count(*) FROM domain_events
+                    WHERE aggregate_type = 'DELIVERY_LEG' AND payload->>'order_id' = o.id::text),
+                   (SELECT count(*) FROM audit_events a JOIN delivery_legs l
+                    ON l.id = a.aggregate_id
+                    WHERE a.aggregate_type = 'DELIVERY_LEG' AND l.order_id = o.id),
+                   (SELECT count(*) FROM outbox_events
+                    WHERE aggregate_type = 'DELIVERY_LEG' AND payload->>'order_id' = o.id::text)
+            FROM orders o WHERE o.id = %s
+            """,
+            (order_id,),
+        )
+        return tuple(cursor.fetchone())
+
+
+@pytest.mark.parametrize("kind", [DeliveryLegKind.PICKUP, DeliveryLegKind.RETURN])
+@pytest.mark.parametrize("outcome", [DeliveryLegOutcome.FAILED, DeliveryLegOutcome.SUCCEEDED])
+def test_a_succeeded_leg_refuses_every_new_attempt_without_writing_cost_or_history(
+    postgres_connection: psycopg.Connection[Any],
+    kind: DeliveryLegKind,
+    outcome: DeliveryLegOutcome,
+) -> None:
+    """A late opposite press cannot say a completed trip failed or add another trip cost.
+
+    Retries are real only after failure. Both leg kinds are final after success, even while the
+    order remains ACTIVE awaiting the counter's separate close command.
+    """
+    store_id = uuid4()
+    staff = _member(postgres_connection, store_id, StaffRole.OPERATOR)
+    order_id = _active_order(
+        postgres_connection, store_id, staff, FulfillmentMode.PICKUP_AND_RETURN
+    )
+    if kind is DeliveryLegKind.RETURN:
+        _washed_and_paid(postgres_connection, order_id, staff)
+    repository = DeliveryLegRepository()
+    repository.record(
+        postgres_connection,
+        RecordDeliveryLegCommand(order_id, kind, DeliveryLegOutcome.SUCCEEDED, staff, uuid4()),
+    )
+    before = _delivery_evidence(postgres_connection, order_id)
+
+    with pytest.raises(DeliveryLegError, match="already recorded as successful"):
+        repository.record(
+            postgres_connection,
+            RecordDeliveryLegCommand(
+                order_id,
+                kind,
+                outcome,
+                staff,
+                uuid4(),
+                trip=TripCost(None, None, 5_000, None),
+            ),
+        )
+    assert _delivery_evidence(postgres_connection, order_id) == before
+
+
+@pytest.mark.parametrize("kind", [DeliveryLegKind.PICKUP, DeliveryLegKind.RETURN])
+def test_a_failed_attempt_waiting_on_a_success_cannot_commit_after_it(
+    postgres_connection: psycopg.Connection[Any], kind: DeliveryLegKind
+) -> None:
+    """Two live connections: the failure waits on the success's order lock, then must re-read it."""
+    store_id = uuid4()
+    staff = _member(postgres_connection, store_id, StaffRole.OPERATOR)
+    order_id = _active_order(
+        postgres_connection, store_id, staff, FulfillmentMode.PICKUP_AND_RETURN
+    )
+    if kind is DeliveryLegKind.RETURN:
+        _washed_and_paid(postgres_connection, order_id, staff)
+    postgres_connection.commit()
+    postgres_connection.execute("SET statement_timeout = '5s'")
+    DeliveryLegRepository().record(
+        postgres_connection,
+        RecordDeliveryLegCommand(order_id, kind, DeliveryLegOutcome.SUCCEEDED, staff, uuid4()),
+    )
+    # The success exists only in this open transaction; the other connection must wait for it.
+    before = _delivery_evidence(postgres_connection, order_id)
+    connected = Event()
+    backend_pids: list[int] = []
+
+    def record_failure() -> str:
+        with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as contender:
+            contender.execute("SET statement_timeout = '5s'")
+            backend_pids.append(contender.info.backend_pid)
+            connected.set()
+            try:
+                DeliveryLegRepository().record(
+                    contender,
+                    RecordDeliveryLegCommand(
+                        order_id,
+                        kind,
+                        DeliveryLegOutcome.FAILED,
+                        staff,
+                        uuid4(),
+                        trip=TripCost(None, None, 5_000, None),
+                    ),
+                )
+            except DeliveryLegError as error:
+                return str(error)
+            return "ACCEPTED"
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(record_failure)
+        try:
+            assert connected.wait(3), "contender did not connect"
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                blocked = postgres_connection.execute(
+                    "SELECT %s = ANY(pg_blocking_pids(%s))",
+                    (postgres_connection.info.backend_pid, backend_pids[0]),
+                ).fetchone()
+                if blocked is not None and blocked[0]:
+                    break
+                time.sleep(0.01)
+            else:
+                pytest.fail("contender did not wait on the order's success transaction")
+            postgres_connection.commit()
+        finally:
+            # On an assertion failure, release the lock before joining the bounded worker.
+            postgres_connection.rollback()
+        assert "already recorded as successful" in future.result(timeout=6)
+    assert _delivery_evidence(postgres_connection, order_id) == before
+
+
+@pytest.mark.parametrize("kind", [DeliveryLegKind.PICKUP, DeliveryLegKind.RETURN])
+def test_replaying_the_succeeded_attempt_returns_its_original_result(
+    postgres_connection: psycopg.Connection[Any], kind: DeliveryLegKind
+) -> None:
+    """The guard refuses new attempts; the original key still recovers a lost success response."""
+    store_id = uuid4()
+    staff = _member(postgres_connection, store_id, StaffRole.OPERATOR)
+    order_id = _active_order(
+        postgres_connection, store_id, staff, FulfillmentMode.PICKUP_AND_RETURN
+    )
+    if kind is DeliveryLegKind.RETURN:
+        _washed_and_paid(postgres_connection, order_id, staff)
+    postgres_connection.commit()
+    service = OperationsService(AuthSettings(database_url=os.environ["DATABASE_URL"]))
+    key = f"delivery-{uuid4().hex}"
+    succeeded = service.record_delivery_leg(
+        order_id=order_id,
+        leg_kind=kind,
+        outcome=DeliveryLegOutcome.SUCCEEDED,
+        principal=staff,
+        idempotency_key=key,
+    )
+    before = _delivery_evidence(postgres_connection, order_id)
+    replayed = service.record_delivery_leg(
+        order_id=order_id,
+        leg_kind=kind,
+        outcome=DeliveryLegOutcome.SUCCEEDED,
+        principal=staff,
+        idempotency_key=key,
+    )
+    assert replayed == succeeded
+    assert _delivery_evidence(postgres_connection, order_id) == before
 
 
 def test_a_non_member_cannot_record_a_delivery(

@@ -13,10 +13,23 @@ rules:
   - This index is deliberately not hash-pinned by any bundle. A pointer inside the thing it points
     at cannot be updated without invalidating itself.
 current:
-  path: evidence/agent-shadow/local-synthetic-suite-v6.json
+  path: evidence/agent-shadow/local-synthetic-suite-v7.json
   derived_by: scripts/capture_local_agent_evidence.py
   release_effect: NONE
 superseded:
+  - path: evidence/agent-shadow/local-synthetic-suite-v6.json
+    sha256: sha256:c414cb18bff97ef6f6929128036e1496d3208fa9169d9890353f3f7b01023643
+    superseded_on: '2026-10-26'
+    superseded_by: evidence/agent-shadow/local-synthetic-suite-v7.json
+    review: docs/audit/DAILY_WORKFLOW_REVIEW_2026-10-26.md
+    reason: >-
+      Daily workflow review closes the worker's tool bridge on every terminal path, including
+      runtime return and runtime failure, so retained runtime references cannot make later tool
+      calls. The corrected agent_runner.py changes a pinned artifact. Re-derived against the
+      corrected tree with capture_local_agent_evidence.py; its default output and supersession
+      guard advance together. Every historical bundle is retained byte-for-byte, all 32 cases
+      remain SKIP on DETERMINISTIC_DEGRADED, and release blockers, provider status and capability
+      authorization remain unchanged.
   - path: evidence/agent-shadow/local-synthetic-suite-v5.json
     sha256: sha256:5062c20661bb6b228b4b306a515e5e65b4306a5dbd13cdf95a8cb8fafa152ea5
     superseded_on: '2026-10-15'

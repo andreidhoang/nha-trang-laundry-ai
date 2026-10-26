@@ -5,6 +5,9 @@ Not part of the default suite, and Playwright is deliberately not a repository d
 
     uv run --with playwright python scripts/verify_console_interaction.py
 
+For only the delayed-response invoice/order regressions, set ``CONSOLE_READ_RACES_ONLY=1``.
+Those checks still run as part of the complete suite by default.
+
 It exists because the defects it covers are invisible to everything else in the repository, and one
 of them shipped. The earlier browser verification drove the quote builder with Playwright's
 ``page.fill()``, which sets a field's value in one shot. A human types. Typing rebuilt the form on
@@ -2904,6 +2907,547 @@ def verify_response_body_deadlines(browser) -> None:  # type: ignore[no-untyped-
         probe_context.close()
 
 
+def verify_invoice_read_races(browser) -> None:  # type: ignore[no-untyped-def]
+    """A tab's late success or refusal must not replace the tab the accountant chose."""
+
+    def probe(width: int, late_status: int, latest_status: int, leave: bool) -> None:
+        invoice_context = browser.new_context(viewport={"width": width, "height": 900})
+        invoice_page = invoice_context.new_page()
+        held: list[Route] = []
+        page_errors: list[str] = []
+        invoice_page.on("pageerror", lambda error: page_errors.append(str(error)))
+        label = f"invoice race {width}/{late_status}/{latest_status}/{'leave' if leave else 'tab'}"
+
+        def invoice_route(route: Route) -> None:
+            path = urllib.parse.urlsplit(route.request.url).path
+            response_status = 200
+            if path.endswith("/session"):
+                answer = {**SESSION_OK, "roles": ["OWNER_ADMIN"]}
+            elif path.endswith("/stores"):
+                answer = {
+                    "store_ids": [STORE],
+                    "stores": [{"store_id": STORE, "name": "Tiệm kiểm thử"}],
+                }
+            elif path.endswith("/invoice-requests"):
+                asked = urllib.parse.parse_qs(urllib.parse.urlsplit(route.request.url).query)
+                status = asked.get("status", ["REQUESTED"])[0]
+                if status == "REQUESTED":
+                    held.append(route)
+                    return
+                response_status = latest_status
+                answer = (
+                    invoice_list(status)
+                    if latest_status == 200
+                    else {"detail": "operations unavailable"}
+                )
+            else:
+                answer = []
+            route.fulfill(
+                status=response_status, content_type="application/json", body=json.dumps(answer)
+            )
+
+        invoice_page.route("**/internal/**", invoice_route)
+        try:
+            invoice_page.goto(f"http://localhost:{PORT}/#/invoices")
+            invoice_page.wait_for_selector("#invoices-tabs [data-value='ISSUED']")
+            check(f"{label}: the first tab read is held", len(held) == 1)
+            if leave:
+                invoice_page.evaluate("location.hash = '#/orders'")
+                invoice_page.wait_for_selector("main .orders")
+            else:
+                invoice_page.locator("#invoices-tabs [data-value='ISSUED']").click()
+            if not leave and latest_status == 200:
+                invoice_page.wait_for_selector("#invoices-table tr[data-status='ISSUED']")
+            elif not leave:
+                invoice_page.wait_for_function(
+                    "document.querySelector('main')?.textContent.includes('Dịch vụ tạm thời')"
+                )
+            for route in held:
+                route.fulfill(
+                    status=late_status,
+                    content_type="application/json",
+                    body=json.dumps(
+                        invoice_list("REQUESTED")
+                        if late_status == 200
+                        else {"detail": "operations unavailable"}
+                    ),
+                )
+            invoice_page.wait_for_timeout(200)
+            rows = invoice_page.locator("#invoices-table tbody tr")
+            statuses = rows.evaluate_all("nodes => nodes.map(node => node.dataset.status)")
+            text = invoice_page.locator("main").inner_text()
+            if leave:
+                kept = (
+                    invoice_page.locator("main h1").inner_text().startswith("Đơn hàng")
+                    and invoice_page.locator("#invoices-tabs").count() == 0
+                    and "Dịch vụ tạm thời" not in text
+                )
+            else:
+                selected = invoice_page.locator("#invoices-tabs [aria-pressed='true']")
+                kept = selected.get_attribute("data-value") == "ISSUED" and (
+                    statuses == ["ISSUED"]
+                    if latest_status == 200
+                    else not statuses and "Dịch vụ tạm thời" in text
+                )
+            check(
+                f"{label}: a late old answer leaves the latest screen intact",
+                kept and invoice_page.locator("[data-record-issued]").count() == 0,
+                f"rows={statuses}, text={text[:250]}",
+            )
+            check(f"{label}: no uncaught page errors", not page_errors, repr(page_errors))
+        finally:
+            invoice_context.close()
+
+    for width in (1280, 390):
+        for late, latest, leave in (
+            (200, 200, False),
+            (503, 200, False),
+            (200, 503, False),
+            (200, 200, True),
+            (503, 200, True),
+        ):
+            probe(width, late, latest, leave)
+
+
+def verify_order_read_races(browser) -> None:  # type: ignore[no-untyped-def]
+    """Exercise the shared list helper through the orders screen's open/recent scopes."""
+
+    def probe(width: int, late_status: int, latest_status: int) -> None:
+        order_context = browser.new_context(viewport={"width": width, "height": 900})
+        order_page = order_context.new_page()
+        held: list[Route] = []
+        page_errors: list[str] = []
+        order_page.on("pageerror", lambda error: page_errors.append(str(error)))
+        label = f"orders race {width}/{late_status}/{latest_status}"
+        open_order = {
+            **TICKET_ORDER,
+            "commercial": "ACTIVE",
+            "production": "IN_PROCESS",
+            "balance": "UNPAID",
+            "ticket_number": 99,
+        }
+
+        def order_route(route: Route) -> None:
+            path = urllib.parse.urlsplit(route.request.url).path
+            response_status = 200
+            if path.endswith("/session"):
+                answer = {**SESSION_OK, "roles": ["OWNER_ADMIN"]}
+            elif path.endswith("/stores"):
+                answer = {
+                    "store_ids": [STORE],
+                    "stores": [{"store_id": STORE, "name": "Tiệm kiểm thử"}],
+                }
+            elif path.endswith(f"/stores/{STORE}/orders"):
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(route.request.url).query)
+                if query.get("open") == ["true"]:
+                    held.append(route)
+                    return
+                response_status = latest_status
+                answer = (
+                    [TICKET_ORDER] if latest_status == 200 else {"detail": "operations unavailable"}
+                )
+            else:
+                answer = []
+            route.fulfill(
+                status=response_status, content_type="application/json", body=json.dumps(answer)
+            )
+
+        order_page.route("**/internal/**", order_route)
+        try:
+            order_page.goto(f"http://localhost:{PORT}/#/orders")
+            order_page.wait_for_selector("#order-tabs [data-value='all']")
+            check(f"{label}: the initial open-order read is held", len(held) == 1)
+            order_page.locator("#order-tabs [data-value='all']").click()
+            if latest_status == 200:
+                order_page.wait_for_selector("#order-board [data-group='done']")
+            else:
+                order_page.wait_for_function(
+                    "document.querySelector('main')?.textContent.includes('Dịch vụ tạm thời')"
+                )
+            for route in held:
+                route.fulfill(
+                    status=late_status,
+                    content_type="application/json",
+                    body=json.dumps(
+                        [open_order] if late_status == 200 else {"detail": "operations unavailable"}
+                    ),
+                )
+            order_page.wait_for_timeout(200)
+            groups = order_page.locator("#order-board [data-group]").evaluate_all(
+                "nodes => nodes.map(node => node.dataset.group)"
+            )
+            text = order_page.locator("main").inner_text()
+            kept = order_page.locator("#order-tabs [aria-pressed='true']").get_attribute(
+                "data-value"
+            ) == "all" and (
+                groups == ["done"]
+                if latest_status == 200
+                else not groups and "Dịch vụ tạm thời" in text
+            )
+            check(
+                f"{label}: the old scope cannot replace the latest rows or error",
+                kept,
+                f"groups={groups}, text={text[:250]}",
+            )
+            check(f"{label}: no uncaught page errors", not page_errors, repr(page_errors))
+        finally:
+            order_context.close()
+
+    for width in (1280, 390):
+        for late, latest in ((200, 200), (503, 200), (200, 503)):
+            probe(width, late, latest)
+
+    list_context = browser.new_context()
+    list_page = list_context.new_page()
+    list_page.route("**/__probe__/list", lambda route: route.fulfill(body="<!doctype html>"))
+    try:
+        list_page.goto(f"http://localhost:{PORT}/__probe__/list")
+        for stale_error in (False, True):
+            result = list_page.evaluate(
+                """async (staleError) => {
+                  const {listView} = await import('/src/ui/components.js');
+                  const waiting = [], loaded = [], failed = [];
+                  const view = listView({limit: 2, clearMetaOnError: true,
+                    fetch: () => new Promise((resolve, reject) => waiting.push({resolve, reject})),
+                    renderItem: item => document.createTextNode(item),
+                    emptyText: 'empty',
+                    onLoaded: items => loaded.push(items),
+                    onError: error => failed.push(error.message)});
+                  document.body.replaceChildren(view.host);
+                  const old = view.reload(), latest = view.reload();
+                  waiting[1].resolve(['latest']);
+                  const latestApplied = await latest;
+                  if (staleError) waiting[0].reject(new Error('stale failure'));
+                  else waiting[0].resolve(['old', 'truncated']);
+                  const oldApplied = await old;
+                  return {latestApplied, oldApplied, loaded, failed, items: view.items(),
+                    text: view.host.textContent, count: view.count.textContent,
+                    truncation: view.truncation.textContent, stamp: view.bar.stamp.textContent};
+                }""",
+                stale_error,
+            )
+            check(
+                f"shared list {stale_error=}: only the latest result certifies fresh data",
+                result["latestApplied"] is True
+                and result["oldApplied"] is False
+                and result["loaded"] == [["latest"]]
+                and result["failed"] == []
+                and result["items"] == ["latest"]
+                and result["text"] == "latest"
+                and result["count"] == "1"
+                and result["truncation"] == ""
+                and bool(result["stamp"]),
+                repr(result),
+            )
+    finally:
+        list_context.close()
+
+
+def verify_list_reload_recovery(browser) -> None:  # type: ignore[no-untyped-def]
+    """Filtering cannot turn old rows into an answer to a loading or failed latest read."""
+
+    def probe(width: int) -> None:
+        video_dir = os.environ.get("CONSOLE_LIST_RECOVERY_VIDEO_DIR", "")
+        video_options = (
+            {
+                "record_video_dir": video_dir,
+                "record_video_size": {"width": width, "height": 900},
+            }
+            if video_dir
+            else {}
+        )
+        probe_context = browser.new_context(
+            viewport={"width": width, "height": 900}, **video_options
+        )
+        probe_page = probe_context.new_page()
+        probe_page.route(
+            "**/__probe__/list-recovery", lambda route: route.fulfill(body="<!doctype html>")
+        )
+        held: list[Route] = []
+        calls = 0
+
+        def read_list(route: Route) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                held.append(route)
+                return
+            items = (
+                [{"id": "old7", "label": "Phiếu 7 cũ"}, {"id": "old8", "label": "Phiếu 8 cũ"}]
+                if calls == 1
+                else [
+                    {"id": "new8", "label": "Phiếu 8 mới"},
+                    {"id": "new9", "label": "Phiếu 9 mới"},
+                ]
+            )
+            route.fulfill(content_type="application/json", body=json.dumps(items))
+
+        probe_page.route("**/__probe__/list-recovery-read", read_list)
+        try:
+            probe_page.goto(f"http://localhost:{PORT}/__probe__/list-recovery")
+            probe_page.evaluate(
+                """async () => {
+                  const {listView} = await import('/src/ui/components.js');
+                  const {request} = await import('/src/core/api.js');
+                  const {h} = await import('/src/core/dom.js');
+                  window.__loaded = []; window.__failed = 0; window.__started = 0;
+                  const view = listView({limit: 10, clearMetaOnError: true,
+                    fetch: () => request('/__probe__/list-recovery-read'),
+                    renderItem: item => h('p', {dataRecord: item.id}, item.label),
+                    filter: {label: 'Lọc phiếu', placeholder: 'Lọc phiếu', noun: 'phiếu',
+                      matches: (item, needle) => item.label.toLowerCase().includes(needle)},
+                    emptyText: 'Không có phiếu',
+                    onLoadStart: () => window.__started++,
+                    onLoaded: items => window.__loaded.push(items.map(item => item.id)),
+                    onError: () => window.__failed++});
+                  window.__view = view;
+                  const scope = h('button', {id: 'probe-scope',
+                    onClick: () => view.rerender()}, 'Đổi phạm vi');
+                  const externalFilter = h('button', {id: 'probe-filter',
+                    onClick: () => view.setFilter('8')}, 'Lọc phiếu 8');
+                  document.body.replaceChildren(
+                    h('h1', null, 'Fault-injected component test'),
+                    h('p', null, 'Synthetic data · stubbed API · not a backend recording'),
+                    h('p', {id: 'probe-step', role: 'status'}, 'Initial successful read'),
+                    view.bar.node, scope, externalFilter, view.filterStatus, view.host);
+                  window.__initialApplied = await view.reload();
+                }"""
+            )
+
+            def stage(text: str) -> None:
+                if video_dir:
+                    probe_page.locator("#probe-step").evaluate(
+                        "(node, text) => node.textContent = text", text
+                    )
+                    probe_page.wait_for_timeout(900)
+
+            def snapshot() -> dict[str, object]:
+                return probe_page.evaluate(
+                    """() => ({records: [...document.querySelectorAll('[data-record]')]
+                      .map(node => node.dataset.record), items: __view.items().map(item => item.id),
+                      skeleton: !!__view.host.querySelector('.skeleton'),
+                      outage: __view.host.textContent.includes('Dịch vụ tạm thời'),
+                      filtered: __view.filterStatus.textContent, typed: __view.bar.search.value,
+                      loaded: __loaded, failed: __failed, started: __started,
+                      count: __view.count.textContent})"""
+                )
+
+            initial = snapshot()
+            check(
+                f"list recovery {width}: initial read publishes rows and one success hook",
+                initial["records"] == ["old7", "old8"]
+                and initial["items"] == ["old7", "old8"]
+                and initial["loaded"] == [["old7", "old8"]]
+                and initial["started"] == 1,
+                repr(initial),
+            )
+            stage("Initial successful read: two synthetic tickets")
+            probe_page.get_by_role("button", name="Tải lại", exact=True).click()
+            probe_page.get_by_role("searchbox", name="Lọc phiếu", exact=True).fill("7")
+            loading = snapshot()
+            check(
+                f"list recovery {width}: typing during a slow reload keeps loading, not old rows",
+                len(held) == 1
+                and loading["skeleton"] is True
+                and loading["records"] == []
+                and loading["items"] == []
+                and loading["filtered"] == ""
+                and loading["typed"] == "7"
+                and loading["loaded"] == [["old7", "old8"]]
+                and loading["failed"] == 0,
+                repr(loading),
+            )
+            stage("Reload held: typing must keep the loading state")
+            for route in held:
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps({"detail": "operations unavailable"}),
+                )
+            probe_page.wait_for_function("__view.host.textContent.includes('Dịch vụ tạm thời')")
+            probe_page.get_by_role("searchbox", name="Lọc phiếu", exact=True).fill("8")
+            failed = snapshot()
+            check(
+                f"list recovery {width}: typing after the latest 503 cannot hide the outage",
+                failed["outage"] is True
+                and failed["records"] == []
+                and failed["items"] == []
+                and failed["filtered"] == ""
+                and failed["typed"] == "8"
+                and failed["failed"] == 1
+                and failed["loaded"] == [["old7", "old8"]]
+                and failed["count"] == "—",
+                repr(failed),
+            )
+            stage("HTTP 503 injected: typing must keep the failure visible")
+            for control in ("#probe-scope", "#probe-filter"):
+                probe_page.locator(control).click()
+                state_after = snapshot()
+                check(
+                    f"list recovery {width}/{control}: scope/filter keeps the latest failure",
+                    state_after["outage"] is True
+                    and state_after["records"] == []
+                    and state_after["items"] == []
+                    and state_after["filtered"] == ""
+                    and state_after["failed"] == 1,
+                    repr(state_after),
+                )
+            stage("Scope/filter changes must not restore old tickets")
+            probe_page.get_by_role("button", name="Tải lại", exact=True).click()
+            probe_page.wait_for_selector("[data-record='new8']")
+            recovered = snapshot()
+            check(
+                f"list recovery {width}: recovery applies the current typed filter to fresh rows",
+                recovered["records"] == ["new8"]
+                and recovered["items"] == ["new8", "new9"]
+                and recovered["typed"] == "8"
+                and recovered["outage"] is False
+                and recovered["filtered"] == "Đang lọc 1/2 phiếu"
+                and recovered["loaded"] == [["old7", "old8"], ["new8", "new9"]]
+                and recovered["failed"] == 1
+                and recovered["started"] == 3
+                and calls == 3,
+                repr(recovered),
+            )
+            stage("API stub recovered: current filter shows only fresh ticket 8")
+        finally:
+            probe_context.close()
+            if video_dir and probe_page.video:
+                recorded = Path(probe_page.video.path())
+                named = recorded.with_name(f"list-reload-recovery-{width}-{recorded.name}")
+                recorded.rename(named)
+                print(f"list recovery {width} video: {named}", flush=True)
+
+    for width in (1280, 390):
+        probe(width)
+
+
+def verify_quote_list_projection(browser) -> None:  # type: ignore[no-untyped-def]
+    """An old intake outside the latest 100 must not make a converted quote look unfinished."""
+
+    converted_id = "aaaaaaaa-0000-4000-8000-000000000071"
+    waiting_id = "aaaaaaaa-0000-4000-8000-000000000072"
+    sparse_id = "aaaaaaaa-0000-4000-8000-000000000073"
+    quoted = {
+        "quote_id": converted_id,
+        "revision": 1,
+        "row_version": 2,
+        "status": "ACCEPTED_FINAL",
+        "finality": "APPROVED_EXACT",
+        "snapshot_hash": "sha256:" + "7" * 64,
+        "display_total_min_vnd": 90_000,
+        "display_total_max_vnd": 90_000,
+        "fulfillment_mode": "SELF_DROP_SELF_COLLECT",
+        "order_request_id": "bbbbbbbb-0000-4000-8000-000000000071",
+        "order_id": PICKUP_ORDER_ID,
+        "ticket_number": 7,
+        "ticket_issued_on": "2026-09-01",
+        "customer_name": "Khách kiểm thử cũ",
+    }
+    waiting = {
+        **quoted,
+        "quote_id": waiting_id,
+        "order_request_id": "bbbbbbbb-0000-4000-8000-000000000072",
+        "order_id": None,
+        "ticket_number": 8,
+        "customer_name": "Khách kiểm thử đang chờ",
+    }
+    sparse = {
+        **quoted,
+        "quote_id": sparse_id,
+        "order_request_id": "bbbbbbbb-0000-4000-8000-000000000073",
+        "order_id": None,
+        "ticket_number": None,
+        "ticket_issued_on": None,
+        "customer_name": None,
+        "contact_binding_id": None,
+    }
+    newer_intakes = [
+        {
+            "order_request_id": f"00000000-0000-4000-8000-{index:012d}",
+            "ticket_number": index + 100,
+            "order_id": None,
+        }
+        for index in range(100)
+    ]
+
+    def probe(width: int) -> None:
+        quote_context = browser.new_context(viewport={"width": width, "height": 900})
+        quote_page = quote_context.new_page()
+        intake_reads: list[str] = []
+
+        def quote_route(route: Route) -> None:
+            path = urllib.parse.urlsplit(route.request.url).path
+            if path.endswith("/session"):
+                answer = {**SESSION_OK, "roles": ["OWNER_ADMIN"]}
+            elif path.endswith("/stores"):
+                answer = {
+                    "store_ids": [STORE],
+                    "stores": [{"store_id": STORE, "name": "Tiệm kiểm thử"}],
+                }
+            elif path.endswith("/quotes"):
+                answer = [quoted, waiting, sparse]
+            elif path.endswith("/order-requests"):
+                intake_reads.append(route.request.url)
+                answer = newer_intakes
+            else:
+                answer = []
+            route.fulfill(content_type="application/json", body=json.dumps(answer))
+
+        quote_page.route("**/internal/**", quote_route)
+        try:
+            quote_page.goto(f"http://localhost:{PORT}/#/quotes", wait_until="networkidle")
+            quote_page.wait_for_selector("#quote-list [data-quote]")
+            rows = quote_page.locator("#quote-list [data-quote]")
+            ids = rows.evaluate_all("nodes => nodes.map(node => node.dataset.quote)")
+            check(
+                f"quote projection {width}: unfinished lists only the unconverted quote",
+                ids == [waiting_id, sparse_id]
+                and "Phiếu 8" in quote_page.locator(f"[data-quote='{waiting_id}']").inner_text(),
+                repr(ids),
+            )
+            sparse_text = quote_page.locator(f"[data-quote='{sparse_id}']").inner_text()
+            check(
+                f"quote projection {width}: a missing intake does not invent a channel customer",
+                sparse_text.startswith("Báo giá") and "Khách nhắn qua kênh" not in sparse_text,
+                sparse_text,
+            )
+            quote_page.locator("#quote-scope [data-value='all']").click()
+            converted = quote_page.locator(f"#quote-list [data-quote='{converted_id}']")
+            text = converted.inner_text()
+            check(
+                f"quote projection {width}: an old converted intake keeps its customer and ticket",
+                "Phiếu 7" in text and "Khách kiểm thử cũ" in text and "Đã thành đơn" in text,
+                text,
+            )
+            quote_page.get_by_role("searchbox", name="Tìm báo giá theo số phiếu").fill("7")
+            ids = quote_page.locator("#quote-list [data-quote]").evaluate_all(
+                "nodes => nodes.map(node => node.dataset.quote)"
+            )
+            check(
+                f"quote projection {width}: filtering finds a ticket outside the intake window",
+                ids == [converted_id],
+                repr(ids),
+            )
+            quote_page.get_by_role("searchbox", name="Tìm báo giá theo số phiếu").fill(
+                "Khách nhắn qua kênh"
+            )
+            check(
+                f"quote projection {width}: filtering never invents a channel binding either",
+                quote_page.locator("#quote-list [data-quote]").count() == 0,
+            )
+            check(
+                f"quote projection {width}: no bounded intake join or per-row requests",
+                not intake_reads,
+                repr(intake_reads),
+            )
+        finally:
+            quote_context.close()
+
+    for width in (1280, 390):
+        probe(width)
+
+
 with sync_playwright() as playwright:
     # Real Chrome by default, because the staff console is opened in a real browser and the
     # rendering defects this file exists to catch are browser behaviour, not DOM shape.
@@ -4173,6 +4717,11 @@ with sync_playwright() as playwright:
                 {
                     "quote_id": EXACT_QUOTE,
                     "order_request_id": ORDER_REQUEST["order_request_id"],
+                    "order_id": ORDER_REQUEST.get("order_id"),
+                    "contact_binding_id": ORDER_REQUEST.get("contact_binding_id"),
+                    "ticket_number": ORDER_REQUEST.get("ticket_number"),
+                    "ticket_issued_on": ORDER_REQUEST.get("ticket_issued_on"),
+                    "customer_name": ORDER_REQUEST.get("customer_name"),
                     "revision": 1,
                     "status": "PROVISIONAL",
                 }
@@ -4257,6 +4806,15 @@ with sync_playwright() as playwright:
         route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
 
     page.route("**/internal/**", route_api)
+    verify_invoice_read_races(browser)
+    verify_order_read_races(browser)
+    verify_list_reload_recovery(browser)
+    verify_quote_list_projection(browser)
+    if os.environ.get("CONSOLE_READ_RACES_ONLY") == "1":
+        browser.close()
+        server.shutdown()
+        print(f"RESULT: {len(PASS)} passed, {len(FAIL)} failed")
+        sys.exit(1 if FAIL else 0)
     verify_response_body_deadlines(browser)
     page.goto(f"http://localhost:{PORT}/#/new", wait_until="networkidle")
     page.wait_for_timeout(1200)

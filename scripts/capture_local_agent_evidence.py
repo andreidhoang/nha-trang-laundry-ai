@@ -38,8 +38,11 @@ SUPERSEDED_OUTPUTS = (
     # Superseded 2026-10-15 after local worker authority and claim-loss corrections.
     # Re-derived against the corrected runner; all cases remain non-release SKIP.
     "evidence/agent-shadow/local-synthetic-suite-v5.json",
+    # Superseded 2026-10-26 after the worker's terminal authority-revocation correction.
+    # Re-derived per EVIDENCE-REPIN-001; no historical bundle or release outcome changes.
+    "evidence/agent-shadow/local-synthetic-suite-v6.json",
 )
-DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v6.json"
+DEFAULT_OUTPUT = ROOT / "evidence/agent-shadow/local-synthetic-suite-v7.json"
 PINNED_ARTIFACTS = (
     "specs/evals/eval-manifest-v1.yaml",
     "specs/evals/fixture-registry-v1.json",

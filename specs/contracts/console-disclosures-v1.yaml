@@ -10,12 +10,12 @@ purpose: 'The staff console''s honesty-chrome disclosures, with what holds each 
 counts:
   ABSENT_TABLE: 3
   ALL_AUTHENTICATED: 1
-  DESCRIPTIVE: 564
+  DESCRIPTIVE: 563
   MODEL_SEAM: 2
   POLICY_BOUND: 1
   REPOSITORY_ROLES: 19
   SERVER_GATE: 15
-total: 605
+total: 604
 disclosures:
 - slot_id: core/errors.js#MESSAGES.OFFLINE:d1fe6e497f69
   module: core/errors.js
@@ -4107,14 +4107,6 @@ disclosures:
   text: 'Khách vãng lai chỉ có số phiếu, tiệm không lưu gì khác (DEC-013): tìm đơn bằng số phiếu ở ô “Số
     phiếu…”. Khách quen có hồ sơ (DEC-034): bấm “Tìm theo khách”, tìm bằng số điện thoại, 4 số cuối hoặc
     tên, rồi mở đơn từ trang của khách.'
-  binding:
-    kind: DESCRIPTIVE
-    why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
-      rewording it fails the check and forces a fresh reading.
-- slot_id: screens/quotes.js#hint:c18a32813101
-  module: screens/quotes.js
-  key: hint
-  text: Chưa đọc được danh sách tiếp nhận, nên chưa biết số phiếu và báo giá nào đã thành đơn.
   binding:
     kind: DESCRIPTIVE
     why: Prose about how this screen behaves. No single code fact governs it; it is registered so that
